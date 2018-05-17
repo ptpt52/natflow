@@ -65,12 +65,17 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	struct iphdr *iph;
 	void *l4;
 	natflow_t *nf;
-	int ret;
 	int dir = 0;
+	int ret;
+
+	if (skb->protocol != htons(ETH_P_IP))
+		return NF_ACCEPT;
+
+	if (skb_is_gso(skb))
+		return NF_ACCEPT;
 
 	iph = ip_hdr(skb);
-	if (iph->protocol != IPPROTO_TCP &&
-			iph->protocol != IPPROTO_UDP) {
+	if (iph->protocol != IPPROTO_TCP && iph->protocol != IPPROTO_UDP) {
 		return NF_ACCEPT;
 	}
 	l4 = (void *)iph + iph->ihl * 4;
@@ -139,18 +144,21 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				}
 				set_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 
-				if (iph->protocol == IPPROTO_TCP) {
-					NATFLOW_DEBUG("(PCI)" DEBUG_TCP_FMT ": NF_FF_ORIGINAL_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
-							DEBUG_TCP_ARG(iph,l4),
-							MAC_HEADER_ARG(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head),
-							nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len,
-							nf->rroute[NF_FF_DIR_REPLY].outdev->name);
-				} else {
-					NATFLOW_DEBUG("(PCI)" DEBUG_UDP_FMT ": NF_FF_ORIGINAL_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
-							DEBUG_UDP_ARG(iph,l4),
-							MAC_HEADER_ARG(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head),
-							nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len,
-							nf->rroute[NF_FF_DIR_REPLY].outdev->name);
+				switch (iph->protocol) {
+					case IPPROTO_TCP:
+						NATFLOW_DEBUG("(PCI)" DEBUG_TCP_FMT ": NF_FF_ORIGINAL_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
+								DEBUG_TCP_ARG(iph,l4),
+								MAC_HEADER_ARG(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head),
+								nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len,
+								nf->rroute[NF_FF_DIR_REPLY].outdev->name);
+						break;
+					case IPPROTO_UDP:
+						NATFLOW_DEBUG("(PCI)" DEBUG_UDP_FMT ": NF_FF_ORIGINAL_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
+								DEBUG_UDP_ARG(iph,l4),
+								MAC_HEADER_ARG(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head),
+								nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len,
+								nf->rroute[NF_FF_DIR_REPLY].outdev->name);
+						break;
 				}
 			}
 		}
@@ -159,6 +167,18 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 
 	//if (!(nf->status & NF_FF_OFFLOAD)) {
 	if (!(nf->status & NF_FF_REPLY_OK) || !(nf->status & NF_FF_ORIGINAL_OK)) {
+		return NF_ACCEPT;
+	}
+
+	if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
+		switch (iph->protocol) {
+			case IPPROTO_TCP:
+				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+				break;
+			case IPPROTO_UDP:
+				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+				break;
+		}
 		return NF_ACCEPT;
 	}
 
@@ -218,6 +238,88 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	return NF_STOLEN;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
+static unsigned natflow_path_post_ct_out_hook(unsigned int hooknum,
+		struct sk_buff *skb,
+		const struct net_device *in,
+		const struct net_device *out,
+		int (*okfn)(struct sk_buff *))
+{
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
+static unsigned int natflow_path_post_ct_out_hook(const struct nf_hook_ops *ops,
+		struct sk_buff *skb,
+		const struct net_device *in,
+		const struct net_device *out,
+		int (*okfn)(struct sk_buff *))
+{
+	unsigned int hooknum = ops->hooknum;
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+static unsigned int natflow_path_post_ct_out_hook(const struct nf_hook_ops *ops,
+		struct sk_buff *skb,
+		const struct nf_hook_state *state)
+{
+	unsigned int hooknum = state->hook;
+	//const struct net_device *in = state->in;
+	//const struct net_device *out = state->out;
+#else
+static unsigned int natflow_path_post_ct_out_hook(void *priv,
+		struct sk_buff *skb,
+		const struct nf_hook_state *state)
+{
+	unsigned int hooknum = state->hook;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
+	//const struct net_device *in = state->in;
+	//const struct net_device *out = state->out;
+#endif
+#endif
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn *ct;
+	struct iphdr *iph;
+	void *l4;
+	natflow_t *nf;
+	unsigned int mtu;
+	int dir = 0;
+
+	if (skb->protocol != htons(ETH_P_IP))
+		return NF_ACCEPT;
+
+	iph = ip_hdr(skb);
+	if (iph->protocol != IPPROTO_TCP && iph->protocol != IPPROTO_UDP) {
+		return NF_ACCEPT;
+	}
+	l4 = (void *)iph + iph->ihl * 4;
+
+	ct = nf_ct_get(skb, &ctinfo);
+	if (NULL == ct) {
+		return NF_ACCEPT;
+	}
+	nf = natflow_session_in(ct);
+	if (NULL == nf) {
+		return NF_ACCEPT;
+	}
+
+	if (CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL) {
+		dir = NF_FF_DIR_ORIGINAL;
+	} else {
+		dir = NF_FF_DIR_REPLY;
+	}
+
+	mtu = ip_skb_dst_mtu(NULL, skb);
+	if (nf->rroute[dir].mtu != mtu) {
+		switch (iph->protocol) {
+			case IPPROTO_TCP:
+				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": update pmtu from %u to %u\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
+				break;
+			case IPPROTO_UDP:
+				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": update pmtu from %u to %u\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
+				break;
+		}
+		nf->rroute[dir].mtu = mtu;
+	}
+
+	return NF_ACCEPT;
+}
+
 static struct nf_hook_ops path_hooks[] = {
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
@@ -227,6 +329,15 @@ static struct nf_hook_ops path_hooks[] = {
 		.pf = PF_INET,
 		.hooknum = NF_INET_PRE_ROUTING,
 		.priority = NF_IP_PRI_CONNTRACK + 1,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_path_post_ct_out_hook,
+		.pf = PF_INET,
+		.hooknum = NF_INET_POST_ROUTING,
+		.priority = NF_IP_PRI_LAST,
 	},
 };
 
