@@ -368,6 +368,12 @@ int natflow_path_init(void)
 	register_netdevice_notifier(&natflow_netdev_notifier);
 
 	ret = nf_register_hooks(path_hooks, ARRAY_SIZE(path_hooks));
+	if (ret != 0)
+		goto nf_register_hooks_failed;
+
+	return 0;
+nf_register_hooks_failed:
+	unregister_netdevice_notifier(&natflow_netdev_notifier);
 	return ret;
 }
 
