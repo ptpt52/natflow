@@ -24,6 +24,8 @@
 #include "natflow_common.h"
 #include "natflow_path.h"
 
+static unsigned int natflow_path_magic = 0;
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned natflow_path_pre_ct_in_hook(unsigned int hooknum,
 		struct sk_buff *skb,
@@ -81,6 +83,13 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	if (NULL == nf) {
 		return NF_ACCEPT;
 	}
+	if (nf->magic != natflow_path_magic) {
+		clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
+		clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
+		clear_bit(NF_FF_REPLY_BIT, &nf->status);
+		clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
+		nf->magic = natflow_path_magic;
+	}
 
 	if (CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL) {
 		if (!(nf->status & NF_FF_REPLY) && !test_and_set_bit(NF_FF_REPLY_BIT, &nf->status)) {
@@ -89,7 +98,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
 				nf->rroute[NF_FF_DIR_REPLY].l2_head_len = l2_len;
 				memcpy(nf->rroute[NF_FF_DIR_REPLY].l2_head, l2, l2_len);
-				nf->rroute[NF_FF_DIR_REPLY].outindex = skb->dev->ifindex;
 				nf->rroute[NF_FF_DIR_REPLY].outdev = skb->dev;
 				if (l2_len >= ETH_HLEN) {
 					unsigned char mac[ETH_ALEN];
@@ -122,7 +130,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
 				nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len = l2_len;
 				memcpy(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head, l2, l2_len);
-				nf->rroute[NF_FF_DIR_ORIGINAL].outindex = skb->dev->ifindex;
 				nf->rroute[NF_FF_DIR_ORIGINAL].outdev = skb->dev;
 				if (l2_len >= ETH_HLEN) {
 					unsigned char mac[ETH_ALEN];
@@ -223,11 +230,31 @@ static struct nf_hook_ops path_hooks[] = {
 	},
 };
 
+static int natflow_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
+{
+	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
+
+	if (event != NETDEV_UNREGISTER)
+		return NOTIFY_DONE;
+
+	natflow_path_magic++;
+
+	NATFLOW_WARN("catch unregister event for dev=%s\n", dev ? dev->name : "(null)");
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block natflow_netdev_notifier = {
+	.notifier_call  = natflow_netdev_event,
+};
+
 int natflow_path_init(void)
 {
 	int ret = 0;
 
 	need_conntrack();
+
+	register_netdevice_notifier(&natflow_netdev_notifier);
 
 	ret = nf_register_hooks(path_hooks, ARRAY_SIZE(path_hooks));
 	return ret;
@@ -236,4 +263,5 @@ int natflow_path_init(void)
 void natflow_path_exit(void)
 {
 	nf_unregister_hooks(path_hooks, ARRAY_SIZE(path_hooks));
+	unregister_netdevice_notifier(&natflow_netdev_notifier);
 }

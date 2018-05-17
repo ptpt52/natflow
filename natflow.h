@@ -17,7 +17,6 @@ typedef struct natflow_route_t {
 #define NF_L2_MAX_LEN (14 + 4 + 8)
 	unsigned char l2_head[NF_L2_MAX_LEN];
 	unsigned int l2_head_len;
-	int outindex;
 	struct net_device *outdev;
 } natflow_route_t;
 
@@ -35,6 +34,7 @@ typedef struct natflow_route_t {
 
 typedef struct natflow_t {
 	struct nf_conn *master;
+	unsigned int magic;
 	unsigned long status;
 #define NF_FF_DIR_ORIGINAL 0
 #define NF_FF_DIR_REPLY 1
