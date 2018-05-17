@@ -293,7 +293,7 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (NULL == ct) {
 		return NF_ACCEPT;
 	}
-	nf = natflow_session_in(ct);
+	nf = natflow_session_get(ct);
 	if (NULL == nf) {
 		return NF_ACCEPT;
 	}
