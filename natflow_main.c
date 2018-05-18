@@ -58,16 +58,19 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		n = snprintf(natflow_ctl_buffer,
 				sizeof(natflow_ctl_buffer) - 1,
 				"# Usage:\n"
+				"#    disabled=Number -- set disable/enable\n"
 				"#    debug=<num> -- set debug\n"
 				"#\n"
 				"# Info:\n"
+				"#    disabled=%u\n"
 				"#    ...\n"
 				"#\n"
 				"# Reload cmd:\n"
 				"\n"
+				"disabled=%u\n"
 				"debug=%d\n"
 				"\n",
-				natflow_debug);
+				disabled, disabled, debug);
 		natflow_ctl_buffer[n] = 0;
 		return natflow_ctl_buffer;
 	}
@@ -146,7 +149,14 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 		int d;
 		n = sscanf(data, "debug=%u", &d);
 		if (n == 1) {
-			natflow_debug = d;
+			debug = d;
+			goto done;
+		}
+	} else if (strncmp(data, "disabled=", 9) == 0) {
+		int d;
+		n = sscanf(data, "disabled=%u", &d);
+		if (n == 1) {
+			disabled = d;
 			goto done;
 		}
 	}

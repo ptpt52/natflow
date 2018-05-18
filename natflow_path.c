@@ -68,6 +68,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	int dir = 0;
 	int ret;
 
+	if (disabled)
+		return NF_ACCEPT;
+
 	if (skb->protocol != htons(ETH_P_IP))
 		return NF_ACCEPT;
 
@@ -283,6 +286,9 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	natflow_t *nf;
 	unsigned int mtu;
 	int dir = 0;
+
+	if (disabled)
+		return NF_ACCEPT;
 
 	if (skb->protocol != htons(ETH_P_IP))
 		return NF_ACCEPT;

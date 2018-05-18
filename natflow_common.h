@@ -24,13 +24,14 @@
 #include <net/netfilter/nf_nat_core.h>
 #include "natflow.h"
 
-extern int natflow_debug;
+extern unsigned int debug;
+extern unsigned int disabled;
 
-#define IS_NATFLOW_FIXME() (natflow_debug & 0x10)
-#define IS_NATFLOW_DEBUG() (natflow_debug & 0x8)
-#define IS_NATFLOW_INFO() (natflow_debug & 0x4)
-#define IS_NATFLOW_WARN() (natflow_debug & 0x2)
-#define IS_NATFLOW_ERROR() (natflow_debug & 0x1)
+#define IS_NATFLOW_FIXME() (debug & 0x10)
+#define IS_NATFLOW_DEBUG() (debug & 0x8)
+#define IS_NATFLOW_INFO() (debug & 0x4)
+#define IS_NATFLOW_WARN() (debug & 0x2)
+#define IS_NATFLOW_ERROR() (debug & 0x1)
 
 #define NATFLOW_println(fmt, ...) \
 	do { \
