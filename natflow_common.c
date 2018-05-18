@@ -25,6 +25,7 @@ int natflow_debug = 0;
 
 int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 {
+	struct nat_key_t *nk;
 	struct natflow_t *nf;
 	struct nf_ct_ext *old, *new;
 	struct nf_conn_nat *nat = NULL;
@@ -46,7 +47,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	old = ct->ext;
 	if (!old) {
 		newoff = ALIGN(sizeof(struct nf_ct_ext), sizeof(unsigned long));
-		newlen = ALIGN(newoff + var_alloc_len, sizeof(unsigned long));
+		newlen = ALIGN(newoff + var_alloc_len, sizeof(unsigned long)) + ALIGN(sizeof(struct nat_key_t), sizeof(unsigned long));
 		alloc_size = ALIGN(newlen + sizeof(struct nf_conn_nat), sizeof(unsigned long));
 
 		new = kzalloc(alloc_size, gfp);
@@ -55,55 +56,56 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		}
 		new->len = newlen;
 		ct->ext = new;
+
 		nat = nf_ct_ext_add(ct, NF_CT_EXT_NAT, gfp);
 	} else {
 		newoff = ALIGN(old->len, sizeof(unsigned long));
-		newlen = ALIGN(newoff + var_alloc_len, sizeof(unsigned long));
+		newlen = ALIGN(newoff + var_alloc_len, sizeof(unsigned long)) + ALIGN(sizeof(struct nat_key_t), sizeof(unsigned long));
 		alloc_size = ALIGN(newlen + sizeof(struct nf_conn_nat), sizeof(unsigned long));
 
 		new = __krealloc(old, alloc_size, gfp);
 		if (!new) {
 			return -1;
 		}
+		new->len = newlen;
+		memset((void *)new + newoff, 0, newlen - newoff);
 
 		if (new != old) {
 			kfree_rcu(old, rcu);
 			rcu_assign_pointer(ct->ext, new);
 		}
-		new->len = newlen;
-		memset((void *)new + newoff, 0, newlen - newoff);
+
 		nat = nf_ct_ext_add(ct, NF_CT_EXT_NAT, gfp);
 	}
 
-	if (nat == NULL) {
+	if (NULL == nat) {
 		return -1;
 	}
 
-	if (newlen != ct->ext->offset[NF_CT_EXT_NAT]) {
-		NATFLOW_ERROR("nat ext offset(%u) is not at %u as expect\n", ct->ext->offset[NF_CT_EXT_NAT], newlen);
-		return -1;
-	}
-
-	nf = (struct natflow_t *)((void *)nat - ALIGN(sizeof(struct natflow_t), sizeof(unsigned long)));
+	nk = (struct nat_key_t *)((void *)nat - ALIGN(sizeof(struct nat_key_t), sizeof(unsigned long)));
+	nk->magic = NATFLOW_MAGIC;
+	nf = (struct natflow_t *)((void *)nat - ALIGN(sizeof(struct natflow_t), sizeof(unsigned long)) - ALIGN(sizeof(struct nat_key_t), sizeof(unsigned long)));
 	nf->master = ct;
-
-	NATFLOW_DEBUG("nat ext offset(%u) newoff:%u newlen:%u var_alloc_len:%u\n",
-			ct->ext->offset[NF_CT_EXT_NAT], newoff, newlen, (unsigned int)var_alloc_len);
 
 	return 0;
 }
 
 struct natflow_t *natflow_session_get(struct nf_conn *ct)
 {
-	struct natflow_t *nf;
 	struct nf_conn_nat *nat;
+	struct nat_key_t *nk;
+	struct natflow_t *nf;
 
 	nat  = nfct_nat(ct);
 	if (!nat) {
 		return NULL;
 	}
 
-	nf = (struct natflow_t *)((void *)nat - ALIGN(sizeof(struct natflow_t), sizeof(unsigned long)));
+	nk = (struct nat_key_t *)((void *)nat - ALIGN(sizeof(struct nat_key_t), sizeof(unsigned long)));
+	if (nk->magic != NATFLOW_MAGIC) {
+		return NULL;
+	}
+	nf = (struct natflow_t *)((void *)nat - ALIGN(sizeof(struct natflow_t), sizeof(unsigned long)) - ALIGN(sizeof(struct nat_key_t), sizeof(unsigned long)));
 	if (nf->master != ct) {
 		return NULL;
 	}

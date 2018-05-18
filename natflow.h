@@ -43,4 +43,13 @@ typedef struct natflow_t {
 	struct natflow_route_t rroute[NF_FF_DIR_MAX];
 } natflow_t;
 
+/*XXX don't change */
+#define NATFLOW_MAGIC 0x464c4f57
+struct nat_key_t {
+	unsigned int magic;
+	unsigned int ext_magic;
+};
+#define IPS_NATFLOW_STOP_BIT 15
+#define IPS_NATFLOW_STOP (1 << IPS_NATFLOW_STOP_BIT)
+
 #endif /* _NATFLOW_H_ */

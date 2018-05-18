@@ -165,6 +165,10 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		dir = NF_FF_DIR_REPLY;
 	}
 
+	if ((ct->status & IPS_NATFLOW_STOP)) {
+		return NF_ACCEPT;
+	}
+
 	//if (!(nf->status & NF_FF_OFFLOAD)) {
 	if (!(nf->status & NF_FF_REPLY_OK) || !(nf->status & NF_FF_ORIGINAL_OK)) {
 		return NF_ACCEPT;
