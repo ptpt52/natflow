@@ -34,8 +34,7 @@ typedef struct natflow_route_t {
 #define NF_FF_REPLY_OK (1 << NF_FF_REPLY_OK_BIT)
 
 typedef struct natflow_t {
-	struct nf_conn *master;
-	unsigned int magic;
+	unsigned long magic;
 	unsigned long status;
 #define NF_FF_DIR_ORIGINAL 0
 #define NF_FF_DIR_REPLY 1
