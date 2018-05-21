@@ -67,6 +67,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	natflow_t *nf;
 	int dir = 0;
 	int ret;
+	int magic = natflow_path_magic;
 
 	if (disabled)
 		return NF_ACCEPT;
@@ -91,12 +92,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	if (NULL == nf) {
 		return NF_ACCEPT;
 	}
-	if (nf->magic != natflow_path_magic) {
+	if (nf->magic != magic) {
 		clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 		clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 		clear_bit(NF_FF_REPLY_BIT, &nf->status);
 		clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
-		nf->magic = natflow_path_magic;
+		nf->magic = magic;
 	}
 
 	if (CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL) {
@@ -359,6 +360,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 		return NOTIFY_DONE;
 
 	natflow_path_magic++;
+	synchronize_rcu();
 
 	NATFLOW_WARN("catch unregister event for dev=%s\n", dev ? dev->name : "(null)");
 
