@@ -63,7 +63,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 #endif
 	int dir = 0;
 	enum ip_conntrack_info ctinfo;
-	struct nf_conn_help *help;
 	struct nf_conn *ct;
 	struct iphdr *iph;
 	void *l4;
@@ -175,9 +174,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		return NF_ACCEPT;
 	}
 
-	help = nfct_help(ct);
-	if (help && help->helper) {
-		if (!nf_ct_is_confirmed(ct)) {
+	if (!nf_ct_is_confirmed(ct)) {
+		struct nf_conn_help *help = nfct_help(ct);
+		if (help && help->helper) {
 			switch (iph->protocol) {
 				case IPPROTO_TCP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": this conn need helper\n", DEBUG_TCP_ARG(iph,l4));
@@ -186,8 +185,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": this conn need helper\n", DEBUG_UDP_ARG(iph,l4));
 					break;
 			}
+			set_bit(IPS_NATFLOW_STOP_BIT, &ct->status);
+			return NF_ACCEPT;
 		}
-		return NF_ACCEPT;
 	}
 
 	//if (!(nf->status & NF_FF_OFFLOAD)) {
