@@ -21,6 +21,7 @@
 #include <linux/udp.h>
 #include <linux/version.h>
 #include <net/netfilter/nf_conntrack.h>
+#include <net/netfilter/nf_conntrack_helper.h>
 #include "natflow_common.h"
 #include "natflow_path.h"
 
@@ -60,12 +61,13 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	//const struct net_device *out = state->out;
 #endif
 #endif
+	int dir = 0;
 	enum ip_conntrack_info ctinfo;
+	struct nf_conn_help *help;
 	struct nf_conn *ct;
 	struct iphdr *iph;
 	void *l4;
 	natflow_t *nf;
-	int dir = 0;
 	int ret;
 	int magic = natflow_path_magic;
 
@@ -117,13 +119,13 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				set_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 
 				if (iph->protocol == IPPROTO_TCP) {
-					NATFLOW_INFO("(PCI)" DEBUG_TCP_FMT ": NF_FF_REPLY_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
+					NATFLOW_DEBUG("(PCI)" DEBUG_TCP_FMT ": NF_FF_REPLY_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
 							DEBUG_TCP_ARG(iph,l4),
 							MAC_HEADER_ARG(nf->rroute[NF_FF_DIR_REPLY].l2_head),
 							nf->rroute[NF_FF_DIR_REPLY].l2_head_len,
 							nf->rroute[NF_FF_DIR_REPLY].outdev->name);
 				} else {
-					NATFLOW_INFO("(PCI)" DEBUG_UDP_FMT ": NF_FF_REPLY_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
+					NATFLOW_DEBUG("(PCI)" DEBUG_UDP_FMT ": NF_FF_REPLY_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
 							DEBUG_UDP_ARG(iph,l4),
 							MAC_HEADER_ARG(nf->rroute[NF_FF_DIR_REPLY].l2_head),
 							nf->rroute[NF_FF_DIR_REPLY].l2_head_len,
@@ -150,14 +152,14 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 
 				switch (iph->protocol) {
 					case IPPROTO_TCP:
-						NATFLOW_INFO("(PCI)" DEBUG_TCP_FMT ": NF_FF_ORIGINAL_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
+						NATFLOW_DEBUG("(PCI)" DEBUG_TCP_FMT ": NF_FF_ORIGINAL_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
 								DEBUG_TCP_ARG(iph,l4),
 								MAC_HEADER_ARG(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head),
 								nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len,
 								nf->rroute[NF_FF_DIR_REPLY].outdev->name);
 						break;
 					case IPPROTO_UDP:
-						NATFLOW_INFO("(PCI)" DEBUG_UDP_FMT ": NF_FF_ORIGINAL_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
+						NATFLOW_DEBUG("(PCI)" DEBUG_UDP_FMT ": NF_FF_ORIGINAL_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
 								DEBUG_UDP_ARG(iph,l4),
 								MAC_HEADER_ARG(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head),
 								nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len,
@@ -173,6 +175,21 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		return NF_ACCEPT;
 	}
 
+	help = nfct_help(ct);
+	if (help && help->helper) {
+		if (!nf_ct_is_confirmed(ct)) {
+			switch (iph->protocol) {
+				case IPPROTO_TCP:
+					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": this conn need helper\n", DEBUG_TCP_ARG(iph,l4));
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": this conn need helper\n", DEBUG_UDP_ARG(iph,l4));
+					break;
+			}
+		}
+		return NF_ACCEPT;
+	}
+
 	//if (!(nf->status & NF_FF_OFFLOAD)) {
 	if (!(nf->status & NF_FF_REPLY_OK) || !(nf->status & NF_FF_ORIGINAL_OK)) {
 		return NF_ACCEPT;
@@ -181,10 +198,10 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
 		switch (iph->protocol) {
 			case IPPROTO_TCP:
-				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
 				break;
 			case IPPROTO_UDP:
-				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
 				break;
 		}
 		return NF_ACCEPT;
@@ -319,10 +336,10 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (nf->rroute[dir].mtu != mtu) {
 		switch (iph->protocol) {
 			case IPPROTO_TCP:
-				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": update pmtu from %u to %u\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
+				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": update pmtu from %u to %u\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
 				break;
 			case IPPROTO_UDP:
-				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": update pmtu from %u to %u\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
+				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": update pmtu from %u to %u\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
 				break;
 		}
 		nf->rroute[dir].mtu = mtu;

@@ -15,8 +15,8 @@ typedef struct natflow_route_t {
 	 * mac + vlan + pppoe (=14 + 4 + 8)
 	 */
 #define NF_L2_MAX_LEN (14 + 4 + 8)
-	unsigned char l2_head[NF_L2_MAX_LEN];
 	unsigned short mtu;
+	unsigned char l2_head[NF_L2_MAX_LEN];
 	unsigned int l2_head_len;
 	struct net_device *outdev;
 } natflow_route_t;
