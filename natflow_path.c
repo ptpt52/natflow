@@ -195,6 +195,10 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		return NF_ACCEPT;
 	}
 
+	if ((ct->status & IPS_NOS_TRACK_INIT) && !(ct->status & IPS_NATFLOW_FF)) {
+		return NF_ACCEPT;
+	}
+
 	if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
 		switch (iph->protocol) {
 			case IPPROTO_TCP:
