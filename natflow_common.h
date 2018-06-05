@@ -144,4 +144,13 @@ extern const char *const hooknames[];
 #define UDPH(u) ((struct udphdr *)(u))
 #define ICMPH(i) ((struct icmphdr *)(i))
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 6, 0)
+static inline int skb_try_make_writable(struct sk_buff *skb,
+					unsigned int write_len)
+{
+	return skb_cloned(skb) && !skb_clone_writable(skb, write_len) &&
+	       pskb_expand_head(skb, 0, 0, GFP_ATOMIC);
+}
+#endif
+
 #endif /* _NATFLOW_COMMON_H_ */
