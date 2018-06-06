@@ -336,7 +336,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		dir = NF_FF_DIR_REPLY;
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+	mtu = ip_skb_dst_mtu(skb);
+#else
 	mtu = ip_skb_dst_mtu(NULL, skb);
+#endif
 	if (nf->rroute[dir].mtu != mtu) {
 		switch (iph->protocol) {
 			case IPPROTO_TCP:
