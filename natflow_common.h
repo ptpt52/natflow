@@ -144,7 +144,8 @@ extern const char *const hooknames[];
 #define UDPH(u) ((struct udphdr *)(u))
 #define ICMPH(i) ((struct icmphdr *)(i))
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 6, 0)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 6, 0)) || (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 15) && LINUX_VERSION_CODE <KERNEL_VERSION(4, 5, 0))
+#else
 static inline int skb_try_make_writable(struct sk_buff *skb,
 					unsigned int write_len)
 {
