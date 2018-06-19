@@ -25,6 +25,9 @@
 #include "natflow.h"
 #include "natflow_common.h"
 
+
+extern void natflow_update_magic(void);
+
 static inline int natflow_nat_ip_tcp(struct sk_buff *skb, unsigned int thoff,
 			      __be32 addr, __be32 new_addr)
 {

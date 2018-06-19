@@ -27,6 +27,11 @@
 
 static unsigned int natflow_path_magic = 0;
 
+void natflow_update_magic(void)
+{
+	natflow_path_magic++;
+}
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned natflow_path_pre_ct_in_hook(unsigned int hooknum,
 		struct sk_buff *skb,
@@ -94,6 +99,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		return NF_ACCEPT;
 	}
 	if (nf->magic != magic) {
+		if ((ct->status & IPS_NOS_TRACK_INIT) && (ct->status & IPS_NATFLOW_FF)) {
+			clear_bit(IPS_NATFLOW_FF_BIT, &ct->status);
+		}
 		clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 		clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 		clear_bit(NF_FF_REPLY_BIT, &nf->status);
@@ -384,7 +392,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 	if (event != NETDEV_UNREGISTER)
 		return NOTIFY_DONE;
 
-	natflow_path_magic++;
+	natflow_update_magic();
 	synchronize_rcu();
 
 	NATFLOW_WARN("catch unregister event for dev=%s\n", dev ? dev->name : "(null)");

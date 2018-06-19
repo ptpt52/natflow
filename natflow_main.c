@@ -159,6 +159,9 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 			disabled = d;
 			goto done;
 		}
+	} else if (strncmp(data, "update_magic", 12) == 0) {
+		natflow_update_magic();
+		goto done;
 	}
 
 	NATFLOW_println("ignoring line[%s]", data);
