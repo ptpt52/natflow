@@ -34,8 +34,8 @@ typedef struct natflow_route_t {
 #define NF_FF_REPLY_OK (1 << NF_FF_REPLY_OK_BIT)
 
 typedef struct natflow_t {
-	unsigned long magic;
-	unsigned long status;
+	unsigned int magic;
+	unsigned int status;
 #define NF_FF_DIR_ORIGINAL 0
 #define NF_FF_DIR_REPLY 1
 #define NF_FF_DIR_MAX 2
@@ -56,5 +56,35 @@ struct nat_key_t {
 
 #define IPS_NATFLOW_FF_BIT 14
 #define IPS_NATFLOW_FF (1 << IPS_NATFLOW_FF_BIT)
+
+
+static inline int simple_test_bit(int nr, const unsigned int *addr)
+{
+	return 1U & (addr[nr/32] >> (nr & (32-1)));
+}
+
+static inline void simple_clear_bit(int nr, unsigned int *addr)
+{
+	unsigned int mask = (1U << ((nr) % 32));
+	unsigned int *p = ((unsigned int *)addr) + nr/32;
+	*p &= ~mask;
+}
+
+static inline void simple_set_bit(int nr, unsigned int *addr)
+{
+	unsigned int mask = (1U << ((nr) % 32));
+	unsigned int *p = ((unsigned int *)addr) + nr/32;
+	*p |= mask;
+}
+
+static inline int simple_test_and_set_bit(int nr, unsigned int *addr)
+{
+	unsigned int mask = (1U << ((nr) % 32));
+	unsigned int *p = ((unsigned int *)addr) + nr/32;
+	unsigned int old;
+	old = *p;
+	*p |= mask;
+	return (old & mask) != 0;
+}
 
 #endif /* _NATFLOW_H_ */

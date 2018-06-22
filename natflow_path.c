@@ -122,15 +122,15 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		if ((ct->status & IPS_NOS_TRACK_INIT) && (ct->status & IPS_NATFLOW_FF)) {
 			clear_bit(IPS_NATFLOW_FF_BIT, &ct->status);
 		}
-		clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
-		clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
-		clear_bit(NF_FF_REPLY_BIT, &nf->status);
-		clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
+		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
+		simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
 		nf->magic = magic;
 	}
 
 	if (CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL) {
-		if (!(nf->status & NF_FF_REPLY) && !test_and_set_bit(NF_FF_REPLY_BIT, &nf->status)) {
+		if (!(nf->status & NF_FF_REPLY) && !simple_test_and_set_bit(NF_FF_REPLY_BIT, &nf->status)) {
 			void *l2 = (void *)skb_mac_header(skb);
 			int l2_len = (void *)iph - l2;
 			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
@@ -143,7 +143,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					memcpy(ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
 					memcpy(ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, mac, ETH_ALEN);
 				}
-				set_bit(NF_FF_REPLY_OK_BIT, &nf->status);
+				simple_set_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 
 				if (iph->protocol == IPPROTO_TCP) {
 					NATFLOW_DEBUG("(PCI)" DEBUG_TCP_FMT ": NF_FF_REPLY_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
@@ -162,7 +162,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		}
 		dir = NF_FF_DIR_ORIGINAL;
 	} else {
-		if (!(nf->status & NF_FF_ORIGINAL) && !test_and_set_bit(NF_FF_ORIGINAL_BIT, &nf->status)) {
+		if (!(nf->status & NF_FF_ORIGINAL) && !simple_test_and_set_bit(NF_FF_ORIGINAL_BIT, &nf->status)) {
 			void *l2 = (void *)skb_mac_header(skb);
 			int l2_len = (void *)iph - l2;
 			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
@@ -175,7 +175,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					memcpy(ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 					memcpy(ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, mac, ETH_ALEN);
 				}
-				set_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
+				simple_set_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 
 				switch (iph->protocol) {
 					case IPPROTO_TCP:
