@@ -69,6 +69,11 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS) + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS);
 		alloc_size = ALIGN(newlen + sizeof(struct nf_conn_nat), __ALIGN_64BITS);
 
+		if (newlen > 255u) {
+			NATFLOW_ERROR(DEBUG_FMT_PREFIX "ct->ext no space left (old->len=%u, newlen=%u)\n", DEBUG_ARG_PREFIX, old->len, newlen);
+			return -1;
+		}
+
 		new = __krealloc(old, alloc_size, gfp);
 		if (!new) {
 			return -1;
