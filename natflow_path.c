@@ -22,6 +22,8 @@
 #include <linux/version.h>
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_helper.h>
+#include <net/netfilter/nf_conntrack_extend.h>
+#include <net/netfilter/nf_conntrack_acct.h>
 #include "natflow_common.h"
 #include "natflow_path.h"
 
@@ -68,6 +70,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 #endif
 	int dir = 0;
 	enum ip_conntrack_info ctinfo;
+	struct nf_conn_acct *acct;
 	struct nf_conn *ct;
 	struct iphdr *iph;
 	void *l4;
@@ -205,6 +208,15 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 
 	if ((ct->status & IPS_NOS_TRACK_INIT) && !(ct->status & IPS_NATFLOW_FF)) {
 		return NF_ACCEPT;
+	}
+
+	//skip 1/32 packets to slow path
+	acct = nf_conn_acct_find(ct);
+	if (acct) {
+		struct nf_conn_counter *counter = acct->counter;
+		if ((atomic64_read(&counter[0].packets) + atomic64_read(&counter[1].packets)) % 32 == 0) {
+			return NF_ACCEPT;
+		}
 	}
 
 	if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
