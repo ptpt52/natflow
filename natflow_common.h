@@ -24,6 +24,10 @@
 #include <net/netfilter/nf_nat_core.h>
 #include "natflow.h"
 
+#if !(defined(CONFIG_NF_NAT) || defined(CONFIG_NF_NAT_MODULE))
+#error "CONFIG_NF_NAT and CONFIG_NF_NAT_MODULE not defined"
+#endif
+
 extern unsigned int debug;
 extern unsigned int disabled;
 

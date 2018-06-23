@@ -31,10 +31,9 @@ unsigned int disabled = 1;
 
 int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 {
-	struct nat_key_t *nk;
+	struct nat_key_t *nk = NULL;
 	struct natflow_t *nf;
 	struct nf_ct_ext *old, *new;
-	struct nf_conn_nat *nat = NULL;
 	unsigned int newoff, newlen = 0;
 	size_t alloc_size;
 	size_t var_alloc_len = ALIGN(sizeof(struct natflow_t), __ALIGN_64BITS);
@@ -46,76 +45,59 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	if (nf_ct_is_confirmed(ct)) {
 		return -1;
 	}
-	if (ct->ext && !!ct->ext->offset[NF_CT_EXT_NAT]) {
-		return -1;
-	}
 
 	old = ct->ext;
 	if (!old) {
 		newoff = ALIGN(sizeof(struct nf_ct_ext), __ALIGN_64BITS);
 		newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS) + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS);
-		alloc_size = ALIGN(newlen + sizeof(struct nf_conn_nat), __ALIGN_64BITS);
+		alloc_size = ALIGN(newlen, __ALIGN_64BITS);
 
 		new = kzalloc(alloc_size, gfp);
 		if (!new) {
 			return -1;
 		}
-		new->len = newlen;
+		new->len = newoff;
 		ct->ext = new;
-
-		nat = nf_ct_ext_add(ct, NF_CT_EXT_NAT, gfp);
 	} else {
 		newoff = ALIGN(old->len, __ALIGN_64BITS);
 		newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS) + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS);
-		alloc_size = ALIGN(newlen + sizeof(struct nf_conn_nat), __ALIGN_64BITS);
-
-		if (newlen > 255u) {
-			NATFLOW_ERROR(DEBUG_FMT_PREFIX "ct->ext no space left (old->len=%u, newlen=%u)\n", DEBUG_ARG_PREFIX, old->len, newlen);
-			return -1;
-		}
+		alloc_size = ALIGN(newlen, __ALIGN_64BITS);
 
 		new = __krealloc(old, alloc_size, gfp);
 		if (!new) {
 			return -1;
 		}
-		new->len = newlen;
+		new->len = newoff;
 		memset((void *)new + newoff, 0, newlen - newoff);
 
 		if (new != old) {
 			kfree_rcu(old, rcu);
 			rcu_assign_pointer(ct->ext, new);
 		}
-
-		nat = nf_ct_ext_add(ct, NF_CT_EXT_NAT, gfp);
 	}
 
-	if (NULL == nat) {
-		return -1;
-	}
-
-	nk = (struct nat_key_t *)((void *)nat - ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS));
+	nk = (struct nat_key_t *)((void *)ct->ext + ct->ext->len);
 	nk->magic = NATFLOW_MAGIC;
-	nf = (struct natflow_t *)((void *)nat - ALIGN(sizeof(struct natflow_t), __ALIGN_64BITS) - ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS));
+	nf = (struct natflow_t *)((void *)nk + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS));
 
 	return 0;
 }
 
 struct natflow_t *natflow_session_get(struct nf_conn *ct)
 {
-	struct nf_conn_nat *nat;
 	struct nat_key_t *nk;
 	struct natflow_t *nf;
 
-	nat  = nfct_nat(ct);
-	if (!nat) {
+	if (!ct->ext) {
 		return NULL;
 	}
 
-	nk = (struct nat_key_t *)((void *)nat - ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS));
+	nk = (struct nat_key_t *)((void *)ct->ext + ct->ext->len);
 	if (nk->magic != NATFLOW_MAGIC) {
 		return NULL;
 	}
-	nf = (struct natflow_t *)((void *)nat - ALIGN(sizeof(struct natflow_t), __ALIGN_64BITS) - ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS));
+
+	nf = (struct natflow_t *)((void *)nk + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS));
 
 	return nf;
 }

@@ -97,24 +97,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	if (NULL == ct) {
 		return NF_ACCEPT;
 	}
-
-	//skip nf session for ct with helper
-	if (!nf_ct_is_confirmed(ct)) {
-		struct nf_conn_help *help = nfct_help(ct);
-		if (help && help->helper) {
-			switch (iph->protocol) {
-				case IPPROTO_TCP:
-					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": this conn need helper\n", DEBUG_TCP_ARG(iph,l4));
-					break;
-				case IPPROTO_UDP:
-					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": this conn need helper\n", DEBUG_UDP_ARG(iph,l4));
-					break;
-			}
-			return NF_ACCEPT;
-		}
-	}
-
-	nf = natflow_session_in(ct);
+	nf = natflow_session_get(ct);
 	if (NULL == nf) {
 		return NF_ACCEPT;
 	}
@@ -209,6 +192,22 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 
 	if ((ct->status & IPS_NOS_TRACK_INIT) && !(ct->status & IPS_NATFLOW_FF)) {
 		return NF_ACCEPT;
+	}
+
+	//skip nf session for ct with helper
+	if (!nf_ct_is_confirmed(ct)) {
+		struct nf_conn_help *help = nfct_help(ct);
+		if (help && help->helper) {
+			switch (iph->protocol) {
+				case IPPROTO_TCP:
+					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": this conn need helper\n", DEBUG_TCP_ARG(iph,l4));
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": this conn need helper\n", DEBUG_UDP_ARG(iph,l4));
+					break;
+			}
+			return NF_ACCEPT;
+		}
 	}
 
 	//skip 1/32 packets to slow path
@@ -329,6 +328,7 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	natflow_t *nf;
 	unsigned int mtu;
 	int dir = 0;
+	int ret;
 
 	if (disabled)
 		return NF_ACCEPT;
@@ -346,9 +346,14 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (NULL == ct) {
 		return NF_ACCEPT;
 	}
-	nf = natflow_session_get(ct);
+	nf = natflow_session_in(ct);
 	if (NULL == nf) {
 		return NF_ACCEPT;
+	}
+	/* XXX I just confirm it first  */
+	ret = nf_conntrack_confirm(skb);
+	if (ret != NF_ACCEPT) {
+		return ret;
 	}
 
 	if (CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL) {
@@ -394,7 +399,7 @@ static struct nf_hook_ops path_hooks[] = {
 		.hook = natflow_path_post_ct_out_hook,
 		.pf = PF_INET,
 		.hooknum = NF_INET_POST_ROUTING,
-		.priority = NF_IP_PRI_LAST,
+		.priority = NF_IP_PRI_LAST - 10 - 1,
 	},
 };
 
