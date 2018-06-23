@@ -342,6 +342,13 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	}
 	l4 = (void *)iph + iph->ihl * 4;
 
+	if (ipv4_is_lbcast(iph->daddr) ||
+			ipv4_is_loopback(iph->daddr) ||
+			ipv4_is_multicast(iph->daddr) ||
+			ipv4_is_zeronet(iph->daddr)) {
+		return NF_ACCEPT;
+	}
+
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
 		return NF_ACCEPT;
