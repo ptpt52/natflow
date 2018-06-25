@@ -194,22 +194,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		return NF_ACCEPT;
 	}
 
-	//skip nf session for ct with helper
-	if (!nf_ct_is_confirmed(ct)) {
-		struct nf_conn_help *help = nfct_help(ct);
-		if (help && help->helper) {
-			switch (iph->protocol) {
-				case IPPROTO_TCP:
-					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": this conn need helper\n", DEBUG_TCP_ARG(iph,l4));
-					break;
-				case IPPROTO_UDP:
-					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": this conn need helper\n", DEBUG_UDP_ARG(iph,l4));
-					break;
-			}
-			return NF_ACCEPT;
-		}
-	}
-
 	//skip 1/32 packets to slow path
 	acct = nf_conn_acct_find(ct);
 	if (acct) {
@@ -357,6 +341,28 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (NULL == nf) {
 		return NF_ACCEPT;
 	}
+
+	if ((ct->status & IPS_NATFLOW_STOP)) {
+		return NF_ACCEPT;
+	}
+
+	//skip nf session for ct with helper
+	if (!nf_ct_is_confirmed(ct)) {
+		struct nf_conn_help *help = nfct_help(ct);
+		if (help && help->helper) {
+			switch (iph->protocol) {
+				case IPPROTO_TCP:
+					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": this conn need helper\n", DEBUG_TCP_ARG(iph,l4));
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": this conn need helper\n", DEBUG_UDP_ARG(iph,l4));
+					break;
+			}
+			set_bit(IPS_NATFLOW_STOP_BIT, &ct->status);
+			return NF_ACCEPT;
+		}
+	}
+
 	/* XXX I just confirm it first  */
 	ret = nf_conntrack_confirm(skb);
 	if (ret != NF_ACCEPT) {
