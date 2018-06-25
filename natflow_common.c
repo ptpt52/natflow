@@ -78,6 +78,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 
 	nk = (struct nat_key_t *)((void *)ct->ext + ct->ext->len);
 	nk->magic = NATFLOW_MAGIC;
+	nk->ext_magic = (unsigned long)ct & 0xffffffff;
 	nf = (struct natflow_t *)((void *)nk + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS));
 
 	return 0;
@@ -93,7 +94,7 @@ struct natflow_t *natflow_session_get(struct nf_conn *ct)
 	}
 
 	nk = (struct nat_key_t *)((void *)ct->ext + ct->ext->len);
-	if (nk->magic != NATFLOW_MAGIC) {
+	if (nk->magic != NATFLOW_MAGIC || nk->ext_magic != (((unsigned long)ct) & 0xffffffff)) {
 		return NULL;
 	}
 
