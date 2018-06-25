@@ -28,6 +28,7 @@ MODULE_PARM_DESC(debug, "Debug level (0=none,1=error,2=warn,4=info,8=debug,16=fi
 unsigned int disabled = 1;
 
 #define __ALIGN_64BITS 8
+#define NATFLOW_THRESHLOD_VAULE 32
 
 int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 {
@@ -59,8 +60,9 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		new->len = newoff / __ALIGN_64BITS;
 		ct->ext = new;
 	} else {
-		if (old->len <= 32) {
-			NATFLOW_ERROR(DEBUG_FMT_PREFIX "ct->ext->len=%u <= 32 not supported\n", DEBUG_ARG_PREFIX, old->len);
+		if (old->len <= NATFLOW_THRESHLOD_VAULE) {
+			NATFLOW_ERROR(DEBUG_FMT_PREFIX "ct->ext->len=%u <= %u not supported\n", DEBUG_ARG_PREFIX, old->len, NATFLOW_THRESHLOD_VAULE);
+			old->len = NATFLOW_THRESHLOD_VAULE + 1;
 			return -1;
 		}
 		newoff = ALIGN(old->len, __ALIGN_64BITS);
@@ -96,7 +98,7 @@ struct natflow_t *natflow_session_get(struct nf_conn *ct)
 	if (!ct->ext) {
 		return NULL;
 	}
-	if (ct->ext->len > 32) {
+	if (ct->ext->len > NATFLOW_THRESHLOD_VAULE) {
 		return NULL;
 	}
 
