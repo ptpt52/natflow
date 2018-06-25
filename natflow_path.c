@@ -97,6 +97,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	if (NULL == ct) {
 		return NF_ACCEPT;
 	}
+	if (!nf_ct_is_confirmed(ct)) {
+		return NF_ACCEPT;
+	}
 	nf = natflow_session_get(ct);
 	if (NULL == nf) {
 		return NF_ACCEPT;
