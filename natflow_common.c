@@ -28,7 +28,6 @@ MODULE_PARM_DESC(debug, "Debug level (0=none,1=error,2=warn,4=info,8=debug,16=fi
 unsigned int disabled = 1;
 
 #define __ALIGN_64BITS 8
-#define NATFLOW_THRESHLOD_VAULE 32
 
 int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 {
