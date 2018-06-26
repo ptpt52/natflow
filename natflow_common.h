@@ -102,6 +102,14 @@ static inline struct natflow_t *natflow_session_in(struct nf_conn *ct)
 	return natflow_session_get(ct);
 }
 
+static inline struct natflow_t *natflow_session_get_safe(struct nf_conn *ct)
+{
+	if (!nf_ct_is_confirmed(ct)) {
+		return NULL;
+	}
+	return natflow_session_get(ct);
+}
+
 extern const char *const hooknames[];
 
 #define MAC_HEADER_FMT "%02X:%02X:%02X:%02X:%02X:%02X->%02X:%02X:%02X:%02X:%02X:%02X h_proto=%04X"
