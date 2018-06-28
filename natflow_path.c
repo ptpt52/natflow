@@ -98,18 +98,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		return NF_ACCEPT;
 	}
 	if (!nf_ct_is_confirmed(ct)) {
-		if (ct->ext && ct->ext->len <= NATFLOW_THRESHLOD_VAULE) {
-			if (iph->protocol == IPPROTO_TCP) {
-				NATFLOW_ERROR("(PCI)" DEBUG_TCP_FMT ": ct->ext->len=%u <= %u not supported\n",
-						DEBUG_TCP_ARG(iph,l4),
-						ct->ext->len, NATFLOW_THRESHLOD_VAULE);
-			} else {
-				NATFLOW_ERROR("(PCI)" DEBUG_UDP_FMT ": ct->ext->len=%u <= %u not supported\n",
-						DEBUG_UDP_ARG(iph,l4),
-						ct->ext->len, NATFLOW_THRESHLOD_VAULE);
-			}
-			ct->ext->len = NATFLOW_THRESHLOD_VAULE + 1;
-		}
 		return NF_ACCEPT;
 	}
 	nf = natflow_session_get(ct);

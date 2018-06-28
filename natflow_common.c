@@ -27,7 +27,9 @@ MODULE_PARM_DESC(debug, "Debug level (0=none,1=error,2=warn,4=info,8=debug,16=fi
 
 unsigned int disabled = 1;
 
+#define NATFLOW_MAX_OFF 384u
 #define __ALIGN_64BITS 8
+#define NATFLOW_FACTOR (__ALIGN_64BITS * 2)
 
 int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 {
@@ -46,15 +48,19 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		return -1;
 	}
 
+	if (ct->ext && !ct->ext->offset[NF_CT_EXT_NAT]) {
+		struct nf_conn_nat *nat = nf_ct_ext_add(ct, NF_CT_EXT_NAT, gfp);
+		if (nat == NULL) {
+			return -1;
+		}
+	}
+
 	old = ct->ext;
 	if (!old) {
-		newoff = ALIGN(sizeof(struct nf_ct_ext), __ALIGN_64BITS);
-		if (newoff <= NATFLOW_ALLOC_ALIGN)
-			newoff = NATFLOW_ALLOC_ALIGN;
-		else if (newoff <= 2 * NATFLOW_ALLOC_ALIGN)
-			newoff = 2 * NATFLOW_ALLOC_ALIGN;
-		else
-			return -1;
+		newoff = ALIGN(sizeof(struct nf_ct_ext), NATFLOW_FACTOR);
+		if (newoff > NATFLOW_MAX_OFF) {
+			NATFLOW_ERROR(DEBUG_FMT_PREFIX "realloc ct->ext->len > %u not supported!\n", DEBUG_ARG_PREFIX, NATFLOW_MAX_OFF);
+		}
 		newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS) + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS);
 		alloc_size = ALIGN(newlen, __ALIGN_64BITS);
 
@@ -62,22 +68,12 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		if (!new) {
 			return -1;
 		}
-		new->len = newoff / __ALIGN_64BITS;
+		new->len = newoff / NATFLOW_FACTOR;
 		ct->ext = new;
 	} else {
-		if (old->len <= NATFLOW_THRESHLOD_VAULE) {
-			NATFLOW_ERROR(DEBUG_FMT_PREFIX "ct->ext->len=%u <= %u not supported\n", DEBUG_ARG_PREFIX, old->len, NATFLOW_THRESHLOD_VAULE);
-			old->len = NATFLOW_THRESHLOD_VAULE + 1;
-			return -1;
-		}
-		newoff = ALIGN(old->len, __ALIGN_64BITS);
-		if (newoff <= NATFLOW_ALLOC_ALIGN)
-			newoff = NATFLOW_ALLOC_ALIGN;
-		else if (newoff <= 2 * NATFLOW_ALLOC_ALIGN)
-			newoff = 2 * NATFLOW_ALLOC_ALIGN;
-		else {
-			NATFLOW_ERROR(DEBUG_FMT_PREFIX "ct->ext->len=%u > 256 not supported\n", DEBUG_ARG_PREFIX, old->len);
-			return -1;
+		newoff = ALIGN(old->len, NATFLOW_FACTOR);
+		if (newoff > NATFLOW_MAX_OFF) {
+			NATFLOW_ERROR(DEBUG_FMT_PREFIX "realloc ct->ext->len > %u not supported!\n", DEBUG_ARG_PREFIX, NATFLOW_MAX_OFF);
 		}
 		newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS) + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS);
 		alloc_size = ALIGN(newlen, __ALIGN_64BITS);
@@ -100,11 +96,11 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 #endif
 		}
 
-		new->len = newoff / __ALIGN_64BITS;
+		new->len = newoff / NATFLOW_FACTOR;
 		memset((void *)new + newoff, 0, newlen - newoff);
 	}
 
-	nk = (struct nat_key_t *)((void *)ct->ext + ct->ext->len * __ALIGN_64BITS);
+	nk = (struct nat_key_t *)((void *)ct->ext + ct->ext->len * NATFLOW_FACTOR);
 	nk->magic = NATFLOW_MAGIC;
 	nk->ext_magic = (unsigned long)ct & 0xffffffff;
 	nf = (struct natflow_t *)((void *)nk + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS));
@@ -120,12 +116,11 @@ struct natflow_t *natflow_session_get(struct nf_conn *ct)
 	if (!ct->ext) {
 		return NULL;
 	}
-	if (ct->ext->len != NATFLOW_ALLOC_ALIGN / __ALIGN_64BITS &&
-			ct->ext->len != 2 * NATFLOW_ALLOC_ALIGN / __ALIGN_64BITS) {
+	if (ct->ext->len > NATFLOW_MAX_OFF / NATFLOW_FACTOR) {
 		return NULL;
 	}
 
-	nk = (struct nat_key_t *)((void *)ct->ext + ct->ext->len * __ALIGN_64BITS);
+	nk = (struct nat_key_t *)((void *)ct->ext + ct->ext->len * NATFLOW_FACTOR);
 	if (nk->magic != NATFLOW_MAGIC || nk->ext_magic != (((unsigned long)ct) & 0xffffffff)) {
 		return NULL;
 	}

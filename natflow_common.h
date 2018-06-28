@@ -90,8 +90,6 @@ static inline void nf_unregister_hooks(struct nf_hook_ops *reg, unsigned int n)
 }
 #endif
 
-
-#define NATFLOW_THRESHLOD_VAULE 32
 extern int natflow_session_init(struct nf_conn *ct, gfp_t gfp);
 extern struct natflow_t *natflow_session_get(struct nf_conn *ct);
 static inline struct natflow_t *natflow_session_in(struct nf_conn *ct)
