@@ -76,11 +76,9 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		if (new != old) {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
 			if ((ct->status & IPS_SRC_NAT_DONE)) {
-				struct nf_conn_nat *old_nat = (void *)old + old->offset[NF_CT_EXT_NAT];
-				struct nf_conn_nat *new_nat = (void *)new + new->offset[NF_CT_EXT_NAT];
-
-				//it is safe without lock
-				hlist_replace_rcu(&old_nat->bysource, &new_nat->bysource);
+				NATFLOW_ERROR(DEBUG_FMT_PREFIX "realloc ct->ext not supported for kernel < 4.9\n", DEBUG_ARG_PREFIX);
+				kfree(new);
+				return -1;
 			}
 #else
 			kfree_rcu(old, rcu);
