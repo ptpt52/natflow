@@ -29,9 +29,13 @@
 
 static unsigned int natflow_path_magic = 0;
 
-void natflow_update_magic(void)
+void natflow_update_magic(int init)
 {
-	natflow_path_magic++;
+	if (init) {
+		natflow_path_magic = jiffies;
+	} else {
+		natflow_path_magic++;
+	}
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
@@ -517,7 +521,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 	if (event != NETDEV_UNREGISTER)
 		return NOTIFY_DONE;
 
-	natflow_update_magic();
+	natflow_update_magic(0);
 	synchronize_rcu();
 
 	NATFLOW_WARN("catch unregister event for dev=%s\n", dev ? dev->name : "(null)");
@@ -534,6 +538,7 @@ int natflow_path_init(void)
 	int ret = 0;
 
 	need_conntrack();
+	natflow_update_magic(1);
 
 	register_netdevice_notifier(&natflow_netdev_notifier);
 
