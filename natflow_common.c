@@ -60,6 +60,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		newoff = ALIGN(sizeof(struct nf_ct_ext), NATFLOW_FACTOR);
 		if (newoff > NATFLOW_MAX_OFF) {
 			NATFLOW_ERROR(DEBUG_FMT_PREFIX "realloc ct->ext->len > %u not supported!\n", DEBUG_ARG_PREFIX, NATFLOW_MAX_OFF);
+			return -1;
 		}
 		newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS) + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS);
 		alloc_size = ALIGN(newlen, __ALIGN_64BITS);
@@ -74,6 +75,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		newoff = ALIGN(old->len, NATFLOW_FACTOR);
 		if (newoff > NATFLOW_MAX_OFF) {
 			NATFLOW_ERROR(DEBUG_FMT_PREFIX "realloc ct->ext->len > %u not supported!\n", DEBUG_ARG_PREFIX, NATFLOW_MAX_OFF);
+			return -1;
 		}
 		newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS) + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS);
 		alloc_size = ALIGN(newlen, __ALIGN_64BITS);
@@ -90,10 +92,9 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 				kfree(new);
 				return -1;
 			}
-#else
+#endif
 			kfree_rcu(old, rcu);
 			rcu_assign_pointer(ct->ext, new);
-#endif
 		}
 
 		new->len = newoff / NATFLOW_FACTOR;
