@@ -72,13 +72,24 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		if (!new) {
 			return -1;
 		}
-		new->len = newoff / __ALIGN_64BITS;
-		memset((void *)new + newoff, 0, newlen - newoff);
 
 		if (new != old) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
+			if ((ct->status & IPS_SRC_NAT_DONE)) {
+				struct nf_conn_nat *old_nat = (void *)old + old->offset[NF_CT_EXT_NAT];
+				struct nf_conn_nat *new_nat = (void *)new + new->offset[NF_CT_EXT_NAT];
+
+				//it is safe without lock
+				hlist_replace_rcu(&old_nat->bysource, &new_nat->bysource);
+			}
+#else
 			kfree_rcu(old, rcu);
 			rcu_assign_pointer(ct->ext, new);
+#endif
 		}
+
+		new->len = newoff / __ALIGN_64BITS;
+		memset((void *)new + newoff, 0, newlen - newoff);
 	}
 
 	nk = (struct nat_key_t *)((void *)ct->ext + ct->ext->len * __ALIGN_64BITS);
