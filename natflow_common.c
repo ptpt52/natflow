@@ -27,16 +27,12 @@ MODULE_PARM_DESC(debug, "Debug level (0=none,1=error,2=warn,4=info,8=debug,16=fi
 
 unsigned int disabled = 1;
 
-#define NATFLOW_MAX_OFF 384u
-#define __ALIGN_64BITS 8
-#define NATFLOW_FACTOR (__ALIGN_64BITS * 2)
-
 int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 {
 	struct nat_key_t *nk = NULL;
 	struct natflow_t *nf;
-	struct nf_ct_ext *old, *new;
-	unsigned int newoff, newlen = 0;
+	struct nf_ct_ext *old, *new = NULL;
+	unsigned int newoff = 0, newlen = 0;
 	size_t alloc_size;
 	size_t var_alloc_len = ALIGN(sizeof(struct natflow_t), __ALIGN_64BITS);
 
@@ -69,7 +65,6 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		if (!new) {
 			return -1;
 		}
-		new->len = newoff / NATFLOW_FACTOR;
 		ct->ext = new;
 	} else {
 		newoff = ALIGN(old->len, NATFLOW_FACTOR);
@@ -84,7 +79,6 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		if (!new) {
 			return -1;
 		}
-
 		if (new != old) {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
 			if ((ct->status & IPS_SRC_NAT_DONE)) {
@@ -96,12 +90,11 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 			kfree_rcu(old, rcu);
 			rcu_assign_pointer(ct->ext, new);
 		}
-
-		new->len = newoff / NATFLOW_FACTOR;
 		memset((void *)new + newoff, 0, newlen - newoff);
 	}
 
-	nk = (struct nat_key_t *)((void *)ct->ext + ct->ext->len * NATFLOW_FACTOR);
+	new->len = newoff / NATFLOW_FACTOR;
+	nk = (struct nat_key_t *)((void *)new + newoff);
 	nk->magic = NATFLOW_MAGIC;
 	nk->ext_magic = (unsigned long)ct & 0xffffffff;
 	nf = (struct natflow_t *)((void *)nk + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS));
@@ -117,7 +110,7 @@ struct natflow_t *natflow_session_get(struct nf_conn *ct)
 	if (!ct->ext) {
 		return NULL;
 	}
-	if (ct->ext->len > NATFLOW_MAX_OFF / NATFLOW_FACTOR) {
+	if (ct->ext->len * NATFLOW_FACTOR > NATFLOW_MAX_OFF) {
 		return NULL;
 	}
 

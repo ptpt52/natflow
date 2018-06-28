@@ -100,6 +100,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	if (!nf_ct_is_confirmed(ct)) {
 		return NF_ACCEPT;
 	}
+	/*
+	 * XXX: FIXME:
+	 * we assume ct->ext->len > 24(=NATFLOW_MAX_OFF / NATFLOW_FACTOR) is always true
+	 * after the nf_conntrack_in() call
+	 * ct->ext->len <= 24 means natflow_session is ready
+	 */
 	nf = natflow_session_get(ct);
 	if (NULL == nf) {
 		return NF_ACCEPT;
