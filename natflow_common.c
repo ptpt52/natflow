@@ -48,7 +48,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		return -1;
 	}
 
-	if (ct->ext && !ct->ext->offset[NF_CT_EXT_NAT]) {
+	if (!ct->ext || !ct->ext->offset[NF_CT_EXT_NAT]) {
 		struct nf_conn_nat *nat = nf_ct_ext_add(ct, NF_CT_EXT_NAT, gfp);
 		if (nat == NULL) {
 			return -1;
