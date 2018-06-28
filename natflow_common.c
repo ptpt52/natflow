@@ -49,6 +49,12 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	old = ct->ext;
 	if (!old) {
 		newoff = ALIGN(sizeof(struct nf_ct_ext), __ALIGN_64BITS);
+		if (newoff <= NATFLOW_ALLOC_ALIGN)
+			newoff = NATFLOW_ALLOC_ALIGN;
+		else if (newoff <= 2 * NATFLOW_ALLOC_ALIGN)
+			newoff = 2 * NATFLOW_ALLOC_ALIGN;
+		else
+			return -1;
 		newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS) + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS);
 		alloc_size = ALIGN(newlen, __ALIGN_64BITS);
 
@@ -65,6 +71,14 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 			return -1;
 		}
 		newoff = ALIGN(old->len, __ALIGN_64BITS);
+		if (newoff <= NATFLOW_ALLOC_ALIGN)
+			newoff = NATFLOW_ALLOC_ALIGN;
+		else if (newoff <= 2 * NATFLOW_ALLOC_ALIGN)
+			newoff = 2 * NATFLOW_ALLOC_ALIGN;
+		else {
+			NATFLOW_ERROR(DEBUG_FMT_PREFIX "ct->ext->len=%u > 256 not supported\n", DEBUG_ARG_PREFIX, old->len);
+			return -1;
+		}
 		newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS) + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS);
 		alloc_size = ALIGN(newlen, __ALIGN_64BITS);
 
@@ -106,7 +120,8 @@ struct natflow_t *natflow_session_get(struct nf_conn *ct)
 	if (!ct->ext) {
 		return NULL;
 	}
-	if (ct->ext->len > NATFLOW_THRESHLOD_VAULE) {
+	if (ct->ext->len != NATFLOW_ALLOC_ALIGN / __ALIGN_64BITS &&
+			ct->ext->len != 2 * NATFLOW_ALLOC_ALIGN / __ALIGN_64BITS) {
 		return NULL;
 	}
 

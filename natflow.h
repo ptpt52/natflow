@@ -33,6 +33,14 @@ typedef struct natflow_route_t {
 #define NF_FF_REPLY_OK_BIT 11
 #define NF_FF_REPLY_OK (1 << NF_FF_REPLY_OK_BIT)
 
+/*
+ * for sizeof(struct natflow_t) + sizeof(struct nat_key_t) <= 128
+ *   we use NATFLOW_ALLOC_ALIGN=128
+ * for > 128
+ *   we use NATFLOW_ALLOC_ALIGN=256
+ */
+#define NATFLOW_ALLOC_ALIGN 128
+
 typedef struct natflow_t {
 	unsigned int magic;
 	unsigned int status;
