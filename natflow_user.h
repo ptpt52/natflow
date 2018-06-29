@@ -22,6 +22,7 @@ typedef struct fakeuser_data_t {
 
 typedef struct nf_conn natflow_fakeuser_t;
 
+extern natflow_fakeuser_t *natflow_user_get(struct nf_conn *ct);
 extern natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct);
 
 extern void natflow_user_timeout_touch(natflow_fakeuser_t *nfu);

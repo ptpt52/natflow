@@ -68,6 +68,24 @@ void natflow_user_timeout_touch(natflow_fakeuser_t *nfu)
 	nfu->timeout = jiffies + natflow_user_timeout * HZ;
 }
 
+natflow_fakeuser_t *natflow_user_get(struct nf_conn *ct)
+{
+	natflow_fakeuser_t *user = NULL;
+
+	if (disabled)
+		return NULL;
+
+	if (ct->master) {
+		if ((IPS_NATFLOW_USER & ct->master->status)) {
+			user = ct->master;
+		} else if (ct->master->master && (IPS_NATFLOW_USER & ct->master->master->status)) {
+			user = ct->master->master;
+		}
+	}
+
+	return user;
+}
+
 natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 {
 	natflow_fakeuser_t *user = NULL;
@@ -83,7 +101,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 		}
 	}
 
-	if (!user) {
+	if (!user && !ct->master) {
 		struct nf_ct_ext *new = NULL;
 		unsigned int newoff = 0;
 		int ret;
