@@ -26,6 +26,18 @@
 #include <net/netfilter/nf_conntrack_acct.h>
 #include "natflow_common.h"
 #include "natflow_path.h"
+#include "natflow_user.h"
+
+static int disabled = 1;
+void natflow_disabled_set(int v)
+{
+	disabled = v;
+}
+
+int natflow_disabled_get(void)
+{
+	return disabled;
+}
 
 static unsigned int natflow_path_magic = 0;
 
@@ -548,6 +560,10 @@ int natflow_path_init(void)
 	need_conntrack();
 	natflow_update_magic(1);
 
+	ret = natflow_user_init();
+	if (ret != 0)
+		goto natflow_user_init_failed;
+
 	register_netdevice_notifier(&natflow_netdev_notifier);
 
 	ret = nf_register_hooks(path_hooks, ARRAY_SIZE(path_hooks));
@@ -557,6 +573,8 @@ int natflow_path_init(void)
 	return 0;
 nf_register_hooks_failed:
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
+	natflow_user_exit();
+natflow_user_init_failed:
 	return ret;
 }
 
@@ -564,4 +582,5 @@ void natflow_path_exit(void)
 {
 	nf_unregister_hooks(path_hooks, ARRAY_SIZE(path_hooks));
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
+	natflow_user_exit();
 }

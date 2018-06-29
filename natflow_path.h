@@ -25,6 +25,8 @@
 #include "natflow.h"
 #include "natflow_common.h"
 
+extern void natflow_disabled_set(int v);
+extern int natflow_disabled_get(void);
 
 extern void natflow_update_magic(int init);
 

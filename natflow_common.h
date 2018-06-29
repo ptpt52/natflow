@@ -29,7 +29,6 @@
 #endif
 
 extern unsigned int debug;
-extern unsigned int disabled;
 
 #define IS_NATFLOW_FIXME() (debug & 0x10)
 #define IS_NATFLOW_DEBUG() (debug & 0x8)
@@ -169,5 +168,22 @@ static inline int skb_try_make_writable(struct sk_buff *skb,
 	       pskb_expand_head(skb, 0, 0, GFP_ATOMIC);
 }
 #endif
+
+#ifndef SKB_NFCT_PTRMASK
+static inline struct nf_conntrack *skb_nfct(const struct sk_buff *skb)
+{
+	return (void *)skb->nfct;
+}
+#endif
+
+static inline void skb_nfct_reset(struct sk_buff *skb)
+{
+	nf_conntrack_put(skb_nfct(skb));
+#ifndef SKB_NFCT_PTRMASK
+	skb->nfct = NULL;
+#else
+	skb->_nfct = 0;
+#endif
+}
 
 #endif /* _NATFLOW_COMMON_H_ */

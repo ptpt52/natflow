@@ -51,6 +51,8 @@ struct nat_key_t {
 /*XXX refer to drivers/nos/src/nos.h */
 #define IPS_NOS_TRACK_INIT_BIT 15
 #define IPS_NOS_TRACK_INIT (1 << IPS_NOS_TRACK_INIT_BIT)
+#define IPS_NATFLOW_USER_BIT 16
+#define IPS_NATFLOW_USER (1 << IPS_NATFLOW_USER_BIT)
 #define IPS_NATFLOW_STOP_BIT 18
 #define IPS_NATFLOW_STOP (1 << IPS_NATFLOW_STOP_BIT)
 

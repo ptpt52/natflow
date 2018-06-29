@@ -70,7 +70,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 				"disabled=%u\n"
 				"debug=%d\n"
 				"\n",
-				disabled, disabled, debug);
+				natflow_disabled_get(), natflow_disabled_get(), debug);
 		natflow_ctl_buffer[n] = 0;
 		return natflow_ctl_buffer;
 	}
@@ -156,7 +156,7 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 		int d;
 		n = sscanf(data, "disabled=%u", &d);
 		if (n == 1) {
-			disabled = d;
+			natflow_disabled_set(d);
 			goto done;
 		}
 	} else if (strncmp(data, "update_magic", 12) == 0) {

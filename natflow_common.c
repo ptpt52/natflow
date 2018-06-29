@@ -28,8 +28,6 @@ unsigned int debug = 0;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0=none,1=error,2=warn,4=info,8=debug,16=fixme,...,31=all) default=0");
 
-unsigned int disabled = 1;
-
 int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 {
 	struct nat_key_t *nk = NULL;
