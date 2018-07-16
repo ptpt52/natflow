@@ -179,14 +179,14 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 								DEBUG_TCP_ARG(iph,l4),
 								MAC_HEADER_ARG(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head),
 								nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len,
-								nf->rroute[NF_FF_DIR_REPLY].outdev->name);
+								nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name);
 						break;
 					case IPPROTO_UDP:
 						NATFLOW_DEBUG("(PCI)" DEBUG_UDP_FMT ": NF_FF_ORIGINAL_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
 								DEBUG_UDP_ARG(iph,l4),
 								MAC_HEADER_ARG(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head),
 								nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len,
-								nf->rroute[NF_FF_DIR_REPLY].outdev->name);
+								nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name);
 						break;
 				}
 			}
