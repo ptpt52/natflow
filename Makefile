@@ -2,7 +2,7 @@
 #EXTRA_CFLAGS = -Wall
 obj-m += natflow.o
 
-natflow-y += natflow_main.o natflow_common.o natflow_path.o natflow_user.o
+natflow-y += natflow_main.o natflow_common.o natflow_path.o natflow_user.o natflow_zone.o
 
 EXTRA_CFLAGS += -Wall -Werror
 

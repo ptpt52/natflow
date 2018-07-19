@@ -37,6 +37,7 @@
 #include "natflow.h"
 #include "natflow_common.h"
 #include "natflow_path.h"
+#include "natflow_zone.h"
 
 #define MODULE_NAME "natflow"
 #define NATFLOW_VERSION "1.0.0"
@@ -240,6 +241,12 @@ static int __init natflow_init(void) {
 		goto device_create_failed;
 	}
 
+	retval = natflow_zone_init();
+	if (retval) {
+		NATFLOW_println("natflow_zone_init fail, error=%d", retval);
+		goto natflow_zone_init_failed;
+	}
+
 	retval = natflow_path_init();
 	if (retval) {
 		NATFLOW_println("natflow_path_init fail, error=%d", retval);
@@ -250,6 +257,8 @@ static int __init natflow_init(void) {
 
 	//natflow_path_exit();
 natflow_path_init_failed:
+	natflow_zone_exit();
+natflow_zone_init_failed:
 	device_destroy(natflow_class, devno);
 device_create_failed:
 	class_destroy(natflow_class);
@@ -267,6 +276,7 @@ static void __exit natflow_exit(void) {
 	NATFLOW_println("removing");
 
 	natflow_path_exit();
+	natflow_zone_exit();
 
 	devno = MKDEV(natflow_major, natflow_minor);
 	device_destroy(natflow_class, devno);
