@@ -350,12 +350,16 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (NULL == ct) {
 		return NF_ACCEPT;
 	}
-	nf = natflow_session_in(ct);
-	if (NULL == nf) {
+	if ((ct->status & IPS_NATFLOW_STOP)) {
 		return NF_ACCEPT;
 	}
 
-	if ((ct->status & IPS_NATFLOW_STOP)) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
+	nf = natflow_session_get(ct);
+#else
+	nf = natflow_session_in(ct);
+#endif
+	if (NULL == nf) {
 		return NF_ACCEPT;
 	}
 
@@ -470,9 +474,13 @@ static unsigned int natflow_path_post_snat_hook(void *priv,
 	if (NULL == ct) {
 		return NF_ACCEPT;
 	}
+	if ((ct->status & IPS_NATFLOW_STOP)) {
+		return NF_ACCEPT;
+	}
 	if ((ct->status & IPS_SRC_NAT_DONE)) {
 		return NF_ACCEPT;
 	}
+
 	nf = natflow_session_in(ct);
 	if (NULL == nf) {
 		return NF_ACCEPT;
