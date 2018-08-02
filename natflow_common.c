@@ -144,3 +144,467 @@ const char *const hooknames[] = {
 	[NF_INET_LOCAL_OUT] = "OUT",
 	[NF_INET_POST_ROUTING] = "POST",
 };
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+int ip_set_test_src_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
+#else
+int ip_set_test_src_ip(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
+#endif
+{
+	int ret = 0;
+	ip_set_id_t id;
+	struct ip_set *set;
+	struct ip_set_adt_opt opt;
+	struct xt_action_param par;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	struct net *net = state->net;
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	struct net *net = &init_net;
+	if (in)
+		net = dev_net(in);
+	else if (out)
+		net = dev_net(out);
+#endif
+
+	memset(&opt, 0, sizeof(opt));
+	opt.family = NFPROTO_IPV4;
+	opt.dim = IPSET_DIM_ONE;
+	opt.flags = IPSET_DIM_ONE_SRC;
+	opt.cmdflags = 0;
+	opt.ext.timeout = UINT_MAX;
+
+	memset(&par, 0, sizeof(par));
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	par.state = state;
+#else
+	par.in = in;
+	par.out = out;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+	par.net = net;
+#endif
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	id = ip_set_get_byname(net, ip_set_name, &set);
+#else
+	id = ip_set_get_byname(ip_set_name, &set);
+#endif
+	if (id == IPSET_INVALID_ID) {
+		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
+		return 0;
+	}
+
+	ret = ip_set_test(id, skb, &par, &opt);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	ip_set_put_byindex(net, id);
+#else
+	ip_set_put_byindex(id);
+#endif
+
+	return ret;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+int ip_set_test_dst_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
+#else
+int ip_set_test_dst_ip(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
+#endif
+{
+	int ret = 0;
+	ip_set_id_t id;
+	struct ip_set *set;
+	struct ip_set_adt_opt opt;
+	struct xt_action_param par;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	struct net *net = state->net;
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	struct net *net = &init_net;
+	if (in)
+		net = dev_net(in);
+	else if (out)
+		net = dev_net(out);
+#endif
+
+	memset(&opt, 0, sizeof(opt));
+	opt.family = NFPROTO_IPV4;
+	opt.dim = IPSET_DIM_ONE;
+	opt.flags = 0;
+	opt.cmdflags = 0;
+	opt.ext.timeout = UINT_MAX;
+
+	memset(&par, 0, sizeof(par));
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	par.state = state;
+#else
+	par.in = in;
+	par.out = out;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+	par.net = net;
+#endif
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	id = ip_set_get_byname(net, ip_set_name, &set);
+#else
+	id = ip_set_get_byname(ip_set_name, &set);
+#endif
+	if (id == IPSET_INVALID_ID) {
+		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
+		return 0;
+	}
+
+	ret = ip_set_test(id, skb, &par, &opt);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	ip_set_put_byindex(net, id);
+#else
+	ip_set_put_byindex(id);
+#endif
+
+	return ret;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+int ip_set_add_src_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
+#else
+int ip_set_add_src_ip(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
+#endif
+{
+	int ret = 0;
+	ip_set_id_t id;
+	struct ip_set *set;
+	struct ip_set_adt_opt opt;
+	struct xt_action_param par;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	struct net *net = state->net;
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	struct net *net = &init_net;
+	if (in)
+		net = dev_net(in);
+	else if (out)
+		net = dev_net(out);
+#endif
+
+	memset(&opt, 0, sizeof(opt));
+	opt.family = NFPROTO_IPV4;
+	opt.dim = IPSET_DIM_ONE;
+	opt.flags = IPSET_DIM_ONE_SRC;
+	opt.cmdflags = 0;
+	opt.ext.timeout = UINT_MAX;
+
+	memset(&par, 0, sizeof(par));
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	par.state = state;
+#else
+	par.in = in;
+	par.out = out;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+	par.net = net;
+#endif
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	id = ip_set_get_byname(net, ip_set_name, &set);
+#else
+	id = ip_set_get_byname(ip_set_name, &set);
+#endif
+	if (id == IPSET_INVALID_ID) {
+		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
+		return 0;
+	}
+
+	ret = ip_set_add(id, skb, &par, &opt);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	ip_set_put_byindex(net, id);
+#else
+	ip_set_put_byindex(id);
+#endif
+
+	return ret;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+int ip_set_add_dst_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
+#else
+int ip_set_add_dst_ip(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
+#endif
+{
+	int ret = 0;
+	ip_set_id_t id;
+	struct ip_set *set;
+	struct ip_set_adt_opt opt;
+	struct xt_action_param par;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	struct net *net = state->net;
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	struct net *net = &init_net;
+	if (in)
+		net = dev_net(in);
+	else if (out)
+		net = dev_net(out);
+#endif
+
+	memset(&opt, 0, sizeof(opt));
+	opt.family = NFPROTO_IPV4;
+	opt.dim = IPSET_DIM_ONE;
+	opt.flags = 0;
+	opt.cmdflags = 0;
+	opt.ext.timeout = UINT_MAX;
+
+	memset(&par, 0, sizeof(par));
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	par.state = state;
+#else
+	par.in = in;
+	par.out = out;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+	par.net = net;
+#endif
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	id = ip_set_get_byname(net, ip_set_name, &set);
+#else
+	id = ip_set_get_byname(ip_set_name, &set);
+#endif
+	if (id == IPSET_INVALID_ID) {
+		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
+		return 0;
+	}
+
+	ret = ip_set_add(id, skb, &par, &opt);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	ip_set_put_byindex(net, id);
+#else
+	ip_set_put_byindex(id);
+#endif
+
+	return ret;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+int ip_set_del_src_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
+#else
+int ip_set_del_src_ip(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
+#endif
+{
+	int ret = 0;
+	ip_set_id_t id;
+	struct ip_set *set;
+	struct ip_set_adt_opt opt;
+	struct xt_action_param par;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	struct net *net = state->net;
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	struct net *net = &init_net;
+	if (in)
+		net = dev_net(in);
+	else if (out)
+		net = dev_net(out);
+#endif
+
+	memset(&opt, 0, sizeof(opt));
+	opt.family = NFPROTO_IPV4;
+	opt.dim = IPSET_DIM_ONE;
+	opt.flags = IPSET_DIM_ONE_SRC;
+	opt.cmdflags = 0;
+	opt.ext.timeout = UINT_MAX;
+
+	memset(&par, 0, sizeof(par));
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	par.state = state;
+#else
+	par.in = in;
+	par.out = out;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+	par.net = net;
+#endif
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	id = ip_set_get_byname(net, ip_set_name, &set);
+#else
+	id = ip_set_get_byname(ip_set_name, &set);
+#endif
+	if (id == IPSET_INVALID_ID) {
+		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
+		return 0;
+	}
+
+	ret = ip_set_del(id, skb, &par, &opt);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	ip_set_put_byindex(net, id);
+#else
+	ip_set_put_byindex(id);
+#endif
+
+	return ret;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+int ip_set_del_dst_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
+#else
+int ip_set_del_dst_ip(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
+#endif
+{
+	int ret = 0;
+	ip_set_id_t id;
+	struct ip_set *set;
+	struct ip_set_adt_opt opt;
+	struct xt_action_param par;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	struct net *net = state->net;
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	struct net *net = &init_net;
+	if (in)
+		net = dev_net(in);
+	else if (out)
+		net = dev_net(out);
+#endif
+
+	memset(&opt, 0, sizeof(opt));
+	opt.family = NFPROTO_IPV4;
+	opt.dim = IPSET_DIM_ONE;
+	opt.flags = 0;
+	opt.cmdflags = 0;
+	opt.ext.timeout = UINT_MAX;
+
+	memset(&par, 0, sizeof(par));
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	par.state = state;
+#else
+	par.in = in;
+	par.out = out;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+	par.net = net;
+#endif
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	id = ip_set_get_byname(net, ip_set_name, &set);
+#else
+	id = ip_set_get_byname(ip_set_name, &set);
+#endif
+	if (id == IPSET_INVALID_ID) {
+		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
+		return 0;
+	}
+
+	ret = ip_set_del(id, skb, &par, &opt);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	ip_set_put_byindex(net, id);
+#else
+	ip_set_put_byindex(id);
+#endif
+
+	return ret;
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+int ip_set_test_src_mac(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
+#else
+int ip_set_test_src_mac(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
+#endif
+{
+	int ret = 0;
+	ip_set_id_t id;
+	struct ip_set *set;
+	struct ip_set_adt_opt opt;
+	struct xt_action_param par;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	struct net *net = state->net;
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	struct net *net = &init_net;
+	if (in)
+		net = dev_net(in);
+	else if (out)
+		net = dev_net(out);
+#endif
+
+	memset(&opt, 0, sizeof(opt));
+	opt.family = NFPROTO_UNSPEC;
+	opt.dim = IPSET_DIM_ONE;
+	opt.flags = IPSET_DIM_ONE_SRC;
+	opt.cmdflags = 0;
+	opt.ext.timeout = UINT_MAX;
+
+	memset(&par, 0, sizeof(par));
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	par.state = state;
+#else
+	par.in = in;
+	par.out = out;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+	par.net = net;
+#endif
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	id = ip_set_get_byname(net, ip_set_name, &set);
+#else
+	id = ip_set_get_byname(ip_set_name, &set);
+#endif
+	if (id == IPSET_INVALID_ID) {
+		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
+		return 0;
+	}
+
+	ret = ip_set_test(id, skb, &par, &opt);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+	ip_set_put_byindex(net, id);
+#else
+	ip_set_put_byindex(id);
+#endif
+
+	return ret;
+}
+
+unsigned int natflow_dnat_setup(struct nf_conn *ct, __be32 addr, __be16 man_proto)
+{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 3, 0)
+	struct nf_nat_range range;
+	if (nf_nat_initialized(ct, IP_NAT_MANIP_DST)) {
+		return NF_ACCEPT;
+	}
+	memset(&range.min_ip, 0, sizeof(range.min_ip));
+	memset(&range.max_ip, 0, sizeof(range.max_ip));
+	range.flags = IP_NAT_RANGE_MAP_IPS | IP_NAT_RANGE_PROTO_SPECIFIED;
+	range.min_ip = addr;
+	range.max_ip = addr;
+	range.min.all = man_proto;
+	range.max.all = man_proto;
+	return nf_nat_setup_info(ct, &range, IP_NAT_MANIP_DST);
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(3, 7, 0)
+	struct nf_nat_ipv4_range range;
+	if (nf_nat_initialized(ct, NF_NAT_MANIP_DST)) {
+		return NF_ACCEPT;
+	}
+	memset(&range.min_ip, 0, sizeof(range.min_ip));
+	memset(&range.max_ip, 0, sizeof(range.max_ip));
+	range.flags = NF_NAT_RANGE_MAP_IPS | NF_NAT_RANGE_PROTO_SPECIFIED;
+	range.min_ip = addr;
+	range.max_ip = addr;
+	range.min.all = man_proto;
+	range.max.all = man_proto;
+	return nf_nat_setup_info(ct, &range, NF_NAT_MANIP_DST);
+#else
+	struct nf_nat_range range;
+	if (nf_nat_initialized(ct, NF_NAT_MANIP_DST)) {
+		return NF_ACCEPT;
+	}
+	memset(&range.min_addr, 0, sizeof(range.min_addr));
+	memset(&range.max_addr, 0, sizeof(range.max_addr));
+	range.flags = NF_NAT_RANGE_MAP_IPS | NF_NAT_RANGE_PROTO_SPECIFIED;
+	range.min_addr.ip = addr;
+	range.max_addr.ip = addr;
+	range.min_proto.all = man_proto;
+	range.max_proto.all = man_proto;
+	return nf_nat_setup_info(ct, &range, NF_NAT_MANIP_DST);
+#endif
+}

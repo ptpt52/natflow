@@ -30,6 +30,13 @@ static inline int natflow_zone_id_get(const struct net_device *dev)
 	return dev->name[IFNAMSIZ - 1] & ZONE_ID_MASK;
 }
 
+static inline int natflow_zone_id_get_safe(const struct net_device *dev)
+{
+	if (dev == NULL)
+		return INVALID_ZONE_ID;
+	return natflow_zone_id_get(dev);
+}
+
 static inline int natflow_zone_id_set(struct net_device *dev, int id)
 {
 	if (strlen(dev->name) + 2 > IFNAMSIZ)
@@ -51,6 +58,11 @@ static inline int natflow_zone_type_set(struct net_device *dev, int type)
 		return -1;
 	dev->name[IFNAMSIZ - 1] = (dev->name[IFNAMSIZ - 1] & ZONE_ID_MASK) | ((type << ZONE_TYPE_SHIFT) & ZONE_TYPE_MASK);
 	return 0;
+}
+
+static inline int natflow_is_lan_zone(const struct net_device *dev)
+{
+	return (natflow_zone_id_get(dev) != INVALID_ZONE_ID && natflow_zone_type_get(dev) == ZONE_TYPE_LAN);
 }
 
 int natflow_zone_init(void);

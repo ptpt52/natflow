@@ -10,6 +10,7 @@
 #include <linux/atomic.h>
 #include <linux/if_ether.h>
 #include <net/netfilter/nf_conntrack.h>
+#include <linux/netfilter/ipset/ip_set.h>
 
 typedef struct fakeuser_data_t {
 	uint32_t timestamp;
@@ -45,5 +46,36 @@ static inline unsigned int timestamp_offset(unsigned int a, unsigned int b)
 		return b - a;
 	return a - b;
 }
+
+struct auth_rule_t {
+#define INVALID_AUTH_RULE_ID 255
+	unsigned int id;
+	unsigned int src_zone_id;
+#define AUTH_TYPE_UNKNOWN 0
+#define AUTH_TYPE_AUTO 1
+#define AUTH_TYPE_WEB 2
+	unsigned int auth_type;
+	char src_ipgrp_name[IPSET_MAXNAMELEN];
+	char src_whitelist_name[IPSET_MAXNAMELEN];
+	char mac_whitelist_name[IPSET_MAXNAMELEN];
+};
+
+struct auth_conf {
+	unsigned int num;
+	char dst_bypasslist_name[IPSET_MAXNAMELEN];
+	char src_bypasslist_name[IPSET_MAXNAMELEN];
+#define MAX_AUTH 16
+	struct auth_rule_t auth[MAX_AUTH];
+};
+
+typedef enum {
+	AUTH_NONE = 0,
+	AUTH_OK = 1,
+	AUTH_BYPASS = 2,
+	AUTH_REQ = 3,
+	AUTH_NOAUTH = 4,
+	AUTH_VIP = 5,
+	AUTH_UNKNOWN = 15,
+} auth_status_t;
 
 #endif /* _NATFLOW_USER_H_ */

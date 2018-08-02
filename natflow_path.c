@@ -79,8 +79,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		const struct nf_hook_state *state)
 {
 	unsigned int hooknum = state->hook;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
 	//const struct net_device *in = state->in;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
 	//const struct net_device *out = state->out;
 #endif
 #endif
@@ -127,7 +127,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		return NF_ACCEPT;
 	}
 	if (nf->magic != magic) {
-		if ((ct->status & IPS_NOS_TRACK_INIT) && (ct->status & IPS_NATFLOW_FF)) {
+		if ((ct->status & IPS_NATFLOW_TRACK_INIT) && (ct->status & IPS_NATFLOW_FF)) {
 			clear_bit(IPS_NATFLOW_FF_BIT, &ct->status);
 		}
 		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
@@ -215,7 +215,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		return NF_ACCEPT;
 	}
 
-	if ((ct->status & IPS_NOS_TRACK_INIT) && !(ct->status & IPS_NATFLOW_FF)) {
+	if ((ct->status & IPS_NATFLOW_TRACK_INIT) && !(ct->status & IPS_NATFLOW_FF)) {
 		return NF_ACCEPT;
 	}
 

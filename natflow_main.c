@@ -39,9 +39,6 @@
 #include "natflow_path.h"
 #include "natflow_zone.h"
 
-#define MODULE_NAME "natflow"
-#define NATFLOW_VERSION "1.0.0"
-
 static int natflow_major = 0;
 static int natflow_minor = 0;
 static int number_of_devices = 1;

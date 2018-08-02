@@ -121,7 +121,8 @@ static inline void natflow_zone_match_refresh(void)
 	}
 }
 
-struct zone_match_t *natflow_zone_match_get(int idx)
+//must lock by caller
+static inline struct zone_match_t *natflow_zone_match_get(int idx)
 {
 	int i = 0;
 	struct zone_match_t *zm;
@@ -147,7 +148,7 @@ static void *natflow_zone_start(struct seq_file *m, loff_t *pos)
 				"# Usage:\n"
 				"#    lan_zone <id>=<if_name> -- set interface lan_zone\n"
 				"#    wan_zone <id>=<if_name> -- set interface wan_zone\n"
-				"#    clear_zone -- clear all existing zone(s)\n"
+				"#    clean -- clear all existing zone(s)\n"
 				"#    update_match -- refresh netdev zone match settings\n"
 				"#\n"
 				"# Info:"
@@ -244,7 +245,7 @@ static ssize_t natflow_zone_write(struct file *file, const char __user *buf, siz
 	if (l >= cnt) {
 		data_left += l;
 		if (data_left >= 256) {
-			printk("err: too long a line\n");
+			NATFLOW_println("err: too long a line");
 			data_left = 0;
 			return -EINVAL;
 		}
@@ -255,7 +256,7 @@ static ssize_t natflow_zone_write(struct file *file, const char __user *buf, siz
 		l++;
 	}
 
-	if (strncmp(data, "clear_zone", 10) == 0) {
+	if (strncmp(data, "clean", 5) == 0) {
 		natflow_zone_cleanup();
 		goto done;
 	} else if (strncmp(data, "lan_zone ", 9) == 0) {
@@ -264,7 +265,7 @@ static ssize_t natflow_zone_write(struct file *file, const char __user *buf, siz
 			zm.type = ZONE_TYPE_LAN;
 			if ((err = natflow_zone_add_tail(&zm)) == 0)
 				goto done;
-			printk("natflow_zone_add_tail() failed ret=%d\n", err);
+			NATFLOW_println("natflow_zone_add_tail() failed ret=%d", err);
 		}
 	} else if (strncmp(data, "wan_zone ", 9) == 0) {
 		n = sscanf(data, "wan_zone %u=%s\n", &zm.id, zm.if_name);
@@ -272,14 +273,14 @@ static ssize_t natflow_zone_write(struct file *file, const char __user *buf, siz
 			zm.type = ZONE_TYPE_WAN;
 			if ((err = natflow_zone_add_tail(&zm)) == 0)
 				goto done;
-			printk("natflow_zone_add_tail() failed ret=%d\n", err);
+			NATFLOW_println("natflow_zone_add_tail() failed ret=%d", err);
 		}
 	} else if (strncmp(data, "update_match", 12) == 0) {
 		natflow_zone_match_refresh();
 		goto done;
 	}
 
-	printk("ignoring line[%s]\n", data);
+	NATFLOW_println("ignoring line[%s]", data);
 	if (err != 0) {
 		return err;
 	}
@@ -346,12 +347,12 @@ int natflow_zone_init(void)
 		retval = alloc_chrdev_region(&devno, natflow_zone_minor, number_of_devices, natflow_zone_dev_name);
 	}
 	if (retval < 0) {
-		printk("alloc_chrdev_region failed!\n");
+		NATFLOW_println("alloc_chrdev_region failed!");
 		return retval;
 	}
 	natflow_zone_major = MAJOR(devno);
 	natflow_zone_minor = MINOR(devno);
-	printk("natflow_zone_major=%d, natflow_zone_minor=%d\n", natflow_zone_major, natflow_zone_minor);
+	NATFLOW_println("natflow_zone_major=%d, natflow_zone_minor=%d", natflow_zone_major, natflow_zone_minor);
 
 	cdev_init(&natflow_zone_cdev, &natflow_zone_fops);
 	natflow_zone_cdev.owner = THIS_MODULE;
@@ -359,13 +360,13 @@ int natflow_zone_init(void)
 
 	retval = cdev_add(&natflow_zone_cdev, devno, 1);
 	if (retval) {
-		printk("adding chardev, error=%d\n", retval);
+		NATFLOW_println("adding chardev, error=%d", retval);
 		goto cdev_add_failed;
 	}
 
 	natflow_zone_class = class_create(THIS_MODULE,"natflow_zone_class");
 	if (IS_ERR(natflow_zone_class)) {
-		printk("failed in creating class\n");
+		NATFLOW_println("failed in creating class");
 		retval = -EINVAL;
 		goto class_create_failed;
 	}
