@@ -86,9 +86,12 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 				kfree(new);
 				return -1;
 			}
-#endif
+			kfree_rcu(old, rcu);
+			ct->ext = new;
+#else
 			kfree_rcu(old, rcu);
 			rcu_assign_pointer(ct->ext, new);
+#endif
 		}
 		memset((void *)new + newoff, 0, newlen - newoff);
 	}
