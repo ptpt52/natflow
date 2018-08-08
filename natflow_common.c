@@ -47,12 +47,19 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		return -1;
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
+	if ((ct->status & IPS_SRC_NAT_DONE)) {
+		NATFLOW_ERROR(DEBUG_FMT_PREFIX "realloc ct->ext with IPS_SRC_NAT_DONE is not supported for kernel < 4.9\n", DEBUG_ARG_PREFIX);
+		return -1;
+	}
+
 	/* XXX Call in advance to make sure this time
 	 * is the last user to modify ct->ext
 	 */
 	if (nfct_help(ct) && !nfct_seqadj(ct)) {
 		nfct_seqadj_ext_add(ct);
 	}
+#endif
 
 	if (!ct->ext || !ct->ext->offset[NF_CT_EXT_NAT]) {
 		struct nf_conn_nat *nat = nf_ct_ext_add(ct, NF_CT_EXT_NAT, gfp);
@@ -91,11 +98,6 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		}
 		if (new != old) {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
-			if ((ct->status & IPS_SRC_NAT_DONE)) {
-				NATFLOW_ERROR(DEBUG_FMT_PREFIX "realloc ct->ext not supported for kernel < 4.9\n", DEBUG_ARG_PREFIX);
-				kfree(new);
-				return -1;
-			}
 			kfree_rcu(old, rcu);
 			ct->ext = new;
 #else
