@@ -14,8 +14,11 @@
 #include <net/netfilter/nf_conntrack_core.h>
 #include <net/netfilter/nf_conntrack_zones.h>
 #include <net/netfilter/nf_conntrack_extend.h>
+#include <net/netfilter/nf_conntrack_helper.h>
+#include <net/netfilter/nf_conntrack_seqadj.h>
 #include <net/netfilter/nf_nat.h>
 #include <net/netfilter/nf_nat_core.h>
+#include <net/netfilter/nf_nat_helper.h>
 #include <linux/netfilter/ipset/ip_set.h>
 #include <linux/netfilter/x_tables.h>
 #include <linux/netfilter/xt_set.h>
@@ -42,6 +45,13 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 
 	if (nf_ct_is_confirmed(ct)) {
 		return -1;
+	}
+
+	/* XXX Call in advance to make sure this time
+	 * is the last user to modify ct->ext
+	 */
+	if (nfct_help(ct) && !nfct_seqadj(ct)) {
+		nfct_seqadj_ext_add(ct);
 	}
 
 	if (!ct->ext || !ct->ext->offset[NF_CT_EXT_NAT]) {
