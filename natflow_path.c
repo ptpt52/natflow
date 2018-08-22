@@ -127,9 +127,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		return NF_ACCEPT;
 	}
 	if (nf->magic != magic) {
-		if ((ct->status & IPS_NATFLOW_TRACK_INIT) && (ct->status & IPS_NATFLOW_FF)) {
-			clear_bit(IPS_NATFLOW_FF_BIT, &ct->status);
-		}
 		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
@@ -206,16 +203,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		dir = NF_FF_DIR_REPLY;
 	}
 
-	if ((ct->status & IPS_NATFLOW_STOP)) {
+	if ((ct->status & IPS_NATFLOW_FF_STOP)) {
 		return NF_ACCEPT;
 	}
 
 	//if (!(nf->status & NF_FF_OFFLOAD)) {
 	if (!(nf->status & NF_FF_REPLY_OK) || !(nf->status & NF_FF_ORIGINAL_OK)) {
-		return NF_ACCEPT;
-	}
-
-	if ((ct->status & IPS_NATFLOW_TRACK_INIT) && !(ct->status & IPS_NATFLOW_FF)) {
 		return NF_ACCEPT;
 	}
 
@@ -362,7 +355,7 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (NULL == ct) {
 		return NF_ACCEPT;
 	}
-	if ((ct->status & IPS_NATFLOW_STOP)) {
+	if ((ct->status & IPS_NATFLOW_FF_STOP)) {
 		return NF_ACCEPT;
 	}
 
@@ -387,7 +380,7 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": this conn need helper\n", DEBUG_UDP_ARG(iph,l4));
 					break;
 			}
-			set_bit(IPS_NATFLOW_STOP_BIT, &ct->status);
+			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
 			return NF_ACCEPT;
 		}
 	}
@@ -486,7 +479,7 @@ static unsigned int natflow_path_post_snat_hook(void *priv,
 	if (NULL == ct) {
 		return NF_ACCEPT;
 	}
-	if ((ct->status & IPS_NATFLOW_STOP)) {
+	if ((ct->status & IPS_NATFLOW_FF_STOP)) {
 		return NF_ACCEPT;
 	}
 	if ((ct->status & IPS_SRC_NAT_DONE)) {

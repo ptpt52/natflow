@@ -95,7 +95,7 @@ static unsigned int natflow_user_timeout = 1800;
 
 static struct sk_buff *natflow_user_uskbs[NR_CPUS];
 #define NATFLOW_USKB_SIZE (sizeof(struct iphdr) + sizeof(struct udphdr))
-#define NATFLOW_FAKEUSER_DADDR 0xffffffff;
+#define NATFLOW_FAKEUSER_DADDR __constant_htonl(0x7fffffff);
 
 static inline struct sk_buff *uskb_of_this_cpu(int id)
 {
@@ -112,9 +112,17 @@ void natflow_user_timeout_touch(natflow_fakeuser_t *nfu)
 
 	fud = natflow_fakeuser_data(nfu);
 	if (fud->auth_type != AUTH_TYPE_UNKNOWN) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
+		nfu->timeout.expires = jiffies + natflow_user_timeout * HZ;
+#else
 		nfu->timeout = jiffies + natflow_user_timeout * HZ;
+#endif
 	} else {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
+		nfu->timeout.expires = jiffies + NATFLOW_USER_TIMEOUT * HZ;
+#else
 		nfu->timeout = jiffies + NATFLOW_USER_TIMEOUT * HZ;
+#endif
 	}
 }
 
@@ -233,10 +241,17 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 			rcu_assign_pointer(user->ext, new);
 		}
 		new->len = newoff;
-		nf_conntrack_get(&user->ct_general);
+		memset((void *)new + newoff, 0, sizeof(struct fakeuser_data_t));
 		set_bit(IPS_NATFLOW_USER_BIT, &user->status);
-		ct->master = user;
+
 		ret = nf_conntrack_confirm(uskb);
+		if (ret != NF_ACCEPT) {
+			skb_nfct_reset(uskb);
+			return NULL;
+		}
+
+		nf_conntrack_get(&user->ct_general);
+		ct->master = user;
 		skb_nfct_reset(uskb);
 
 		natflow_user_timeout_touch(user);
@@ -523,7 +538,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		return NF_ACCEPT;
 	}
 
-	if ((ct->status & IPS_NATFLOW_BYPASS)) {
+	if ((ct->status & IPS_NATFLOW_USER_BYPASS)) {
 		return NF_ACCEPT;
 	}
 	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL) {
@@ -593,6 +608,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 			memcpy(fud->macaddr, eth_hdr(skb)->h_source, ETH_ALEN);
 		}
 		fud->timestamp = jiffies;
+		natflow_user_timeout_touch(user);
 		//TODO notify user update
 	}
 
@@ -604,11 +620,11 @@ static unsigned int natflow_user_pre_hook(void *priv,
 			if (TCPH(l4)->dest == __constant_htons(443)) {
 				if (auth_conf->dst_bypasslist_name[0] != 0 &&
 						IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
-					set_bit(IPS_NATFLOW_BYPASS_BIT, &ct->status);
+					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 					return NF_ACCEPT;
 				} else if (auth_conf->src_bypasslist_name[0] != 0 &&
 						IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
-					set_bit(IPS_NATFLOW_BYPASS_BIT, &ct->status);
+					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 					return NF_ACCEPT;
 				}
 
@@ -628,7 +644,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 					if (newdst) {
 						NATFLOW_DEBUG(DEBUG_TCP_FMT ": new connection https redirect to %pI4:%u\n", DEBUG_TCP_ARG(iph,l4), &newdst, ntohs(https_redirect_port));
 						natflow_dnat_setup(ct, newdst, https_redirect_port);
-						set_bit(IPS_NATFLOW_BYPASS_BIT, &ct->status);
+						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 					}
 				} while (0);
 			}
@@ -689,7 +705,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		return NF_ACCEPT;
 	}
 
-	if ((ct->status & IPS_NATFLOW_BYPASS)) {
+	if ((ct->status & IPS_NATFLOW_USER_BYPASS)) {
 		return NF_ACCEPT;
 	}
 	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL) {
@@ -719,23 +735,23 @@ static unsigned int natflow_user_forward_hook(void *priv,
 
 				if (auth_conf->dst_bypasslist_name[0] != 0 &&
 						IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
-					set_bit(IPS_NATFLOW_BYPASS_BIT, &ct->status);
+					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 					return NF_ACCEPT;
 				} else if (auth_conf->src_bypasslist_name[0] != 0 &&
 						IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
-					set_bit(IPS_NATFLOW_BYPASS_BIT, &ct->status);
+					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 					return NF_ACCEPT;
 				}
 
 				if (iph->protocol == IPPROTO_UDP) {
 					if (UDPH(l4)->dest == __constant_htons(53) || UDPH(l4)->dest == __constant_htons(67)) {
-						set_bit(IPS_NATFLOW_BYPASS_BIT, &ct->status);
+						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 						return NF_ACCEPT;
 					}
 				}
 
 				if (iph->protocol != IPPROTO_TCP) {
-					set_bit(IPS_NATFLOW_DROP_BIT, &ct->status);
+					set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
 					return NF_DROP;
 				}
 
@@ -743,10 +759,10 @@ static unsigned int natflow_user_forward_hook(void *priv,
 				data_len = ntohs(iph->tot_len) - ((iph->ihl << 2) + (TCPH(l4)->doff << 2));
 				if ((data_len > 4 && strncasecmp(data, "GET ", 4) == 0) || (data_len > 5 && strncasecmp(data, "POST ", 5) == 0)) {
 					natflow_auth_http_302(in, skb, user);
-					set_bit(IPS_NATFLOW_DROP_BIT, &ct->status);
+					set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
 					return NF_DROP;
 				} else if (data_len > 0) {
-					set_bit(IPS_NATFLOW_DROP_BIT, &ct->status);
+					set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
 					return NF_DROP;
 				}
 
@@ -782,7 +798,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 								}
 							}
 						}
-						set_bit(IPS_NATFLOW_BYPASS_BIT, &ct->status);
+						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 					}
 				}
 			}
