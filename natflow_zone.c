@@ -340,7 +340,7 @@ int natflow_zone_init(void)
 	int retval = 0;
 	dev_t devno;
 
-	if (natflow_zone_major>0) {
+	if (natflow_zone_major > 0) {
 		devno = MKDEV(natflow_zone_major, natflow_zone_minor);
 		retval = register_chrdev_region(devno, number_of_devices, natflow_zone_dev_name);
 	} else {

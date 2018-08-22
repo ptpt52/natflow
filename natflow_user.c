@@ -893,6 +893,7 @@ static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 				"#    auth id=<id>,szone=<idx>,type=web/auto,sipgrp=<name>[,ipwhite=<name>][,macwhite=<name>] -- set one auth\n"
 				"#\n"
 				"# Info:\n"
+				"#    disabled=%u\n"
 				"#    auth_conf_magic=%u\n"
 				"#    redirect_ip=%pI4\n"
 				"#    no_flow_timeout=%u\n"
@@ -906,6 +907,7 @@ static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 				"\n"
 				"clean\n"
 				"\n",
+				disabled,
 				auth_conf_magic,
 				&redirect_ip,
 				natflow_user_timeout,
@@ -1006,12 +1008,16 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 		l++;
 	}
 
-	natflow_user_disabled_set(1);
-	synchronize_rcu();
-
 	if (strncmp(data, "clean", 10) == 0) {
 		auth_conf_cleanup();
 		goto done;
+	} else if (strncmp(data, "disabled=", 9) == 0) {
+		unsigned int a;
+		n = sscanf(data, "disabled=%u", &a);
+		if (n == 1) {
+			natflow_user_disabled_set(!!(a));
+			goto done;
+		}
 	} else if (strncmp(data, "update_magic", 10) == 0) {
 		auth_conf_update_magic(0);
 		goto done;
@@ -1138,13 +1144,11 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 
 	NATFLOW_println("ignoring line[%s]", data);
 	if (err != 0) {
-		natflow_user_disabled_set(0);
 		return err;
 	}
 
 done:
 	*offset += l;
-	natflow_user_disabled_set(0);
 	return l;
 }
 
@@ -1191,9 +1195,9 @@ int natflow_user_init(void)
 	if (retval != 0)
 		goto auth_conf_init_failed;
 
-	natflow_user_disabled_set(1);
+	natflow_user_disabled_set(0);
 
-	if (natflow_user_major>0) {
+	if (natflow_user_major > 0) {
 		devno = MKDEV(natflow_user_major, natflow_user_minor);
 		retval = register_chrdev_region(devno, number_of_devices, natflow_user_dev_name);
 	} else {
