@@ -10,6 +10,8 @@
 #include <linux/if_vlan.h>
 #include <linux/if_pppox.h>
 
+#define MAX_IOCTL_LEN 256
+
 typedef struct natflow_route_t {
 	/* max L2 len supoorted
 	 * mac + vlan + pppoe (=14 + 4 + 8)

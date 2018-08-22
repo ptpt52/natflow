@@ -107,8 +107,8 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 {
 	int err = 0;
 	int n, l;
-	int cnt = 256;
-	static char data[256];
+	int cnt = MAX_IOCTL_LEN;
+	static char data[MAX_IOCTL_LEN];
 	static int data_left = 0;
 
 	cnt -= data_left;
@@ -126,12 +126,12 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 		return n;
 	}
 
-	//make sure line ended with '\n' and line len <=256
+	//make sure line ended with '\n' and line len <= MAX_IOCTL_LEN
 	l = 0;
 	while (l < cnt && data[l + data_left] != '\n') l++;
 	if (l >= cnt) {
 		data_left += l;
-		if (data_left >= 256) {
+		if (data_left >= MAX_IOCTL_LEN) {
 			NATFLOW_println("err: too long a line");
 			data_left = 0;
 			return -EINVAL;
