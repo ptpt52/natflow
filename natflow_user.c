@@ -663,13 +663,13 @@ static unsigned int natflow_user_forward_hook(const struct nf_hook_ops *ops,
 		const struct net_device *out,
 		int (*okfn)(struct sk_buff *))
 {
-	//unsigned int hooknum = ops->hooknum;
+	unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_user_forward_hook(const struct nf_hook_ops *ops,
 		struct sk_buff *skb,
 		const struct nf_hook_state *state)
 {
-	//unsigned int hooknum = state->hook;
+	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 	const struct net_device *out = state->out;
 #else
@@ -677,7 +677,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		struct sk_buff *skb,
 		const struct nf_hook_state *state)
 {
-	//unsigned int hooknum = state->hook;
+	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
 	const struct net_device *out = state->out;
@@ -702,6 +702,10 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	if ((ct->status & IPS_NATFLOW_USER_BYPASS)) {
 		return NF_ACCEPT;
 	}
+	if ((ct->status & IPS_NATFLOW_USER_DROP)) {
+		return NF_DROP;
+	}
+
 	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL) {
 		return NF_ACCEPT;
 	}
@@ -752,6 +756,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 				data = skb->data + (iph->ihl << 2) + (TCPH(l4)->doff << 2);
 				data_len = ntohs(iph->tot_len) - ((iph->ihl << 2) + (TCPH(l4)->doff << 2));
 				if ((data_len > 4 && strncasecmp(data, "GET ", 4) == 0) || (data_len > 5 && strncasecmp(data, "POST ", 5) == 0)) {
+					NATFLOW_DEBUG(DEBUG_TCP_FMT ": sending HTTP 302 redirect\n", DEBUG_TCP_ARG(iph,l4));
 					natflow_auth_http_302(in, skb, user);
 					set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
 					return NF_DROP;
