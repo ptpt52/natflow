@@ -83,6 +83,8 @@ int natflow_user_disabled_get(void)
 	return disabled;
 }
 
+static unsigned int auth_open_weixin_reply = 0;
+
 static unsigned short https_redirect_port = __constant_htons(443);
 static unsigned int https_redirect_en = 0;
 
@@ -265,7 +267,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 	return user;
 }
 
-static inline void natflow_auth_reply_payload(const char *payload, int payload_len, struct sk_buff *oskb, const struct net_device *dev)
+static inline void natflow_auth_reply_payload_fin(const char *payload, int payload_len, struct sk_buff *oskb, const struct net_device *dev)
 {
 	struct sk_buff *nskb;
 	struct ethhdr *neth, *oeth;
@@ -384,7 +386,7 @@ static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *
 	http->header[sizeof(http->header) - 1] = 0;
 	n = sprintf(http->payload, "%s%s", http->header, http->data);
 
-	natflow_auth_reply_payload(http->payload, n, skb, dev);
+	natflow_auth_reply_payload_fin(http->payload, n, skb, dev);
 	kfree(http);
 }
 
@@ -423,11 +425,11 @@ static inline void natflow_auth_open_weixin_reply(const struct net_device *dev, 
 	http->header[sizeof(http->header) - 1] = 0;
 	n = sprintf(http->payload, "%s%s", http->header, http->data);
 
-	natflow_auth_reply_payload(http->payload, n, skb, dev);
+	natflow_auth_reply_payload_fin(http->payload, n, skb, dev);
 	kfree(http);
 }
 
-void natflow_auth_convert_tcprst(struct sk_buff *skb)
+static inline void natflow_auth_convert_tcprst(struct sk_buff *skb)
 {
 	int offset = 0;
 	int len;
@@ -481,6 +483,83 @@ void natflow_auth_convert_tcprst(struct sk_buff *skb)
 		tcph->check = csum_tcpudp_magic(iph->saddr, iph->daddr, len - iph->ihl * 4, iph->protocol, skb->csum);
 	}
 }
+
+static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, struct sk_buff *oskb)
+{
+	struct sk_buff *nskb;
+	struct ethhdr *neth, *oeth;
+	struct iphdr *niph, *oiph;
+	struct tcphdr *otcph, *ntcph;
+	int len;
+	unsigned int csum;
+	int offset, header_len;
+
+	oeth = (struct ethhdr *)skb_mac_header(oskb);
+	oiph = ip_hdr(oskb);
+	otcph = (struct tcphdr *)((void *)oiph + oiph->ihl*4);
+
+	offset = sizeof(struct iphdr) + sizeof(struct tcphdr) - oskb->len;
+	header_len = offset < 0 ? 0 : offset;
+	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
+	if (!nskb) {
+		NATFLOW_ERROR("alloc_skb fail\n");
+		return;
+	}
+	if (offset <= 0) {
+		if (pskb_trim(nskb, nskb->len + offset)) {
+			NATFLOW_ERROR("pskb_trim fail: len=%d, offset=%d\n", nskb->len, offset);
+			consume_skb(nskb);
+			return;
+		}
+	} else {
+		nskb->len += offset;
+		nskb->tail += offset;
+	}
+
+	//setup mac header
+	neth = eth_hdr(nskb);
+	memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
+	memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
+	//neth->h_proto = htons(ETH_P_IP);
+	//setup ip header
+	niph = ip_hdr(nskb);
+	memset(niph, 0, sizeof(struct iphdr));
+	niph->saddr = oiph->daddr;
+	niph->daddr = oiph->saddr;
+	niph->version = oiph->version;
+	niph->ihl = 5;
+	niph->tos = 0;
+	niph->tot_len = htons(nskb->len);
+	niph->ttl = 0x80;
+	niph->protocol = oiph->protocol;
+	niph->id = __constant_htons(0xDEAD);
+	niph->frag_off = 0x0;
+	ip_send_check(niph);
+	//setup tcp header
+	ntcph = (struct tcphdr *)((char *)ip_hdr(nskb) + sizeof(struct iphdr));
+	memset(ntcph, 0, sizeof(struct tcphdr));
+	ntcph->source = otcph->dest;
+	ntcph->dest = otcph->source;
+	ntcph->seq = otcph->ack_seq;
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->tot_len) - (oiph->ihl<<2) - (otcph->doff<<2) + 1);
+	ntcph->doff = 5;
+	ntcph->ack = 1;
+	ntcph->rst = 1;
+	ntcph->psh = 0;
+	ntcph->fin = 0;
+	ntcph->window = 0;
+	//sum check
+	len = ntohs(niph->tot_len) - (niph->ihl<<2);
+	csum = csum_partial((char*)ntcph, len, 0);
+	ntcph->check = tcp_v4_check(len, niph->saddr, niph->daddr, csum);
+	//ready to send out
+	skb_push(nskb, (char *)niph - (char *)neth);
+	nskb->dev = (struct net_device *)dev;
+	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+
+	dev_queue_xmit(nskb);
+}
+
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned natflow_user_pre_hook(unsigned int hooknum,
@@ -694,6 +773,9 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	if (skb->protocol != htons(ETH_P_IP))
 		return NF_ACCEPT;
 
+	if (in == NULL)
+		in = skb->dev;
+
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
 		return NF_ACCEPT;
@@ -703,15 +785,18 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		return NF_ACCEPT;
 	}
 	if ((ct->status & IPS_NATFLOW_USER_DROP)) {
+		struct iphdr *iph = ip_hdr(skb);
+		void *l4 = (void *)iph + iph->ihl * 4;
+
+		if (iph->protocol == IPPROTO_TCP && TCPH(l4)->fin && TCPH(l4)->ack) {
+			natflow_auth_tcp_reply_finack(in, skb);
+		}
 		return NF_DROP;
 	}
 
 	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL) {
 		return NF_ACCEPT;
 	}
-
-	if (in == NULL)
-		in = skb->dev;
 
 	user = natflow_user_get(ct);
 	if (NULL == user) {
@@ -763,6 +848,9 @@ static unsigned int natflow_user_forward_hook(void *priv,
 				} else if (data_len > 0) {
 					set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
 					return NF_DROP;
+				} else if (TCPH(l4)->ack && !TCPH(l4)->syn) {
+					natflow_auth_convert_tcprst(skb);
+					return NF_ACCEPT;
 				}
 			} else if (fud->auth_type == AUTH_TYPE_AUTO) {
 				fud->auth_status = AUTH_OK;
@@ -776,7 +864,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 				struct iphdr *iph = ip_hdr(skb);
 				void *l4 = (void *)iph + iph->ihl * 4;
 
-				if (iph->protocol == IPPROTO_TCP) {
+				if (iph->protocol == IPPROTO_TCP && auth_open_weixin_reply != 0) {
 					data = skb->data + (iph->ihl << 2) + (TCPH(l4)->doff << 2);
 					data_len = ntohs(iph->tot_len) - ((iph->ihl << 2) + (TCPH(l4)->doff << 2));
 					if (data_len > 0) {
@@ -790,12 +878,12 @@ static unsigned int natflow_user_forward_hook(void *priv,
 									if (i + 24 < data_len && strncasecmp(data + i, "Host: open.weixin.qq.com", 24) == 0) {
 										natflow_auth_open_weixin_reply(in, skb);
 										natflow_auth_convert_tcprst(skb);
+										set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
 										return NF_ACCEPT;
 									}
 								}
 							}
 						}
-						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 					}
 				}
 			}
@@ -894,6 +982,7 @@ static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 				"#    auth_conf_magic=%u\n"
 				"#    redirect_ip=%pI4\n"
 				"#    no_flow_timeout=%u\n"
+				"#    auth_open_weixin_reply=%u\n"
 				"#    https_redirect_en=%u\n"
 				"#    https_redirect_port=%u\n"
 				"#    rule(s) num=%u\n"
@@ -908,6 +997,7 @@ static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 				auth_conf_magic,
 				&redirect_ip,
 				natflow_user_timeout,
+				auth_open_weixin_reply,
 				https_redirect_en,
 				ntohs(https_redirect_port),
 				auth_conf->num, auth_conf->dst_bypasslist_name, auth_conf->src_bypasslist_name
@@ -1128,6 +1218,13 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 		n = sscanf(data, "https_redirect_en=%u", &a);
 		if (n == 1) {
 			https_redirect_en = !!a;
+			goto done;
+		}
+	} else if (strncmp(data, "auth_open_weixin_reply=", 23) == 0) {
+		unsigned int a;
+		n = sscanf(data, "auth_open_weixin_reply=%u", &a);
+		if (n == 1) {
+			auth_open_weixin_reply = !!a;
 			goto done;
 		}
 	} else if (strncmp(data, "https_redirect_port=", 18) == 0) {
