@@ -51,7 +51,7 @@ struct nat_key_t {
 	unsigned int ext_magic;
 };
 /*XXX refer to drivers/nos/src/nos.h */
-#define IPS_NATFLOW_FF_STOP_BIT 15
+#define IPS_NATFLOW_FF_STOP_BIT 14
 #define IPS_NATFLOW_FF_STOP (1 << IPS_NATFLOW_FF_STOP_BIT)
 
 #define IPS_NATFLOW_USER_BIT 15
