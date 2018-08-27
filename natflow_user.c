@@ -151,13 +151,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 	if (disabled)
 		return NULL;
 
-	if (ct->master) {
-		if ((IPS_NATFLOW_USER & ct->master->status)) {
-			user = ct->master;
-		} else if (ct->master->master && (IPS_NATFLOW_USER & ct->master->master->status)) {
-			user = ct->master->master;
-		}
-	}
+	user = natflow_user_get(ct);
 
 	if (!user && !ct->master) {
 		struct nf_ct_ext *new = NULL;
@@ -765,8 +759,6 @@ static unsigned int natflow_user_forward_hook(void *priv,
 					set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
 					return NF_DROP;
 				}
-
-				return NF_DROP;
 			} else if (fud->auth_type == AUTH_TYPE_AUTO) {
 				fud->auth_status = AUTH_OK;
 				//TODO notify user
@@ -827,7 +819,7 @@ static struct nf_hook_ops user_hooks[] = {
 #endif
 		.hook = natflow_user_forward_hook,
 		.pf = PF_INET,
-		.hooknum = NF_INET_PRE_ROUTING,
+		.hooknum = NF_INET_FORWARD,
 		.priority = NF_IP_PRI_FILTER,
 	},
 };
