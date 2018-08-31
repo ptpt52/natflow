@@ -51,9 +51,6 @@ struct nat_key_t {
 	unsigned int ext_magic;
 };
 /*XXX refer to drivers/nos/src/nos.h */
-#define IPS_NATFLOW_FF_STOP_BIT 14
-#define IPS_NATFLOW_FF_STOP (1 << IPS_NATFLOW_FF_STOP_BIT)
-
 #define IPS_NATFLOW_USER_BIT 15
 #define IPS_NATFLOW_USER (1 << IPS_NATFLOW_USER_BIT)
 
@@ -62,6 +59,9 @@ struct nat_key_t {
 
 #define IPS_NATFLOW_USER_DROP_BIT 17
 #define IPS_NATFLOW_USER_DROP (1 << IPS_NATFLOW_USER_DROP_BIT)
+
+#define IPS_NATFLOW_FF_STOP_BIT 18
+#define IPS_NATFLOW_FF_STOP (1 << IPS_NATFLOW_FF_STOP_BIT)
 
 static inline int simple_test_bit(int nr, const unsigned int *addr)
 {
