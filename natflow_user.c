@@ -73,7 +73,7 @@ static inline int auth_rule_add_one(struct auth_rule_t *rule)
 	return -ENOMEM;
 }
 
-static int disabled = 0;
+static int disabled = 1;
 void natflow_user_disabled_set(int v)
 {
 	disabled = v;
@@ -1289,7 +1289,7 @@ int natflow_user_init(void)
 	if (retval != 0)
 		goto auth_conf_init_failed;
 
-	natflow_user_disabled_set(0);
+	natflow_user_disabled_set(1);
 
 	if (natflow_user_major > 0) {
 		devno = MKDEV(natflow_user_major, natflow_user_minor);
