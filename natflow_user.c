@@ -115,13 +115,19 @@ void natflow_user_timeout_touch(natflow_fakeuser_t *nfu)
 	fud = natflow_fakeuser_data(nfu);
 	if (fud->auth_type != AUTH_TYPE_UNKNOWN) {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
-		nfu->timeout.expires = jiffies + natflow_user_timeout * HZ;
+		unsigned long newtimeout = jiffies + natflow_user_timeout * HZ;
+		if (newtimeout - nfu->timeout.expires > HZ) {
+			mod_timer_pending(&nfu->timeout, newtimeout);
+		}
 #else
 		nfu->timeout = jiffies + natflow_user_timeout * HZ;
 #endif
 	} else {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
-		nfu->timeout.expires = jiffies + NATFLOW_USER_TIMEOUT * HZ;
+		unsigned long newtimeout = jiffies + NATFLOW_USER_TIMEOUT * HZ;
+		if (newtimeout - nfu->timeout.expires > HZ) {
+			mod_timer_pending(&nfu->timeout, newtimeout);
+		}
 #else
 		nfu->timeout = jiffies + NATFLOW_USER_TIMEOUT * HZ;
 #endif
