@@ -180,6 +180,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 
 		uskb->protocol = __constant_htons(ETH_P_IP);
 		skb_set_tail_pointer(uskb, NATFLOW_USKB_SIZE);
+		uskb->len = NATFLOW_USKB_SIZE;
 		uskb->pkt_type = PACKET_HOST;
 		uskb->transport_header = uskb->network_header + sizeof(struct iphdr);
 
