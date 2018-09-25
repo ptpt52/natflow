@@ -570,7 +570,7 @@ static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, s
 
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
-static unsigned natflow_user_pre_hook(unsigned int hooknum,
+static unsigned int natflow_user_pre_hook(unsigned int hooknum,
 		struct sk_buff *skb,
 		const struct net_device *in,
 		const struct net_device *out,
@@ -737,7 +737,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
-static unsigned natflow_user_forward_hook(unsigned int hooknum,
+static unsigned int natflow_user_forward_hook(unsigned int hooknum,
 		struct sk_buff *skb,
 		const struct net_device *in,
 		const struct net_device *out,
