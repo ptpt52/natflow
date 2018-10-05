@@ -137,14 +137,15 @@ static inline struct zone_match_t *natflow_zone_match_get(int idx)
 	return NULL;
 }
 
-static char natflow_zone_ctl_buffer[PAGE_SIZE];
+static int natflow_zone_ctl_buffer_use = 0;
+static char *natflow_zone_ctl_buffer = NULL;
 static void *natflow_zone_start(struct seq_file *m, loff_t *pos)
 {
 	int n = 0;
 
 	if ((*pos) == 0) {
 		n = snprintf(natflow_zone_ctl_buffer,
-				sizeof(natflow_zone_ctl_buffer) - 1,
+				PAGE_SIZE - 1,
 				"# Usage:\n"
 				"#    lan_zone <id>=<if_name> -- set interface lan_zone\n"
 				"#    wan_zone <id>=<if_name> -- set interface wan_zone\n"
@@ -170,7 +171,7 @@ static void *natflow_zone_start(struct seq_file *m, loff_t *pos)
 		if (zm) {
 			natflow_zone_ctl_buffer[0] = 0;
 			n = snprintf(natflow_zone_ctl_buffer,
-					sizeof(natflow_zone_ctl_buffer) - 1,
+					PAGE_SIZE - 1,
 					"%s %u=%s\n",
 					zm->type == ZONE_TYPE_LAN ? "lan_zone" : "wan_zone",
 					zm->id, zm->if_name);
@@ -292,18 +293,34 @@ done:
 
 static int natflow_zone_open(struct inode *inode, struct file *file)
 {
-	int ret = seq_open(file, &natflow_zone_seq_ops);
-	if (ret)
-		return ret;
+	int ret;
 	//set nonseekable
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
+	if (natflow_zone_ctl_buffer_use++ == 0) {
+		natflow_zone_ctl_buffer = kmalloc(PAGE_SIZE, GFP_KERNEL);
+		if (natflow_zone_ctl_buffer == NULL) {
+			natflow_zone_ctl_buffer_use--;
+			return -ENOMEM;
+		}
+	}
+
+	ret = seq_open(file, &natflow_zone_seq_ops);
+	if (ret)
+		return ret;
 	return 0;
 }
 
 static int natflow_zone_release(struct inode *inode, struct file *file)
 {
-	return seq_release(inode, file);
+	int ret = seq_release(inode, file);
+
+	if (--natflow_zone_ctl_buffer_use == 0) {
+		kfree(natflow_zone_ctl_buffer);
+		natflow_zone_ctl_buffer = NULL;
+	}
+
+	return ret;
 }
 
 static struct file_operations natflow_zone_fops = {

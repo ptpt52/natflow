@@ -47,14 +47,15 @@ const char *natflow_dev_name = "natflow_ctl";
 static struct class *natflow_class;
 static struct device *natflow_dev;
 
-static char natflow_ctl_buffer[PAGE_SIZE];
+static int natflow_ctl_buffer_use = 0;
+static char *natflow_ctl_buffer = NULL;
 static void *natflow_start(struct seq_file *m, loff_t *pos)
 {
 	int n = 0;
 
 	if ((*pos) == 0) {
 		n = snprintf(natflow_ctl_buffer,
-				sizeof(natflow_ctl_buffer) - 1,
+				PAGE_SIZE - 1,
 				"# Usage:\n"
 				"#    disabled=Number -- set disable/enable\n"
 				"#    debug=<num> -- set debug\n"
@@ -174,18 +175,36 @@ done:
 
 static int natflow_open(struct inode *inode, struct file *file)
 {
-	int ret = seq_open(file, &natflow_seq_ops);
-	if (ret)
-		return ret;
+	int ret;
 	//set nonseekable
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
+
+	if (natflow_ctl_buffer_use++ == 0)
+	{
+		natflow_ctl_buffer = kmalloc(PAGE_SIZE, GFP_KERNEL);
+		if (natflow_ctl_buffer == NULL) {
+			natflow_ctl_buffer_use--;
+			return -ENOMEM;
+		}
+	}
+
+	ret = seq_open(file, &natflow_seq_ops);
+	if (ret)
+		return ret;
 
 	return 0;
 }
 
 static int natflow_release(struct inode *inode, struct file *file)
 {
-	return seq_release(inode, file);
+	int ret = seq_release(inode, file);
+
+	if (--natflow_ctl_buffer_use == 0) {
+		kfree(natflow_ctl_buffer);
+		natflow_ctl_buffer = NULL;
+	}
+
+	return ret;
 }
 
 static struct file_operations natflow_fops = {

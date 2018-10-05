@@ -972,14 +972,15 @@ static inline struct auth_rule_t *natflow_auth_rule_get(int idx)
 	return NULL;
 }
 
-static char natflow_user_ctl_buffer[PAGE_SIZE];
+static int natflow_user_ctl_buffer_use = 0;
+static char *natflow_user_ctl_buffer = NULL;
 static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 {
 	int n = 0;
 
 	if ((*pos) == 0) {
 		n = snprintf(natflow_user_ctl_buffer,
-				sizeof(natflow_user_ctl_buffer) - 1,
+				PAGE_SIZE - 1,
 				"# Usage:\n"
 				"#    clean -- clear all existing auth rule(s)\n"
 				"#    update_magic -- update auth rule magic\n"
@@ -1018,7 +1019,7 @@ static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 		if (rule) {
 			natflow_user_ctl_buffer[0] = 0;
 			n = snprintf(natflow_user_ctl_buffer,
-					sizeof(natflow_user_ctl_buffer) - 1,
+					PAGE_SIZE - 1,
 					"auth id=%u,szone=%u,type=%s,sipgrp=%s,ipwhite=%s,macwhite=%s\n",
 					rule->id, rule->src_zone_id, rule->auth_type == AUTH_TYPE_AUTO ? "auto" : "web",
 					rule->src_ipgrp_name, rule->src_whitelist_name, rule->mac_whitelist_name
@@ -1256,18 +1257,34 @@ done:
 
 static int natflow_user_open(struct inode *inode, struct file *file)
 {
-	int ret = seq_open(file, &natflow_user_seq_ops);
-	if (ret)
-		return ret;
+	int ret;
 	//set nonseekable
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
+	if (natflow_user_ctl_buffer_use++ == 0) {
+		natflow_user_ctl_buffer = kmalloc(PAGE_SIZE, GFP_KERNEL);
+		if (natflow_user_ctl_buffer == NULL) {
+			natflow_user_ctl_buffer_use--;
+			return -ENOMEM;
+		}
+	}
+
+	ret = seq_open(file, &natflow_user_seq_ops);
+	if (ret)
+		return ret;
 	return 0;
 }
 
 static int natflow_user_release(struct inode *inode, struct file *file)
 {
-	return seq_release(inode, file);
+	int ret = seq_release(inode, file);
+
+	if (--natflow_user_ctl_buffer_use == 0) {
+		kfree(natflow_user_ctl_buffer);
+		natflow_user_ctl_buffer = NULL;
+	}
+
+	return ret;
 }
 
 static struct file_operations natflow_user_fops = {
