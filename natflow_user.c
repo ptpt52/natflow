@@ -204,7 +204,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 		udph->len = __constant_htons(sizeof(struct udphdr));
 		udph->check = 0;
 
-		ret = nf_conntrack_in(&init_net, PF_INET, NF_INET_PRE_ROUTING, uskb);
+		ret = nf_conntrack_in_compat(&init_net, PF_INET, NF_INET_PRE_ROUTING, uskb);
 		if (ret != NF_ACCEPT) {
 			return NULL;
 		}

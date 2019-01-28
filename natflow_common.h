@@ -223,4 +223,24 @@ extern int ip_set_test_src_mac(const struct net_device *in, const struct net_dev
 
 unsigned int natflow_dnat_setup(struct nf_conn *ct, __be32 addr, __be16 man_proto);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0)
+static inline unsigned int nf_conntrack_in_compat(struct net *net, u_int8_t pf, unsigned int hooknum, struct sk_buff *skb)
+{
+	return nf_conntrack_in(net, pf, hooknum, skb);
+}
+#else
+static inline unsigned int nf_conntrack_in_compat(struct net *net, u_int8_t pf, unsigned int hooknum, struct sk_buff *skb)
+{
+	struct nf_hook_state state = {
+		.hook = hooknum,
+		.pf = pf,
+		.net = net,
+	};
+
+	return nf_conntrack_in(skb, &state);
+}
+
+#define need_conntrack() do {} while (0)
+#endif
+
 #endif /* _NATFLOW_COMMON_H_ */
