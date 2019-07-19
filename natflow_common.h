@@ -21,8 +21,11 @@
 #include <net/netfilter/nf_conntrack_core.h>
 #include <net/netfilter/nf_conntrack_zones.h>
 #include <net/netfilter/nf_nat.h>
-#include <net/netfilter/nf_nat_core.h>
 #include "natflow.h"
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)
+#include <net/netfilter/nf_nat_core.h>
+#endif
 
 #define MODULE_NAME "natflow"
 #define NATFLOW_VERSION "1.0.0"
