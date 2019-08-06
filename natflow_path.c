@@ -138,6 +138,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		if (!(nf->status & NF_FF_REPLY) && !simple_test_and_set_bit(NF_FF_REPLY_BIT, &nf->status)) {
 			void *l2 = (void *)skb_mac_header(skb);
 			int l2_len = (void *)iph - l2;
+			if (skb->dev->flags & IFF_NOARP) {
+				l2_len = 0;
+			}
 			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
 				nf->rroute[NF_FF_DIR_REPLY].l2_head_len = l2_len;
 				memcpy(nf->rroute[NF_FF_DIR_REPLY].l2_head, l2, l2_len);
@@ -170,6 +173,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		if (!(nf->status & NF_FF_ORIGINAL) && !simple_test_and_set_bit(NF_FF_ORIGINAL_BIT, &nf->status)) {
 			void *l2 = (void *)skb_mac_header(skb);
 			int l2_len = (void *)iph - l2;
+			if (skb->dev->flags & IFF_NOARP) {
+				l2_len = 0;
+			}
 			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
 				nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len = l2_len;
 				memcpy(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head, l2, l2_len);
