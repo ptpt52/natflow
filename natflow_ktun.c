@@ -418,23 +418,23 @@ int natflow_ktun_send_reply(natflow_t *nf, struct nf_conn *ct, struct sk_buff *s
 	nudph = (struct udphdr *)((void *)niph + niph->ihl * 4);
 	memcpy((void *)nudph + sizeof(struct udphdr), payload, payload_len);
 	nudph->source = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.udp.port;
-	nudph->dest = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.udp.port;
+	nudph->dest = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.udp.port;
 	nudph->len = ntohs(nskb->len - niph->ihl * 4);
 	nudph->check = CSUM_MANGLED_0;
 
 	nskb->ip_summed = CHECKSUM_UNNECESSARY;
 	skb_rcsum_tcpudp(nskb);
 
-	if (nf->rroute[IP_CT_DIR_ORIGINAL].l2_head_len > skb_headroom(nskb) &&
-			pskb_expand_head(nskb, nf->rroute[IP_CT_DIR_ORIGINAL].l2_head_len, skb_tailroom(nskb), GFP_ATOMIC)) {
+	if (nf->rroute[IP_CT_DIR_REPLY].l2_head_len > skb_headroom(nskb) &&
+			pskb_expand_head(nskb, nf->rroute[NF_FF_DIR_REPLY].l2_head_len, skb_tailroom(nskb), GFP_ATOMIC)) {
 		consume_skb(nskb);
 		return NF_DROP;
 	}
 
-	skb_push(nskb, nf->rroute[IP_CT_DIR_ORIGINAL].l2_head_len);
+	skb_push(nskb, nf->rroute[IP_CT_DIR_REPLY].l2_head_len);
 	skb_reset_mac_header(nskb);
-	memcpy(skb_mac_header(nskb), nf->rroute[IP_CT_DIR_ORIGINAL].l2_head, nf->rroute[IP_CT_DIR_ORIGINAL].l2_head_len);
-	nskb->dev = nf->rroute[IP_CT_DIR_ORIGINAL].outdev;
+	memcpy(skb_mac_header(nskb), nf->rroute[IP_CT_DIR_REPLY].l2_head, nf->rroute[IP_CT_DIR_REPLY].l2_head_len);
+	nskb->dev = nf->rroute[IP_CT_DIR_REPLY].outdev;
 
 	dev_queue_xmit(nskb);
 
@@ -580,13 +580,16 @@ static unsigned int natflow_ktun_hook(void *priv,
 
 	if (get_byte4(data + 4) == __constant_htonl(0x00000001)) {
 		//reply
-		//0x10010001: resp=1, ret=001, code=0001 bcast fail
-		//0x10020001: resp=1, ret=002, code=0001 bcast ok
-		int payload_len = 8;
+		//0x10010001: resp=1, ret=001, code=0001 listen fail: smac, ip, port
+		//0x10020001: resp=1, ret=002, code=0001 listen ok:   smac, ip, port
+		int payload_len = 4 + 4 + 6 + 4 + 2;
 		unsigned char payload[64];
 
 		set_byte4(payload, __constant_htonl(KTUN_P_MAGIC));
 		set_byte4(payload + 4, __constant_htonl(0x10020001));
+		set_byte6(payload + 4 + 4, smac);
+		set_byte4(payload + 4 + 4 + 6, ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip);
+		set_byte2(payload + 4 + 4 + 6 + 4, ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.udp.port);
 
 		ret = natflow_ktun_send_reply(nf, ct, skb, payload, payload_len);
 		if (ret != NF_ACCEPT) {
@@ -594,11 +597,10 @@ static unsigned int natflow_ktun_hook(void *priv,
 		}
 	} else if (get_byte4(data + 4) == __constant_htonl(0x00000002)) {
 		//reply
-		//0x10010002: resp=1, ret=001, code=0002 bcast fail
-		//0x10020002: resp=1, ret=002, code=0002 bcast ok only
-		//0x10030002: resp=1, ret=003, code=0002 connect from smac to dmac via (ip,port)
-		//0x10040002: resp=1, ret=004, code=0002 bcast and connect all fail
-		int payload_len = 8;
+		//0x10010002: resp=1, ret=001, code=0002 connect fail:                smac, dmac, sip, sport, 0, 0
+		//0x10020002: resp=1, ret=002, code=0002 connect ready but not found: smac, dmac, sip, sport, 0, 0
+		//0x10030002: resp=1, ret=003, code=0002 connect ready and found:     smac, dmac, sip, sport, dip, dport
+		int payload_len = 4 + 4 + 6 + 6 + 4 + 2 + 4 + 2;
 		unsigned char payload[64];
 
 		struct nf_conn *user = NULL;
@@ -621,17 +623,24 @@ static unsigned int natflow_ktun_hook(void *priv,
 			user = nf_ct_tuplehash_to_ctrack(h);
 		}
 
-		set_byte4(payload, __constant_htonl(KTUN_P_MAGIC));
-		set_byte4(payload + 4, __constant_htonl(0x10020002));
-
 		if (user) {
-			payload_len = 8 + 6 + 6 + 4 + 2;
 			set_byte4(payload, __constant_htonl(KTUN_P_MAGIC));
 			set_byte4(payload + 4, __constant_htonl(0x10030002));
-			set_byte6(payload + 8, smac);
-			set_byte6(payload + 14, dmac);
-			set_byte4(payload + 20, user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip);
-			set_byte4(payload + 24, user->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.udp.port);
+			set_byte6(payload + 4 + 4, smac);
+			set_byte6(payload + 4 + 4 + 6, dmac);
+			set_byte4(payload + 4 + 4 + 6 + 6, ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip);
+			set_byte2(payload + 4 + 4 + 6 + 6 + 4, ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.udp.port);
+			set_byte4(payload + 4 + 4 + 6 + 6 + 4 + 2, user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip);
+			set_byte2(payload + 4 + 4 + 6 + 6 + 4 + 2 + 4, user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.udp.port);
+		} else {
+			set_byte4(payload, __constant_htonl(KTUN_P_MAGIC));
+			set_byte4(payload + 4, __constant_htonl(0x10020002));
+			set_byte6(payload + 4 + 4, smac);
+			set_byte6(payload + 4 + 4 + 6, dmac);
+			set_byte4(payload + 4 + 4 + 6 + 6, ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip);
+			set_byte2(payload + 4 + 4 + 6 + 6 + 4, ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.udp.port);
+			set_byte4(payload + 4 + 4 + 6 + 6 + 4 + 2, __constant_htonl(0));
+			set_byte2(payload + 4 + 4 + 6 + 6 + 4 + 2 + 4, __constant_htons(0));
 		}
 
 		ret = natflow_ktun_send_reply(nf, ct, skb, payload, payload_len);
@@ -645,13 +654,14 @@ static unsigned int natflow_ktun_hook(void *priv,
 				return NF_DROP;
 			}
 
-			payload_len = 8 + 6 + 6 + 4 + 2;
 			set_byte4(payload, __constant_htonl(KTUN_P_MAGIC));
 			set_byte4(payload + 4, __constant_htonl(0x10030002));
-			set_byte6(payload + 8, dmac);
-			set_byte6(payload + 14, smac);
-			set_byte4(payload + 20, ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip);
-			set_byte4(payload + 24, ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.udp.port);
+			set_byte6(payload + 4 + 4, dmac);
+			set_byte6(payload + 4 + 4 + 6, smac);
+			set_byte4(payload + 4 + 4 + 6 + 6, user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip);
+			set_byte2(payload + 4 + 4 + 6 + 6 + 4, user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.udp.port);
+			set_byte4(payload + 4 + 4 + 6 + 6 + 4 + 2, ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip);
+			set_byte2(payload + 4 + 4 + 6 + 6 + 4 + 2 + 4, ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.udp.port);
 
 			ret = natflow_ktun_send_reply(nf, user, skb, payload, payload_len);
 			if (ret != NF_ACCEPT) {
