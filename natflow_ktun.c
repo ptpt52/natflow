@@ -377,11 +377,69 @@ unsigned int natflow_ktun_snat_setup(struct nf_conn *ct, __be32 addr, __be16 man
     return __natflow_ktun_nat_setup(ct, addr, man_proto, 1);
 }
 
+#define KTUN_P_MAGIC 0xfffd0099
+
 #define KTUN_FAKEUSER_DADDR __constant_htonl(0x7ffffffe)
 #define KTUN_FAKEUSER_PORT __constant_htons(65534)
 
 #define TCPH(t) ((struct tcphdr *)(t))
 #define UDPH(u) ((struct udphdr *)(u))
+
+int natflow_ktun_send_reply(natflow_t *nf, struct nf_conn *ct, struct sk_buff *skb, void *payload, int payload_len)
+{
+	struct sk_buff *nskb;
+	struct iphdr *niph;
+	struct udphdr *nudph;
+	int offset, add_len;
+
+	offset = sizeof(struct iphdr) + sizeof(struct udphdr) + payload_len - (skb_headlen(skb) + skb_tailroom(skb));
+	add_len = offset < 0 ? 0 : offset;
+	offset += skb_tailroom(skb);
+	nskb = skb_copy_expand(skb, skb_headroom(skb), skb_tailroom(skb) + add_len, GFP_ATOMIC);
+	if (!nskb) {
+		NATFLOW_ERROR(DEBUG_FMT_PREFIX "alloc_skb fail\n", DEBUG_ARG_PREFIX);
+		return NF_DROP;
+	}
+	nskb->tail += offset;
+	nskb->len = sizeof(struct iphdr) + sizeof(struct udphdr) + payload_len;
+
+	niph = ip_hdr(nskb);
+	niph->saddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
+	niph->daddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+	niph->version = ip_hdr(skb)->version;
+	niph->ihl = sizeof(struct iphdr) / 4;
+	niph->tos = 0;
+	niph->tot_len = htons(nskb->len);
+	niph->ttl = 0x80;
+	niph->protocol = ip_hdr(skb)->protocol;
+	niph->id = __constant_htons(0xdead);
+	niph->frag_off = 0x0;
+
+	nudph = (struct udphdr *)((void *)niph + niph->ihl * 4);
+	memcpy((void *)nudph + sizeof(struct udphdr), payload, payload_len);
+	nudph->source = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.udp.port;
+	nudph->dest = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.udp.port;
+	nudph->len = ntohs(nskb->len - niph->ihl * 4);
+	nudph->check = CSUM_MANGLED_0;
+
+	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+	skb_rcsum_tcpudp(nskb);
+
+	if (nf->rroute[IP_CT_DIR_ORIGINAL].l2_head_len > skb_headroom(nskb) &&
+			pskb_expand_head(nskb, nf->rroute[IP_CT_DIR_ORIGINAL].l2_head_len, skb_tailroom(nskb), GFP_ATOMIC)) {
+		consume_skb(nskb);
+		return NF_DROP;
+	}
+
+	skb_push(nskb, nf->rroute[IP_CT_DIR_ORIGINAL].l2_head_len);
+	skb_reset_mac_header(nskb);
+	memcpy(skb_mac_header(nskb), nf->rroute[IP_CT_DIR_ORIGINAL].l2_head, nf->rroute[IP_CT_DIR_ORIGINAL].l2_head_len);
+	nskb->dev = nf->rroute[IP_CT_DIR_ORIGINAL].outdev;
+
+	dev_queue_xmit(nskb);
+
+	return NF_ACCEPT;
+}
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned natflow_ktun_hook(unsigned int hooknum,
@@ -452,7 +510,7 @@ static unsigned int natflow_ktun_hook(void *priv,
 	}
 
 	if (!skb_make_writable(skb, iph->ihl * 4 + sizeof(struct udphdr) + 4) ||
-			get_byte4((void *)UDPH(l4) + sizeof(struct udphdr)) != __constant_htonl(0xfffd0099)) {
+			get_byte4((void *)UDPH(l4) + sizeof(struct udphdr)) != __constant_htonl(KTUN_P_MAGIC)) {
 		return NF_ACCEPT;
 	}
 	if (!skb_make_writable(skb, skb->len)) {
@@ -479,10 +537,10 @@ static unsigned int natflow_ktun_hook(void *priv,
 		struct nf_conntrack_tuple tuple;
 		
 		memset(&tuple, 0, sizeof(tuple));
-		tuple.src.u3.ip = KTUN_FAKEUSER_DADDR;
-		tuple.src.u.udp.port = KTUN_FAKEUSER_PORT;
-		tuple.dst.u3.ip = get_byte4(smac);
-		tuple.dst.u.udp.port = get_byte2(smac + 4);
+		tuple.src.u3.ip = get_byte4(smac);
+		tuple.src.u.udp.port = get_byte2(smac + 4);
+		tuple.dst.u3.ip = KTUN_FAKEUSER_DADDR;
+		tuple.dst.u.udp.port = KTUN_FAKEUSER_PORT;
 		tuple.src.l3num = PF_INET;
 		tuple.dst.protonum = IPPROTO_UDP;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
@@ -497,10 +555,10 @@ static unsigned int natflow_ktun_hook(void *priv,
         }
 		//lookup exist user? force drop it?
 
-		natflow_ktun_dnat_setup(ct, KTUN_FAKEUSER_DADDR, KTUN_FAKEUSER_PORT);
+		natflow_ktun_dnat_setup(ct, get_byte4(smac), get_byte2(smac + 4));
 		//DNAT setup
 
-		natflow_ktun_snat_setup(ct, get_byte4(smac), get_byte2(smac + 4));
+		natflow_ktun_snat_setup(ct, KTUN_FAKEUSER_DADDR, KTUN_FAKEUSER_PORT);
 		//SNAT setup
 	}
 
@@ -524,11 +582,82 @@ static unsigned int natflow_ktun_hook(void *priv,
 		//reply
 		//0x10010001: resp=1, ret=001, code=0001 bcast fail
 		//0x10020001: resp=1, ret=002, code=0001 bcast ok
+		int payload_len = 8;
+		unsigned char payload[64];
+
+		set_byte4(payload, __constant_htonl(KTUN_P_MAGIC));
+		set_byte4(payload + 4, __constant_htonl(0x10020001));
+
+		ret = natflow_ktun_send_reply(nf, ct, skb, payload, payload_len);
+		if (ret != NF_ACCEPT) {
+			return ret;
+		}
 	} else if (get_byte4(data + 4) == __constant_htonl(0x00000002)) {
 		//reply
-		//0x10010002: resp=1, ret=001, code=0002 bcast fail and connect fail
-		//0x10020002: resp=1, ret=002, code=0002 bcast ok but connect fail
-		//0x10030002: resp=1, ret=003, code=0002 bcast ok and connect ok
+		//0x10010002: resp=1, ret=001, code=0002 bcast fail
+		//0x10020002: resp=1, ret=002, code=0002 bcast ok only
+		//0x10030002: resp=1, ret=003, code=0002 connect from smac to dmac via (ip,port)
+		//0x10040002: resp=1, ret=004, code=0002 bcast and connect all fail
+		int payload_len = 8;
+		unsigned char payload[64];
+
+		struct nf_conn *user = NULL;
+		struct nf_conntrack_tuple_hash *h;
+		struct nf_conntrack_tuple tuple;
+
+		memset(&tuple, 0, sizeof(tuple));
+		tuple.src.u3.ip = get_byte4(dmac);
+		tuple.src.u.udp.port = get_byte2(dmac + 4);
+		tuple.dst.u3.ip = KTUN_FAKEUSER_DADDR;
+		tuple.dst.u.udp.port = KTUN_FAKEUSER_PORT;
+		tuple.src.l3num = PF_INET;
+		tuple.dst.protonum = IPPROTO_UDP;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
+        h = nf_conntrack_find_get(net, NF_CT_DEFAULT_ZONE, &tuple);
+#else
+        h = nf_conntrack_find_get(net, &nf_ct_zone_dflt, &tuple);
+#endif
+		if (h) {
+			user = nf_ct_tuplehash_to_ctrack(h);
+		}
+
+		set_byte4(payload, __constant_htonl(KTUN_P_MAGIC));
+		set_byte4(payload + 4, __constant_htonl(0x10020002));
+
+		if (user) {
+			payload_len = 8 + 6 + 6 + 4 + 2;
+			set_byte4(payload, __constant_htonl(KTUN_P_MAGIC));
+			set_byte4(payload + 4, __constant_htonl(0x10030002));
+			set_byte6(payload + 8, smac);
+			set_byte6(payload + 14, dmac);
+			set_byte4(payload + 20, user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip);
+			set_byte4(payload + 24, user->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.udp.port);
+		}
+
+		ret = natflow_ktun_send_reply(nf, ct, skb, payload, payload_len);
+		if (ret != NF_ACCEPT) {
+			return ret;
+		}
+
+		if (user) {
+			nf = natflow_session_get(user);
+			if (!nf || !(nf->status & NF_FF_REPLY_OK)) {
+				return NF_DROP;
+			}
+
+			payload_len = 8 + 6 + 6 + 4 + 2;
+			set_byte4(payload, __constant_htonl(KTUN_P_MAGIC));
+			set_byte4(payload + 4, __constant_htonl(0x10030002));
+			set_byte6(payload + 8, dmac);
+			set_byte6(payload + 14, smac);
+			set_byte4(payload + 20, ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip);
+			set_byte4(payload + 24, ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.udp.port);
+
+			ret = natflow_ktun_send_reply(nf, user, skb, payload, payload_len);
+			if (ret != NF_ACCEPT) {
+				return ret;
+			}
+		}
 	}
 
 	consume_skb(skb);
