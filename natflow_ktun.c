@@ -562,11 +562,6 @@ static unsigned int natflow_ktun_hook(void *priv,
 		//SNAT setup
 	}
 
-	ret = nf_conntrack_confirm(skb);
-	if (ret != NF_ACCEPT) {
-		return ret;
-	}
-
 	nf = natflow_session_in(ct);
 	if (NULL == nf) {
 		NATFLOW_WARN("(NK)" DEBUG_UDP_FMT ": natflow_session_in\n", DEBUG_UDP_ARG(iph,l4));
@@ -576,6 +571,11 @@ static unsigned int natflow_ktun_hook(void *priv,
 
 	if (!(nf->status & NF_FF_REPLY_OK)) {
 		return NF_DROP;
+	}
+
+	ret = nf_conntrack_confirm(skb);
+	if (ret != NF_ACCEPT) {
+		return ret;
 	}
 
 	if (get_byte4(data + 4) == __constant_htonl(0x00000001)) {
