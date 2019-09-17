@@ -50,6 +50,62 @@ void natflow_update_magic(int init)
 	}
 }
 
+void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir)
+{
+	int magic = natflow_path_magic;
+	struct iphdr *iph = ip_hdr(skb);
+
+	if (nf->magic != magic) {
+		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
+		simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
+		nf->magic = magic;
+	}
+
+	if (dir == IP_CT_DIR_ORIGINAL) {
+		if (!(nf->status & NF_FF_REPLY) && !simple_test_and_set_bit(NF_FF_REPLY_BIT, &nf->status)) {
+			void *l2 = (void *)skb_mac_header(skb);
+			int l2_len = (void *)iph - l2;
+			if (skb->dev->flags & IFF_NOARP) {
+				l2_len = 0;
+			}
+			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
+				nf->rroute[NF_FF_DIR_REPLY].l2_head_len = l2_len;
+				memcpy(nf->rroute[NF_FF_DIR_REPLY].l2_head, l2, l2_len);
+				nf->rroute[NF_FF_DIR_REPLY].outdev = skb->dev;
+				if (l2_len >= ETH_HLEN) {
+					unsigned char mac[ETH_ALEN];
+					memcpy(mac, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
+					memcpy(ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
+					memcpy(ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, mac, ETH_ALEN);
+				}
+				simple_set_bit(NF_FF_REPLY_OK_BIT, &nf->status);
+			}
+		}
+	} else {
+		if (!(nf->status & NF_FF_ORIGINAL) && !simple_test_and_set_bit(NF_FF_ORIGINAL_BIT, &nf->status)) {
+			void *l2 = (void *)skb_mac_header(skb);
+			int l2_len = (void *)iph - l2;
+			if (skb->dev->flags & IFF_NOARP) {
+				l2_len = 0;
+			}
+			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
+				nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len = l2_len;
+				memcpy(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head, l2, l2_len);
+				nf->rroute[NF_FF_DIR_ORIGINAL].outdev = skb->dev;
+				if (l2_len >= ETH_HLEN) {
+					unsigned char mac[ETH_ALEN];
+					memcpy(mac, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
+					memcpy(ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
+					memcpy(ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, mac, ETH_ALEN);
+				}
+				simple_set_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
+			}
+		}
+	}
+}
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned int natflow_path_pre_ct_in_hook(unsigned int hooknum,
 		struct sk_buff *skb,
@@ -92,7 +148,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	void *l4;
 	natflow_t *nf;
 	int ret;
-	int magic = natflow_path_magic;
 
 	if (disabled)
 		return NF_ACCEPT;
@@ -126,88 +181,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	if (NULL == nf) {
 		return NF_ACCEPT;
 	}
-	if (nf->magic != magic) {
-		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
-		simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
-		nf->magic = magic;
-	}
 
-	if (CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL) {
-		if (!(nf->status & NF_FF_REPLY) && !simple_test_and_set_bit(NF_FF_REPLY_BIT, &nf->status)) {
-			void *l2 = (void *)skb_mac_header(skb);
-			int l2_len = (void *)iph - l2;
-			if (skb->dev->flags & IFF_NOARP) {
-				l2_len = 0;
-			}
-			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
-				nf->rroute[NF_FF_DIR_REPLY].l2_head_len = l2_len;
-				memcpy(nf->rroute[NF_FF_DIR_REPLY].l2_head, l2, l2_len);
-				nf->rroute[NF_FF_DIR_REPLY].outdev = skb->dev;
-				if (l2_len >= ETH_HLEN) {
-					unsigned char mac[ETH_ALEN];
-					memcpy(mac, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
-					memcpy(ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
-					memcpy(ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, mac, ETH_ALEN);
-				}
-				simple_set_bit(NF_FF_REPLY_OK_BIT, &nf->status);
-
-				if (iph->protocol == IPPROTO_TCP) {
-					NATFLOW_DEBUG("(PCI)" DEBUG_TCP_FMT ": NF_FF_REPLY_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
-							DEBUG_TCP_ARG(iph,l4),
-							MAC_HEADER_ARG(nf->rroute[NF_FF_DIR_REPLY].l2_head),
-							nf->rroute[NF_FF_DIR_REPLY].l2_head_len,
-							nf->rroute[NF_FF_DIR_REPLY].outdev->name);
-				} else {
-					NATFLOW_DEBUG("(PCI)" DEBUG_UDP_FMT ": NF_FF_REPLY_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
-							DEBUG_UDP_ARG(iph,l4),
-							MAC_HEADER_ARG(nf->rroute[NF_FF_DIR_REPLY].l2_head),
-							nf->rroute[NF_FF_DIR_REPLY].l2_head_len,
-							nf->rroute[NF_FF_DIR_REPLY].outdev->name);
-				}
-			}
-		}
-		dir = NF_FF_DIR_ORIGINAL;
-	} else {
-		if (!(nf->status & NF_FF_ORIGINAL) && !simple_test_and_set_bit(NF_FF_ORIGINAL_BIT, &nf->status)) {
-			void *l2 = (void *)skb_mac_header(skb);
-			int l2_len = (void *)iph - l2;
-			if (skb->dev->flags & IFF_NOARP) {
-				l2_len = 0;
-			}
-			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
-				nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len = l2_len;
-				memcpy(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head, l2, l2_len);
-				nf->rroute[NF_FF_DIR_ORIGINAL].outdev = skb->dev;
-				if (l2_len >= ETH_HLEN) {
-					unsigned char mac[ETH_ALEN];
-					memcpy(mac, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
-					memcpy(ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
-					memcpy(ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, mac, ETH_ALEN);
-				}
-				simple_set_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
-
-				switch (iph->protocol) {
-					case IPPROTO_TCP:
-						NATFLOW_DEBUG("(PCI)" DEBUG_TCP_FMT ": NF_FF_ORIGINAL_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
-								DEBUG_TCP_ARG(iph,l4),
-								MAC_HEADER_ARG(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head),
-								nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len,
-								nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name);
-						break;
-					case IPPROTO_UDP:
-						NATFLOW_DEBUG("(PCI)" DEBUG_UDP_FMT ": NF_FF_ORIGINAL_OK\n" MAC_HEADER_FMT " l2_len=%d dev=%s\n",
-								DEBUG_UDP_ARG(iph,l4),
-								MAC_HEADER_ARG(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head),
-								nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len,
-								nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name);
-						break;
-				}
-			}
-		}
-		dir = NF_FF_DIR_REPLY;
-	}
+	dir = CTINFO2DIR(ctinfo);
+	natflow_session_learn(skb, ct, nf, dir);
 
 	if ((ct->status & IPS_NATFLOW_FF_STOP)) {
 		return NF_ACCEPT;

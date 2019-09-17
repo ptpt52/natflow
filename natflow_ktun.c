@@ -40,6 +40,7 @@
 #include <net/udp.h>
 
 #include "natflow_common.h"
+#include "natflow_path.h"
 
 static inline unsigned char get_byte1(const unsigned char *p)
 {
@@ -396,20 +397,20 @@ static unsigned int natflow_ktun_hook(const struct nf_hook_ops *ops,
 		const struct net_device *out,
 		int (*okfn)(struct sk_buff *))
 {
-	//unsigned int hooknum = ops->hooknum;
+	unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_ktun_hook(const struct nf_hook_ops *ops,
 		struct sk_buff *skb,
 		const struct nf_hook_state *state)
 {
-	//unsigned int hooknum = state->hook;
+	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 #else
 static unsigned int natflow_ktun_hook(void *priv,
 		struct sk_buff *skb,
 		const struct nf_hook_state *state)
 {
-	//unsigned int hooknum = state->hook;
+	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 #endif
 	int ret = 0;
@@ -418,6 +419,7 @@ static unsigned int natflow_ktun_hook(void *priv,
 	struct nf_conn *ct;
 	struct iphdr *iph;
 	void *l4;
+	natflow_t *nf;
 	unsigned char *data;
 	int data_len;
 	unsigned char smac[6];
@@ -505,6 +507,17 @@ static unsigned int natflow_ktun_hook(void *priv,
 	ret = nf_conntrack_confirm(skb);
 	if (ret != NF_ACCEPT) {
 		return ret;
+	}
+
+	nf = natflow_session_in(ct);
+	if (NULL == nf) {
+		NATFLOW_WARN("(NK)" DEBUG_UDP_FMT ": natflow_session_in\n", DEBUG_UDP_ARG(iph,l4));
+		return NF_DROP;
+	}
+	natflow_session_learn(skb, ct, nf, IP_CT_DIR_ORIGINAL);
+
+	if (!(nf->status & NF_FF_REPLY_OK)) {
+		return NF_DROP;
 	}
 
 	if (get_byte4(data + 4) == __constant_htonl(0x00000001)) {

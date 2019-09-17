@@ -211,6 +211,7 @@ static inline int natflow_do_dnat(struct sk_buff *skb, struct nf_conn *ct, int d
 	return 0;
 }
 
+void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir);
 
 extern int natflow_path_init(void);
 extern void natflow_path_exit(void);
