@@ -380,8 +380,8 @@ unsigned int natflow_ktun_snat_setup(struct nf_conn *ct, __be32 addr, __be16 man
 
 #define KTUN_P_MAGIC 0xfffd0099
 
-#define KTUN_FAKEUSER_DADDR __constant_htonl(0x7ffffffe)
-#define KTUN_FAKEUSER_PORT __constant_htons(65534)
+#define KTUN_FAKEUSER_DADDR __constant_htonl(0x7ffffffd)
+#define KTUN_FAKEUSER_PORT __constant_htons(65535)
 
 #define TCPH(t) ((struct tcphdr *)(t))
 #define UDPH(u) ((struct udphdr *)(u))
