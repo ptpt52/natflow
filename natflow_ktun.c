@@ -558,13 +558,19 @@ static unsigned int natflow_ktun_hook(void *priv,
 		natflow_ktun_dnat_setup(ct, get_byte4(smac), get_byte2(smac + 4));
 		//DNAT setup
 
+		nf = natflow_session_in(ct);
+		if (NULL == nf) {
+			NATFLOW_WARN("(NK)" DEBUG_UDP_FMT ": natflow_session_in\n", DEBUG_UDP_ARG(iph,l4));
+			return NF_DROP;
+		}
+
 		natflow_ktun_snat_setup(ct, KTUN_FAKEUSER_DADDR, KTUN_FAKEUSER_PORT);
 		//SNAT setup
 	}
 
-	nf = natflow_session_in(ct);
+	nf = natflow_session_get(ct);
 	if (NULL == nf) {
-		NATFLOW_WARN("(NK)" DEBUG_UDP_FMT ": natflow_session_in\n", DEBUG_UDP_ARG(iph,l4));
+		NATFLOW_WARN("(NK)" DEBUG_UDP_FMT ": natflow_session_get\n", DEBUG_UDP_ARG(iph,l4));
 		return NF_DROP;
 	}
 	natflow_session_learn(skb, ct, nf, IP_CT_DIR_ORIGINAL);
@@ -645,12 +651,14 @@ static unsigned int natflow_ktun_hook(void *priv,
 
 		ret = natflow_ktun_send_reply(nf, ct, skb, payload, payload_len);
 		if (ret != NF_ACCEPT) {
+			nf_ct_put(user);
 			return ret;
 		}
 
 		if (user) {
 			nf = natflow_session_get(user);
 			if (!nf || !(nf->status & NF_FF_REPLY_OK)) {
+				nf_ct_put(user);
 				return NF_DROP;
 			}
 
@@ -665,8 +673,11 @@ static unsigned int natflow_ktun_hook(void *priv,
 
 			ret = natflow_ktun_send_reply(nf, user, skb, payload, payload_len);
 			if (ret != NF_ACCEPT) {
+				nf_ct_put(user);
 				return ret;
 			}
+
+			nf_ct_put(user);
 		}
 	}
 
