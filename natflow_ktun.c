@@ -104,7 +104,8 @@ static inline int inet_is_local(const struct net_device *dev, __be32 ip)
 			rcu_read_unlock();
 			return 1;
 		}
-	} endfor_ifa(in_dev);
+	}
+	endfor_ifa(in_dev);
 	rcu_read_unlock();
 
 	return 0;
@@ -125,17 +126,17 @@ static void *natflow_ktun_start(struct seq_file *m, loff_t *pos)
 
 	if ((*pos) == 0) {
 		n = snprintf(natflow_ktun_ctl_buffer,
-				sizeof(natflow_ktun_ctl_buffer) - 1,
-				"# Usage:\n"
-				"#    hsts_host=hostname -- set hostname\n"
-				"#\n"
-				"# Info:\n"
-				"#    ...\n"
-				"#\n"
-				"# Reload cmd:\n"
-				"\n"
-				"\n"
-				);
+		             sizeof(natflow_ktun_ctl_buffer) - 1,
+		             "# Usage:\n"
+		             "#    hsts_host=hostname -- set hostname\n"
+		             "#\n"
+		             "# Info:\n"
+		             "#    ...\n"
+		             "#\n"
+		             "# Reload cmd:\n"
+		             "\n"
+		             "\n"
+		            );
 		natflow_ktun_ctl_buffer[n] = 0;
 		return natflow_ktun_ctl_buffer;
 	}
@@ -312,69 +313,69 @@ int skb_rcsum_tcpudp(struct sk_buff *skb)
 static unsigned int __natflow_ktun_nat_setup(struct nf_conn *ct, __be32 addr, __be16 man_proto, int type)
 {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 3, 0)
-    struct nf_nat_range range;
-    if (nf_nat_initialized(ct, type == 0 ? IP_NAT_MANIP_DST : IP_NAT_MANIP_SRC)) {
-        return NF_ACCEPT;
-    }
-    memset(&range.min_ip, 0, sizeof(range.min_ip));
-    memset(&range.max_ip, 0, sizeof(range.max_ip));
-    range.flags = IP_NAT_RANGE_MAP_IPS | IP_NAT_RANGE_PROTO_SPECIFIED;
-    range.min_ip = addr;
-    range.max_ip = addr;
-    range.min.all = man_proto;
-    range.max.all = man_proto;
-    return nf_nat_setup_info(ct, &range, type == 0 ? IP_NAT_MANIP_DST : IP_NAT_MANIP_SRC);
+	struct nf_nat_range range;
+	if (nf_nat_initialized(ct, type == 0 ? IP_NAT_MANIP_DST : IP_NAT_MANIP_SRC)) {
+		return NF_ACCEPT;
+	}
+	memset(&range.min_ip, 0, sizeof(range.min_ip));
+	memset(&range.max_ip, 0, sizeof(range.max_ip));
+	range.flags = IP_NAT_RANGE_MAP_IPS | IP_NAT_RANGE_PROTO_SPECIFIED;
+	range.min_ip = addr;
+	range.max_ip = addr;
+	range.min.all = man_proto;
+	range.max.all = man_proto;
+	return nf_nat_setup_info(ct, &range, type == 0 ? IP_NAT_MANIP_DST : IP_NAT_MANIP_SRC);
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(3, 7, 0)
-    struct nf_nat_ipv4_range range;
-    if (nf_nat_initialized(ct, type == 0 ? NF_NAT_MANIP_DST : NF_NAT_MANIP_SRC)) {
-        return NF_ACCEPT;
-    }
-    memset(&range.min_ip, 0, sizeof(range.min_ip));
-    memset(&range.max_ip, 0, sizeof(range.max_ip));
-    range.flags = NF_NAT_RANGE_MAP_IPS | NF_NAT_RANGE_PROTO_SPECIFIED;
-    range.min_ip = addr;
-    range.max_ip = addr;
-    range.min.all = man_proto;
-    range.max.all = man_proto;
-    return nf_nat_setup_info(ct, &range, type == 0 ? NF_NAT_MANIP_DST : NF_NAT_MANIP_SRC);
+	struct nf_nat_ipv4_range range;
+	if (nf_nat_initialized(ct, type == 0 ? NF_NAT_MANIP_DST : NF_NAT_MANIP_SRC)) {
+		return NF_ACCEPT;
+	}
+	memset(&range.min_ip, 0, sizeof(range.min_ip));
+	memset(&range.max_ip, 0, sizeof(range.max_ip));
+	range.flags = NF_NAT_RANGE_MAP_IPS | NF_NAT_RANGE_PROTO_SPECIFIED;
+	range.min_ip = addr;
+	range.max_ip = addr;
+	range.min.all = man_proto;
+	range.max.all = man_proto;
+	return nf_nat_setup_info(ct, &range, type == 0 ? NF_NAT_MANIP_DST : NF_NAT_MANIP_SRC);
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
-    struct nf_nat_range range;
-    if (nf_nat_initialized(ct, type == 0 ? NF_NAT_MANIP_DST : NF_NAT_MANIP_SRC)) {
-        return NF_ACCEPT;
-    }
-    memset(&range.min_addr, 0, sizeof(range.min_addr));
-    memset(&range.max_addr, 0, sizeof(range.max_addr));
-    range.flags = NF_NAT_RANGE_MAP_IPS | NF_NAT_RANGE_PROTO_SPECIFIED;
-    range.min_addr.ip = addr;
-    range.max_addr.ip = addr;
-    range.min_proto.all = man_proto;
-    range.max_proto.all = man_proto;
-    return nf_nat_setup_info(ct, &range, type == 0 ? NF_NAT_MANIP_DST : NF_NAT_MANIP_SRC);
+	struct nf_nat_range range;
+	if (nf_nat_initialized(ct, type == 0 ? NF_NAT_MANIP_DST : NF_NAT_MANIP_SRC)) {
+		return NF_ACCEPT;
+	}
+	memset(&range.min_addr, 0, sizeof(range.min_addr));
+	memset(&range.max_addr, 0, sizeof(range.max_addr));
+	range.flags = NF_NAT_RANGE_MAP_IPS | NF_NAT_RANGE_PROTO_SPECIFIED;
+	range.min_addr.ip = addr;
+	range.max_addr.ip = addr;
+	range.min_proto.all = man_proto;
+	range.max_proto.all = man_proto;
+	return nf_nat_setup_info(ct, &range, type == 0 ? NF_NAT_MANIP_DST : NF_NAT_MANIP_SRC);
 #else
-    struct nf_nat_range2 range;
-    if (nf_nat_initialized(ct, type == 0 ? NF_NAT_MANIP_DST : NF_NAT_MANIP_SRC)) {
-        return NF_ACCEPT;
-    }
-    memset(&range.min_addr, 0, sizeof(range.min_addr));
-    memset(&range.max_addr, 0, sizeof(range.max_addr));
-    range.flags = NF_NAT_RANGE_MAP_IPS | NF_NAT_RANGE_PROTO_SPECIFIED;
-    range.min_addr.ip = addr;
-    range.max_addr.ip = addr;
-    range.min_proto.all = man_proto;
-    range.max_proto.all = man_proto;
-    memset(&range.base_proto, 0, sizeof(range.base_proto));
-    return nf_nat_setup_info(ct, &range, type == 0 ? NF_NAT_MANIP_DST : NF_NAT_MANIP_SRC);
+	struct nf_nat_range2 range;
+	if (nf_nat_initialized(ct, type == 0 ? NF_NAT_MANIP_DST : NF_NAT_MANIP_SRC)) {
+		return NF_ACCEPT;
+	}
+	memset(&range.min_addr, 0, sizeof(range.min_addr));
+	memset(&range.max_addr, 0, sizeof(range.max_addr));
+	range.flags = NF_NAT_RANGE_MAP_IPS | NF_NAT_RANGE_PROTO_SPECIFIED;
+	range.min_addr.ip = addr;
+	range.max_addr.ip = addr;
+	range.min_proto.all = man_proto;
+	range.max_proto.all = man_proto;
+	memset(&range.base_proto, 0, sizeof(range.base_proto));
+	return nf_nat_setup_info(ct, &range, type == 0 ? NF_NAT_MANIP_DST : NF_NAT_MANIP_SRC);
 #endif
 }
 
 unsigned int natflow_ktun_dnat_setup(struct nf_conn *ct, __be32 addr, __be16 man_proto)
 {
-    return __natflow_ktun_nat_setup(ct, addr, man_proto, 0);
+	return __natflow_ktun_nat_setup(ct, addr, man_proto, 0);
 }
 
 unsigned int natflow_ktun_snat_setup(struct nf_conn *ct, __be32 addr, __be16 man_proto)
 {
-    return __natflow_ktun_nat_setup(ct, addr, man_proto, 1);
+	return __natflow_ktun_nat_setup(ct, addr, man_proto, 1);
 }
 
 #define KTUN_P_MAGIC 0xfffd0099
@@ -426,7 +427,7 @@ int natflow_ktun_send_reply(natflow_t *nf, struct nf_conn *ct, struct sk_buff *s
 	skb_rcsum_tcpudp(nskb);
 
 	if (nf->rroute[IP_CT_DIR_REPLY].l2_head_len > skb_headroom(nskb) &&
-			pskb_expand_head(nskb, nf->rroute[NF_FF_DIR_REPLY].l2_head_len, skb_tailroom(nskb), GFP_ATOMIC)) {
+	        pskb_expand_head(nskb, nf->rroute[NF_FF_DIR_REPLY].l2_head_len, skb_tailroom(nskb), GFP_ATOMIC)) {
 		consume_skb(nskb);
 		return NF_DROP;
 	}
@@ -443,30 +444,30 @@ int natflow_ktun_send_reply(natflow_t *nf, struct nf_conn *ct, struct sk_buff *s
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned natflow_ktun_hook(unsigned int hooknum,
-		struct sk_buff *skb,
-		const struct net_device *in,
-		const struct net_device *out,
-		int (*okfn)(struct sk_buff *))
+                                  struct sk_buff *skb,
+                                  const struct net_device *in,
+                                  const struct net_device *out,
+                                  int (*okfn)(struct sk_buff *))
 {
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
 static unsigned int natflow_ktun_hook(const struct nf_hook_ops *ops,
-		struct sk_buff *skb,
-		const struct net_device *in,
-		const struct net_device *out,
-		int (*okfn)(struct sk_buff *))
+                                      struct sk_buff *skb,
+                                      const struct net_device *in,
+                                      const struct net_device *out,
+                                      int (*okfn)(struct sk_buff *))
 {
 	unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_ktun_hook(const struct nf_hook_ops *ops,
-		struct sk_buff *skb,
-		const struct nf_hook_state *state)
+                                      struct sk_buff *skb,
+                                      const struct nf_hook_state *state)
 {
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 #else
 static unsigned int natflow_ktun_hook(void *priv,
-		struct sk_buff *skb,
-		const struct nf_hook_state *state)
+                                      struct sk_buff *skb,
+                                      const struct nf_hook_state *state)
 {
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
@@ -483,8 +484,8 @@ static unsigned int natflow_ktun_hook(void *priv,
 	unsigned char smac[6];
 	unsigned char dmac[6];
 
-    if (in) {
-        net = dev_net(in);
+	if (in) {
+		net = dev_net(in);
 	}
 
 	iph = ip_hdr(skb);
@@ -510,7 +511,7 @@ static unsigned int natflow_ktun_hook(void *priv,
 	}
 
 	if (!skb_make_writable(skb, iph->ihl * 4 + sizeof(struct udphdr) + 4) ||
-			get_byte4((void *)UDPH(l4) + sizeof(struct udphdr)) != __constant_htonl(KTUN_P_MAGIC)) {
+	        get_byte4((void *)UDPH(l4) + sizeof(struct udphdr)) != __constant_htonl(KTUN_P_MAGIC)) {
 		return NF_ACCEPT;
 	}
 	if (!skb_make_writable(skb, skb->len)) {
@@ -535,7 +536,7 @@ static unsigned int natflow_ktun_hook(void *priv,
 		struct nf_conn *user;
 		struct nf_conntrack_tuple_hash *h;
 		struct nf_conntrack_tuple tuple;
-		
+
 		memset(&tuple, 0, sizeof(tuple));
 		tuple.src.u3.ip = get_byte4(smac);
 		tuple.src.u.udp.port = get_byte2(smac + 4);
@@ -544,15 +545,15 @@ static unsigned int natflow_ktun_hook(void *priv,
 		tuple.src.l3num = PF_INET;
 		tuple.dst.protonum = IPPROTO_UDP;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
-        h = nf_conntrack_find_get(net, NF_CT_DEFAULT_ZONE, &tuple);
+		h = nf_conntrack_find_get(net, NF_CT_DEFAULT_ZONE, &tuple);
 #else
-        h = nf_conntrack_find_get(net, &nf_ct_zone_dflt, &tuple);
+		h = nf_conntrack_find_get(net, &nf_ct_zone_dflt, &tuple);
 #endif
-        if (h) {
+		if (h) {
 			user = nf_ct_tuplehash_to_ctrack(h);
-			nf_ct_delete(user, 0, 0);
-            nf_ct_put(user);
-        }
+			nf_ct_kill(user);
+			//nf_ct_put(user); kill ct already put
+		}
 		//lookup exist user? force drop it?
 
 		natflow_ktun_dnat_setup(ct, get_byte4(smac), get_byte2(smac + 4));
@@ -621,9 +622,9 @@ static unsigned int natflow_ktun_hook(void *priv,
 		tuple.src.l3num = PF_INET;
 		tuple.dst.protonum = IPPROTO_UDP;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
-        h = nf_conntrack_find_get(net, NF_CT_DEFAULT_ZONE, &tuple);
+		h = nf_conntrack_find_get(net, NF_CT_DEFAULT_ZONE, &tuple);
 #else
-        h = nf_conntrack_find_get(net, &nf_ct_zone_dflt, &tuple);
+		h = nf_conntrack_find_get(net, &nf_ct_zone_dflt, &tuple);
 #endif
 		if (h) {
 			user = nf_ct_tuplehash_to_ctrack(h);
@@ -686,7 +687,7 @@ static unsigned int natflow_ktun_hook(void *priv,
 }
 
 static struct nf_hook_ops natflow_ktun_hooks[] = {
-	{    
+	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 		.owner = THIS_MODULE,
 #endif
