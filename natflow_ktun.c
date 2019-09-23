@@ -378,7 +378,7 @@ unsigned int natflow_ktun_snat_setup(struct nf_conn *ct, __be32 addr, __be16 man
 	return __natflow_ktun_nat_setup(ct, addr, man_proto, 1);
 }
 
-#define KTUN_P_MAGIC 0xfffd0099
+#define KTUN_P_MAGIC 0xfffb0099
 
 #define KTUN_FAKEUSER_DADDR __constant_htonl(0x7ffffffd)
 #define KTUN_FAKEUSER_PORT __constant_htons(65535)
