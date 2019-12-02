@@ -175,7 +175,7 @@ static inline int skb_try_make_writable(struct sk_buff *skb,
 }
 #endif
 
-#ifndef SKB_NFCT_PTRMASK
+#if !defined(SKB_NFCT_PTRMASK) && !defined(NFCT_PTRMASK)
 static inline struct nf_conntrack *skb_nfct(const struct sk_buff *skb)
 {
 	return (void *)skb->nfct;
@@ -184,13 +184,18 @@ static inline struct nf_conntrack *skb_nfct(const struct sk_buff *skb)
 
 static inline void skb_nfct_reset(struct sk_buff *skb)
 {
-	nf_conntrack_put(skb_nfct(skb));
-#ifndef SKB_NFCT_PTRMASK
-	skb->nfct = NULL;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+	nf_reset_ct(skb);
 #else
-	skb->_nfct = 0;
+	nf_reset(skb);
 #endif
 }
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#define nf_reset nf_reset_ct
+#else
+#define skb_frag_off(f) (f)->page_offset
+#endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
 extern int ip_set_test_src_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name);
