@@ -45,10 +45,12 @@ typedef struct natflow_t {
 } natflow_t;
 
 /*XXX don't change */
+#define NATCAP_MAGIC 0x43415099
 #define NATFLOW_MAGIC 0x464c4f57
 struct nat_key_t {
 	unsigned int magic;
 	unsigned int ext_magic;
+	unsigned int len;
 };
 /*XXX refer to drivers/nos/src/nos.h */
 #define IPS_NATFLOW_USER_BIT 15

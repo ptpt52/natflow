@@ -95,7 +95,7 @@ static inline void nf_unregister_hooks(struct nf_hook_ops *reg, unsigned int n)
 }
 #endif
 
-#define NATFLOW_MAX_OFF 384u
+#define NATFLOW_MAX_OFF 512u
 #define __ALIGN_64BITS 8
 #define NATFLOW_FACTOR (__ALIGN_64BITS * 2)
 
