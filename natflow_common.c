@@ -14,9 +14,6 @@
 #include <net/netfilter/nf_conntrack_core.h>
 #include <net/netfilter/nf_conntrack_zones.h>
 #include <net/netfilter/nf_conntrack_extend.h>
-#include <net/netfilter/nf_conntrack_helper.h>
-#include <net/netfilter/nf_conntrack_seqadj.h>
-#include <net/netfilter/nf_conntrack_synproxy.h>
 #include <net/netfilter/nf_nat.h>
 #include <net/netfilter/nf_nat_helper.h>
 #include <linux/netfilter/ipset/ip_set.h>
@@ -30,6 +27,7 @@ MODULE_PARM_DESC(debug, "Debug level (0=none,1=error,2=warn,4=info,8=debug,16=fi
 
 int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 {
+	int i;
 	struct nat_key_t *nk = NULL;
 	struct natflow_t *nf;
 	struct nf_ct_ext *old, *new = NULL;
@@ -52,9 +50,9 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	}
 #endif
 
-	nf_ct_ext_add(ct, NF_CT_EXT_NAT, gfp);
-	nfct_seqadj_ext_add(ct);
-	nfct_synproxy_ext_add(ct);
+	for (i = 0; i < ARRAY_SIZE((((struct nf_ct_ext *)0)->offset)); i++) {
+		if (!nf_ct_ext_exist(ct, i)) nf_ct_ext_add(ct, i, gfp);
+	}
 
 	if (!ct->ext) {
 		return -1;
