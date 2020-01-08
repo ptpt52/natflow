@@ -101,9 +101,16 @@ extern int natflow_session_init(struct nf_conn *ct, gfp_t gfp);
 extern struct natflow_t *natflow_session_get(struct nf_conn *ct);
 static inline struct natflow_t *natflow_session_in(struct nf_conn *ct)
 {
+	struct natflow_t *nf = natflow_session_get(ct);
+
+	if (nf) {
+		return nf;
+	}
+
 	if (natflow_session_init(ct, GFP_ATOMIC) != 0) {
 		return NULL;
 	}
+
 	return natflow_session_get(ct);
 }
 
