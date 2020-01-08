@@ -34,30 +34,22 @@ void *compat_nf_ct_ext_add(struct nf_conn *ct, int id, gfp_t gfp)
 #define compat_nf_ct_ext_add nf_ct_ext_add
 #endif
 
+#define NATCAP_MAX_OFF 512u
+#define __ALIGN_64BYTES (__ALIGN_64BITS * 8)
+#define NATCAP_FACTOR (__ALIGN_64BITS * 2)
+
 int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 {
 	int i;
 	struct nat_key_t *nk = NULL;
-	struct natflow_t *nf;
 	struct nf_ct_ext *old, *new = NULL;
-	unsigned int newoff = 0, newlen = 0;
+	unsigned int nkoff, newoff, newlen = 0;
 	size_t alloc_size;
 	size_t var_alloc_len = ALIGN(sizeof(struct natflow_t), __ALIGN_64BITS);
-
-	if (natflow_session_get(ct) != NULL) {
-		return 0;
-	}
 
 	if (nf_ct_is_confirmed(ct)) {
 		return -1;
 	}
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
-	if ((ct->status & IPS_SRC_NAT_DONE)) {
-		NATFLOW_ERROR(DEBUG_FMT_PREFIX "realloc ct->ext with IPS_SRC_NAT_DONE is not supported for kernel < 4.9\n", DEBUG_ARG_PREFIX);
-		return -1;
-	}
-#endif
 
 	for (i = 0; i < ARRAY_SIZE((((struct nf_ct_ext *)0)->offset)); i++) {
 		if (!nf_ct_ext_exist(ct, i)) compat_nf_ct_ext_add(ct, i, gfp);
@@ -68,27 +60,35 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	}
 
 	old = ct->ext;
-	newoff = ALIGN(old->len, NATFLOW_FACTOR);
+	nkoff = ALIGN(old->len, __ALIGN_64BYTES);
+	newoff = ALIGN(nkoff + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS), __ALIGN_64BITS);
 
-	if (ct->ext->len * NATFLOW_FACTOR <= NATFLOW_MAX_OFF) {
-		nk = (struct nat_key_t *)((void *)ct->ext + ct->ext->len * NATFLOW_FACTOR);
-		if (nk->magic != NATCAP_MAGIC || nk->ext_magic != (((unsigned long)ct) & 0xffffffff)) {
-			newoff = ALIGN(nk->len, NATFLOW_FACTOR);
+	if (old->len * NATCAP_FACTOR <= NATCAP_MAX_OFF) {
+		nk = (struct nat_key_t *)((void *)old + old->len * NATCAP_FACTOR);
+		if (nk->magic == NATCAP_MAGIC && nk->ext_magic == (((unsigned long)ct) & 0xffffffff)) {
+			if (nk->natflow_off) {
+				//natflow exist
+				return 0;
+			}
+			nkoff = old->len * NATCAP_FACTOR;
+			newoff = ALIGN(nkoff + nk->len, __ALIGN_64BITS);
 		}
 	}
 
-	if (newoff > NATFLOW_MAX_OFF) {
-		NATFLOW_ERROR(DEBUG_FMT_PREFIX "realloc ct->ext->len > %u not supported!\n", DEBUG_ARG_PREFIX, NATFLOW_MAX_OFF);
+	if (nkoff > NATCAP_MAX_OFF) {
+		NATFLOW_ERROR(DEBUG_FMT_PREFIX "realloc ct->ext->len > %u not supported!\n", DEBUG_ARG_PREFIX, NATCAP_MAX_OFF);
 		return -1;
 	}
 
-	newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS) + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS);
+	newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS);
 	alloc_size = ALIGN(newlen, __ALIGN_64BITS);
 
 	new = __krealloc(old, alloc_size, gfp);
 	if (!new) {
 		return -1;
 	}
+	memset((void *)new + newoff, 0, newlen - newoff);
+
 	if (new != old) {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
 		kfree_rcu(old, rcu);
@@ -98,15 +98,13 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		rcu_assign_pointer(ct->ext, new);
 #endif
 	}
-	memset((void *)new + newoff, 0, newlen - newoff);
 
-	new->len = newoff / NATFLOW_FACTOR;
-	nk = (struct nat_key_t *)((void *)new + newoff);
-	nk->magic = NATFLOW_MAGIC;
+	new->len = nkoff / NATCAP_FACTOR;
+	nk = (struct nat_key_t *)((void *)new + nkoff);
+	nk->magic = NATCAP_MAGIC;
 	nk->ext_magic = (unsigned long)ct & 0xffffffff;
 	nk->len = newlen;
-
-	nf = (struct natflow_t *)((void *)nk + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS));
+	nk->natflow_off = newoff;
 
 	return 0;
 }
@@ -114,21 +112,26 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 struct natflow_t *natflow_session_get(struct nf_conn *ct)
 {
 	struct nat_key_t *nk;
-	struct natflow_t *nf;
+	struct natflow_t *nf = NULL;
 
 	if (!ct->ext) {
 		return NULL;
 	}
-	if (ct->ext->len * NATFLOW_FACTOR > NATFLOW_MAX_OFF) {
+
+	if (ct->ext->len * NATCAP_FACTOR > NATCAP_MAX_OFF) {
 		return NULL;
 	}
 
-	nk = (struct nat_key_t *)((void *)ct->ext + ct->ext->len * NATFLOW_FACTOR);
-	if (nk->magic != NATFLOW_MAGIC || nk->ext_magic != (((unsigned long)ct) & 0xffffffff)) {
+	nk = (struct nat_key_t *)((void *)ct->ext + ct->ext->len * NATCAP_FACTOR);
+	if (nk->magic != NATCAP_MAGIC || nk->ext_magic != (((unsigned long)ct) & 0xffffffff)) {
 		return NULL;
 	}
 
-	nf = (struct natflow_t *)((void *)nk + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS));
+	if (nk->natflow_off == 0) {
+		return NULL;
+	}
+
+	nf = (struct natflow_t *)((void *)ct->ext + nk->natflow_off);
 
 	return nf;
 }

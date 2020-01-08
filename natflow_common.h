@@ -95,9 +95,7 @@ static inline void nf_unregister_hooks(struct nf_hook_ops *reg, unsigned int n)
 }
 #endif
 
-#define NATFLOW_MAX_OFF 512u
 #define __ALIGN_64BITS 8
-#define NATFLOW_FACTOR (__ALIGN_64BITS * 2)
 
 extern int natflow_session_init(struct nf_conn *ct, gfp_t gfp);
 extern struct natflow_t *natflow_session_get(struct nf_conn *ct);
