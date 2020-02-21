@@ -62,6 +62,9 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 		simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
 		nf->magic = magic;
 	}
+	if (!skb->dev) {
+		return;
+	}
 
 	if (dir == IP_CT_DIR_ORIGINAL) {
 		if (!(nf->status & NF_FF_REPLY) && !simple_test_and_set_bit(NF_FF_REPLY_BIT, &nf->status)) {
