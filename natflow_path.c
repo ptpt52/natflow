@@ -44,7 +44,7 @@ static unsigned int natflow_path_magic = 0;
 void natflow_update_magic(int init)
 {
 	if (init) {
-		natflow_path_magic = jiffies;
+		natflow_path_magic = jiffies + prandom_u32();
 	} else {
 		natflow_path_magic++;
 	}
