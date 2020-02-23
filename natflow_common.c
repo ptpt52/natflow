@@ -117,7 +117,6 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 
 struct natflow_t *natflow_session_get(struct nf_conn *ct)
 {
-	int i;
 	struct nat_key_t *nk;
 	struct natflow_t *nf = NULL;
 
@@ -127,10 +126,6 @@ struct natflow_t *natflow_session_get(struct nf_conn *ct)
 
 	if (ct->ext->len * NATCAP_FACTOR > NATCAP_MAX_OFF) {
 		return NULL;
-	}
-
-	for (i = 0; i < ARRAY_SIZE((((struct nf_ct_ext *)0)->offset)); i++) {
-		if (!nf_ct_ext_exist(ct, i)) return NULL;
 	}
 
 	nk = (struct nat_key_t *)((void *)ct->ext + ct->ext->len * NATCAP_FACTOR);
