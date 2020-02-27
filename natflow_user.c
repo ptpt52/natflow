@@ -241,8 +241,15 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 				return NULL;
 			}
 			if (user->ext != new) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
+				kfree_rcu(user->ext, rcu);
+				user->ext = new;
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
 				kfree_rcu(user->ext, rcu);
 				rcu_assign_pointer(user->ext, new);
+#else
+				user->ext = new;
+#endif
 			}
 			new->len = newoff;
 			memset((void *)new + newoff, 0, sizeof(struct fakeuser_data_t));
