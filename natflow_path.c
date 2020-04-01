@@ -24,9 +24,21 @@
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_extend.h>
 #include <net/netfilter/nf_conntrack_acct.h>
+#ifdef CONFIG_NETFILTER_INGRESS
+#include <linux/if_pppox.h>
+#include <linux/ppp_defs.h>
+#endif
 #include "natflow_common.h"
 #include "natflow_path.h"
 #include "natflow_user.h"
+
+#ifdef CONFIG_NETFILTER_INGRESS
+static inline __be16 pppoe_proto(const struct sk_buff *skb)
+{
+    return *((__be16 *)(skb_mac_header(skb) + ETH_HLEN +
+                sizeof(struct pppoe_hdr)));
+}
+#endif
 
 static int disabled = 1;
 void natflow_disabled_set(int v)
@@ -116,6 +128,9 @@ static unsigned int natflow_path_pre_ct_in_hook(unsigned int hooknum,
 		const struct net_device *out,
 		int (*okfn)(struct sk_buff *))
 {
+#ifdef CONFIG_NETFILTER_INGRESS
+	u_int8_t pf = PF_INET;
+#endif
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
 static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
 		struct sk_buff *skb,
@@ -123,12 +138,18 @@ static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
 		const struct net_device *out,
 		int (*okfn)(struct sk_buff *))
 {
+#ifdef CONFIG_NETFILTER_INGRESS
+	u_int8_t pf = ops->pf;
+#endif
 	unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
 		struct sk_buff *skb,
 		const struct nf_hook_state *state)
 {
+#ifdef CONFIG_NETFILTER_INGRESS
+	u_int8_t pf = state->pf;
+#endif
 	unsigned int hooknum = state->hook;
 	//const struct net_device *in = state->in;
 	//const struct net_device *out = state->out;
@@ -137,6 +158,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		struct sk_buff *skb,
 		const struct nf_hook_state *state)
 {
+#ifdef CONFIG_NETFILTER_INGRESS
+	u_int8_t pf = state->pf;
+#endif
 	unsigned int hooknum = state->hook;
 	//const struct net_device *in = state->in;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
@@ -150,29 +174,98 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	struct iphdr *iph;
 	void *l4;
 	natflow_t *nf;
-	int ret;
+	int ret = NF_ACCEPT;
 
 	if (disabled)
 		return NF_ACCEPT;
 
+#ifdef CONFIG_NETFILTER_INGRESS
+	if (pf == NFPROTO_NETDEV) {
+		struct iphdr _iph;
+		int _netoff;
+		u32 _len;
+
+		if (skb->protocol != __constant_htons(ETH_P_PPP_SES)) {
+			return NF_ACCEPT;
+		}
+		if (skb_vlan_tag_present(skb)) {
+			return NF_ACCEPT;
+		}
+		if (pppoe_proto(skb) != __constant_htons(PPP_IP) /* Internet Protocol */ ) {
+			return NF_ACCEPT;
+		}
+
+		skb->network_header += PPPOE_SES_HLEN;
+		_netoff = skb_network_offset(skb);
+		if (skb_copy_bits(skb, _netoff, &_iph, sizeof(_iph)) < 0) {
+			skb->network_header -= PPPOE_SES_HLEN;
+			return NF_ACCEPT;
+		}
+		skb->network_header -= PPPOE_SES_HLEN;
+
+		if (_iph.ihl < 5 || _iph.version != 4) {
+			return NF_ACCEPT;
+		}
+		if (ip_is_fragment(&_iph)) {
+			return NF_ACCEPT;
+		}
+
+		_len = ntohs(_iph.tot_len);
+		if (skb->len < _netoff + _len || _len < (_iph.ihl * 4)) {
+			return NF_ACCEPT;
+		}
+		if (_iph.protocol != IPPROTO_TCP && _iph.protocol != IPPROTO_UDP) {
+			return NF_ACCEPT;
+		}
+
+		skb_pull_rcsum(skb, PPPOE_SES_HLEN);
+		skb->network_header += PPPOE_SES_HLEN;
+
+		if (!pskb_may_pull(skb, sizeof(struct iphdr))) {
+			return NF_DROP;
+		}
+		iph = ip_hdr(skb);
+		if (!pskb_may_pull(skb, iph->ihl*4)) {
+			return NF_DROP;
+		}
+		iph = ip_hdr(skb);
+		if (unlikely(ip_fast_csum((u8 *)iph, iph->ihl))) {
+			return NF_DROP;
+		}
+
+		_len = ntohs(iph->tot_len);
+		if (pskb_trim_rcsum(skb, _len)) {
+			return NF_DROP;
+		}
+
+		skb->protocol = htons(ETH_P_IP);
+		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
+
+		ret = nf_conntrack_in_compat(dev_net(skb->dev), PF_INET, NF_INET_PRE_ROUTING, skb);
+		if (ret != NF_ACCEPT) {
+			goto out;
+		}
+	}
+#endif
+
 	if (skb->protocol != htons(ETH_P_IP))
-		return NF_ACCEPT;
+		goto out;
 
 	if (skb_is_gso(skb))
-		return NF_ACCEPT;
+		goto out;
 
 	iph = ip_hdr(skb);
 	if (iph->protocol != IPPROTO_TCP && iph->protocol != IPPROTO_UDP) {
-		return NF_ACCEPT;
+		goto out;
 	}
 	l4 = (void *)iph + iph->ihl * 4;
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
-		return NF_ACCEPT;
+		goto out;
 	}
 	if (!nf_ct_is_confirmed(ct)) {
-		return NF_ACCEPT;
+		goto out;
 	}
 	/*
 	 * XXX: FIXME:
@@ -182,19 +275,19 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	 */
 	nf = natflow_session_get(ct);
 	if (NULL == nf) {
-		return NF_ACCEPT;
+		goto out;
 	}
 
 	dir = CTINFO2DIR(ctinfo);
 	natflow_session_learn(skb, ct, nf, dir);
 
 	if ((ct->status & IPS_NATFLOW_FF_STOP)) {
-		return NF_ACCEPT;
+		goto out;
 	}
 
 	//if (!(nf->status & NF_FF_OFFLOAD)) {
 	if (!(nf->status & NF_FF_REPLY_OK) || !(nf->status & NF_FF_ORIGINAL_OK)) {
-		return NF_ACCEPT;
+		goto out;
 	}
 
 	//skip 1/32 packets to slow path
@@ -202,7 +295,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	if (acct) {
 		struct nf_conn_counter *counter = acct->counter;
 		if ((atomic64_read(&counter[0].packets) + atomic64_read(&counter[1].packets)) % 32 == 0) {
-			return NF_ACCEPT;
+			goto out;
 		}
 	}
 
@@ -215,11 +308,11 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
 				break;
 		}
-		return NF_ACCEPT;
+		goto out;
 	}
 
 	if (nf->rroute[dir].l2_head_len > skb_headroom(skb) && pskb_expand_head(skb, nf->rroute[dir].l2_head_len, skb_tailroom(skb), GFP_ATOMIC)) {
-		return NF_ACCEPT;
+		goto out;
 	}
 	iph = ip_hdr(skb);
 	l4 = (void *)iph + iph->ihl * 4;
@@ -261,17 +354,32 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	/* XXX I just confirm it first  */
 	ret = nf_conntrack_confirm(skb);
 	if (ret != NF_ACCEPT) {
-		return ret;
+		goto out;
 	}
 
 	skb_push(skb, nf->rroute[dir].l2_head_len);
 	skb_reset_mac_header(skb);
 	memcpy(skb_mac_header(skb), nf->rroute[dir].l2_head, nf->rroute[dir].l2_head_len);
 	skb->dev = nf->rroute[dir].outdev;
+#ifdef CONFIG_NETFILTER_INGRESS
+	if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
+		ph->length = htons(ntohs(iph->tot_len) + 2);
+	}
+#endif
 
 	dev_queue_xmit(skb);
 
 	return NF_STOLEN;
+out:
+#ifdef CONFIG_NETFILTER_INGRESS
+	if (pf == NFPROTO_NETDEV) {
+		skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
+		skb->network_header -= PPPOE_SES_HLEN;
+		skb_push(skb, PPPOE_SES_HLEN);
+	}
+#endif
+	return ret;
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
@@ -512,12 +620,94 @@ static struct nf_hook_ops path_hooks[] = {
 	},
 };
 
+#ifdef CONFIG_NETFILTER_INGRESS
+struct natflow_hook_t {
+    struct hlist_node list;
+    struct nf_hook_ops ops;
+};
+
+static HLIST_HEAD(natflow_hooks);
+static DEFINE_SPINLOCK(natflow_hooks_lock);
+
+static struct natflow_hook_t *natflow_lookup_hook(struct net_device *dev)
+{
+    struct natflow_hook_t *hook;
+
+    hlist_for_each_entry(hook, &natflow_hooks, list) {
+        if (hook->ops.dev == dev)
+            return hook;
+    }
+
+    return NULL;
+}
+
+static int natflow_create_hook(struct net_device *dev)
+{
+	struct natflow_hook_t *hook;
+	struct nf_hook_ops *ops;
+
+	hook = kzalloc(sizeof(*hook), GFP_ATOMIC);
+	if (!hook)
+		return -ENOMEM;
+
+	ops = &hook->ops;
+	ops->pf = NFPROTO_NETDEV;
+	ops->hooknum = NF_NETDEV_INGRESS;
+	ops->priority = 9;
+	ops->hook = natflow_path_pre_ct_in_hook;
+	ops->dev = dev;
+
+	if (nf_register_net_hook(dev_net(dev), ops) != 0) {
+		kfree(hook);
+		return -EINVAL;
+	}
+
+	hlist_add_head(&hook->list, &natflow_hooks);
+
+	return 0;
+}
+
+static void natflow_check_device(struct net_device *dev)
+{
+	struct natflow_hook_t *hook;
+
+	spin_lock_bh(&natflow_hooks_lock);
+	hook = natflow_lookup_hook(dev);
+	if (!hook)
+		natflow_create_hook(dev);
+	spin_unlock_bh(&natflow_hooks_lock);
+}
+
+static void natflow_unhook_device(struct net_device *dev)
+{
+	struct natflow_hook_t *hook;
+	spin_lock_bh(&natflow_hooks_lock);
+	hook = natflow_lookup_hook(dev);
+	if (hook) {
+		nf_unregister_net_hook(dev_net(dev), &hook->ops);
+	}
+	spin_unlock_bh(&natflow_hooks_lock);
+}
+#endif
+
 static int natflow_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
+#ifdef CONFIG_NETFILTER_INGRESS
+	if (event == NETDEV_UP) {
+		natflow_check_device(dev);
+		NATFLOW_println("catch NETDEV_UP event for dev=%s, add ingress hook", dev ? dev->name : "(null)");
+		return NOTIFY_DONE;
+	}
+#endif
+
 	if (event != NETDEV_UNREGISTER)
 		return NOTIFY_DONE;
+
+#ifdef CONFIG_NETFILTER_INGRESS
+	natflow_unhook_device(dev);
+#endif
 
 	natflow_update_magic(0);
 	synchronize_rcu();
