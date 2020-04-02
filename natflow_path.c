@@ -62,7 +62,9 @@ void natflow_update_magic(int init)
 	}
 }
 
+#ifdef CONFIG_NETFILTER_INGRESS
 static natflow_fastnat_node_t natflow_fast_nat_table[NATFLOW_FASTNAT_TABLE_SIZE];
+#endif
 
 void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir)
 {
