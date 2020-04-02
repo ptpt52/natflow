@@ -622,8 +622,8 @@ static struct nf_hook_ops path_hooks[] = {
 
 #ifdef CONFIG_NETFILTER_INGRESS
 struct natflow_hook_t {
-    struct hlist_node list;
-    struct nf_hook_ops ops;
+	struct hlist_node list;
+	struct nf_hook_ops ops;
 };
 
 static HLIST_HEAD(natflow_hooks);
@@ -684,7 +684,9 @@ static void natflow_unhook_device(struct net_device *dev)
 	spin_lock_bh(&natflow_hooks_lock);
 	hook = natflow_lookup_hook(dev);
 	if (hook) {
+		hlist_del(&hook->list);
 		nf_unregister_net_hook(dev_net(dev), &hook->ops);
+		kfree(hook);
 	}
 	spin_unlock_bh(&natflow_hooks_lock);
 }
@@ -714,7 +716,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 	natflow_update_magic(0);
 	synchronize_rcu();
 
-	NATFLOW_WARN("catch unregister event for dev=%s\n", dev ? dev->name : "(null)");
+	NATFLOW_println("catch unregister event for dev=%s", dev ? dev->name : "(null)");
 
 	return NOTIFY_DONE;
 }
