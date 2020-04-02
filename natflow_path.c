@@ -326,7 +326,7 @@ fast_output:
 						skb->protocol = __constant_htons(ETH_P_IP);
 					}
 					skb->dev = nfn->outdev;
-					if (_I == ETH_HLEN) { /* do GSO for PPPOE packets only */
+					if (_I != ETH_HLEN + PPPOE_SES_HLEN) { /* do GSO for PPPOE packets only */
 						dev_queue_xmit(skb);
 						break;
 					} else {
@@ -391,9 +391,6 @@ slow_fastpath:
 	if (skb->protocol != htons(ETH_P_IP))
 		goto out;
 
-	if (skb_is_gso(skb))
-		goto out;
-
 	iph = ip_hdr(skb);
 	if (iph->protocol != IPPROTO_TCP && iph->protocol != IPPROTO_UDP) {
 		goto out;
@@ -451,12 +448,6 @@ slow_fastpath:
 		goto out;
 	}
 
-	if (nf->rroute[dir].l2_head_len > skb_headroom(skb) && pskb_expand_head(skb, nf->rroute[dir].l2_head_len, skb_tailroom(skb), GFP_ATOMIC)) {
-		goto out;
-	}
-	iph = ip_hdr(skb);
-	l4 = (void *)iph + iph->ihl * 4;
-
 	if ((ct->status & IPS_DST_NAT)) {
 		if (dir == NF_FF_DIR_ORIGINAL) {
 			//do DNAT
@@ -497,72 +488,98 @@ slow_fastpath:
 		goto out;
 	}
 
-	skb_push(skb, nf->rroute[dir].l2_head_len);
-	skb_reset_mac_header(skb);
-	memcpy(skb_mac_header(skb), nf->rroute[dir].l2_head, nf->rroute[dir].l2_head_len);
-	skb->dev = nf->rroute[dir].outdev;
 #ifdef CONFIG_NETFILTER_INGRESS
+	if (nf->rroute[dir].l2_head_len >= ETH_HLEN) {
+		if (dir == NF_FF_DIR_ORIGINAL) {
+			if (!(nf->status & NF_FF_ORIGINAL_CHECK) && !simple_test_and_set_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status)) {
+fastnat_check:
+				do {
+					struct ethhdr *eth = (struct ethhdr *)nf->rroute[dir].l2_head;
+					__be32 saddr = ct->tuplehash[dir].tuple.src.u3.ip;
+					__be32 daddr = ct->tuplehash[dir].tuple.dst.u3.ip;
+					__be16 source = ct->tuplehash[dir].tuple.src.u.all;
+					__be16 dest = ct->tuplehash[dir].tuple.dst.u.all;
+					__be16 protonum = ct->tuplehash[dir].tuple.dst.protonum;
+					u32 hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
+					natflow_fastnat_node_t *nfn = &natflow_fast_nat_table[hash];
+
+					if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT) {
+						nfn->saddr = saddr;
+						nfn->daddr = daddr;
+						nfn->source = source;
+						nfn->dest = dest;
+						nfn->protonum = protonum;
+
+						nfn->nat_saddr = ct->tuplehash[!dir].tuple.dst.u3.ip;
+						nfn->nat_daddr = ct->tuplehash[!dir].tuple.src.u3.ip;
+						nfn->nat_source = ct->tuplehash[!dir].tuple.dst.u.all;
+						nfn->nat_dest = ct->tuplehash[!dir].tuple.src.u.all;
+
+						memcpy(nfn->h_source, eth->h_source, ETH_ALEN);
+						memcpy(nfn->h_dest, eth->h_dest, ETH_ALEN);
+
+						nfn->flags = 0;
+						nfn->vlan_tci = 0;
+						nfn->pppoe_sid = 0;
+						if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+							struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth + ETH_HLEN);
+							nfn->pppoe_sid = ph->sid;
+							nfn->flags |= FASTNAT_PPPOE_FLAG;
+						}
+
+						nfn->outdev = nf->rroute[dir].outdev;
+						nfn->magic = natflow_path_magic;
+						nfn->jiffies = jiffies;
+					}
+				} while (0);
+			}
+		} else {
+			if (!(nf->status & NF_FF_REPLY_CHECK) && !simple_test_and_set_bit(NF_FF_REPLY_CHECK_BIT, &nf->status)) {
+				goto fastnat_check;
+			}
+		}
+	}
+
 	if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
-		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
-		ph->length = htons(ntohs(iph->tot_len) + 2);
+		if (skb_is_gso(skb)) {
+			struct sk_buff *segs = skb_gso_segment(skb, 0);
+			if (IS_ERR(segs)) {
+				return NF_DROP;
+			}
+			consume_skb(skb);
+			skb = segs;
+		}
 	}
 #endif
 
-	if (dir == NF_FF_DIR_ORIGINAL) {
-		if (!(nf->status & NF_FF_ORIGINAL_CHECK) && !simple_test_and_set_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status)) {
-			goto fastnat_check;
+	do {
+		struct sk_buff *next = skb->next;
+		if (nf->rroute[dir].l2_head_len > skb_headroom(skb) && pskb_expand_head(skb, nf->rroute[dir].l2_head_len, skb_tailroom(skb), GFP_ATOMIC)) {
+			kfree_skb_list(skb);
+			return NF_STOLEN;
 		}
-	} else {
-		if (!(nf->status & NF_FF_REPLY_CHECK) && !simple_test_and_set_bit(NF_FF_REPLY_CHECK_BIT, &nf->status)) {
-			goto fastnat_check;
+		skb_push(skb, nf->rroute[dir].l2_head_len);
+		skb_reset_mac_header(skb);
+		memcpy(skb_mac_header(skb), nf->rroute[dir].l2_head, nf->rroute[dir].l2_head_len);
+		skb->dev = nf->rroute[dir].outdev;
+#ifdef CONFIG_NETFILTER_INGRESS
+		if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+			struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
+			ph->length = htons(ntohs(ip_hdr(skb)->tot_len) + 2);
+			skb->protocol = __constant_htons(ETH_P_PPP_SES);
 		}
-	}
-
-slow_out:
-	dev_queue_xmit(skb);
+#endif
+		if (nf->rroute[dir].l2_head_len != ETH_HLEN + PPPOE_SES_HLEN) { /* do GSO for PPPOE packets only */
+			dev_queue_xmit(skb);
+			break;
+		} else {
+			skb->next = NULL;
+			dev_queue_xmit(skb);
+		}
+		skb = next;
+	} while (skb);
 
 	return NF_STOLEN;
-
-fastnat_check:
-	if (nf->rroute[dir].l2_head_len >= ETH_HLEN) {
-		__be32 saddr = ct->tuplehash[dir].tuple.src.u3.ip;
-		__be32 daddr = ct->tuplehash[dir].tuple.dst.u3.ip;
-		__be16 source = ct->tuplehash[dir].tuple.src.u.all;
-		__be16 dest = ct->tuplehash[dir].tuple.dst.u.all;
-		__be16 protonum = ct->tuplehash[dir].tuple.dst.protonum;
-		u32 hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
-		natflow_fastnat_node_t *nfn = &natflow_fast_nat_table[hash];
-
-		if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT) {
-			nfn->saddr = saddr;
-			nfn->daddr = daddr;
-			nfn->source = source;
-			nfn->dest = dest;
-			nfn->protonum = protonum;
-
-			nfn->nat_saddr = ct->tuplehash[!dir].tuple.dst.u3.ip;
-			nfn->nat_daddr = ct->tuplehash[!dir].tuple.src.u3.ip;
-			nfn->nat_source = ct->tuplehash[!dir].tuple.dst.u.all;
-			nfn->nat_dest = ct->tuplehash[!dir].tuple.src.u.all;
-
-			memcpy(nfn->h_source, eth_hdr(skb)->h_source, ETH_ALEN);
-			memcpy(nfn->h_dest, eth_hdr(skb)->h_dest, ETH_ALEN);
-
-			nfn->flags = 0;
-			nfn->vlan_tci = 0;
-			nfn->pppoe_sid = 0;
-			if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
-				struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
-				nfn->pppoe_sid = ph->sid;
-				nfn->flags |= FASTNAT_PPPOE_FLAG;
-			}
-
-			nfn->outdev = skb->dev;
-			nfn->magic = natflow_path_magic;
-			nfn->jiffies = jiffies;
-		}
-	}
-	goto slow_out;
 
 out:
 #ifdef CONFIG_NETFILTER_INGRESS
