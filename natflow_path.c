@@ -177,6 +177,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	void *l4;
 	natflow_t *nf;
 	int ret = NF_ACCEPT;
+#ifdef CONFIG_NETFILTER_INGRESS
+	int ingress_pad_len = 0;
+#endif
 
 	if (disabled)
 		return NF_ACCEPT;
@@ -188,28 +191,27 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		u32 _I;
 		natflow_fastnat_node_t *nfn;
 
-		if (skb->protocol != __constant_htons(ETH_P_PPP_SES)) {
+		if (skb_vlan_tag_present(skb) || skb->mac_len != ETH_HLEN) {
 			return NF_ACCEPT;
 		}
-		if (skb_vlan_tag_present(skb)) {
-			return NF_ACCEPT;
-		}
-		if (pppoe_proto(skb) != __constant_htons(PPP_IP) /* Internet Protocol */ ) {
+		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+		        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
+			ingress_pad_len = PPPOE_SES_HLEN;
+		} else if (skb->protocol == __constant_htons(ETH_P_IP)) {
+			ingress_pad_len = 0;
+		} else {
 			return NF_ACCEPT;
 		}
 
-		skb->network_header += PPPOE_SES_HLEN;
+		skb->network_header += ingress_pad_len;
 		_netoff = skb_network_offset(skb);
 		if (skb_copy_bits(skb, _netoff, &_iph, sizeof(_iph)) < 0) {
-			skb->network_header -= PPPOE_SES_HLEN;
+			skb->network_header -= ingress_pad_len;
 			return NF_ACCEPT;
 		}
-		skb->network_header -= PPPOE_SES_HLEN;
+		skb->network_header -= ingress_pad_len;
 
-		if (_iph.ihl < 5 || _iph.version != 4) {
-			return NF_ACCEPT;
-		}
-		if (ip_is_fragment(&_iph)) {
+		if (_iph.ihl < 5 || _iph.version != 4 || ip_is_fragment(&_iph)) {
 			return NF_ACCEPT;
 		}
 
@@ -221,8 +223,10 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			return NF_ACCEPT;
 		}
 
-		skb_pull_rcsum(skb, PPPOE_SES_HLEN);
-		skb->network_header += PPPOE_SES_HLEN;
+		if (ingress_pad_len > 0) {
+			skb_pull(skb, ingress_pad_len);
+			skb->network_header += ingress_pad_len;
+		}
 
 		if (!pskb_may_pull(skb, sizeof(struct iphdr))) {
 			return NF_DROP;
@@ -279,39 +283,59 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					natflow_nat_ip_tcp(skb, iph->ihl * 4, iph->daddr, nfn->nat_daddr);
 					iph->daddr = nfn->nat_daddr;
 				}
-
 				ip_decrease_ttl(iph);
 
+fast_output:
 				_I = ETH_HLEN;
 				if ((nfn->flags & FASTNAT_PPPOE_FLAG)) {
 					_I += PPPOE_SES_HLEN;
 				}
-				if (_I > skb_headroom(skb) && pskb_expand_head(skb, _I, skb_tailroom(skb), GFP_ATOMIC)) {
-					return NF_DROP;
-				}
-				iph = ip_hdr(skb);
-
-				skb_push(skb, _I);
-				skb_reset_mac_header(skb);
-				memcpy(eth_hdr(skb)->h_source, nfn->h_source, ETH_ALEN);
-				memcpy(eth_hdr(skb)->h_dest, nfn->h_dest, ETH_ALEN);
 				if (_I == ETH_HLEN + PPPOE_SES_HLEN) {
-					struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
-					eth_hdr(skb)->h_proto = __constant_htons(ETH_P_PPP_SES);
-					skb->protocol = __constant_htons(ETH_P_PPP_SES);
-					ph->ver = 1;
-					ph->type = 1;
-					ph->code = 0;
-					ph->sid = nfn->pppoe_sid;
-					ph->length = htons(ntohs(iph->tot_len) + 2);
-					*(__be16 *)((void *)ph + sizeof(struct pppoe_hdr)) = __constant_htons(PPP_IP);
-				} else {
-					eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
-					skb->protocol = __constant_htons(ETH_P_IP);
+					if (skb_is_gso(skb)) {
+						struct sk_buff *segs = skb_gso_segment(skb, 0);
+						if (IS_ERR(segs)) {
+							return NF_DROP;
+						}
+						consume_skb(skb);
+						skb = segs;
+					}
 				}
-				skb->dev = nfn->outdev;
 
-				dev_queue_xmit(skb);
+				do {
+					struct sk_buff *next = skb->next;
+					if (_I > skb_headroom(skb) && pskb_expand_head(skb, _I, skb_tailroom(skb), GFP_ATOMIC)) {
+						kfree_skb_list(skb);
+						return NF_STOLEN;
+					}
+					skb_push(skb, _I);
+					skb_reset_mac_header(skb);
+					memcpy(eth_hdr(skb)->h_source, nfn->h_source, ETH_ALEN);
+					memcpy(eth_hdr(skb)->h_dest, nfn->h_dest, ETH_ALEN);
+					if (_I == ETH_HLEN + PPPOE_SES_HLEN) {
+						struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
+						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_PPP_SES);
+						skb->protocol = __constant_htons(ETH_P_PPP_SES);
+						ph->ver = 1;
+						ph->type = 1;
+						ph->code = 0;
+						ph->sid = nfn->pppoe_sid;
+						ph->length = htons(ntohs(ip_hdr(skb)->tot_len) + 2);
+						*(__be16 *)((void *)ph + sizeof(struct pppoe_hdr)) = __constant_htons(PPP_IP);
+					} else {
+						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
+						skb->protocol = __constant_htons(ETH_P_IP);
+					}
+					skb->dev = nfn->outdev;
+					if (_I == ETH_HLEN) { /* do GSO for PPPOE packets only */
+						dev_queue_xmit(skb);
+						break;
+					} else {
+						skb->next = NULL;
+						dev_queue_xmit(skb);
+					}
+					skb = next;
+				} while (skb);
+
 				return NF_STOLEN;
 			}
 		} else {
@@ -350,40 +374,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					natflow_nat_ip_udp(skb, iph->ihl * 4, iph->daddr, nfn->nat_daddr);
 					iph->daddr = nfn->nat_daddr;
 				}
-
 				ip_decrease_ttl(iph);
 
-				_I = ETH_HLEN;
-				if ((nfn->flags & FASTNAT_PPPOE_FLAG)) {
-					_I += PPPOE_SES_HLEN;
-				}
-				if (_I > skb_headroom(skb) && pskb_expand_head(skb, _I, skb_tailroom(skb), GFP_ATOMIC)) {
-					return NF_DROP;
-				}
-				iph = ip_hdr(skb);
-
-				skb_push(skb, _I);
-				skb_reset_mac_header(skb);
-				memcpy(eth_hdr(skb)->h_source, nfn->h_source, ETH_ALEN);
-				memcpy(eth_hdr(skb)->h_dest, nfn->h_dest, ETH_ALEN);
-				if (_I == ETH_HLEN + PPPOE_SES_HLEN) {
-					struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
-					eth_hdr(skb)->h_proto = __constant_htons(ETH_P_PPP_SES);
-					skb->protocol = __constant_htons(ETH_P_PPP_SES);
-					ph->ver = 1;
-					ph->type = 1;
-					ph->code = 0;
-					ph->sid = nfn->pppoe_sid;
-					ph->length = htons(ntohs(iph->tot_len) + 2);
-					*(__be16 *)((void *)ph + sizeof(struct pppoe_hdr)) = __constant_htons(PPP_IP);
-				} else {
-					eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
-					skb->protocol = __constant_htons(ETH_P_IP);
-				}
-				skb->dev = nfn->outdev;
-
-				dev_queue_xmit(skb);
-				return NF_STOLEN;
+				goto fast_output;
 			}
 		}
 
@@ -574,9 +567,11 @@ fastnat_check:
 out:
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (pf == NFPROTO_NETDEV) {
-		skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
-		skb->network_header -= PPPOE_SES_HLEN;
-		skb_push(skb, PPPOE_SES_HLEN);
+		if (ingress_pad_len == PPPOE_SES_HLEN) {
+			skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
+			skb->network_header -= PPPOE_SES_HLEN;
+			skb_push(skb, PPPOE_SES_HLEN);
+		}
 	}
 #endif
 	return ret;
