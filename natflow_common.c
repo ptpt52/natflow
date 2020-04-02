@@ -85,7 +85,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS);
 	alloc_size = ALIGN(newlen, __ALIGN_64BITS);
 
-	new = __krealloc(old, alloc_size, gfp);
+	new = krealloc(old, alloc_size, gfp);
 	if (!new) {
 		return -1;
 	}
