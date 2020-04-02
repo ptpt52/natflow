@@ -85,7 +85,11 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS);
 	alloc_size = ALIGN(newlen, __ALIGN_64BITS);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
+	new = __krealloc(old, alloc_size, gfp);
+#else
 	new = krealloc(old, alloc_size, gfp);
+#endif
 	if (!new) {
 		return -1;
 	}
