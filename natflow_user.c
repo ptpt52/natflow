@@ -212,19 +212,19 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 
 		if (!user) {
 			NATFLOW_ERROR("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] failed, ctinfo=%x\n",
-					&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
-					&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
-					&ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
-					&ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all), (unsigned int)ctinfo);
+			              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
+			              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
+			              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
+			              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all), (unsigned int)ctinfo);
 			return NULL;
 		}
 
 		if (!user->ext) {
 			NATFLOW_ERROR("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] failed, user->ext is NULL\n",
-					&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
-					&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
-					&ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
-					&ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all));
+			              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
+			              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
+			              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
+			              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all));
 			skb_nfct_reset(uskb);
 			return NULL;
 		}
@@ -233,10 +233,10 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 			new = __krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
 			if (!new) {
 				NATFLOW_ERROR("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] failed, realloc user->ext failed\n",
-						&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
-						&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
-						&ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
-						&ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all));
+				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
+				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
+				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
+				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all));
 				skb_nfct_reset(uskb);
 				return NULL;
 			}
@@ -268,15 +268,15 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 		natflow_user_timeout_touch(user);
 
 		NATFLOW_INFO("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] user[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u]\n",
-				&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
-				&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
-				&ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
-				&ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all),
-				&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
-				&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
-				&user->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(user->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
-				&user->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(user->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all)
-				);
+		             &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
+		             &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
+		             &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
+		             &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all),
+		             &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
+		             &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
+		             &user->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(user->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
+		             &user->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(user->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all)
+		            );
 	}
 
 	return user;
@@ -365,20 +365,20 @@ static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *
 {
 	struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 	const char *http_header_fmt = ""
-		"HTTP/1.1 302 Moved Temporarily\r\n"
-		"Connection: close\r\n"
-		"Cache-Control: no-cache\r\n"
-		"Content-Type: text/html; charset=UTF-8\r\n"
-		"Location: %s\r\n"
-		"Content-Length: %u\r\n"
-		"\r\n";
+	                              "HTTP/1.1 302 Moved Temporarily\r\n"
+	                              "Connection: close\r\n"
+	                              "Cache-Control: no-cache\r\n"
+	                              "Content-Type: text/html; charset=UTF-8\r\n"
+	                              "Location: %s\r\n"
+	                              "Content-Length: %u\r\n"
+	                              "\r\n";
 	const char *http_data_fmt = ""
-		"<HTML><HEAD><meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\">\r\n"
-		"<TITLE>302 Moved</TITLE></HEAD><BODY>\r\n"
-		"<H1>302 Moved</H1>\r\n"
-		"The document has moved\r\n"
-		"<A HREF=\"%s\">here</A>.\r\n"
-		"</BODY></HTML>\r\n";
+	                            "<HTML><HEAD><meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\">\r\n"
+	                            "<TITLE>302 Moved</TITLE></HEAD><BODY>\r\n"
+	                            "<H1>302 Moved</H1>\r\n"
+	                            "The document has moved\r\n"
+	                            "<A HREF=\"%s\">here</A>.\r\n"
+	                            "</BODY></HTML>\r\n";
 	int n = 0;
 	struct {
 		char location[128];
@@ -390,10 +390,10 @@ static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *
 		return;
 
 	snprintf(http->location, sizeof(http->location), "http://%pI4/index.html?ip=%pI4&mac=%02X-%02X-%02X-%02X-%02X-%02X&rid=%u&_t=%lu",
-			&redirect_ip, &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip,
-			fud->macaddr[0], fud->macaddr[1], fud->macaddr[2],
-			fud->macaddr[3], fud->macaddr[4], fud->macaddr[5],
-			fud->auth_rule_id, jiffies);
+	         &redirect_ip, &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip,
+	         fud->macaddr[0], fud->macaddr[1], fud->macaddr[2],
+	         fud->macaddr[3], fud->macaddr[4], fud->macaddr[5],
+	         fud->auth_rule_id, jiffies);
 	http->location[sizeof(http->location) - 1] = 0;
 	n = snprintf(http->data, sizeof(http->data), http_data_fmt, http->location);
 	http->data[sizeof(http->data) - 1] = 0;
@@ -408,23 +408,23 @@ static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *
 static inline void natflow_auth_open_weixin_reply(const struct net_device *dev, struct sk_buff *skb)
 {
 	const char *http_header_fmt = ""
-		"HTTP/1.1 200 OK\r\n"
-		"Connection: close\r\n"
-		"Cache-Control: no-cache\r\n"
-		"Content-Type: text/html; charset=UTF-8\r\n"
-		"Content-Length: %u\r\n"
-		"\r\n";
+	                              "HTTP/1.1 200 OK\r\n"
+	                              "Connection: close\r\n"
+	                              "Cache-Control: no-cache\r\n"
+	                              "Content-Type: text/html; charset=UTF-8\r\n"
+	                              "Content-Length: %u\r\n"
+	                              "\r\n";
 	const char *http_data_fmt = ""
-		"<!DOCTYPE html>\r\n"
-		"<html class='no-js'>\r\n"
-		"<head>\r\n"
-		"<meta charset='utf-8'>\r\n"
-		"<meta name='viewport' content='initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>\r\n"
-		"<script type='text/javascript' src='http://%pI4/admin/js/guanzhu.js?%u'></script>\r\n"
-		"</head>\r\n"
-		"<body>\r\n"
-		"</body>\r\n"
-		"</html>\r\n";
+	                            "<!DOCTYPE html>\r\n"
+	                            "<html class='no-js'>\r\n"
+	                            "<head>\r\n"
+	                            "<meta charset='utf-8'>\r\n"
+	                            "<meta name='viewport' content='initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>\r\n"
+	                            "<script type='text/javascript' src='http://%pI4/admin/js/guanzhu.js?%u'></script>\r\n"
+	                            "</head>\r\n"
+	                            "<body>\r\n"
+	                            "</body>\r\n"
+	                            "</html>\r\n";
 	int n = 0;
 	struct {
 		char data[384];
@@ -578,31 +578,31 @@ static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, s
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned int natflow_user_pre_hook(unsigned int hooknum,
-		struct sk_buff *skb,
-		const struct net_device *in,
-		const struct net_device *out,
-		int (*okfn)(struct sk_buff *))
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
 {
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
 static unsigned int natflow_user_pre_hook(const struct nf_hook_ops *ops,
-		struct sk_buff *skb,
-		const struct net_device *in,
-		const struct net_device *out,
-		int (*okfn)(struct sk_buff *))
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
 {
 	unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_user_pre_hook(const struct nf_hook_ops *ops,
-		struct sk_buff *skb,
-		const struct nf_hook_state *state)
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
 {
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 	const struct net_device *out = state->out;
 #else
 static unsigned int natflow_user_pre_hook(void *priv,
-		struct sk_buff *skb,
-		const struct nf_hook_state *state)
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
 {
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
@@ -646,7 +646,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	fud = natflow_fakeuser_data(user);
 
 	if ( (fud->auth_rule_magic != auth_conf_magic && fud->auth_status != AUTH_OK && fud->auth_status != AUTH_VIP) ||
-			fud->auth_status == AUTH_NONE ) {
+	        fud->auth_status == AUTH_NONE ) {
 		int i;
 		int zid = natflow_zone_id_get_safe(in);
 
@@ -660,9 +660,9 @@ static unsigned int natflow_user_pre_hook(void *priv,
 
 		for (i = 0; i < auth_conf->num; i++) {
 			if (zid == auth_conf->auth[i].src_zone_id) {
-			//zone match ok
+				//zone match ok
 				if (IP_SET_test_src_ip(state, in, out, skb, auth_conf->auth[i].src_ipgrp_name) > 0) {
-				//ipgrp match ok
+					//ipgrp match ok
 					fud->auth_rule_id = auth_conf->auth[i].id;
 
 					if (auth_conf->auth[i].auth_type == AUTH_TYPE_AUTO) {
@@ -675,11 +675,11 @@ static unsigned int natflow_user_pre_hook(void *priv,
 
 						//check src_whitelist or mac_whitelist
 						if (auth_conf->auth[i].src_whitelist_name[0] != 0 &&
-								IP_SET_test_src_ip(state, in, out, skb, auth_conf->auth[i].src_whitelist_name) > 0) {
+						        IP_SET_test_src_ip(state, in, out, skb, auth_conf->auth[i].src_whitelist_name) > 0) {
 							fud->auth_status = AUTH_VIP;
 							//TODO notify user
 						} else if (auth_conf->auth[i].mac_whitelist_name[0] != 0 &&
-								IP_SET_test_src_mac(state, in, out, skb, auth_conf->auth[i].mac_whitelist_name) > 0) {
+						           IP_SET_test_src_mac(state, in, out, skb, auth_conf->auth[i].mac_whitelist_name) > 0) {
 							fud->auth_status = AUTH_VIP;
 							//TODO notify user
 						}
@@ -707,11 +707,11 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		if (iph->protocol == IPPROTO_TCP) {
 			if (TCPH(l4)->dest == __constant_htons(443)) {
 				if (auth_conf->dst_bypasslist_name[0] != 0 &&
-						IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
+				        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
 					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 					return NF_ACCEPT;
 				} else if (auth_conf->src_bypasslist_name[0] != 0 &&
-						IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
+				           IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
 					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 					return NF_ACCEPT;
 				}
@@ -745,31 +745,31 @@ static unsigned int natflow_user_pre_hook(void *priv,
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned int natflow_user_forward_hook(unsigned int hooknum,
-		struct sk_buff *skb,
-		const struct net_device *in,
-		const struct net_device *out,
-		int (*okfn)(struct sk_buff *))
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
 {
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
 static unsigned int natflow_user_forward_hook(const struct nf_hook_ops *ops,
-		struct sk_buff *skb,
-		const struct net_device *in,
-		const struct net_device *out,
-		int (*okfn)(struct sk_buff *))
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
 {
 	unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_user_forward_hook(const struct nf_hook_ops *ops,
-		struct sk_buff *skb,
-		const struct nf_hook_state *state)
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
 {
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 	const struct net_device *out = state->out;
 #else
 static unsigned int natflow_user_forward_hook(void *priv,
-		struct sk_buff *skb,
-		const struct nf_hook_state *state)
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
 {
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
@@ -824,88 +824,88 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	fud = natflow_fakeuser_data(user);
 
 	switch(fud->auth_status) {
-		case AUTH_REQ:
-			if (fud->auth_type == AUTH_TYPE_WEB) {
-				int data_len;
-				unsigned char *data;
-				struct iphdr *iph = ip_hdr(skb);
-				void *l4 = (void *)iph + iph->ihl * 4;
+	case AUTH_REQ:
+		if (fud->auth_type == AUTH_TYPE_WEB) {
+			int data_len;
+			unsigned char *data;
+			struct iphdr *iph = ip_hdr(skb);
+			void *l4 = (void *)iph + iph->ihl * 4;
 
-				if (auth_conf->dst_bypasslist_name[0] != 0 &&
-						IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
+			if (auth_conf->dst_bypasslist_name[0] != 0 &&
+			        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
+				set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+				return NF_ACCEPT;
+			} else if (auth_conf->src_bypasslist_name[0] != 0 &&
+			           IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
+				set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+				return NF_ACCEPT;
+			}
+
+			if (iph->protocol == IPPROTO_UDP) {
+				if (UDPH(l4)->dest == __constant_htons(53) || UDPH(l4)->dest == __constant_htons(67)) {
 					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 					return NF_ACCEPT;
-				} else if (auth_conf->src_bypasslist_name[0] != 0 &&
-						IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
-					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
-					return NF_ACCEPT;
 				}
+			}
 
-				if (iph->protocol == IPPROTO_UDP) {
-					if (UDPH(l4)->dest == __constant_htons(53) || UDPH(l4)->dest == __constant_htons(67)) {
-						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
-						return NF_ACCEPT;
-					}
-				}
+			if (iph->protocol != IPPROTO_TCP) {
+				set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
+				return NF_DROP;
+			}
 
-				if (iph->protocol != IPPROTO_TCP) {
-					set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
-					return NF_DROP;
-				}
+			data = skb->data + (iph->ihl << 2) + (TCPH(l4)->doff << 2);
+			data_len = ntohs(iph->tot_len) - ((iph->ihl << 2) + (TCPH(l4)->doff << 2));
+			if ((data_len > 4 && strncasecmp(data, "GET ", 4) == 0) || (data_len > 5 && strncasecmp(data, "POST ", 5) == 0)) {
+				NATFLOW_DEBUG(DEBUG_TCP_FMT ": sending HTTP 302 redirect\n", DEBUG_TCP_ARG(iph,l4));
+				natflow_auth_http_302(in, skb, user);
+				set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
+				return NF_DROP;
+			} else if (data_len > 0) {
+				set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
+				return NF_DROP;
+			} else if (TCPH(l4)->ack && !TCPH(l4)->syn) {
+				natflow_auth_convert_tcprst(skb);
+				return NF_ACCEPT;
+			}
+		} else if (fud->auth_type == AUTH_TYPE_AUTO) {
+			fud->auth_status = AUTH_OK;
+			//TODO notify user
+		}
+		break;
+	case AUTH_OK:
+		if (fud->auth_type == AUTH_TYPE_WEB) {
+			int data_len;
+			unsigned char *data;
+			struct iphdr *iph = ip_hdr(skb);
+			void *l4 = (void *)iph + iph->ihl * 4;
 
+			if (iph->protocol == IPPROTO_TCP && auth_open_weixin_reply != 0) {
 				data = skb->data + (iph->ihl << 2) + (TCPH(l4)->doff << 2);
 				data_len = ntohs(iph->tot_len) - ((iph->ihl << 2) + (TCPH(l4)->doff << 2));
-				if ((data_len > 4 && strncasecmp(data, "GET ", 4) == 0) || (data_len > 5 && strncasecmp(data, "POST ", 5) == 0)) {
-					NATFLOW_DEBUG(DEBUG_TCP_FMT ": sending HTTP 302 redirect\n", DEBUG_TCP_ARG(iph,l4));
-					natflow_auth_http_302(in, skb, user);
-					set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
-					return NF_DROP;
-				} else if (data_len > 0) {
-					set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
-					return NF_DROP;
-				} else if (TCPH(l4)->ack && !TCPH(l4)->syn) {
-					natflow_auth_convert_tcprst(skb);
-					return NF_ACCEPT;
-				}
-			} else if (fud->auth_type == AUTH_TYPE_AUTO) {
-				fud->auth_status = AUTH_OK;
-				//TODO notify user
-			}
-			break;
-		case AUTH_OK:
-			if (fud->auth_type == AUTH_TYPE_WEB) {
-				int data_len;
-				unsigned char *data;
-				struct iphdr *iph = ip_hdr(skb);
-				void *l4 = (void *)iph + iph->ihl * 4;
-
-				if (iph->protocol == IPPROTO_TCP && auth_open_weixin_reply != 0) {
-					data = skb->data + (iph->ihl << 2) + (TCPH(l4)->doff << 2);
-					data_len = ntohs(iph->tot_len) - ((iph->ihl << 2) + (TCPH(l4)->doff << 2));
-					if (data_len > 0) {
-						if (TCPH(l4)->dest == __constant_htons(80)) {
-							int i = 0;
-							if (strncasecmp(data, "GET /auto-portal-subscribe.html", 31) == 0) {
-								i += 31;
-								while (i < data_len) {
-									while (i < data_len && data[i] != '\n') i++;
-									i++;
-									if (i + 24 < data_len && strncasecmp(data + i, "Host: open.weixin.qq.com", 24) == 0) {
-										natflow_auth_open_weixin_reply(in, skb);
-										natflow_auth_convert_tcprst(skb);
-										set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
-										return NF_ACCEPT;
-									}
+				if (data_len > 0) {
+					if (TCPH(l4)->dest == __constant_htons(80)) {
+						int i = 0;
+						if (strncasecmp(data, "GET /auto-portal-subscribe.html", 31) == 0) {
+							i += 31;
+							while (i < data_len) {
+								while (i < data_len && data[i] != '\n') i++;
+								i++;
+								if (i + 24 < data_len && strncasecmp(data + i, "Host: open.weixin.qq.com", 24) == 0) {
+									natflow_auth_open_weixin_reply(in, skb);
+									natflow_auth_convert_tcprst(skb);
+									set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
+									return NF_ACCEPT;
 								}
 							}
 						}
 					}
 				}
 			}
-			break;
-		case AUTH_VIP:
-		case AUTH_BYPASS:
-			break;
+		}
+		break;
+	case AUTH_VIP:
+	case AUTH_BYPASS:
+		break;
 	}
 
 	return NF_ACCEPT;
@@ -987,37 +987,37 @@ static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 
 	if ((*pos) == 0) {
 		n = snprintf(natflow_user_ctl_buffer,
-				PAGE_SIZE - 1,
-				"# Usage:\n"
-				"#    clean -- clear all existing auth rule(s)\n"
-				"#    update_magic -- update auth rule magic\n"
-				"#    auth id=<id>,szone=<idx>,type=web/auto,sipgrp=<name>[,ipwhite=<name>][,macwhite=<name>] -- set one auth\n"
-				"#\n"
-				"# Info:\n"
-				"#    disabled=%u\n"
-				"#    auth_conf_magic=%u\n"
-				"#    redirect_ip=%pI4\n"
-				"#    no_flow_timeout=%u\n"
-				"#    auth_open_weixin_reply=%u\n"
-				"#    https_redirect_en=%u\n"
-				"#    https_redirect_port=%u\n"
-				"#    rule(s) num=%u\n"
-				"#    dst_bypasslist_name=%s\n"
-				"#    src_bypasslist_name=%s\n"
-				"#\n"
-				"# Reload cmd:\n"
-				"\n"
-				"clean\n"
-				"\n",
-				disabled,
-				auth_conf_magic,
-				&redirect_ip,
-				natflow_user_timeout,
-				auth_open_weixin_reply,
-				https_redirect_en,
-				ntohs(https_redirect_port),
-				auth_conf->num, auth_conf->dst_bypasslist_name, auth_conf->src_bypasslist_name
-				);
+		             PAGE_SIZE - 1,
+		             "# Usage:\n"
+		             "#    clean -- clear all existing auth rule(s)\n"
+		             "#    update_magic -- update auth rule magic\n"
+		             "#    auth id=<id>,szone=<idx>,type=web/auto,sipgrp=<name>[,ipwhite=<name>][,macwhite=<name>] -- set one auth\n"
+		             "#\n"
+		             "# Info:\n"
+		             "#    disabled=%u\n"
+		             "#    auth_conf_magic=%u\n"
+		             "#    redirect_ip=%pI4\n"
+		             "#    no_flow_timeout=%u\n"
+		             "#    auth_open_weixin_reply=%u\n"
+		             "#    https_redirect_en=%u\n"
+		             "#    https_redirect_port=%u\n"
+		             "#    rule(s) num=%u\n"
+		             "#    dst_bypasslist_name=%s\n"
+		             "#    src_bypasslist_name=%s\n"
+		             "#\n"
+		             "# Reload cmd:\n"
+		             "\n"
+		             "clean\n"
+		             "\n",
+		             disabled,
+		             auth_conf_magic,
+		             &redirect_ip,
+		             natflow_user_timeout,
+		             auth_open_weixin_reply,
+		             https_redirect_en,
+		             ntohs(https_redirect_port),
+		             auth_conf->num, auth_conf->dst_bypasslist_name, auth_conf->src_bypasslist_name
+		            );
 		natflow_user_ctl_buffer[n] = 0;
 		return natflow_user_ctl_buffer;
 	} else if ((*pos) > 0) {
@@ -1026,11 +1026,11 @@ static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 		if (rule) {
 			natflow_user_ctl_buffer[0] = 0;
 			n = snprintf(natflow_user_ctl_buffer,
-					PAGE_SIZE - 1,
-					"auth id=%u,szone=%u,type=%s,sipgrp=%s,ipwhite=%s,macwhite=%s\n",
-					rule->id, rule->src_zone_id, rule->auth_type == AUTH_TYPE_AUTO ? "auto" : "web",
-					rule->src_ipgrp_name, rule->src_whitelist_name, rule->mac_whitelist_name
-					);
+			             PAGE_SIZE - 1,
+			             "auth id=%u,szone=%u,type=%s,sipgrp=%s,ipwhite=%s,macwhite=%s\n",
+			             rule->id, rule->src_zone_id, rule->auth_type == AUTH_TYPE_AUTO ? "auto" : "web",
+			             rule->src_ipgrp_name, rule->src_whitelist_name, rule->mac_whitelist_name
+			            );
 			natflow_user_ctl_buffer[n] = 0;
 			return natflow_user_ctl_buffer;
 		}
@@ -1212,13 +1212,13 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 			kfree(rule);
 		}
 	} else if (strncmp(data, "redirect_ip=", 12) == 0) {
-		unsigned int a, b, c ,d;
+		unsigned int a, b, c,d;
 		n = sscanf(data, "redirect_ip=%u.%u.%u.%u", &a, &b, &c, &d);
 		if ( n == 4 &&
-				(((a & 0xff) == a) &&
-				 ((b & 0xff) == b) &&
-				 ((c & 0xff) == c) &&
-				 ((d & 0xff) == d)) ) {
+		        (((a & 0xff) == a) &&
+		         ((b & 0xff) == b) &&
+		         ((c & 0xff) == c) &&
+		         ((d & 0xff) == d)) ) {
 			redirect_ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
 			goto done;
 		}

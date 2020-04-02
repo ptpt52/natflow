@@ -56,21 +56,21 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 
 	if ((*pos) == 0) {
 		n = snprintf(natflow_ctl_buffer,
-				PAGE_SIZE - 1,
-				"# Usage:\n"
-				"#    disabled=Number -- set disable/enable\n"
-				"#    debug=<num> -- set debug\n"
-				"#\n"
-				"# Info:\n"
-				"#    disabled=%u\n"
-				"#    ...\n"
-				"#\n"
-				"# Reload cmd:\n"
-				"\n"
-				"disabled=%u\n"
-				"debug=%d\n"
-				"\n",
-				natflow_disabled_get(), natflow_disabled_get(), debug);
+		             PAGE_SIZE - 1,
+		             "# Usage:\n"
+		             "#    disabled=Number -- set disable/enable\n"
+		             "#    debug=<num> -- set debug\n"
+		             "#\n"
+		             "# Info:\n"
+		             "#    disabled=%u\n"
+		             "#    ...\n"
+		             "#\n"
+		             "# Reload cmd:\n"
+		             "\n"
+		             "disabled=%u\n"
+		             "debug=%d\n"
+		             "\n",
+		             natflow_disabled_get(), natflow_disabled_get(), debug);
 		natflow_ctl_buffer[n] = 0;
 		return natflow_ctl_buffer;
 	}

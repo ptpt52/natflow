@@ -35,8 +35,8 @@
 #ifdef CONFIG_NETFILTER_INGRESS
 static inline __be16 pppoe_proto(const struct sk_buff *skb)
 {
-    return *((__be16 *)(skb_mac_header(skb) + ETH_HLEN +
-                sizeof(struct pppoe_hdr)));
+	return *((__be16 *)(skb_mac_header(skb) + ETH_HLEN +
+	                    sizeof(struct pppoe_hdr)));
 }
 #endif
 
@@ -123,20 +123,20 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned int natflow_path_pre_ct_in_hook(unsigned int hooknum,
-		struct sk_buff *skb,
-		const struct net_device *in,
-		const struct net_device *out,
-		int (*okfn)(struct sk_buff *))
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
 {
 #ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = PF_INET;
 #endif
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
 static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
-		struct sk_buff *skb,
-		const struct net_device *in,
-		const struct net_device *out,
-		int (*okfn)(struct sk_buff *))
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
 {
 #ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = ops->pf;
@@ -144,8 +144,8 @@ static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
 	unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
-		struct sk_buff *skb,
-		const struct nf_hook_state *state)
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
 {
 #ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = state->pf;
@@ -155,8 +155,8 @@ static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
 	//const struct net_device *out = state->out;
 #else
 static unsigned int natflow_path_pre_ct_in_hook(void *priv,
-		struct sk_buff *skb,
-		const struct nf_hook_state *state)
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
 {
 #ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = state->pf;
@@ -301,12 +301,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 
 	if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
 		switch (iph->protocol) {
-			case IPPROTO_TCP:
-				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
-				break;
-			case IPPROTO_UDP:
-				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
-				break;
+		case IPPROTO_TCP:
+			NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+			break;
+		case IPPROTO_UDP:
+			NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+			break;
 		}
 		goto out;
 	}
@@ -384,31 +384,31 @@ out:
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned int natflow_path_post_ct_out_hook(unsigned int hooknum,
-		struct sk_buff *skb,
-		const struct net_device *in,
-		const struct net_device *out,
-		int (*okfn)(struct sk_buff *))
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
 {
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
 static unsigned int natflow_path_post_ct_out_hook(const struct nf_hook_ops *ops,
-		struct sk_buff *skb,
-		const struct net_device *in,
-		const struct net_device *out,
-		int (*okfn)(struct sk_buff *))
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
 {
 	unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_path_post_ct_out_hook(const struct nf_hook_ops *ops,
-		struct sk_buff *skb,
-		const struct nf_hook_state *state)
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
 {
 	unsigned int hooknum = state->hook;
 	//const struct net_device *in = state->in;
 	//const struct net_device *out = state->out;
 #else
 static unsigned int natflow_path_post_ct_out_hook(void *priv,
-		struct sk_buff *skb,
-		const struct nf_hook_state *state)
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
 {
 	unsigned int hooknum = state->hook;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
@@ -438,9 +438,9 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	l4 = (void *)iph + iph->ihl * 4;
 
 	if (ipv4_is_lbcast(iph->daddr) ||
-			ipv4_is_loopback(iph->daddr) ||
-			ipv4_is_multicast(iph->daddr) ||
-			ipv4_is_zeronet(iph->daddr)) {
+	        ipv4_is_loopback(iph->daddr) ||
+	        ipv4_is_multicast(iph->daddr) ||
+	        ipv4_is_zeronet(iph->daddr)) {
 		return NF_ACCEPT;
 	}
 
@@ -466,12 +466,12 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		struct nf_conn_help *help = nfct_help(ct);
 		if (help && help->helper) {
 			switch (iph->protocol) {
-				case IPPROTO_TCP:
-					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": this conn need helper\n", DEBUG_TCP_ARG(iph,l4));
-					break;
-				case IPPROTO_UDP:
-					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": this conn need helper\n", DEBUG_UDP_ARG(iph,l4));
-					break;
+			case IPPROTO_TCP:
+				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": this conn need helper\n", DEBUG_TCP_ARG(iph,l4));
+				break;
+			case IPPROTO_UDP:
+				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": this conn need helper\n", DEBUG_UDP_ARG(iph,l4));
+				break;
 			}
 			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
 			return NF_ACCEPT;
@@ -497,12 +497,12 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 #endif
 	if (nf->rroute[dir].mtu != mtu) {
 		switch (iph->protocol) {
-			case IPPROTO_TCP:
-				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": update pmtu from %u to %u\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
-				break;
-			case IPPROTO_UDP:
-				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": update pmtu from %u to %u\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
-				break;
+		case IPPROTO_TCP:
+			NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": update pmtu from %u to %u\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
+			break;
+		case IPPROTO_UDP:
+			NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": update pmtu from %u to %u\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
+			break;
 		}
 		nf->rroute[dir].mtu = mtu;
 	}
@@ -513,31 +513,31 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned int natflow_path_post_snat_hook(unsigned int hooknum,
-		struct sk_buff *skb,
-		const struct net_device *in,
-		const struct net_device *out,
-		int (*okfn)(struct sk_buff *))
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
 {
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
 static unsigned int natflow_path_post_snat_hook(const struct nf_hook_ops *ops,
-		struct sk_buff *skb,
-		const struct net_device *in,
-		const struct net_device *out,
-		int (*okfn)(struct sk_buff *))
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
 {
 	//unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_path_post_snat_hook(const struct nf_hook_ops *ops,
-		struct sk_buff *skb,
-		const struct nf_hook_state *state)
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
 {
 	//unsigned int hooknum = state->hook;
 	//const struct net_device *in = state->in;
 	//const struct net_device *out = state->out;
 #else
 static unsigned int natflow_path_post_snat_hook(void *priv,
-		struct sk_buff *skb,
-		const struct nf_hook_state *state)
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
 {
 	//unsigned int hooknum = state->hook;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
@@ -562,9 +562,9 @@ static unsigned int natflow_path_post_snat_hook(void *priv,
 	}
 
 	if (ipv4_is_lbcast(iph->daddr) ||
-			ipv4_is_loopback(iph->daddr) ||
-			ipv4_is_multicast(iph->daddr) ||
-			ipv4_is_zeronet(iph->daddr)) {
+	        ipv4_is_loopback(iph->daddr) ||
+	        ipv4_is_multicast(iph->daddr) ||
+	        ipv4_is_zeronet(iph->daddr)) {
 		return NF_ACCEPT;
 	}
 
@@ -631,14 +631,14 @@ static DEFINE_SPINLOCK(natflow_hooks_lock);
 
 static struct natflow_hook_t *natflow_lookup_hook(struct net_device *dev)
 {
-    struct natflow_hook_t *hook;
+	struct natflow_hook_t *hook;
 
-    hlist_for_each_entry(hook, &natflow_hooks, list) {
-        if (hook->ops.dev == dev)
-            return hook;
-    }
+	hlist_for_each_entry(hook, &natflow_hooks, list) {
+		if (hook->ops.dev == dev)
+			return hook;
+	}
 
-    return NULL;
+	return NULL;
 }
 
 static int natflow_create_hook(struct net_device *dev)

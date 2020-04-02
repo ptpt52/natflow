@@ -116,7 +116,7 @@ static inline void natflow_zone_match_refresh(void)
 	while (dev) {
 		natflow_zone_match_update(dev);
 		NATFLOW_INFO(DEBUG_FMT_PREFIX "dev=%s set zone=%u type=%u\n", DEBUG_ARG_PREFIX,
-				dev->name, natflow_zone_id_get(dev), natflow_zone_type_get(dev));
+		             dev->name, natflow_zone_id_get(dev), natflow_zone_type_get(dev));
 		dev = next_net_device(dev);
 	}
 }
@@ -145,22 +145,22 @@ static void *natflow_zone_start(struct seq_file *m, loff_t *pos)
 
 	if ((*pos) == 0) {
 		n = snprintf(natflow_zone_ctl_buffer,
-				PAGE_SIZE - 1,
-				"# Usage:\n"
-				"#    lan_zone <id>=<if_name> -- set interface lan_zone\n"
-				"#    wan_zone <id>=<if_name> -- set interface wan_zone\n"
-				"#    clean -- clear all existing zone(s)\n"
-				"#    update_match -- refresh netdev zone match settings\n"
-				"#\n"
-				"# Info:"
-				"#  VALID ZONE ID RANGE: 0~%u\n"
-				"#\n"
-				"# Reload cmd:\n"
-				"\n"
-				"clean\n"
-				"\n",
-				MAX_ZONE_ID
-				);
+		             PAGE_SIZE - 1,
+		             "# Usage:\n"
+		             "#    lan_zone <id>=<if_name> -- set interface lan_zone\n"
+		             "#    wan_zone <id>=<if_name> -- set interface wan_zone\n"
+		             "#    clean -- clear all existing zone(s)\n"
+		             "#    update_match -- refresh netdev zone match settings\n"
+		             "#\n"
+		             "# Info:"
+		             "#  VALID ZONE ID RANGE: 0~%u\n"
+		             "#\n"
+		             "# Reload cmd:\n"
+		             "\n"
+		             "clean\n"
+		             "\n",
+		             MAX_ZONE_ID
+		            );
 		natflow_zone_ctl_buffer[n] = 0;
 		return natflow_zone_ctl_buffer;
 	} else if ((*pos) > 0) {
@@ -171,10 +171,10 @@ static void *natflow_zone_start(struct seq_file *m, loff_t *pos)
 		if (zm) {
 			natflow_zone_ctl_buffer[0] = 0;
 			n = snprintf(natflow_zone_ctl_buffer,
-					PAGE_SIZE - 1,
-					"%s %u=%s\n",
-					zm->type == ZONE_TYPE_LAN ? "lan_zone" : "wan_zone",
-					zm->id, zm->if_name);
+			             PAGE_SIZE - 1,
+			             "%s %u=%s\n",
+			             zm->type == ZONE_TYPE_LAN ? "lan_zone" : "wan_zone",
+			             zm->id, zm->if_name);
 			natflow_zone_ctl_buffer[n] = 0;
 			read_unlock_bh(&zone_match_lock);
 			return natflow_zone_ctl_buffer;
@@ -343,7 +343,7 @@ static int zone_netdev_event(struct notifier_block *this, unsigned long event, v
 
 	natflow_zone_match_update(dev);
 	NATFLOW_WARN(DEBUG_FMT_PREFIX "dev=%s set zone=%u type=%u\n", DEBUG_ARG_PREFIX,
-			dev->name, natflow_zone_id_get(dev), natflow_zone_type_get(dev));
+	             dev->name, natflow_zone_id_get(dev), natflow_zone_type_get(dev));
 
 	return NOTIFY_DONE;
 }
