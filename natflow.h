@@ -35,6 +35,11 @@ typedef struct natflow_route_t {
 #define NF_FF_REPLY_OK_BIT 11
 #define NF_FF_REPLY_OK (1 << NF_FF_REPLY_OK_BIT)
 
+#define NF_FF_ORIGINAL_CHECK_BIT 12
+#define NF_FF_ORIGINAL_CHECK (1 << NF_FF_ORIGINAL_CHECK_BIT)
+#define NF_FF_REPLY_CHECK_BIT 13
+#define NF_FF_REPLY_CHECK (1 << NF_FF_REPLY_CHECK_BIT)
+
 typedef struct natflow_t {
 	unsigned int magic;
 	unsigned int status;
@@ -93,6 +98,54 @@ static inline int simple_test_and_set_bit(int nr, unsigned int *addr)
 	old = *p;
 	*p |= mask;
 	return (old & mask) != 0;
+}
+
+static inline unsigned long ulongmindiff(unsigned long a, unsigned long b)
+{
+	return (a - b < b - a ? a - b : b - a);
+}
+
+typedef struct natflow_fastnat_node_t {
+	struct net_device *outdev;
+	unsigned long jiffies;
+	unsigned int magic;
+#define FASTNAT_VLAN_FLAG  0x01
+#define FASTNAT_PPPOE_FLAG 0x02
+	unsigned char flags;
+	unsigned char count;
+	__be16 protonum;
+	__be32 saddr,
+	       daddr;
+	__be16 source,
+	       dest;
+	__be16 nat_source,
+	       nat_dest;
+	__be32 nat_saddr,
+	       nat_daddr;
+	unsigned char h_source[ETH_ALEN];
+	__be16 vlan_tci;
+	unsigned char h_dest[ETH_ALEN];
+	__be16 pppoe_sid;
+} natflow_fastnat_node_t;
+
+#define NATFLOW_FF_TIMEOUT (60 * HZ)
+
+#define NATFLOW_FASTNAT_TABLE_SIZE 2048
+
+static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __be16 dest, __be16 proto)
+{
+	u32 ports = ntohs(source) << 16 | ntohs(dest);
+	u32 src = ntohl(saddr);
+	u32 dst = ntohl(daddr);
+	u32 hash = (ports & src) | ((~ports) & dst);
+	u32 hash_23_0 = hash & 0xffffff;
+	u32 hash_31_24 = hash & 0xff000000;
+
+	hash = ports ^ src ^ dst ^ ((hash_23_0 << 8) | (hash_31_24 >> 24));
+	hash = ((hash & 0xffff0000) >> 16 ) ^ (hash & 0xfffff);
+	hash &= 0x7ff; /* 0 ~ 2047 NATFLOW_FASTNAT_TABLE_SIZE */
+
+	return hash;
 }
 
 #endif /* _NATFLOW_H_ */

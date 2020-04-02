@@ -62,6 +62,8 @@ void natflow_update_magic(int init)
 	}
 }
 
+static natflow_fastnat_node_t natflow_fast_nat_table[NATFLOW_FASTNAT_TABLE_SIZE];
+
 void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir)
 {
 	int magic = natflow_path_magic;
@@ -183,7 +185,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	if (pf == NFPROTO_NETDEV) {
 		struct iphdr _iph;
 		int _netoff;
-		u32 _len;
+		u32 _I;
+		natflow_fastnat_node_t *nfn;
 
 		if (skb->protocol != __constant_htons(ETH_P_PPP_SES)) {
 			return NF_ACCEPT;
@@ -210,8 +213,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			return NF_ACCEPT;
 		}
 
-		_len = ntohs(_iph.tot_len);
-		if (skb->len < _netoff + _len || _len < (_iph.ihl * 4)) {
+		_I = ntohs(_iph.tot_len);
+		if (skb->len < _netoff + _I || _I < (_iph.ihl * 4)) {
 			return NF_ACCEPT;
 		}
 		if (_iph.protocol != IPPROTO_TCP && _iph.protocol != IPPROTO_UDP) {
@@ -225,7 +228,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			return NF_DROP;
 		}
 		iph = ip_hdr(skb);
-		if (!pskb_may_pull(skb, iph->ihl*4)) {
+		if (!pskb_may_pull(skb, iph->ihl * 4)) {
 			return NF_DROP;
 		}
 		iph = ip_hdr(skb);
@@ -233,14 +236,158 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			return NF_DROP;
 		}
 
-		_len = ntohs(iph->tot_len);
-		if (pskb_trim_rcsum(skb, _len)) {
+		if (pskb_trim_rcsum(skb, _I)) {
 			return NF_DROP;
 		}
 
 		skb->protocol = htons(ETH_P_IP);
 		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
 
+		if (_iph.protocol == IPPROTO_TCP) {
+			if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct tcphdr)) || skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct tcphdr))) {
+				return NF_DROP;
+			}
+			iph = ip_hdr(skb);
+			l4 = (void *)iph + iph->ihl * 4;
+			_I = natflow_hash_v4(iph->saddr, iph->daddr, TCPH(l4)->source, TCPH(l4)->dest, IPPROTO_TCP);
+			nfn = &natflow_fast_nat_table[_I];
+			if (nfn->magic == natflow_path_magic &&
+			        ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT &&
+			        nfn->saddr == iph->saddr && nfn->daddr == iph->daddr &&
+			        nfn->source == TCPH(l4)->source && nfn->dest == TCPH(l4)->dest &&
+			        nfn->protonum == IPPROTO_TCP) {
+				nfn->jiffies = jiffies;
+				nfn->count++;
+				if (nfn->count % 64 == 0)
+					goto slow_fastpath;
+
+				if (TCPH(l4)->source != nfn->nat_source) {
+					natflow_nat_port_tcp(skb, iph->ihl * 4, TCPH(l4)->source, nfn->source);
+					TCPH(l4)->source = nfn->nat_source;
+				}
+				if (TCPH(l4)->dest != nfn->nat_dest) {
+					natflow_nat_port_tcp(skb, iph->ihl * 4, TCPH(l4)->dest, nfn->nat_dest);
+					TCPH(l4)->dest = nfn->nat_dest;
+				}
+				if (iph->saddr != nfn->nat_saddr) {
+					csum_replace4(&iph->check, iph->saddr, nfn->nat_saddr);
+					natflow_nat_ip_tcp(skb, iph->ihl * 4, iph->saddr, nfn->nat_saddr);
+					iph->saddr = nfn->nat_saddr;
+				}
+				if (iph->daddr != nfn->nat_daddr) {
+					csum_replace4(&iph->check, iph->daddr, nfn->nat_daddr);
+					natflow_nat_ip_tcp(skb, iph->ihl * 4, iph->daddr, nfn->nat_daddr);
+					iph->daddr = nfn->nat_daddr;
+				}
+
+				ip_decrease_ttl(iph);
+
+				_I = ETH_HLEN;
+				if ((nfn->flags & FASTNAT_PPPOE_FLAG)) {
+					_I += PPPOE_SES_HLEN;
+				}
+				if (_I > skb_headroom(skb) && pskb_expand_head(skb, _I, skb_tailroom(skb), GFP_ATOMIC)) {
+					return NF_DROP;
+				}
+				iph = ip_hdr(skb);
+
+				skb_push(skb, _I);
+				skb_reset_mac_header(skb);
+				memcpy(eth_hdr(skb)->h_source, nfn->h_source, ETH_ALEN);
+				memcpy(eth_hdr(skb)->h_dest, nfn->h_dest, ETH_ALEN);
+				if (_I == ETH_HLEN + PPPOE_SES_HLEN) {
+					struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
+					eth_hdr(skb)->h_proto = __constant_htons(ETH_P_PPP_SES);
+					skb->protocol = __constant_htons(ETH_P_PPP_SES);
+					ph->ver = 1;
+					ph->type = 1;
+					ph->code = 0;
+					ph->sid = nfn->pppoe_sid;
+					ph->length = htons(ntohs(iph->tot_len) + 2);
+					*(__be16 *)((void *)ph + sizeof(struct pppoe_hdr)) = __constant_htons(PPP_IP);
+				} else {
+					eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
+					skb->protocol = __constant_htons(ETH_P_IP);
+				}
+				skb->dev = nfn->outdev;
+
+				dev_queue_xmit(skb);
+				return NF_STOLEN;
+			}
+		} else {
+			if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr)) || skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct udphdr))) {
+				return NF_DROP;
+			}
+			iph = ip_hdr(skb);
+			l4 = (void *)iph + iph->ihl * 4;
+			_I = natflow_hash_v4(iph->saddr, iph->daddr, UDPH(l4)->source, UDPH(l4)->dest, IPPROTO_UDP);
+			nfn = &natflow_fast_nat_table[_I];
+			if (nfn->magic == natflow_path_magic &&
+			        ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT &&
+			        nfn->saddr == iph->saddr && nfn->daddr == iph->daddr &&
+			        nfn->source == UDPH(l4)->source && nfn->dest == UDPH(l4)->dest &&
+			        nfn->protonum == IPPROTO_UDP) {
+				nfn->jiffies = jiffies;
+				nfn->count++;
+				if (nfn->count % 64 == 0)
+					goto slow_fastpath;
+
+				if (UDPH(l4)->source != nfn->nat_source) {
+					natflow_nat_port_udp(skb, iph->ihl * 4, UDPH(l4)->source, nfn->source);
+					UDPH(l4)->source = nfn->nat_source;
+				}
+				if (UDPH(l4)->dest != nfn->nat_dest) {
+					natflow_nat_port_udp(skb, iph->ihl * 4, UDPH(l4)->dest, nfn->nat_dest);
+					UDPH(l4)->dest = nfn->nat_dest;
+				}
+				if (iph->saddr != nfn->nat_saddr) {
+					csum_replace4(&iph->check, iph->saddr, nfn->nat_saddr);
+					natflow_nat_ip_udp(skb, iph->ihl * 4, iph->saddr, nfn->nat_saddr);
+					iph->saddr = nfn->nat_saddr;
+				}
+				if (iph->daddr != nfn->nat_daddr) {
+					csum_replace4(&iph->check, iph->daddr, nfn->nat_daddr);
+					natflow_nat_ip_udp(skb, iph->ihl * 4, iph->daddr, nfn->nat_daddr);
+					iph->daddr = nfn->nat_daddr;
+				}
+
+				ip_decrease_ttl(iph);
+
+				_I = ETH_HLEN;
+				if ((nfn->flags & FASTNAT_PPPOE_FLAG)) {
+					_I += PPPOE_SES_HLEN;
+				}
+				if (_I > skb_headroom(skb) && pskb_expand_head(skb, _I, skb_tailroom(skb), GFP_ATOMIC)) {
+					return NF_DROP;
+				}
+				iph = ip_hdr(skb);
+
+				skb_push(skb, _I);
+				skb_reset_mac_header(skb);
+				memcpy(eth_hdr(skb)->h_source, nfn->h_source, ETH_ALEN);
+				memcpy(eth_hdr(skb)->h_dest, nfn->h_dest, ETH_ALEN);
+				if (_I == ETH_HLEN + PPPOE_SES_HLEN) {
+					struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
+					eth_hdr(skb)->h_proto = __constant_htons(ETH_P_PPP_SES);
+					skb->protocol = __constant_htons(ETH_P_PPP_SES);
+					ph->ver = 1;
+					ph->type = 1;
+					ph->code = 0;
+					ph->sid = nfn->pppoe_sid;
+					ph->length = htons(ntohs(iph->tot_len) + 2);
+					*(__be16 *)((void *)ph + sizeof(struct pppoe_hdr)) = __constant_htons(PPP_IP);
+				} else {
+					eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
+					skb->protocol = __constant_htons(ETH_P_IP);
+				}
+				skb->dev = nfn->outdev;
+
+				dev_queue_xmit(skb);
+				return NF_STOLEN;
+			}
+		}
+
+slow_fastpath:
 		ret = nf_conntrack_in_compat(dev_net(skb->dev), PF_INET, NF_INET_PRE_ROUTING, skb);
 		if (ret != NF_ACCEPT) {
 			goto out;
@@ -368,9 +515,62 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	}
 #endif
 
+	if (dir == NF_FF_DIR_ORIGINAL) {
+		if (!(nf->status & NF_FF_ORIGINAL_CHECK) && !simple_test_and_set_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status)) {
+			goto fastnat_check;
+		}
+	} else {
+		if (!(nf->status & NF_FF_REPLY_CHECK) && !simple_test_and_set_bit(NF_FF_REPLY_CHECK_BIT, &nf->status)) {
+			goto fastnat_check;
+		}
+	}
+
+slow_out:
 	dev_queue_xmit(skb);
 
 	return NF_STOLEN;
+
+fastnat_check:
+	if (nf->rroute[dir].l2_head_len >= ETH_HLEN) {
+		__be32 saddr = ct->tuplehash[dir].tuple.src.u3.ip;
+		__be32 daddr = ct->tuplehash[dir].tuple.dst.u3.ip;
+		__be16 source = ct->tuplehash[dir].tuple.src.u.all;
+		__be16 dest = ct->tuplehash[dir].tuple.dst.u.all;
+		__be16 protonum = ct->tuplehash[dir].tuple.dst.protonum;
+		u32 hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
+		natflow_fastnat_node_t *nfn = &natflow_fast_nat_table[hash];
+
+		if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT) {
+			nfn->saddr = saddr;
+			nfn->daddr = daddr;
+			nfn->source = source;
+			nfn->dest = dest;
+			nfn->protonum = protonum;
+
+			nfn->nat_saddr = ct->tuplehash[!dir].tuple.dst.u3.ip;
+			nfn->nat_daddr = ct->tuplehash[!dir].tuple.src.u3.ip;
+			nfn->nat_source = ct->tuplehash[!dir].tuple.dst.u.all;
+			nfn->nat_dest = ct->tuplehash[!dir].tuple.src.u.all;
+
+			memcpy(nfn->h_source, eth_hdr(skb)->h_source, ETH_ALEN);
+			memcpy(nfn->h_dest, eth_hdr(skb)->h_dest, ETH_ALEN);
+
+			nfn->flags = 0;
+			nfn->vlan_tci = 0;
+			nfn->pppoe_sid = 0;
+			if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+				struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
+				nfn->pppoe_sid = ph->sid;
+				nfn->flags |= FASTNAT_PPPOE_FLAG;
+			}
+
+			nfn->outdev = skb->dev;
+			nfn->magic = natflow_path_magic;
+			nfn->jiffies = jiffies;
+		}
+	}
+	goto slow_out;
+
 out:
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (pf == NFPROTO_NETDEV) {

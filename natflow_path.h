@@ -34,10 +34,6 @@ static inline int natflow_nat_ip_tcp(struct sk_buff *skb, unsigned int thoff,
 {
 	struct tcphdr *tcph;
 
-	if (!pskb_may_pull(skb, thoff + sizeof(*tcph)) ||
-	        skb_try_make_writable(skb, thoff + sizeof(*tcph)))
-		return -1;
-
 	tcph = (void *)(skb_network_header(skb) + thoff);
 	inet_proto_csum_replace4(&tcph->check, skb, addr, new_addr, true);
 
@@ -48,10 +44,6 @@ static inline int natflow_nat_ip_udp(struct sk_buff *skb, unsigned int thoff,
                                      __be32 addr, __be32 new_addr)
 {
 	struct udphdr *udph;
-
-	if (!pskb_may_pull(skb, thoff + sizeof(*udph)) ||
-	        skb_try_make_writable(skb, thoff + sizeof(*udph)))
-		return -1;
 
 	udph = (void *)(skb_network_header(skb) + thoff);
 	if (udph->check || skb->ip_summed == CHECKSUM_PARTIAL) {
@@ -96,10 +88,6 @@ static inline int natflow_nat_port_udp(struct sk_buff *skb, unsigned int thoff,
                                        __be16 port, __be16 new_port)
 {
 	struct udphdr *udph;
-
-	if (!pskb_may_pull(skb, thoff + sizeof(*udph)) ||
-	        skb_try_make_writable(skb, thoff + sizeof(*udph)))
-		return -1;
 
 	udph = (void *)(skb_network_header(skb) + thoff);
 	if (udph->check || skb->ip_summed == CHECKSUM_PARTIAL) {
@@ -148,6 +136,9 @@ static inline int natflow_do_snat(struct sk_buff *skb, struct nf_conn *ct, int d
 		}
 		break;
 	case IPPROTO_UDP:
+		if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr)) ||
+		        skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct udphdr)))
+			return -1;
 		port = UDPH(l4)->source;
 		UDPH(l4)->source = ct->tuplehash[!dir].tuple.dst.u.all;
 		if (natflow_nat_port(skb, iph->ihl * 4, iph->protocol, port, UDPH(l4)->source) != 0) {
