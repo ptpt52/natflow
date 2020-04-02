@@ -696,8 +696,10 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (event == NETDEV_UP) {
-		natflow_check_device(dev);
-		NATFLOW_println("catch NETDEV_UP event for dev=%s, add ingress hook", dev ? dev->name : "(null)");
+		if (!(dev->flags & (IFF_NOARP | IFF_LOOPBACK | IFF_POINTOPOINT))) {
+			natflow_check_device(dev);
+			NATFLOW_println("catch NETDEV_UP event for dev=%s, add ingress hook", dev ? dev->name : "(null)");
+		}
 		return NOTIFY_DONE;
 	}
 #endif
