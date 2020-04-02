@@ -700,7 +700,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 	if (event == NETDEV_UP) {
 		if (!(dev->flags & (IFF_NOARP | IFF_LOOPBACK | IFF_POINTOPOINT))) {
 			natflow_check_device(dev);
-			NATFLOW_println("catch NETDEV_UP event for dev=%s, add ingress hook", dev ? dev->name : "(null)");
+			NATFLOW_println("catch NETDEV_UP event for dev=%s, add ingress hook", dev->name);
 		}
 		return NOTIFY_DONE;
 	}
@@ -716,7 +716,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 	natflow_update_magic(0);
 	synchronize_rcu();
 
-	NATFLOW_println("catch unregister event for dev=%s", dev ? dev->name : "(null)");
+	NATFLOW_println("catch NETDEV_UNREGISTER event for dev=%s", dev->name);
 
 	return NOTIFY_DONE;
 }
