@@ -105,7 +105,9 @@ static inline unsigned long ulongmindiff(unsigned long a, unsigned long b)
 	return (a - b < b - a ? a - b : b - a);
 }
 
-typedef struct natflow_fastnat_node_t {
+typedef struct natflow_fastnat_node_t natflow_fastnat_node_t;
+
+struct natflow_fastnat_node_t {
 	struct net_device *outdev;
 	unsigned long jiffies;
 	unsigned int magic;
@@ -126,7 +128,7 @@ typedef struct natflow_fastnat_node_t {
 	__be16 vlan_tci;
 	unsigned char h_dest[ETH_ALEN];
 	__be16 pppoe_sid;
-} natflow_fastnat_node_t;
+} __attribute__((__aligned__(SMP_CACHE_BYTES)));
 
 #define NATFLOW_FF_TIMEOUT (60 * HZ)
 
