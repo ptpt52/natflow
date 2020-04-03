@@ -226,7 +226,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		}
 
 		if (ingress_pad_len > 0) {
-			skb_pull(skb, ingress_pad_len);
+			skb_pull_rcsum(skb, ingress_pad_len);
 			skb->network_header += ingress_pad_len;
 		}
 
