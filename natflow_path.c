@@ -506,6 +506,14 @@ fastnat_check:
 					natflow_fastnat_node_t *nfn = &natflow_fast_nat_table[hash];
 
 					if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT) {
+						switch (iph->protocol) {
+						case IPPROTO_TCP:
+							NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d use hash=%d\n", DEBUG_TCP_ARG(iph,l4), dir, hash);
+							break;
+						case IPPROTO_UDP:
+							NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d use hash=%d\n", DEBUG_UDP_ARG(iph,l4), dir, hash);
+							break;
+						}
 						nfn->saddr = saddr;
 						nfn->daddr = daddr;
 						nfn->source = source;
@@ -532,6 +540,15 @@ fastnat_check:
 						nfn->outdev = nf->rroute[dir].outdev;
 						nfn->magic = natflow_path_magic;
 						nfn->jiffies = jiffies;
+					} else {
+						switch (iph->protocol) {
+						case IPPROTO_TCP:
+							NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d skip hash=%d\n", DEBUG_TCP_ARG(iph,l4), dir, hash);
+							break;
+						case IPPROTO_UDP:
+							NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d skip hash=%d\n", DEBUG_UDP_ARG(iph,l4), dir, hash);
+							break;
+						}
 					}
 				} while (0);
 			}
