@@ -132,6 +132,7 @@ struct natflow_fastnat_node_t {
 
 #define NATFLOW_FF_TIMEOUT (60 * HZ)
 
+/* MAX 65536 for now we use 2048 */
 #define NATFLOW_FASTNAT_TABLE_SIZE 2048
 
 static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __be16 dest, __be16 proto)
@@ -145,7 +146,7 @@ static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __b
 
 	hash = ports ^ src ^ dst ^ ((hash_23_0 << 8) | (hash_31_24 >> 24));
 	hash = ((hash & 0xffff0000) >> 16 ) ^ (hash & 0xfffff);
-	hash &= 0x7ff; /* 0 ~ 2047 NATFLOW_FASTNAT_TABLE_SIZE */
+	hash &= NATFLOW_FASTNAT_TABLE_SIZE - 1; /* 0 ~ 2047 NATFLOW_FASTNAT_TABLE_SIZE */
 
 	return hash;
 }
