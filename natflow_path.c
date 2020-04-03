@@ -72,6 +72,8 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 	struct iphdr *iph = ip_hdr(skb);
 
 	if (nf->magic != magic) {
+		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
