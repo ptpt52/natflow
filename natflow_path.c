@@ -270,7 +270,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					goto slow_fastpath;
 
 				if (TCPH(l4)->source != nfn->nat_source) {
-					natflow_nat_port_tcp(skb, iph->ihl * 4, TCPH(l4)->source, nfn->source);
+					natflow_nat_port_tcp(skb, iph->ihl * 4, TCPH(l4)->source, nfn->nat_source);
 					TCPH(l4)->source = nfn->nat_source;
 				}
 				if (TCPH(l4)->dest != nfn->nat_dest) {
@@ -361,7 +361,7 @@ fast_output:
 					goto slow_fastpath;
 
 				if (UDPH(l4)->source != nfn->nat_source) {
-					natflow_nat_port_udp(skb, iph->ihl * 4, UDPH(l4)->source, nfn->source);
+					natflow_nat_port_udp(skb, iph->ihl * 4, UDPH(l4)->source, nfn->nat_source);
 					UDPH(l4)->source = nfn->nat_source;
 				}
 				if (UDPH(l4)->dest != nfn->nat_dest) {
