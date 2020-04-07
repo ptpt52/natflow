@@ -606,6 +606,10 @@ out:
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (pf == NFPROTO_NETDEV) {
 		if (ingress_pad_len == PPPOE_SES_HLEN) {
+			struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
+			if (ph->length != htons(ntohs(ip_hdr(skb)->tot_len) + 2)) {
+				ph->length = htons(ntohs(ip_hdr(skb)->tot_len) + 2);
+			}
 			skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
 			skb->network_header -= PPPOE_SES_HLEN;
 			skb_push(skb, PPPOE_SES_HLEN);
