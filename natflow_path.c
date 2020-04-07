@@ -406,16 +406,13 @@ slow_fastpath:
 	if (NULL == ct) {
 		goto out;
 	}
-	if (!nf_ct_is_confirmed(ct)) {
-		goto out;
-	}
 	/*
 	 * XXX: FIXME:
 	 * we assume ct->ext->len > 24(=NATFLOW_MAX_OFF / NATFLOW_FACTOR) is always true
 	 * after the nf_conntrack_in() call
 	 * ct->ext->len <= 24 means natflow_session is ready
 	 */
-	nf = natflow_session_get(ct);
+	nf = natflow_session_in(ct);
 	if (NULL == nf) {
 		goto out;
 	}
@@ -423,6 +420,9 @@ slow_fastpath:
 	dir = CTINFO2DIR(ctinfo);
 	natflow_session_learn(skb, ct, nf, dir);
 
+	if (!nf_ct_is_confirmed(ct)) {
+		goto out;
+	}
 	if ((ct->status & IPS_NATFLOW_FF_STOP)) {
 		goto out;
 	}
@@ -689,11 +689,7 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		return NF_ACCEPT;
 	}
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
 	nf = natflow_session_get(ct);
-#else
-	nf = natflow_session_in(ct);
-#endif
 	if (NULL == nf) {
 		return NF_ACCEPT;
 	}
