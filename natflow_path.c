@@ -182,7 +182,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	natflow_t *nf;
 	int ret = NF_ACCEPT;
 #ifdef CONFIG_NETFILTER_INGRESS
-	int ingress_pad_len = 0;
+	unsigned int ingress_pad_len = 0;
+	unsigned int ingress_trim_off = 0;
 #endif
 
 	if (disabled)
@@ -191,7 +192,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (pf == NFPROTO_NETDEV) {
 		struct iphdr _iph;
-		int _netoff;
 		u32 _I;
 		natflow_fastnat_node_t *nfn;
 
@@ -208,8 +208,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		}
 
 		skb->network_header += ingress_pad_len;
-		_netoff = skb_network_offset(skb);
-		if (skb_copy_bits(skb, _netoff, &_iph, sizeof(_iph)) < 0) {
+		ingress_trim_off = skb_network_offset(skb);
+		if (skb_copy_bits(skb, ingress_trim_off, &_iph, sizeof(_iph)) < 0) {
 			skb->network_header -= ingress_pad_len;
 			return NF_ACCEPT;
 		}
@@ -220,7 +220,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		}
 
 		_I = ntohs(_iph.tot_len);
-		if (skb->len < _netoff + _I || _I < (_iph.ihl * 4)) {
+		if (skb->len < ingress_trim_off + _I || _I < (_iph.ihl * 4)) {
 			return NF_ACCEPT;
 		}
 		if (_iph.protocol != IPPROTO_TCP && _iph.protocol != IPPROTO_UDP) {
@@ -244,6 +244,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			return NF_DROP;
 		}
 
+		ingress_trim_off = skb->len - _I;
 		if (pskb_trim_rcsum(skb, _I)) {
 			return NF_DROP;
 		}
@@ -606,13 +607,12 @@ out:
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (pf == NFPROTO_NETDEV) {
 		if (ingress_pad_len == PPPOE_SES_HLEN) {
-			struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
-			if (ph->length != htons(ntohs(ip_hdr(skb)->tot_len) + 2)) {
-				ph->length = htons(ntohs(ip_hdr(skb)->tot_len) + 2);
-			}
 			skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
 			skb->network_header -= PPPOE_SES_HLEN;
 			skb_push(skb, PPPOE_SES_HLEN);
+		}
+		if (ingress_trim_off) {
+			skb->len += ingress_trim_off;
 		}
 	}
 #endif
