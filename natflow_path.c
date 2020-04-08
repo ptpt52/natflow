@@ -191,7 +191,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (pf == NFPROTO_NETDEV) {
-		struct iphdr _iph;
 		u32 _I;
 		natflow_fastnat_node_t *nfn;
 
@@ -207,26 +206,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			return NF_ACCEPT;
 		}
 
-		skb->network_header += ingress_pad_len;
-		ingress_trim_off = skb_network_offset(skb);
-		if (skb_copy_bits(skb, ingress_trim_off, &_iph, sizeof(_iph)) < 0) {
-			skb->network_header -= ingress_pad_len;
-			return NF_ACCEPT;
-		}
-		skb->network_header -= ingress_pad_len;
-
-		if (_iph.ihl < 5 || _iph.version != 4 || ip_is_fragment(&_iph)) {
-			return NF_ACCEPT;
-		}
-
-		_I = ntohs(_iph.tot_len);
-		if (skb->len < ingress_trim_off + _I || _I < (_iph.ihl * 4)) {
-			return NF_ACCEPT;
-		}
-		if (_iph.protocol != IPPROTO_TCP && _iph.protocol != IPPROTO_UDP) {
-			return NF_ACCEPT;
-		}
-
 		if (ingress_pad_len > 0) {
 			skb_pull_rcsum(skb, ingress_pad_len);
 			skb->network_header += ingress_pad_len;
@@ -236,6 +215,19 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			return NF_DROP;
 		}
 		iph = ip_hdr(skb);
+
+		if (iph->ihl < 5 || iph->version != 4 || ip_is_fragment(iph)) {
+			goto out;
+		}
+
+		_I = ntohs(iph->tot_len);
+		if (skb->len < _I || _I < (iph->ihl * 4)) {
+			goto out;
+		}
+		if (iph->protocol != IPPROTO_TCP && iph->protocol != IPPROTO_UDP) {
+			goto out;
+		}
+
 		if (!pskb_may_pull(skb, iph->ihl * 4)) {
 			return NF_DROP;
 		}
@@ -252,7 +244,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		skb->protocol = htons(ETH_P_IP);
 		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
 
-		if (_iph.protocol == IPPROTO_TCP) {
+		if (iph->protocol == IPPROTO_TCP) {
 			if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct tcphdr)) || skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct tcphdr))) {
 				return NF_DROP;
 			}
@@ -499,7 +491,6 @@ slow_fastpath:
 			if (!(nf->status & NF_FF_ORIGINAL_CHECK) && !simple_test_and_set_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status)) {
 fastnat_check:
 				do {
-					struct ethhdr *eth = (struct ethhdr *)nf->rroute[dir].l2_head;
 					__be32 saddr = ct->tuplehash[dir].tuple.src.u3.ip;
 					__be32 daddr = ct->tuplehash[dir].tuple.dst.u3.ip;
 					__be16 source = ct->tuplehash[dir].tuple.src.u.all;
@@ -507,6 +498,7 @@ fastnat_check:
 					__be16 protonum = ct->tuplehash[dir].tuple.dst.protonum;
 					u32 hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
 					natflow_fastnat_node_t *nfn = &natflow_fast_nat_table[hash];
+					struct ethhdr *eth = (struct ethhdr *)nf->rroute[dir].l2_head;
 
 					if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT) {
 						switch (iph->protocol) {
@@ -608,8 +600,8 @@ out:
 	if (pf == NFPROTO_NETDEV) {
 		if (ingress_pad_len == PPPOE_SES_HLEN) {
 			skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
-			skb->network_header -= PPPOE_SES_HLEN;
 			skb_push(skb, PPPOE_SES_HLEN);
+			skb->network_header -= PPPOE_SES_HLEN;
 		}
 		if (ingress_trim_off) {
 			skb->len += ingress_trim_off;
