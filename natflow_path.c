@@ -63,7 +63,7 @@ void natflow_update_magic(int init)
 }
 
 #ifdef CONFIG_NETFILTER_INGRESS
-static natflow_fastnat_node_t natflow_fast_nat_table[NATFLOW_FASTNAT_TABLE_SIZE];
+static natflow_fastnat_node_t *natflow_fast_nat_table = NULL;
 #endif
 
 void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir)
@@ -865,6 +865,13 @@ int natflow_path_init(void)
 {
 	int ret = 0;
 
+#ifdef CONFIG_NETFILTER_INGRESS
+	natflow_fast_nat_table = kmalloc(sizeof(natflow_fastnat_node_t) * NATFLOW_FASTNAT_TABLE_SIZE, GFP_KERNEL);
+	if (natflow_fast_nat_table == NULL) {
+		return -ENOMEM;
+	}
+#endif
+
 	need_conntrack();
 	natflow_update_magic(1);
 
@@ -883,6 +890,7 @@ nf_register_hooks_failed:
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
 	natflow_user_exit();
 natflow_user_init_failed:
+	kfree(natflow_fast_nat_table);
 	return ret;
 }
 
@@ -891,4 +899,8 @@ void natflow_path_exit(void)
 	nf_unregister_hooks(path_hooks, ARRAY_SIZE(path_hooks));
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
 	natflow_user_exit();
+#ifdef CONFIG_NETFILTER_INGRESS
+	synchronize_rcu();
+	kfree(natflow_fast_nat_table);
+#endif
 }
