@@ -600,7 +600,7 @@ out:
 	if (pf == NFPROTO_NETDEV) {
 		if (ingress_pad_len == PPPOE_SES_HLEN) {
 			skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
-			skb_push(skb, PPPOE_SES_HLEN);
+			skb_push_rcsum(skb, PPPOE_SES_HLEN);
 			skb->network_header -= PPPOE_SES_HLEN;
 		}
 		if (ingress_trim_off) {
