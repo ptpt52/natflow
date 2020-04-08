@@ -259,7 +259,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			        nfn->protonum == IPPROTO_TCP) {
 				nfn->jiffies = jiffies;
 				nfn->count++;
-				if (nfn->count % 64 == 0)
+				if (nfn->count % 128 == 0)
 					goto slow_fastpath;
 
 				if (TCPH(l4)->source != nfn->nat_source) {
@@ -350,7 +350,7 @@ fast_output:
 			        nfn->protonum == IPPROTO_UDP) {
 				nfn->jiffies = jiffies;
 				nfn->count++;
-				if (nfn->count % 64 == 0)
+				if (nfn->count % 128 == 0)
 					goto slow_fastpath;
 
 				if (UDPH(l4)->source != nfn->nat_source) {
@@ -424,11 +424,17 @@ slow_fastpath:
 		goto out;
 	}
 
-	//skip 1/32 packets to slow path
 	acct = nf_conn_acct_find(ct);
 	if (acct) {
 		struct nf_conn_counter *counter = acct->counter;
-		if ((atomic64_read(&counter[0].packets) + atomic64_read(&counter[1].packets)) % 32 == 0) {
+		int packets = atomic64_read(&counter[0].packets) + atomic64_read(&counter[1].packets);
+		/* do FF check every 1024 packets */
+		if (packets % 1024 == 0) {
+			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
+			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
+		}
+		/* skip 1/64 packets to slow path */
+		if (packets % 64 == 0) {
 			goto out;
 		}
 	}
