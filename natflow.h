@@ -130,7 +130,8 @@ struct natflow_fastnat_node_t {
 	__be16 pppoe_sid;
 } __attribute__((__aligned__(SMP_CACHE_BYTES)));
 
-#define NATFLOW_FF_TIMEOUT (60 * HZ)
+#define NATFLOW_FF_TIMEOUT_HIGH (30 * HZ)
+#define NATFLOW_FF_TIMEOUT_LOW (25 * HZ)
 
 /* MAX 65536 for now we use 2048 */
 #define NATFLOW_FASTNAT_TABLE_SIZE 2048
