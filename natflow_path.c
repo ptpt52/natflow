@@ -194,6 +194,10 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		u32 _I;
 		natflow_fastnat_node_t *nfn;
 
+		if (netif_is_bridge_port(skb->dev)) {
+			return NF_ACCEPT;
+		}
+
 		if (skb_vlan_tag_present(skb) || skb->mac_len != ETH_HLEN) {
 			return NF_ACCEPT;
 		}
@@ -423,6 +427,16 @@ slow_fastpath:
 
 	//if (!(nf->status & NF_FF_OFFLOAD)) {
 	if (!(nf->status & NF_FF_REPLY_OK) || !(nf->status & NF_FF_ORIGINAL_OK)) {
+		switch (iph->protocol) {
+		case IPPROTO_TCP:
+			NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": dir=%d reply:%d original:%d, dev=%s\n", DEBUG_TCP_ARG(iph,l4), dir,
+			              !!(nf->status & NF_FF_REPLY_OK), !!(nf->status & NF_FF_ORIGINAL_OK), skb->dev->name);
+			break;
+		case IPPROTO_UDP:
+			NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": dir=%d reply:%d original:%d, dev=%s\n", DEBUG_UDP_ARG(iph,l4), dir,
+			              !!(nf->status & NF_FF_REPLY_OK), !!(nf->status & NF_FF_ORIGINAL_OK), skb->dev->name);
+			break;
+		}
 		goto out;
 	}
 
