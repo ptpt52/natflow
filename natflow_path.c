@@ -252,14 +252,15 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			l4 = (void *)iph + iph->ihl * 4;
 			_I = natflow_hash_v4(iph->saddr, iph->daddr, TCPH(l4)->source, TCPH(l4)->dest, IPPROTO_TCP);
 			nfn = &natflow_fast_nat_table[_I];
+			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 			if (nfn->magic == natflow_path_magic &&
-			        ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+			        _I < NATFLOW_FF_TIMEOUT_LOW &&
 			        nfn->saddr == iph->saddr && nfn->daddr == iph->daddr &&
 			        nfn->source == TCPH(l4)->source && nfn->dest == TCPH(l4)->dest &&
 			        nfn->protonum == IPPROTO_TCP) {
 				nfn->jiffies = jiffies;
 				nfn->count++;
-				if (nfn->count % 128 == 0)
+				if (nfn->count % 128 == 0 || _I > HZ)
 					goto slow_fastpath;
 
 				if (TCPH(l4)->source != nfn->nat_source) {
@@ -343,14 +344,15 @@ fast_output:
 			l4 = (void *)iph + iph->ihl * 4;
 			_I = natflow_hash_v4(iph->saddr, iph->daddr, UDPH(l4)->source, UDPH(l4)->dest, IPPROTO_UDP);
 			nfn = &natflow_fast_nat_table[_I];
+			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 			if (nfn->magic == natflow_path_magic &&
-			        ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+			        _I < NATFLOW_FF_TIMEOUT_LOW &&
 			        nfn->saddr == iph->saddr && nfn->daddr == iph->daddr &&
 			        nfn->source == UDPH(l4)->source && nfn->dest == UDPH(l4)->dest &&
 			        nfn->protonum == IPPROTO_UDP) {
 				nfn->jiffies = jiffies;
 				nfn->count++;
-				if (nfn->count % 128 == 0)
+				if (nfn->count % 128 == 0 || _I > HZ)
 					goto slow_fastpath;
 
 				if (UDPH(l4)->source != nfn->nat_source) {
