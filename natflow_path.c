@@ -303,6 +303,7 @@ fast_output:
 					}
 				}
 
+				ingress_trim_off = (nfn->outdev->features & NETIF_F_TSO) && iph->protocol == IPPROTO_TCP;
 				do {
 					struct sk_buff *next = skb->next;
 					if (_I > skb_headroom(skb) && pskb_expand_head(skb, _I, skb_tailroom(skb), GFP_ATOMIC)) {
@@ -328,7 +329,7 @@ fast_output:
 						skb->protocol = __constant_htons(ETH_P_IP);
 					}
 					skb->dev = nfn->outdev;
-					if (_I != ETH_HLEN + PPPOE_SES_HLEN) { /* do GSO for PPPOE packets only */
+					if (_I != ETH_HLEN + PPPOE_SES_HLEN && ingress_trim_off) { /* TSO hw ok */
 						dev_queue_xmit(skb);
 						break;
 					} else {
@@ -588,6 +589,7 @@ fastnat_check:
 	}
 #endif
 
+	ingress_trim_off = (nf->rroute[dir].outdev->features & NETIF_F_TSO) && iph->protocol == IPPROTO_TCP;
 	do {
 		struct sk_buff *next = skb->next;
 		if (nf->rroute[dir].l2_head_len > skb_headroom(skb) && pskb_expand_head(skb, nf->rroute[dir].l2_head_len, skb_tailroom(skb), GFP_ATOMIC)) {
@@ -605,7 +607,7 @@ fastnat_check:
 			skb->protocol = __constant_htons(ETH_P_PPP_SES);
 		}
 #endif
-		if (nf->rroute[dir].l2_head_len != ETH_HLEN + PPPOE_SES_HLEN) { /* do GSO for PPPOE packets only */
+		if (nf->rroute[dir].l2_head_len != ETH_HLEN + PPPOE_SES_HLEN && ingress_trim_off) { /* TSO hw ok */
 			dev_queue_xmit(skb);
 			break;
 		} else {
