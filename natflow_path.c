@@ -276,9 +276,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		if (unlikely(ip_fast_csum((u8 *)iph, iph->ihl))) {
 			return NF_DROP;
 		}
-		if (iph->ttl <= 1) {
-			return NF_DROP;
-		}
 
 		ingress_trim_off = skb->len - _I;
 		if (pskb_trim_rcsum(skb, _I)) {
@@ -310,6 +307,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				if ((nfn->flags & FASTNAT_SKIP_NAT))
 					goto fast_output;
 
+				if (iph->ttl <= 1) {
+					return NF_DROP;
+				}
 				if (TCPH(l4)->source != nfn->nat_source) {
 					natflow_nat_port_tcp(skb, iph->ihl * 4, TCPH(l4)->source, nfn->nat_source);
 					TCPH(l4)->source = nfn->nat_source;
@@ -429,6 +429,9 @@ fast_output:
 				if ((nfn->flags & FASTNAT_SKIP_NAT))
 					goto fast_output;
 
+				if (iph->ttl <= 1) {
+					return NF_DROP;
+				}
 				if (UDPH(l4)->source != nfn->nat_source) {
 					natflow_nat_port_udp(skb, iph->ihl * 4, UDPH(l4)->source, nfn->nat_source);
 					UDPH(l4)->source = nfn->nat_source;
@@ -540,7 +543,6 @@ slow_fastpath:
 	if (iph->ttl <= 1) {
 		return NF_DROP;
 	}
-
 	if ((ct->status & IPS_DST_NAT)) {
 		if (dir == NF_FF_DIR_ORIGINAL) {
 			//do DNAT
