@@ -234,7 +234,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			return NF_ACCEPT;
 		}
 
-		if (skb_vlan_tag_present(skb) && skb->vlan_proto == htons(ETH_P_8021Q) && !vlan_ingress) {
+		if (skb_vlan_tag_present(skb) && skb->vlan_proto == __constant_htons(ETH_P_8021Q) && !vlan_ingress) {
 			return NF_ACCEPT;
 		} else if (skb->mac_len != ETH_HLEN) {
 			return NF_ACCEPT;
@@ -283,7 +283,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			return NF_DROP;
 		}
 
-		skb->protocol = htons(ETH_P_IP);
+		skb->protocol = __constant_htons(ETH_P_IP);
 		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
 
 		if (iph->protocol == IPPROTO_TCP) {
@@ -435,7 +435,7 @@ slow_fastpath:
 	}
 #endif
 
-	if (skb->protocol != htons(ETH_P_IP))
+	if (skb->protocol != __constant_htons(ETH_P_IP))
 		goto out;
 
 	iph = ip_hdr(skb);
@@ -730,7 +730,7 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (disabled)
 		return NF_ACCEPT;
 
-	if (skb->protocol != htons(ETH_P_IP))
+	if (skb->protocol != __constant_htons(ETH_P_IP))
 		return NF_ACCEPT;
 
 	iph = ip_hdr(skb);

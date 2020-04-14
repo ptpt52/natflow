@@ -622,7 +622,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	if (disabled)
 		return NF_ACCEPT;
 
-	if (skb->protocol != htons(ETH_P_IP))
+	if (skb->protocol != __constant_htons(ETH_P_IP))
 		return NF_ACCEPT;
 
 	ct = nf_ct_get(skb, &ctinfo);
@@ -789,7 +789,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	if (disabled)
 		return NF_ACCEPT;
 
-	if (skb->protocol != htons(ETH_P_IP))
+	if (skb->protocol != __constant_htons(ETH_P_IP))
 		return NF_ACCEPT;
 
 	if (in == NULL)
