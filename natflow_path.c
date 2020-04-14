@@ -621,7 +621,11 @@ fastnat_check:
 						memcpy(nfn->h_dest, eth->h_dest, ETH_ALEN);
 
 						nfn->flags = 0;
-						nfn->vlan_tci = natflow_vlan_tci_get(nf->rroute[dir].l2_head);
+						if (nf->rroute[dir].l2_head_len <= ETH_HLEN + PPPOE_SES_HLEN) {
+							nfn->vlan_tci = natflow_vlan_tci_get(nf->rroute[dir].l2_head);
+						} else {
+							nfn->vlan_tci = 0;
+						}
 						if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 							struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth + ETH_HLEN);
 							nfn->pppoe_sid = ph->sid;
@@ -697,7 +701,8 @@ fastnat_check:
 			ph->length = htons(ntohs(ip_hdr(skb)->tot_len) + 2);
 			skb->protocol = __constant_htons(ETH_P_PPP_SES);
 		}
-		if (natflow_vlan_tci_get(nf->rroute[dir].l2_head) != 0) {
+		if (nf->rroute[dir].l2_head_len <= ETH_HLEN + PPPOE_SES_HLEN &&
+		        natflow_vlan_tci_get(nf->rroute[dir].l2_head) != 0) {
 			__vlan_hwaccel_put_tag(skb, __constant_htons(ETH_P_8021Q), natflow_vlan_tci_get(nf->rroute[dir].l2_head));
 		} else if (skb_vlan_tag_present(skb)) {
 			__vlan_hwaccel_clear_tag(skb);
