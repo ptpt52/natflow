@@ -67,9 +67,13 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             "\n"
 		             "disabled=%u\n"
 		             "bridge_ingress=%u\n"
+		             "vlan_ingress=%u\n"
 		             "debug=%d\n"
 		             "\n",
-		             natflow_disabled_get(), natflow_bridge_ingress_get(), debug);
+		             natflow_disabled_get(),
+		             natflow_bridge_ingress_get(),
+		             natflow_vlan_ingress_get(),
+		             debug);
 		natflow_ctl_buffer[n] = 0;
 		return natflow_ctl_buffer;
 	}
@@ -163,6 +167,13 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 		n = sscanf(data, "bridge_ingress=%u", &d);
 		if (n == 1) {
 			natflow_bridge_ingress_set(!!d);
+			goto done;
+		}
+	} else if (strncmp(data, "vlan_ingress=", 13) == 0) {
+		int d;
+		n = sscanf(data, "vlan_ingress=%u", &d);
+		if (n == 1) {
+			natflow_vlan_ingress_set(!!d);
 			goto done;
 		}
 	} else if (strncmp(data, "update_magic", 12) == 0) {

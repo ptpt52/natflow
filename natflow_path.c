@@ -60,6 +60,16 @@ int natflow_bridge_ingress_get(void)
 	return bridge_ingress;
 }
 
+static int vlan_ingress = 0;
+void natflow_vlan_ingress_set(int v)
+{
+	vlan_ingress = v;
+}
+int natflow_vlan_ingress_get(void)
+{
+	return vlan_ingress;
+}
+
 static unsigned int natflow_path_magic = 0;
 void natflow_update_magic(int init)
 {
@@ -73,6 +83,17 @@ void natflow_update_magic(int init)
 #ifdef CONFIG_NETFILTER_INGRESS
 static natflow_fastnat_node_t *natflow_fast_nat_table = NULL;
 #endif
+
+static inline void natflow_vlan_tci_set(void *hdr, __be16 vlan_tci)
+{
+	__be16 *vl = (__be16 *)(hdr + ETH_HLEN + PPPOE_SES_HLEN);
+	*vl = vlan_tci;
+}
+static inline __be16 natflow_vlan_tci_get(const void *hdr)
+{
+	__be16 *vl = (__be16 *)(hdr + ETH_HLEN + PPPOE_SES_HLEN);
+	return *vl;
+}
 
 void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir)
 {
@@ -109,6 +130,9 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 					memcpy(ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
 					memcpy(ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, mac, ETH_ALEN);
 				}
+				if (skb_vlan_tag_present(skb) && (l2_len == ETH_HLEN || l2_len == ETH_HLEN + PPPOE_SES_HLEN)) {
+					natflow_vlan_tci_set(nf->rroute[dir].l2_head, skb->vlan_tci);
+				}
 				simple_set_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 			}
 		}
@@ -128,6 +152,10 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 					memcpy(mac, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 					memcpy(ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 					memcpy(ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, mac, ETH_ALEN);
+				}
+				if (skb_vlan_tag_present(skb) && (l2_len == ETH_HLEN || l2_len == ETH_HLEN + PPPOE_SES_HLEN)) {
+					__be16 *vl = (__be16 *)(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN + PPPOE_SES_HLEN);
+					*vl = skb->vlan_tci;
 				}
 				simple_set_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 			}
@@ -206,7 +234,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			return NF_ACCEPT;
 		}
 
-		if (skb_vlan_tag_present(skb) || skb->mac_len != ETH_HLEN) {
+		if (skb_vlan_tag_present(skb) && skb->vlan_proto == htons(ETH_P_8021Q) && !vlan_ingress) {
+			return NF_ACCEPT;
+		} else if (skb->mac_len != ETH_HLEN) {
 			return NF_ACCEPT;
 		}
 		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
@@ -337,7 +367,10 @@ fast_output:
 						skb->protocol = __constant_htons(ETH_P_IP);
 					}
 					skb->dev = nfn->outdev;
-					if (_I != ETH_HLEN + PPPOE_SES_HLEN && ingress_trim_off) { /* TSO hw ok */
+					if (nfn->vlan_tci != 0) {
+						__vlan_hwaccel_put_tag(skb, __constant_htons(ETH_P_8021Q), nfn->vlan_tci);
+					}
+					if (_I == ETH_HLEN && ingress_trim_off) { /* TSO hw ok */
 						dev_queue_xmit(skb);
 						break;
 					} else {
@@ -555,12 +588,13 @@ fastnat_check:
 						memcpy(nfn->h_dest, eth->h_dest, ETH_ALEN);
 
 						nfn->flags = 0;
-						nfn->vlan_tci = 0;
-						nfn->pppoe_sid = 0;
+						nfn->vlan_tci = natflow_vlan_tci_get(nf->rroute[dir].l2_head);
 						if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 							struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth + ETH_HLEN);
 							nfn->pppoe_sid = ph->sid;
 							nfn->flags |= FASTNAT_PPPOE_FLAG;
+						} else {
+							nfn->pppoe_sid = 0;
 						}
 
 						nfn->outdev = nf->rroute[dir].outdev;
@@ -615,7 +649,10 @@ fastnat_check:
 			skb->protocol = __constant_htons(ETH_P_PPP_SES);
 		}
 #endif
-		if (nf->rroute[dir].l2_head_len != ETH_HLEN + PPPOE_SES_HLEN && ingress_trim_off) { /* TSO hw ok */
+		if (natflow_vlan_tci_get(nf->rroute[dir].l2_head) != 0) {
+			__vlan_hwaccel_put_tag(skb, __constant_htons(ETH_P_8021Q), natflow_vlan_tci_get(nf->rroute[dir].l2_head));
+		}
+		if (nf->rroute[dir].l2_head_len == ETH_HLEN && ingress_trim_off) { /* TSO hw ok */
 			dev_queue_xmit(skb);
 			break;
 		} else {

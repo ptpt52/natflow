@@ -30,6 +30,9 @@ extern int natflow_disabled_get(void);
 void natflow_bridge_ingress_set(int v);
 int natflow_bridge_ingress_get(void);
 
+void natflow_vlan_ingress_set(int v);
+int natflow_vlan_ingress_get(void);
+
 extern void natflow_update_magic(int init);
 
 static inline int natflow_nat_ip_tcp(struct sk_buff *skb, unsigned int thoff,
