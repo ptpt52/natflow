@@ -369,6 +369,8 @@ fast_output:
 					skb->dev = nfn->outdev;
 					if (nfn->vlan_tci != 0) {
 						__vlan_hwaccel_put_tag(skb, __constant_htons(ETH_P_8021Q), nfn->vlan_tci);
+					} else if (skb_vlan_tag_present(skb)) {
+						__vlan_hwaccel_clear_tag(skb);
 					}
 					if (_I == ETH_HLEN && ingress_trim_off) { /* TSO hw ok */
 						dev_queue_xmit(skb);
@@ -651,6 +653,8 @@ fastnat_check:
 #endif
 		if (natflow_vlan_tci_get(nf->rroute[dir].l2_head) != 0) {
 			__vlan_hwaccel_put_tag(skb, __constant_htons(ETH_P_8021Q), natflow_vlan_tci_get(nf->rroute[dir].l2_head));
+		} else if (skb_vlan_tag_present(skb)) {
+			__vlan_hwaccel_clear_tag(skb);
 		}
 		if (nf->rroute[dir].l2_head_len == ETH_HLEN && ingress_trim_off) { /* TSO hw ok */
 			dev_queue_xmit(skb);
