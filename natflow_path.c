@@ -50,26 +50,6 @@ int natflow_disabled_get(void)
 	return disabled;
 }
 
-static int bridge_ingress = 0;
-void natflow_bridge_ingress_set(int v)
-{
-	bridge_ingress = v;
-}
-int natflow_bridge_ingress_get(void)
-{
-	return bridge_ingress;
-}
-
-static int vlan_ingress = 0;
-void natflow_vlan_ingress_set(int v)
-{
-	vlan_ingress = v;
-}
-int natflow_vlan_ingress_get(void)
-{
-	return vlan_ingress;
-}
-
 static unsigned int natflow_path_magic = 0;
 void natflow_update_magic(int init)
 {
@@ -83,17 +63,6 @@ void natflow_update_magic(int init)
 #ifdef CONFIG_NETFILTER_INGRESS
 static natflow_fastnat_node_t *natflow_fast_nat_table = NULL;
 #endif
-
-static inline void natflow_vlan_tci_set(void *hdr, u16 vlan_tci)
-{
-	u16 *vl = (u16 *)(hdr + ETH_HLEN + PPPOE_SES_HLEN);
-	*vl = vlan_tci;
-}
-static inline u16 natflow_vlan_tci_get(const void *hdr)
-{
-	u16 *vl = (u16 *)(hdr + ETH_HLEN + PPPOE_SES_HLEN);
-	return *vl;
-}
 
 void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir)
 {
@@ -130,15 +99,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 					memcpy(ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
 					memcpy(ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, mac, ETH_ALEN);
 				}
-				if (skb_vlan_tag_present(skb) && (l2_len == ETH_HLEN || l2_len == ETH_HLEN + PPPOE_SES_HLEN)) {
-					natflow_vlan_tci_set(nf->rroute[NF_FF_DIR_REPLY].l2_head, skb->vlan_tci);
-				}
 				simple_set_bit(NF_FF_REPLY_OK_BIT, &nf->status);
-			}
-
-			//ct is sure not comfirm, we use 'mtu' to store ttl
-			if (!nf_ct_is_confirmed(ct)) {
-				nf->rroute[NF_FF_DIR_ORIGINAL].mtu = iph->ttl;
 			}
 		}
 	} else {
@@ -157,9 +118,6 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 					memcpy(mac, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 					memcpy(ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 					memcpy(ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, mac, ETH_ALEN);
-				}
-				if (skb_vlan_tag_present(skb) && (l2_len == ETH_HLEN || l2_len == ETH_HLEN + PPPOE_SES_HLEN)) {
-					natflow_vlan_tci_set(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head, skb->vlan_tci);
 				}
 				simple_set_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 			}
@@ -234,13 +192,11 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		u32 _I;
 		natflow_fastnat_node_t *nfn;
 
-		if (netif_is_bridge_port(skb->dev) && !bridge_ingress) {
+		if (netif_is_bridge_port(skb->dev)) {
 			return NF_ACCEPT;
 		}
 
-		if (skb_vlan_tag_present(skb) && skb->vlan_proto == __constant_htons(ETH_P_8021Q) && !vlan_ingress) {
-			return NF_ACCEPT;
-		} else if (skb->mac_len != ETH_HLEN) {
+		if (skb_vlan_tag_present(skb) || skb->mac_len != ETH_HLEN) {
 			return NF_ACCEPT;
 		}
 		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
@@ -309,15 +265,10 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				if (nfn->count % 128 == 0 || _I > HZ)
 					goto slow_fastpath;
 
-				if ((nfn->flags & FASTNAT_CHECK_TTL)) {
-					if (iph->ttl <= 1) {
-						return NF_DROP;
-					}
-					ip_decrease_ttl(iph);
+				if (iph->ttl <= 1) {
+					return NF_DROP;
 				}
-				if ((nfn->flags & FASTNAT_SKIP_NAT))
-					goto fast_output;
-
+				ip_decrease_ttl(iph);
 				if (TCPH(l4)->source != nfn->nat_source) {
 					natflow_nat_port_tcp(skb, iph->ihl * 4, TCPH(l4)->source, nfn->nat_source);
 					TCPH(l4)->source = nfn->nat_source;
@@ -338,22 +289,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				}
 
 fast_output:
-				_I = skb_mac_header_len(skb);
-				if (unlikely((nfn->flags & FASTNAT_SKIP_MAC) && !skb->next && _I <= skb_headroom(skb))) {
-					skb_push(skb, _I);
-					skb_reset_mac_header(skb);
-					skb->dev = nfn->outdev;
-					if (!(nfn->flags & FASTNAT_SKIP_TAG)) {
-						if (nfn->vlan_tci != 0) {
-							__vlan_hwaccel_put_tag(skb, __constant_htons(ETH_P_8021Q), nfn->vlan_tci);
-						} else if (skb_vlan_tag_present(skb)) {
-							__vlan_hwaccel_clear_tag(skb);
-						}
-					}
-					dev_queue_xmit(skb);
-					return NF_STOLEN;
-				}
-
 				_I = ETH_HLEN;
 				if ((nfn->flags & FASTNAT_PPPOE_FLAG)) {
 					_I += PPPOE_SES_HLEN;
@@ -395,14 +330,7 @@ fast_output:
 						skb->protocol = __constant_htons(ETH_P_IP);
 					}
 					skb->dev = nfn->outdev;
-					if (!(nfn->flags & FASTNAT_SKIP_TAG)) {
-						if (nfn->vlan_tci != 0) {
-							__vlan_hwaccel_put_tag(skb, __constant_htons(ETH_P_8021Q), nfn->vlan_tci);
-						} else if (skb_vlan_tag_present(skb)) {
-							__vlan_hwaccel_clear_tag(skb);
-						}
-					}
-					if (_I == ETH_HLEN && ingress_trim_off && !skb_vlan_tag_present(skb)) { /* TSO hw ok */
+					if (_I == ETH_HLEN && ingress_trim_off) { /* TSO hw ok */
 						dev_queue_xmit(skb);
 						break;
 					} else {
@@ -433,15 +361,10 @@ fast_output:
 				if (nfn->count % 128 == 0 || _I > HZ)
 					goto slow_fastpath;
 
-				if ((nfn->flags & FASTNAT_CHECK_TTL)) {
-					if (iph->ttl <= 1) {
-						return NF_DROP;
-					}
-					ip_decrease_ttl(iph);
+				if (iph->ttl <= 1) {
+					return NF_DROP;
 				}
-				if ((nfn->flags & FASTNAT_SKIP_NAT))
-					goto fast_output;
-
+				ip_decrease_ttl(iph);
 				if (UDPH(l4)->source != nfn->nat_source) {
 					natflow_nat_port_udp(skb, iph->ihl * 4, UDPH(l4)->source, nfn->nat_source);
 					UDPH(l4)->source = nfn->nat_source;
@@ -549,12 +472,10 @@ slow_fastpath:
 		goto out;
 	}
 
-	if ((nf->status & NF_FF_CHECK_TTL)) {
-		if (iph->ttl <= 1) {
-			return NF_DROP;
-		}
-		ip_decrease_ttl(iph);
+	if (iph->ttl <= 1) {
+		return NF_DROP;
 	}
+	ip_decrease_ttl(iph);
 	if ((ct->status & IPS_DST_NAT)) {
 		if (dir == NF_FF_DIR_ORIGINAL) {
 			//do DNAT
@@ -633,36 +554,13 @@ fastnat_check:
 						memcpy(nfn->h_dest, eth->h_dest, ETH_ALEN);
 
 						nfn->flags = 0;
-						if (nf->rroute[dir].l2_head_len <= ETH_HLEN + PPPOE_SES_HLEN) {
-							nfn->vlan_tci = natflow_vlan_tci_get(nf->rroute[dir].l2_head);
-						} else {
-							nfn->vlan_tci = 0;
-						}
+						nfn->vlan_tci = 0;
 						if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 							struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth + ETH_HLEN);
 							nfn->pppoe_sid = ph->sid;
 							nfn->flags |= FASTNAT_PPPOE_FLAG;
 						} else {
 							nfn->pppoe_sid = 0;
-						}
-
-						if ((nf->status & NF_FF_CHECK_TTL)) {
-							nfn->flags |= FASTNAT_CHECK_TTL;
-						}
-						if (saddr == ct->tuplehash[!dir].tuple.dst.u3.ip &&
-						        daddr == ct->tuplehash[!dir].tuple.src.u3.ip &&
-						        source == ct->tuplehash[!dir].tuple.dst.u.all &&
-						        dest == ct->tuplehash[!dir].tuple.src.u.all) {
-							nfn->flags |= FASTNAT_SKIP_NAT;
-						}
-						if (nf->rroute[dir].l2_head_len > 0 &&
-						        nf->rroute[dir].l2_head_len == skb_mac_header_len(skb) &&
-						        memcmp(nf->rroute[dir].l2_head, skb_mac_header(skb), nf->rroute[dir].l2_head_len) == 0) {
-							nfn->flags |= FASTNAT_SKIP_MAC;
-						}
-						if ((skb_vlan_tag_present(skb) && nfn->vlan_tci == skb->vlan_tci) ||
-						        (!skb_vlan_tag_present(skb) && !nfn->vlan_tci)) {
-							nfn->flags |= FASTNAT_SKIP_TAG;
 						}
 
 						nfn->outdev = nf->rroute[dir].outdev;
@@ -716,14 +614,8 @@ fastnat_check:
 			ph->length = htons(ntohs(ip_hdr(skb)->tot_len) + 2);
 			skb->protocol = __constant_htons(ETH_P_PPP_SES);
 		}
-		if (nf->rroute[dir].l2_head_len <= ETH_HLEN + PPPOE_SES_HLEN &&
-		        natflow_vlan_tci_get(nf->rroute[dir].l2_head) != 0) {
-			__vlan_hwaccel_put_tag(skb, __constant_htons(ETH_P_8021Q), natflow_vlan_tci_get(nf->rroute[dir].l2_head));
-		} else if (skb_vlan_tag_present(skb)) {
-			__vlan_hwaccel_clear_tag(skb);
-		}
 #endif
-		if (nf->rroute[dir].l2_head_len == ETH_HLEN && ingress_trim_off && !skb_vlan_tag_present(skb)) { /* TSO hw ok */
+		if (nf->rroute[dir].l2_head_len == ETH_HLEN && ingress_trim_off) { /* TSO hw ok */
 			dev_queue_xmit(skb);
 			break;
 		} else {
@@ -840,9 +732,6 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 			}
 			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
 			return NF_ACCEPT;
-		}
-		if (CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL && nf->rroute[NF_FF_DIR_ORIGINAL].mtu != iph->ttl) {
-			simple_set_bit(NF_FF_CHECK_TTL_BIT, &nf->status);
 		}
 	}
 
