@@ -125,7 +125,7 @@ struct natflow_fastnat_node_t {
 	__be32 nat_saddr,
 	       nat_daddr;
 	unsigned char h_source[ETH_ALEN];
-	__be16 vlan_tci;
+	u16 vlan_tci;
 	unsigned char h_dest[ETH_ALEN];
 	__be16 pppoe_sid;
 } __attribute__((__aligned__(SMP_CACHE_BYTES)));

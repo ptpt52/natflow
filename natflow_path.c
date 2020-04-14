@@ -84,14 +84,14 @@ void natflow_update_magic(int init)
 static natflow_fastnat_node_t *natflow_fast_nat_table = NULL;
 #endif
 
-static inline void natflow_vlan_tci_set(void *hdr, __be16 vlan_tci)
+static inline void natflow_vlan_tci_set(void *hdr, u16 vlan_tci)
 {
-	__be16 *vl = (__be16 *)(hdr + ETH_HLEN + PPPOE_SES_HLEN);
+	u16 *vl = (u16 *)(hdr + ETH_HLEN + PPPOE_SES_HLEN);
 	*vl = vlan_tci;
 }
-static inline __be16 natflow_vlan_tci_get(const void *hdr)
+static inline u16 natflow_vlan_tci_get(const void *hdr)
 {
-	__be16 *vl = (__be16 *)(hdr + ETH_HLEN + PPPOE_SES_HLEN);
+	u16 *vl = (u16 *)(hdr + ETH_HLEN + PPPOE_SES_HLEN);
 	return *vl;
 }
 
