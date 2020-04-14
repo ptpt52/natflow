@@ -372,7 +372,7 @@ fast_output:
 					} else if (skb_vlan_tag_present(skb)) {
 						__vlan_hwaccel_clear_tag(skb);
 					}
-					if (_I == ETH_HLEN && ingress_trim_off) { /* TSO hw ok */
+					if (_I == ETH_HLEN && ingress_trim_off && !skb_vlan_tag_present(skb)) { /* TSO hw ok */
 						dev_queue_xmit(skb);
 						break;
 					} else {
@@ -656,7 +656,7 @@ fastnat_check:
 		} else if (skb_vlan_tag_present(skb)) {
 			__vlan_hwaccel_clear_tag(skb);
 		}
-		if (nf->rroute[dir].l2_head_len == ETH_HLEN && ingress_trim_off) { /* TSO hw ok */
+		if (nf->rroute[dir].l2_head_len == ETH_HLEN && ingress_trim_off && !skb_vlan_tag_present(skb)) { /* TSO hw ok */
 			dev_queue_xmit(skb);
 			break;
 		} else {
