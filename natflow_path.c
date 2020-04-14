@@ -135,6 +135,11 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 				}
 				simple_set_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 			}
+
+			//ct is sure not comfirm, we use 'mtu' to store ttl
+			if (!nf_ct_is_confirmed(ct)) {
+				nf->rroute[NF_FF_DIR_ORIGINAL].mtu = iph->ttl;
+			}
 		}
 	} else {
 		if (!(nf->status & NF_FF_ORIGINAL) && !simple_test_and_set_bit(NF_FF_ORIGINAL_BIT, &nf->status)) {
@@ -304,12 +309,15 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				if (nfn->count % 128 == 0 || _I > HZ)
 					goto slow_fastpath;
 
+				if ((nfn->flags & FASTNAT_CHECK_TTL)) {
+					if (iph->ttl <= 1) {
+						return NF_DROP;
+					}
+					ip_decrease_ttl(iph);
+				}
 				if ((nfn->flags & FASTNAT_SKIP_NAT))
 					goto fast_output;
 
-				if (iph->ttl <= 1) {
-					return NF_DROP;
-				}
 				if (TCPH(l4)->source != nfn->nat_source) {
 					natflow_nat_port_tcp(skb, iph->ihl * 4, TCPH(l4)->source, nfn->nat_source);
 					TCPH(l4)->source = nfn->nat_source;
@@ -328,7 +336,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					natflow_nat_ip_tcp(skb, iph->ihl * 4, iph->daddr, nfn->nat_daddr);
 					iph->daddr = nfn->nat_daddr;
 				}
-				ip_decrease_ttl(iph);
 
 fast_output:
 				_I = skb_mac_header_len(skb);
@@ -426,12 +433,15 @@ fast_output:
 				if (nfn->count % 128 == 0 || _I > HZ)
 					goto slow_fastpath;
 
+				if ((nfn->flags & FASTNAT_CHECK_TTL)) {
+					if (iph->ttl <= 1) {
+						return NF_DROP;
+					}
+					ip_decrease_ttl(iph);
+				}
 				if ((nfn->flags & FASTNAT_SKIP_NAT))
 					goto fast_output;
 
-				if (iph->ttl <= 1) {
-					return NF_DROP;
-				}
 				if (UDPH(l4)->source != nfn->nat_source) {
 					natflow_nat_port_udp(skb, iph->ihl * 4, UDPH(l4)->source, nfn->nat_source);
 					UDPH(l4)->source = nfn->nat_source;
@@ -450,7 +460,6 @@ fast_output:
 					natflow_nat_ip_udp(skb, iph->ihl * 4, iph->daddr, nfn->nat_daddr);
 					iph->daddr = nfn->nat_daddr;
 				}
-				ip_decrease_ttl(iph);
 
 				goto fast_output;
 			}
@@ -540,8 +549,11 @@ slow_fastpath:
 		goto out;
 	}
 
-	if (iph->ttl <= 1) {
-		return NF_DROP;
+	if ((nf->status & NF_FF_CHECK_TTL)) {
+		if (iph->ttl <= 1) {
+			return NF_DROP;
+		}
+		ip_decrease_ttl(iph);
 	}
 	if ((ct->status & IPS_DST_NAT)) {
 		if (dir == NF_FF_DIR_ORIGINAL) {
@@ -574,8 +586,6 @@ slow_fastpath:
 	}
 	iph = ip_hdr(skb);
 	l4 = (void *)iph + iph->ihl * 4;
-
-	ip_decrease_ttl(iph);
 
 	/* XXX I just confirm it first  */
 	ret = nf_conntrack_confirm(skb);
@@ -636,6 +646,9 @@ fastnat_check:
 							nfn->pppoe_sid = 0;
 						}
 
+						if ((nf->status & NF_FF_CHECK_TTL)) {
+							nfn->flags |= FASTNAT_CHECK_TTL;
+						}
 						if (saddr == ct->tuplehash[!dir].tuple.dst.u3.ip &&
 						        daddr == ct->tuplehash[!dir].tuple.src.u3.ip &&
 						        source == ct->tuplehash[!dir].tuple.dst.u.all &&
@@ -827,6 +840,9 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 			}
 			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
 			return NF_ACCEPT;
+		}
+		if (CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL && nf->rroute[NF_FF_DIR_ORIGINAL].mtu != iph->ttl) {
+			simple_set_bit(NF_FF_CHECK_TTL_BIT, &nf->status);
 		}
 	}
 

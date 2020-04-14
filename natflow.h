@@ -40,6 +40,9 @@ typedef struct natflow_route_t {
 #define NF_FF_REPLY_CHECK_BIT 13
 #define NF_FF_REPLY_CHECK (1 << NF_FF_REPLY_CHECK_BIT)
 
+#define NF_FF_CHECK_TTL_BIT 14
+#define NF_FF_CHECK_TTL (1 << NF_FF_CHECK_TTL_BIT)
+
 typedef struct natflow_t {
 	unsigned int magic;
 	unsigned int status;
@@ -116,6 +119,7 @@ struct natflow_fastnat_node_t {
 #define FASTNAT_SKIP_NAT   0x04
 #define FASTNAT_SKIP_MAC   0x08
 #define FASTNAT_SKIP_TAG   0x10
+#define FASTNAT_CHECK_TTL  0x20
 	unsigned char flags;
 	unsigned char count;
 	__be16 protonum;
