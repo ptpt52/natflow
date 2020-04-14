@@ -307,6 +307,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				if (nfn->count % 128 == 0 || _I > HZ)
 					goto slow_fastpath;
 
+				if ((nfn->flags & FASTNAT_SKIP_NAT))
+					goto fast_output;
+
 				if (TCPH(l4)->source != nfn->nat_source) {
 					natflow_nat_port_tcp(skb, iph->ihl * 4, TCPH(l4)->source, nfn->nat_source);
 					TCPH(l4)->source = nfn->nat_source;
@@ -328,6 +331,22 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				ip_decrease_ttl(iph);
 
 fast_output:
+				_I = skb_mac_header_len(skb);
+				if (unlikely((nfn->flags & FASTNAT_SKIP_MAC) && !skb->next && _I <= skb_headroom(skb))) {
+					skb_push(skb, _I);
+					skb_reset_mac_header(skb);
+					skb->dev = nfn->outdev;
+					if (!(nfn->flags & FASTNAT_SKIP_TAG)) {
+						if (nfn->vlan_tci != 0) {
+							__vlan_hwaccel_put_tag(skb, __constant_htons(ETH_P_8021Q), nfn->vlan_tci);
+						} else if (skb_vlan_tag_present(skb)) {
+							__vlan_hwaccel_clear_tag(skb);
+						}
+					}
+					dev_queue_xmit(skb);
+					return NF_STOLEN;
+				}
+
 				_I = ETH_HLEN;
 				if ((nfn->flags & FASTNAT_PPPOE_FLAG)) {
 					_I += PPPOE_SES_HLEN;
@@ -369,10 +388,12 @@ fast_output:
 						skb->protocol = __constant_htons(ETH_P_IP);
 					}
 					skb->dev = nfn->outdev;
-					if (nfn->vlan_tci != 0) {
-						__vlan_hwaccel_put_tag(skb, __constant_htons(ETH_P_8021Q), nfn->vlan_tci);
-					} else if (skb_vlan_tag_present(skb)) {
-						__vlan_hwaccel_clear_tag(skb);
+					if (!(nfn->flags & FASTNAT_SKIP_TAG)) {
+						if (nfn->vlan_tci != 0) {
+							__vlan_hwaccel_put_tag(skb, __constant_htons(ETH_P_8021Q), nfn->vlan_tci);
+						} else if (skb_vlan_tag_present(skb)) {
+							__vlan_hwaccel_clear_tag(skb);
+						}
 					}
 					if (_I == ETH_HLEN && ingress_trim_off && !skb_vlan_tag_present(skb)) { /* TSO hw ok */
 						dev_queue_xmit(skb);
@@ -404,6 +425,9 @@ fast_output:
 				nfn->count++;
 				if (nfn->count % 128 == 0 || _I > HZ)
 					goto slow_fastpath;
+
+				if ((nfn->flags & FASTNAT_SKIP_NAT))
+					goto fast_output;
 
 				if (UDPH(l4)->source != nfn->nat_source) {
 					natflow_nat_port_udp(skb, iph->ihl * 4, UDPH(l4)->source, nfn->nat_source);
@@ -581,6 +605,7 @@ fastnat_check:
 							NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d use hash=%d\n", DEBUG_UDP_ARG(iph,l4), dir, hash);
 							break;
 						}
+
 						nfn->saddr = saddr;
 						nfn->daddr = daddr;
 						nfn->source = source;
@@ -603,6 +628,22 @@ fastnat_check:
 							nfn->flags |= FASTNAT_PPPOE_FLAG;
 						} else {
 							nfn->pppoe_sid = 0;
+						}
+
+						if (saddr == ct->tuplehash[!dir].tuple.dst.u3.ip &&
+						        daddr == ct->tuplehash[!dir].tuple.src.u3.ip &&
+						        source == ct->tuplehash[!dir].tuple.dst.u.all &&
+						        dest == ct->tuplehash[!dir].tuple.src.u.all) {
+							nfn->flags |= FASTNAT_SKIP_NAT;
+						}
+						if (nf->rroute[dir].l2_head_len > 0 &&
+						        nf->rroute[dir].l2_head_len == skb_mac_header_len(skb) &&
+						        memcmp(nf->rroute[dir].l2_head, skb_mac_header(skb), nf->rroute[dir].l2_head_len) == 0) {
+							nfn->flags |= FASTNAT_SKIP_MAC;
+						}
+						if ((skb_vlan_tag_present(skb) && nfn->vlan_tci == skb->vlan_tci) ||
+						        (!skb_vlan_tag_present(skb) && !nfn->vlan_tci)) {
+							nfn->flags |= FASTNAT_SKIP_TAG;
 						}
 
 						nfn->outdev = nf->rroute[dir].outdev;
@@ -656,12 +697,12 @@ fastnat_check:
 			ph->length = htons(ntohs(ip_hdr(skb)->tot_len) + 2);
 			skb->protocol = __constant_htons(ETH_P_PPP_SES);
 		}
-#endif
 		if (natflow_vlan_tci_get(nf->rroute[dir].l2_head) != 0) {
 			__vlan_hwaccel_put_tag(skb, __constant_htons(ETH_P_8021Q), natflow_vlan_tci_get(nf->rroute[dir].l2_head));
 		} else if (skb_vlan_tag_present(skb)) {
 			__vlan_hwaccel_clear_tag(skb);
 		}
+#endif
 		if (nf->rroute[dir].l2_head_len == ETH_HLEN && ingress_trim_off && !skb_vlan_tag_present(skb)) { /* TSO hw ok */
 			dev_queue_xmit(skb);
 			break;
