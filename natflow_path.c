@@ -45,14 +45,22 @@ void natflow_disabled_set(int v)
 {
 	disabled = v;
 }
-
 int natflow_disabled_get(void)
 {
 	return disabled;
 }
 
-static unsigned int natflow_path_magic = 0;
+static int bridge_ingress = 0;
+void natflow_bridge_ingress_set(int v)
+{
+	bridge_ingress = v;
+}
+int natflow_bridge_ingress_get(void)
+{
+	return bridge_ingress;
+}
 
+static unsigned int natflow_path_magic = 0;
 void natflow_update_magic(int init)
 {
 	if (init) {
@@ -194,7 +202,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		u32 _I;
 		natflow_fastnat_node_t *nfn;
 
-		if (netif_is_bridge_port(skb->dev)) {
+		if (netif_is_bridge_port(skb->dev) && !bridge_ingress) {
 			return NF_ACCEPT;
 		}
 
