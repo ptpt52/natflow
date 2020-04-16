@@ -181,8 +181,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	int ret = NF_ACCEPT;
 #ifdef CONFIG_NETFILTER_INGRESS
 	unsigned int ingress_pad_len = 0;
-	unsigned int ingress_trim_off = 0;
 #endif
+	unsigned int ingress_trim_off = 0;
 
 	if (disabled)
 		return NF_ACCEPT;
@@ -922,7 +922,9 @@ nf_register_hooks_failed:
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
 	natflow_user_exit();
 natflow_user_init_failed:
+#ifdef CONFIG_NETFILTER_INGRESS
 	kfree(natflow_fast_nat_table);
+#endif
 	return ret;
 }
 
