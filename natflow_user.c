@@ -321,11 +321,13 @@ static inline void natflow_auth_reply_payload_fin(const char *payload, int paylo
 
 	//setup mac header
 	neth = eth_hdr(nskb);
-	memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
-	memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
-	//neth->h_proto = htons(ETH_P_IP);
-	//setup ip header
 	niph = ip_hdr(nskb);
+	if ((char *)niph - (char *)neth >= ETH_HLEN) {
+		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
+		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
+		//neth->h_proto = htons(ETH_P_IP);
+	}
+	//setup ip header
 	memset(niph, 0, sizeof(struct iphdr));
 	niph->saddr = oiph->daddr;
 	niph->daddr = oiph->saddr;
@@ -537,11 +539,13 @@ static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, s
 
 	//setup mac header
 	neth = eth_hdr(nskb);
-	memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
-	memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
-	//neth->h_proto = htons(ETH_P_IP);
-	//setup ip header
 	niph = ip_hdr(nskb);
+	if ((char *)niph - (char *)neth >= ETH_HLEN) {
+		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
+		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
+		//neth->h_proto = htons(ETH_P_IP);
+	}
+	//setup ip header
 	memset(niph, 0, sizeof(struct iphdr));
 	niph->saddr = oiph->daddr;
 	niph->daddr = oiph->saddr;
