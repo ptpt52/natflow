@@ -393,6 +393,14 @@ slow_fastpath:
 		if (ret != NF_ACCEPT) {
 			goto out;
 		}
+		ct = nf_ct_get(skb, &ctinfo);
+		if (NULL == ct) {
+			goto out;
+		}
+		if ((ct->status & IPS_NATFLOW_FF_STOP)) {
+			skb_nfct_reset(skb);
+			goto out;
+		}
 	}
 #endif
 
