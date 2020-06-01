@@ -334,12 +334,9 @@ fast_output:
 						*(__be16 *)((void *)ph + sizeof(struct pppoe_hdr)) = __constant_htons(PPP_IP);
 					} else if (_I == ETH_HLEN) {
 						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
-						skb->protocol = __constant_htons(ETH_P_IP);
-					} else {
-						skb->protocol = __constant_htons(ETH_P_IP);
 					}
 					skb->dev = nfn->outdev;
-					if (_I <= ETH_HLEN && ingress_trim_off) { /* TSO hw ok */
+					if (_I == ETH_HLEN && ingress_trim_off) { /* TSO hw ok */
 						dev_queue_xmit(skb);
 						break;
 					} else {
