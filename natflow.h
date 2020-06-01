@@ -113,6 +113,7 @@ struct natflow_fastnat_node_t {
 	unsigned int magic;
 #define FASTNAT_VLAN_FLAG  0x01
 #define FASTNAT_PPPOE_FLAG 0x02
+#define FASTNAT_NO_ARP 0x04
 	unsigned char flags;
 	unsigned char count;
 	__be16 protonum;
