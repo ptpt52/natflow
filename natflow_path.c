@@ -262,8 +262,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			        nfn->source == TCPH(l4)->source && nfn->dest == TCPH(l4)->dest &&
 			        nfn->protonum == IPPROTO_TCP) {
 				nfn->jiffies = jiffies;
-				nfn->count++;
-				if ((re_learn = (nfn->flags & FASTNAT_NO_ARP) && ingress_pad_len) || nfn->count % 128 == 0 || _I > HZ)
+				if ((re_learn = (nfn->flags & FASTNAT_NO_ARP) && ingress_pad_len) || _I > HZ)
 					goto slow_fastpath;
 
 				if (iph->ttl <= 1) {
@@ -363,8 +362,7 @@ fast_output:
 			        nfn->source == UDPH(l4)->source && nfn->dest == UDPH(l4)->dest &&
 			        nfn->protonum == IPPROTO_UDP) {
 				nfn->jiffies = jiffies;
-				nfn->count++;
-				if ((re_learn = (nfn->flags & FASTNAT_NO_ARP) && ingress_pad_len) || nfn->count % 128 == 0 || _I > HZ)
+				if ((re_learn = (nfn->flags & FASTNAT_NO_ARP) && ingress_pad_len) || _I > HZ)
 					goto slow_fastpath;
 
 				if (iph->ttl <= 1) {
@@ -549,7 +547,8 @@ fastnat_check:
 				struct ethhdr *eth = (struct ethhdr *)nf->rroute[dir].l2_head;
 
 				if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH ||
-				        (nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum)) {
+				        (nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum &&
+				         (nfn->flags & FASTNAT_NO_ARP))) {
 					switch (iph->protocol) {
 					case IPPROTO_TCP:
 						NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d use hash=%d\n", DEBUG_TCP_ARG(iph,l4), dir, hash);
