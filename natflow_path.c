@@ -263,7 +263,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				nfn->jiffies = jiffies;
 				nfn->count++;
 				if (nfn->count % 128 == 0 || _I > HZ)
-					goto out;
+					goto slow_fastpath;
 
 				if (iph->ttl <= 1) {
 					return NF_DROP;
@@ -359,7 +359,7 @@ fast_output:
 				nfn->jiffies = jiffies;
 				nfn->count++;
 				if (nfn->count % 128 == 0 || _I > HZ)
-					goto out;
+					goto slow_fastpath;
 
 				if (iph->ttl <= 1) {
 					return NF_DROP;
@@ -388,7 +388,14 @@ fast_output:
 			}
 		}
 
-		goto out;
+slow_fastpath:
+		if (ingress_pad_len == 0) {
+			goto out;
+		}
+		ret = nf_conntrack_in_compat(dev_net(skb->dev), PF_INET, NF_INET_PRE_ROUTING, skb);
+		if (ret != NF_ACCEPT) {
+			goto out;
+		}
 	}
 #endif
 
