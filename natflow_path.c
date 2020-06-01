@@ -263,7 +263,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			        nfn->protonum == IPPROTO_TCP) {
 				nfn->jiffies = jiffies;
 				nfn->count++;
-				if (nfn->count % 128 == 0 || _I > HZ || (re_learn = !!(nfn->flags & FASTNAT_NO_ARP)))
+				if ((re_learn = (nfn->flags & FASTNAT_NO_ARP) && ingress_pad_len) || nfn->count % 128 == 0 || _I > HZ)
 					goto slow_fastpath;
 
 				if (iph->ttl <= 1) {
@@ -294,6 +294,10 @@ fast_output:
 				if ((nfn->flags & FASTNAT_PPPOE_FLAG)) {
 					_I += PPPOE_SES_HLEN;
 				}
+				if ((nfn->flags & FASTNAT_NO_ARP)) {
+					_I = 0;
+				}
+
 				if (_I == ETH_HLEN + PPPOE_SES_HLEN) {
 					if (skb_is_gso(skb)) {
 						struct sk_buff *segs = skb_gso_segment(skb, 0);
@@ -314,8 +318,10 @@ fast_output:
 					}
 					skb_push(skb, _I);
 					skb_reset_mac_header(skb);
-					memcpy(eth_hdr(skb)->h_source, nfn->h_source, ETH_ALEN);
-					memcpy(eth_hdr(skb)->h_dest, nfn->h_dest, ETH_ALEN);
+					if (_I >= ETH_HLEN) {
+						memcpy(eth_hdr(skb)->h_source, nfn->h_source, ETH_ALEN);
+						memcpy(eth_hdr(skb)->h_dest, nfn->h_dest, ETH_ALEN);
+					}
 					if (_I == ETH_HLEN + PPPOE_SES_HLEN) {
 						struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
 						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_PPP_SES);
@@ -326,12 +332,14 @@ fast_output:
 						ph->sid = nfn->pppoe_sid;
 						ph->length = htons(ntohs(ip_hdr(skb)->tot_len) + 2);
 						*(__be16 *)((void *)ph + sizeof(struct pppoe_hdr)) = __constant_htons(PPP_IP);
-					} else {
+					} else if (_I == ETH_HLEN) {
 						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
+						skb->protocol = __constant_htons(ETH_P_IP);
+					} else {
 						skb->protocol = __constant_htons(ETH_P_IP);
 					}
 					skb->dev = nfn->outdev;
-					if (_I == ETH_HLEN && ingress_trim_off) { /* TSO hw ok */
+					if (_I <= ETH_HLEN && ingress_trim_off) { /* TSO hw ok */
 						dev_queue_xmit(skb);
 						break;
 					} else {
@@ -359,7 +367,7 @@ fast_output:
 			        nfn->protonum == IPPROTO_UDP) {
 				nfn->jiffies = jiffies;
 				nfn->count++;
-				if (nfn->count % 128 == 0 || _I > HZ || (re_learn = !!(nfn->flags & FASTNAT_NO_ARP)))
+				if ((re_learn = (nfn->flags & FASTNAT_NO_ARP) && ingress_pad_len) || nfn->count % 128 == 0 || _I > HZ)
 					goto slow_fastpath;
 
 				if (iph->ttl <= 1) {
