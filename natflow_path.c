@@ -70,11 +70,12 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 	struct iphdr *iph = ip_hdr(skb);
 
 	if (nf->magic != magic) {
-		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
+
+		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
 		nf->magic = magic;
 	}
@@ -183,7 +184,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	unsigned int ingress_pad_len = 0;
 #endif
 	unsigned int ingress_trim_off = 0;
-	unsigned re_learn = 0;
+	unsigned int re_learn = 0;
+	int d;
 
 	if (disabled)
 		return NF_ACCEPT;
@@ -262,8 +264,13 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			        nfn->source == TCPH(l4)->source && nfn->dest == TCPH(l4)->dest &&
 			        nfn->protonum == IPPROTO_TCP) {
 				nfn->jiffies = jiffies;
-				if ((re_learn = (nfn->flags & FASTNAT_NO_ARP) && ingress_pad_len) || _I > HZ)
-					goto slow_fastpath;
+				if ((re_learn = (nfn->flags & FASTNAT_RE_LEARN) && ingress_pad_len) || _I > HZ) {
+					if (re_learn) {
+						nfn->flags &= ~FASTNAT_RE_LEARN;
+						goto slow_fastpath;
+					}
+					goto out;
+				}
 
 				if (iph->ttl <= 1) {
 					return NF_DROP;
@@ -362,8 +369,13 @@ fast_output:
 			        nfn->source == UDPH(l4)->source && nfn->dest == UDPH(l4)->dest &&
 			        nfn->protonum == IPPROTO_UDP) {
 				nfn->jiffies = jiffies;
-				if ((re_learn = (nfn->flags & FASTNAT_NO_ARP) && ingress_pad_len) || _I > HZ)
-					goto slow_fastpath;
+				if ((re_learn = (nfn->flags & FASTNAT_RE_LEARN) && ingress_pad_len) || _I > HZ) {
+					if (re_learn) {
+						nfn->flags &= ~FASTNAT_RE_LEARN;
+						goto slow_fastpath;
+					}
+					goto out;
+				}
 
 				if (iph->ttl <= 1) {
 					return NF_DROP;
@@ -391,11 +403,9 @@ fast_output:
 				goto fast_output;
 			}
 		}
+		goto out;
 
 slow_fastpath:
-		if (re_learn == 0) {
-			goto out;
-		}
 		ret = nf_conntrack_in_compat(dev_net(skb->dev), PF_INET, NF_INET_PRE_ROUTING, skb);
 		if (ret != NF_ACCEPT) {
 			goto out;
@@ -429,12 +439,12 @@ slow_fastpath:
 
 	dir = CTINFO2DIR(ctinfo);
 	if (re_learn != 0) {
-		if (dir == IP_CT_DIR_ORIGINAL) {
-			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
+		if (dir == NF_FF_DIR_ORIGINAL) {
+			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
 		} else {
-			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
+			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
 		}
@@ -533,78 +543,100 @@ slow_fastpath:
 	}
 
 #ifdef CONFIG_NETFILTER_INGRESS
-	if (dir == NF_FF_DIR_ORIGINAL) {
-		if (!(nf->status & NF_FF_ORIGINAL_CHECK) && !simple_test_and_set_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status)) {
+	for (d = 0; d < NF_FF_DIR_MAX; d++) {
+		if (d == NF_FF_DIR_ORIGINAL) {
+			if (!(nf->status & NF_FF_ORIGINAL_CHECK) && !simple_test_and_set_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status)) {
 fastnat_check:
-			do {
-				__be32 saddr = ct->tuplehash[dir].tuple.src.u3.ip;
-				__be32 daddr = ct->tuplehash[dir].tuple.dst.u3.ip;
-				__be16 source = ct->tuplehash[dir].tuple.src.u.all;
-				__be16 dest = ct->tuplehash[dir].tuple.dst.u.all;
-				__be16 protonum = ct->tuplehash[dir].tuple.dst.protonum;
-				u32 hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
-				natflow_fastnat_node_t *nfn = &natflow_fast_nat_table[hash];
-				struct ethhdr *eth = (struct ethhdr *)nf->rroute[dir].l2_head;
+				do {
+					__be32 saddr = ct->tuplehash[d].tuple.src.u3.ip;
+					__be32 daddr = ct->tuplehash[d].tuple.dst.u3.ip;
+					__be16 source = ct->tuplehash[d].tuple.src.u.all;
+					__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
+					__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
+					u32 hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
+					natflow_fastnat_node_t *nfn = &natflow_fast_nat_table[hash];
+					struct ethhdr *eth = (struct ethhdr *)nf->rroute[d].l2_head;
 
-				if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH ||
-				        (nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum &&
-				         (nfn->flags & FASTNAT_NO_ARP))) {
-					switch (iph->protocol) {
-					case IPPROTO_TCP:
-						NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d use hash=%d\n", DEBUG_TCP_ARG(iph,l4), dir, hash);
-						break;
-					case IPPROTO_UDP:
-						NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d use hash=%d\n", DEBUG_UDP_ARG(iph,l4), dir, hash);
-						break;
-					}
+					if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH ||
+					        (nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum)) {
+						switch (iph->protocol) {
+						case IPPROTO_TCP:
+							NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d use hash=%d\n", DEBUG_TCP_ARG(iph,l4), d, hash);
+							break;
+						case IPPROTO_UDP:
+							NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d use hash=%d\n", DEBUG_UDP_ARG(iph,l4), d, hash);
+							break;
+						}
 
-					nfn->saddr = saddr;
-					nfn->daddr = daddr;
-					nfn->source = source;
-					nfn->dest = dest;
-					nfn->protonum = protonum;
+						nfn->saddr = saddr;
+						nfn->daddr = daddr;
+						nfn->source = source;
+						nfn->dest = dest;
+						nfn->protonum = protonum;
 
-					nfn->nat_saddr = ct->tuplehash[!dir].tuple.dst.u3.ip;
-					nfn->nat_daddr = ct->tuplehash[!dir].tuple.src.u3.ip;
-					nfn->nat_source = ct->tuplehash[!dir].tuple.dst.u.all;
-					nfn->nat_dest = ct->tuplehash[!dir].tuple.src.u.all;
+						nfn->nat_saddr = ct->tuplehash[!d].tuple.dst.u3.ip;
+						nfn->nat_daddr = ct->tuplehash[!d].tuple.src.u3.ip;
+						nfn->nat_source = ct->tuplehash[!d].tuple.dst.u.all;
+						nfn->nat_dest = ct->tuplehash[!d].tuple.src.u.all;
 
-					nfn->flags = 0;
-					nfn->vlan_tci = 0;
-					if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
-						struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth + ETH_HLEN);
-						nfn->pppoe_sid = ph->sid;
-						nfn->flags |= FASTNAT_PPPOE_FLAG;
-						nfn->flags &= ~FASTNAT_NO_ARP;
-						memcpy(nfn->h_source, eth->h_source, ETH_ALEN);
-						memcpy(nfn->h_dest, eth->h_dest, ETH_ALEN);
-					} else if (nf->rroute[dir].l2_head_len == ETH_HLEN) {
-						nfn->pppoe_sid = 0;
-						memcpy(nfn->h_source, eth->h_source, ETH_ALEN);
-						memcpy(nfn->h_dest, eth->h_dest, ETH_ALEN);
-						nfn->flags &= ~FASTNAT_NO_ARP;
+						nfn->flags = 0;
+						nfn->vlan_tci = 0;
+						nfn->outdev = nf->rroute[d].outdev;
+						if (nf->rroute[d].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+							struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth + ETH_HLEN);
+							nfn->pppoe_sid = ph->sid;
+							nfn->flags |= FASTNAT_PPPOE_FLAG;
+							nfn->flags &= ~FASTNAT_NO_ARP;
+							memcpy(nfn->h_source, eth->h_source, ETH_ALEN);
+							memcpy(nfn->h_dest, eth->h_dest, ETH_ALEN);
+						} else if (nf->rroute[d].l2_head_len == ETH_HLEN) {
+							nfn->pppoe_sid = 0;
+							memcpy(nfn->h_source, eth->h_source, ETH_ALEN);
+							memcpy(nfn->h_dest, eth->h_dest, ETH_ALEN);
+							nfn->flags &= ~FASTNAT_NO_ARP;
+						} else {
+							nfn->flags |= FASTNAT_NO_ARP;
+						}
+
+						nfn->magic = natflow_path_magic;
+						nfn->jiffies = jiffies;
 					} else {
-						nfn->flags |= FASTNAT_NO_ARP;
+						switch (iph->protocol) {
+						case IPPROTO_TCP:
+							NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d skip hash=%d\n", DEBUG_TCP_ARG(iph,l4), d, hash);
+							break;
+						case IPPROTO_UDP:
+							NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d skip hash=%d\n", DEBUG_UDP_ARG(iph,l4), d, hash);
+							break;
+						}
 					}
 
-					nfn->outdev = nf->rroute[dir].outdev;
-					nfn->magic = natflow_path_magic;
-					nfn->jiffies = jiffies;
-				} else {
-					switch (iph->protocol) {
-					case IPPROTO_TCP:
-						NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d skip hash=%d\n", DEBUG_TCP_ARG(iph,l4), dir, hash);
-						break;
-					case IPPROTO_UDP:
-						NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d skip hash=%d\n", DEBUG_UDP_ARG(iph,l4), dir, hash);
-						break;
+					if ((nf->status & NF_FF_ORIGINAL_CHECK) && (nf->status & NF_FF_REPLY_CHECK)) {
+						natflow_fastnat_node_t *nfn_i;
+						saddr = ct->tuplehash[!d].tuple.src.u3.ip;
+						daddr = ct->tuplehash[!d].tuple.dst.u3.ip;
+						source = ct->tuplehash[!d].tuple.src.u.all;
+						dest = ct->tuplehash[!d].tuple.dst.u.all;
+						protonum = ct->tuplehash[!d].tuple.dst.protonum;
+						hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
+						nfn_i = &natflow_fast_nat_table[hash];
+
+						if (nfn_i->magic == natflow_path_magic && ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+						        (nfn_i->saddr == saddr && nfn_i->daddr == daddr && nfn_i->source == source && nfn_i->dest == dest && nfn_i->protonum == protonum)) {
+							if ((nfn_i->flags & FASTNAT_NO_ARP)) {
+								nfn->flags |= FASTNAT_RE_LEARN;
+							}
+							if ((nfn->flags & FASTNAT_NO_ARP)) {
+								nfn_i->flags |= FASTNAT_RE_LEARN;
+							}
+						}
 					}
-				}
-			} while (0);
-		}
-	} else {
-		if (!(nf->status & NF_FF_REPLY_CHECK) && !simple_test_and_set_bit(NF_FF_REPLY_CHECK_BIT, &nf->status)) {
-			goto fastnat_check;
+				} while (0);
+			}
+		} else {
+			if (!(nf->status & NF_FF_REPLY_CHECK) && !simple_test_and_set_bit(NF_FF_REPLY_CHECK_BIT, &nf->status)) {
+				goto fastnat_check;
+			}
 		}
 	}
 
