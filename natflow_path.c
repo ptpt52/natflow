@@ -306,7 +306,9 @@ fast_output:
 
 				if (_I == ETH_HLEN + PPPOE_SES_HLEN) {
 					if (skb_is_gso(skb)) {
-						struct sk_buff *segs = skb_gso_segment(skb, 0);
+						struct sk_buff *segs;
+						skb->ip_summed = CHECKSUM_UNNECESSARY;
+						segs = skb_gso_segment(skb, 0);
 						if (IS_ERR(segs)) {
 							return NF_DROP;
 						}
@@ -642,7 +644,9 @@ fastnat_check:
 
 	if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 		if (skb_is_gso(skb)) {
-			struct sk_buff *segs = skb_gso_segment(skb, 0);
+			struct sk_buff *segs;
+			skb->ip_summed = CHECKSUM_UNNECESSARY;
+			segs = skb_gso_segment(skb, 0);
 			if (IS_ERR(segs)) {
 				return NF_DROP;
 			}
