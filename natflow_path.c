@@ -295,6 +295,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					iph->daddr = nfn->nat_daddr;
 				}
 
+				ingress_trim_off = (nfn->outdev->features & NETIF_F_TSO);
+
 fast_output:
 				_I = ETH_HLEN;
 				if ((nfn->flags & FASTNAT_PPPOE_FLAG)) {
@@ -317,7 +319,6 @@ fast_output:
 					}
 				}
 
-				ingress_trim_off = (nfn->outdev->features & NETIF_F_TSO) && iph->protocol == IPPROTO_TCP;
 				do {
 					struct sk_buff *next = skb->next;
 					if (_I > skb_headroom(skb) && pskb_expand_head(skb, _I, skb_tailroom(skb), GFP_ATOMIC)) {
@@ -401,6 +402,8 @@ fast_output:
 					natflow_nat_ip_udp(skb, iph->ihl * 4, iph->daddr, nfn->nat_daddr);
 					iph->daddr = nfn->nat_daddr;
 				}
+
+				ingress_trim_off = 0;
 
 				goto fast_output;
 			}
