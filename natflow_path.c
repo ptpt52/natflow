@@ -92,14 +92,13 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 			}
 			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
 				nf->rroute[NF_FF_DIR_REPLY].l2_head_len = l2_len;
-				memcpy(nf->rroute[NF_FF_DIR_REPLY].l2_head, l2, l2_len);
-				nf->rroute[NF_FF_DIR_REPLY].outdev = skb->dev;
 				if (l2_len >= ETH_HLEN) {
-					unsigned char mac[ETH_ALEN];
-					memcpy(mac, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
-					memcpy(ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
-					memcpy(ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, mac, ETH_ALEN);
+					memcpy(ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH(l2)->h_dest, ETH_ALEN);
+					memcpy(ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH(l2)->h_source, ETH_ALEN);
+					ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_proto = ETH(l2)->h_proto;
+					memcpy(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN, l2 + ETH_HLEN, l2_len - ETH_HLEN);
 				}
+				nf->rroute[NF_FF_DIR_REPLY].outdev = skb->dev;
 				simple_set_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 			}
 		}
@@ -112,14 +111,13 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 			}
 			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
 				nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len = l2_len;
-				memcpy(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head, l2, l2_len);
-				nf->rroute[NF_FF_DIR_ORIGINAL].outdev = skb->dev;
 				if (l2_len >= ETH_HLEN) {
-					unsigned char mac[ETH_ALEN];
-					memcpy(mac, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
-					memcpy(ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
-					memcpy(ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, mac, ETH_ALEN);
+					memcpy(ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH(l2)->h_dest, ETH_ALEN);
+					memcpy(ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH(l2)->h_source, ETH_ALEN);
+					ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_proto = ETH(l2)->h_proto;
+					memcpy(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN, l2 + ETH_HLEN, l2_len - ETH_HLEN);
 				}
+				nf->rroute[NF_FF_DIR_ORIGINAL].outdev = skb->dev;
 				simple_set_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 			}
 		}
