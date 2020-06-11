@@ -193,10 +193,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		u32 _I;
 		natflow_fastnat_node_t *nfn;
 
-		if (netif_is_bridge_port(skb->dev)) {
-			return NF_ACCEPT;
-		}
-
 		if (skb_vlan_tag_present(skb) || skb->mac_len != ETH_HLEN) {
 			return NF_ACCEPT;
 		}
@@ -262,7 +258,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			        nfn->source == TCPH(l4)->source && nfn->dest == TCPH(l4)->dest &&
 			        nfn->protonum == IPPROTO_TCP) {
 				nfn->jiffies = jiffies;
-				if ((re_learn = (nfn->flags & FASTNAT_RE_LEARN) && ingress_pad_len) || _I > HZ) {
+				if ((re_learn = (nfn->flags & FASTNAT_RE_LEARN)) || _I > HZ) {
 					if (re_learn) {
 						nfn->flags &= ~FASTNAT_RE_LEARN;
 						goto slow_fastpath;
@@ -302,7 +298,9 @@ fast_output:
 					_I = 0;
 				}
 
-				if (skb_is_gso(skb)) {
+				ingress_trim_off = (nfn->outdev->features & NETIF_F_TSO) && iph->protocol == IPPROTO_TCP;
+
+				if (skb_is_gso(skb) && (!ingress_trim_off || _I != ETH_HLEN)) {
 					struct sk_buff *segs;
 					skb->ip_summed = CHECKSUM_UNNECESSARY;
 					segs = skb_gso_segment(skb, 0);
@@ -361,7 +359,7 @@ fast_output:
 			        nfn->source == UDPH(l4)->source && nfn->dest == UDPH(l4)->dest &&
 			        nfn->protonum == IPPROTO_UDP) {
 				nfn->jiffies = jiffies;
-				if ((re_learn = (nfn->flags & FASTNAT_RE_LEARN) && ingress_pad_len) || _I > HZ) {
+				if ((re_learn = (nfn->flags & FASTNAT_RE_LEARN)) || _I > HZ) {
 					if (re_learn) {
 						nfn->flags &= ~FASTNAT_RE_LEARN;
 						goto slow_fastpath;
@@ -617,10 +615,12 @@ fastnat_check:
 
 						if (nfn_i->magic == natflow_path_magic && ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
 						        (nfn_i->saddr == saddr && nfn_i->daddr == daddr && nfn_i->source == source && nfn_i->dest == dest && nfn_i->protonum == protonum)) {
-							if ((nfn_i->flags & FASTNAT_NO_ARP)) {
+							if ((nfn_i->flags & FASTNAT_NO_ARP) ||
+							        netif_is_bridge_master(nfn_i->outdev)) {
 								nfn->flags |= FASTNAT_RE_LEARN;
 							}
-							if ((nfn->flags & FASTNAT_NO_ARP)) {
+							if ((nfn->flags & FASTNAT_NO_ARP) ||
+							        netif_is_bridge_master(nfn->outdev)) {
 								nfn_i->flags |= FASTNAT_RE_LEARN;
 							}
 						}
@@ -635,7 +635,9 @@ fastnat_check:
 	}
 #endif
 
-	if (skb_is_gso(skb)) {
+	ingress_trim_off = (nf->rroute[dir].outdev->features & NETIF_F_TSO) && iph->protocol == IPPROTO_TCP;
+
+	if (skb_is_gso(skb) && (!ingress_trim_off || nf->rroute[dir].l2_head_len != ETH_HLEN)) {
 		struct sk_buff *segs;
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 		segs = skb_gso_segment(skb, 0);
