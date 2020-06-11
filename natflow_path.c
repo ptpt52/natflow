@@ -293,8 +293,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					iph->daddr = nfn->nat_daddr;
 				}
 
-				ingress_trim_off = (nfn->outdev->features & NETIF_F_TSO);
-
 fast_output:
 				_I = ETH_HLEN;
 				if ((nfn->flags & FASTNAT_PPPOE_FLAG)) {
@@ -304,17 +302,15 @@ fast_output:
 					_I = 0;
 				}
 
-				if (_I == ETH_HLEN + PPPOE_SES_HLEN) {
-					if (skb_is_gso(skb)) {
-						struct sk_buff *segs;
-						skb->ip_summed = CHECKSUM_UNNECESSARY;
-						segs = skb_gso_segment(skb, 0);
-						if (IS_ERR(segs)) {
-							return NF_DROP;
-						}
-						consume_skb(skb);
-						skb = segs;
+				if (skb_is_gso(skb)) {
+					struct sk_buff *segs;
+					skb->ip_summed = CHECKSUM_UNNECESSARY;
+					segs = skb_gso_segment(skb, 0);
+					if (IS_ERR(segs)) {
+						return NF_DROP;
 					}
+					consume_skb(skb);
+					skb = segs;
 				}
 
 				do {
@@ -343,13 +339,8 @@ fast_output:
 						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
 					}
 					skb->dev = nfn->outdev;
-					if (_I == ETH_HLEN && ingress_trim_off) { /* TSO hw ok */
-						dev_queue_xmit(skb);
-						break;
-					} else {
-						skb->next = NULL;
-						dev_queue_xmit(skb);
-					}
+					skb->next = NULL;
+					dev_queue_xmit(skb);
 					skb = next;
 				} while (skb);
 
@@ -642,22 +633,19 @@ fastnat_check:
 			}
 		}
 	}
-
-	if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
-		if (skb_is_gso(skb)) {
-			struct sk_buff *segs;
-			skb->ip_summed = CHECKSUM_UNNECESSARY;
-			segs = skb_gso_segment(skb, 0);
-			if (IS_ERR(segs)) {
-				return NF_DROP;
-			}
-			consume_skb(skb);
-			skb = segs;
-		}
-	}
 #endif
 
-	ingress_trim_off = (nf->rroute[dir].outdev->features & NETIF_F_TSO) && iph->protocol == IPPROTO_TCP;
+	if (skb_is_gso(skb)) {
+		struct sk_buff *segs;
+		skb->ip_summed = CHECKSUM_UNNECESSARY;
+		segs = skb_gso_segment(skb, 0);
+		if (IS_ERR(segs)) {
+			return NF_DROP;
+		}
+		consume_skb(skb);
+		skb = segs;
+	}
+
 	do {
 		struct sk_buff *next = skb->next;
 		if (nf->rroute[dir].l2_head_len > skb_headroom(skb) && pskb_expand_head(skb, nf->rroute[dir].l2_head_len, skb_tailroom(skb), GFP_ATOMIC)) {
@@ -675,13 +663,8 @@ fastnat_check:
 			skb->protocol = __constant_htons(ETH_P_PPP_SES);
 		}
 #endif
-		if (nf->rroute[dir].l2_head_len == ETH_HLEN && ingress_trim_off) { /* TSO hw ok */
-			dev_queue_xmit(skb);
-			break;
-		} else {
-			skb->next = NULL;
-			dev_queue_xmit(skb);
-		}
+		skb->next = NULL;
+		dev_queue_xmit(skb);
 		skb = next;
 	} while (skb);
 
