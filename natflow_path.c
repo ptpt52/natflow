@@ -617,11 +617,17 @@ fastnat_check:
 						        (nfn_i->saddr == saddr && nfn_i->daddr == daddr && nfn_i->source == source && nfn_i->dest == dest && nfn_i->protonum == protonum)) {
 							if ((nfn_i->flags & FASTNAT_NO_ARP) ||
 							        netif_is_bridge_master(nfn_i->outdev)) {
-								nfn->flags |= FASTNAT_RE_LEARN;
+								if (!(nfn->flags & FASTNAT_STOP_LEARN)) {
+									nfn->flags |= FASTNAT_RE_LEARN;
+									nfn->flags |= FASTNAT_STOP_LEARN;
+								}
 							}
 							if ((nfn->flags & FASTNAT_NO_ARP) ||
 							        netif_is_bridge_master(nfn->outdev)) {
-								nfn_i->flags |= FASTNAT_RE_LEARN;
+								if (!(nfn_i->flags & FASTNAT_STOP_LEARN)) {
+									nfn_i->flags |= FASTNAT_RE_LEARN;
+									nfn_i->flags |= FASTNAT_STOP_LEARN;
+								}
 							}
 						}
 					}
