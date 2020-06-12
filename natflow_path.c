@@ -258,7 +258,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			        nfn->source == TCPH(l4)->source && nfn->dest == TCPH(l4)->dest &&
 			        nfn->protonum == IPPROTO_TCP) {
 				nfn->jiffies = jiffies;
-				if ((re_learn = (nfn->flags & FASTNAT_RE_LEARN)) || _I > HZ) {
+				if ((re_learn = ((nfn->flags & FASTNAT_RE_LEARN) || (u16)skb->dev->ifindex != nfn->ifindex)) || _I > HZ) {
 					if (re_learn) {
 						nfn->flags &= ~FASTNAT_RE_LEARN;
 						goto slow_fastpath;
@@ -359,7 +359,7 @@ fast_output:
 			        nfn->source == UDPH(l4)->source && nfn->dest == UDPH(l4)->dest &&
 			        nfn->protonum == IPPROTO_UDP) {
 				nfn->jiffies = jiffies;
-				if ((re_learn = (nfn->flags & FASTNAT_RE_LEARN)) || _I > HZ) {
+				if ((re_learn = ((nfn->flags & FASTNAT_RE_LEARN) || (u16)skb->dev->ifindex != nfn->ifindex)) || _I > HZ) {
 					if (re_learn) {
 						nfn->flags &= ~FASTNAT_RE_LEARN;
 						goto slow_fastpath;
@@ -572,7 +572,7 @@ fastnat_check:
 						nfn->nat_dest = ct->tuplehash[!d].tuple.src.u.all;
 
 						nfn->flags = 0;
-						nfn->vlan_tci = 0;
+						nfn->ifindex = (u16)-1;
 						nfn->outdev = nf->rroute[d].outdev;
 						if (nf->rroute[d].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 							struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth + ETH_HLEN);
@@ -629,6 +629,8 @@ fastnat_check:
 									nfn_i->flags |= FASTNAT_STOP_LEARN;
 								}
 							}
+							nfn->ifindex = (u16)nfn_i->outdev->ifindex;
+							nfn_i->ifindex = (u16)nfn->outdev->ifindex;
 						}
 					}
 				} while (0);
