@@ -102,6 +102,8 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 	ft->src_port = ctt->src.u.tcp.port;
 	ft->dst_port = ctt->dst.u.tcp.port;
 
+	/*XXX: in fact ppe don't care flags  */
+	flow->flags = 0;
 	if (ct->status & IPS_SRC_NAT)
 		flow->flags |= FLOW_OFFLOAD_SNAT;
 	if (ct->status & IPS_DST_NAT)
