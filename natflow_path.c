@@ -28,6 +28,9 @@
 #include <linux/if_pppox.h>
 #include <linux/ppp_defs.h>
 #endif
+#ifdef CONFIG_NET_RALINK_OFFLOAD
+#include <net/netfilter/nf_flow_table.h>
+#endif
 #include "natflow_common.h"
 #include "natflow_path.h"
 #include "natflow_user.h"
@@ -62,6 +65,50 @@ void natflow_update_magic(int init)
 
 #ifdef CONFIG_NETFILTER_INGRESS
 static natflow_fastnat_node_t *natflow_fast_nat_table = NULL;
+#endif
+
+#ifdef CONFIG_NET_RALINK_OFFLOAD
+struct natflow_offload {
+	struct flow_offload flow;
+};
+
+static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow_t *nf)
+{
+	static struct natflow_offload natflow_offload[NR_CPUS];
+
+	int dir;
+	struct flow_offload_tuple *ft;
+	struct nf_conntrack_tuple *ctt;
+	struct natflow_offload *natflow = &natflow_offload[smp_processor_id()];
+	struct flow_offload *flow = &natflow->flow;
+
+	dir = 0;
+	ft = &flow->tuplehash[dir].tuple;
+	ctt = &ct->tuplehash[dir].tuple;
+	ft->src_v4 = ctt->src.u3.in;
+	ft->dst_v4 = ctt->dst.u3.in;
+	ft->l3proto = ctt->src.l3num;
+	ft->l4proto = ctt->dst.protonum;
+	ft->src_port = ctt->src.u.tcp.port;
+	ft->dst_port = ctt->dst.u.tcp.port;
+
+	dir = 1;
+	ft = &flow->tuplehash[dir].tuple;
+	ctt = &ct->tuplehash[dir].tuple;
+	ft->src_v4 = ctt->src.u3.in;
+	ft->dst_v4 = ctt->dst.u3.in;
+	ft->l3proto = ctt->src.l3num;
+	ft->l4proto = ctt->dst.protonum;
+	ft->src_port = ctt->src.u.tcp.port;
+	ft->dst_port = ctt->dst.u.tcp.port;
+
+	if (ct->status & IPS_SRC_NAT)
+		flow->flags |= FLOW_OFFLOAD_SNAT;
+	if (ct->status & IPS_DST_NAT)
+		flow->flags |= FLOW_OFFLOAD_DNAT;
+
+	return natflow;
+}
 #endif
 
 void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir)
@@ -639,6 +686,54 @@ fastnat_check:
 								}
 								nfn->ifindex = (u16)nfn_i->outdev->ifindex;
 								nfn_i->ifindex = (u16)nfn->outdev->ifindex;
+#ifdef CONFIG_NET_RALINK_OFFLOAD
+								if (get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev) == get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
+									struct net_device *real_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
+									__be16 orig_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
+									__be16 reply_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_REPLY].outdev);
+									if (real_dev->netdev_ops->ndo_flow_offload) {
+										struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
+										struct flow_offload_hw_path orig = {
+											.dev = real_dev,
+											.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+										};
+										struct flow_offload_hw_path reply = {
+											.dev = real_dev,
+											.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+										};
+										memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
+										memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
+										memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
+										memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
+
+										if (orig_vid > 0) {
+											orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+											orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
+											orig.vlan_id = orig_vid;
+										}
+										if (reply_vid > 0) {
+											reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+											reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
+											reply.vlan_id = reply_vid;
+										}
+
+										if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+											orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+											orig.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
+										}
+										if (nf->rroute[NF_FF_DIR_REPLY].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+											reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+											reply.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
+										}
+
+										real_dev->netdev_ops->ndo_flow_offload(FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig);
+
+										NATFLOW_INFO("(PCO) set hwnat offload dev=%s s=%pI4:%u d=%pI4:%u dev=%s s=%pI4:%u d=%pI4:%u\n",
+										             nfn->outdev->name, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
+										             nfn_i->outdev->name, &nfn_i->saddr, ntohs(nfn_i->source), &nfn_i->daddr, ntohs(nfn_i->dest));
+									}
+								}
+#endif
 							} else {
 								if (!(nfn->flags & FASTNAT_HALF_LEARN)) {
 									nfn->flags |= FASTNAT_HALF_LEARN;

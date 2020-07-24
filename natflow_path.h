@@ -202,6 +202,33 @@ static inline int natflow_do_dnat(struct sk_buff *skb, struct nf_conn *ct, int d
 	return 0;
 }
 
+static inline struct net_device *get_vlan_real_dev(struct net_device *dev)
+{
+	if (is_vlan_dev(dev)) {
+		struct vlan_dev_priv *vlan = vlan_dev_priv(dev);
+		return vlan->real_dev;
+	}
+	return dev;
+}
+
+static inline __be16 get_vlan_vid(struct net_device *dev)
+{
+	if (is_vlan_dev(dev)) {
+		struct vlan_dev_priv *vlan = vlan_dev_priv(dev);
+		return vlan->vlan_id;
+	}
+	return 0;
+}
+
+static inline __be16 get_vlan_proto(struct net_device *dev)
+{
+	if (is_vlan_dev(dev)) {
+		struct vlan_dev_priv *vlan = vlan_dev_priv(dev);
+		return vlan->vlan_proto;
+	}
+	return 0;
+}
+
 void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir);
 
 extern int natflow_path_init(void);
