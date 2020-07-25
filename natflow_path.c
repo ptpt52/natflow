@@ -304,10 +304,13 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			nfn = &natflow_fast_nat_table[_I];
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 			if (nfn->magic == natflow_path_magic &&
-			        _I < NATFLOW_FF_TIMEOUT_LOW &&
 			        nfn->saddr == iph->saddr && nfn->daddr == iph->daddr &&
 			        nfn->source == TCPH(l4)->source && nfn->dest == TCPH(l4)->dest &&
 			        nfn->protonum == IPPROTO_TCP) {
+				if (_I > NATFLOW_FF_TIMEOUT_LOW) {
+					re_learn = 1;
+					goto slow_fastpath;
+				}
 				nfn->jiffies = jiffies;
 				if ((re_learn = ((nfn->flags & FASTNAT_RE_LEARN) || (u16)skb->dev->ifindex != nfn->ifindex)) || _I > HZ) {
 					if (re_learn) {
@@ -407,10 +410,13 @@ fast_output:
 			nfn = &natflow_fast_nat_table[_I];
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 			if (nfn->magic == natflow_path_magic &&
-			        _I < NATFLOW_FF_TIMEOUT_LOW &&
 			        nfn->saddr == iph->saddr && nfn->daddr == iph->daddr &&
 			        nfn->source == UDPH(l4)->source && nfn->dest == UDPH(l4)->dest &&
 			        nfn->protonum == IPPROTO_UDP) {
+				if (_I > NATFLOW_FF_TIMEOUT_LOW) {
+					re_learn = 1;
+					goto slow_fastpath;
+				}
 				nfn->jiffies = jiffies;
 				if ((re_learn = ((nfn->flags & FASTNAT_RE_LEARN) || (u16)skb->dev->ifindex != nfn->ifindex)) || _I > HZ) {
 					if (re_learn) {
@@ -586,6 +592,7 @@ slow_fastpath:
 	}
 
 #ifdef CONFIG_NETFILTER_INGRESS
+	if (!(nf->status & NF_FF_FAIL))
 	for (d = 0; d < NF_FF_DIR_MAX; d++) {
 		if (d == NF_FF_DIR_ORIGINAL) {
 			if (!(nf->status & NF_FF_ORIGINAL_CHECK) && !simple_test_and_set_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status)) {
@@ -650,6 +657,8 @@ fastnat_check:
 						nfn->magic = natflow_path_magic;
 						nfn->jiffies = jiffies;
 					} else {
+						/* mark FF_FAIL so never try FF */
+						simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
 						switch (iph->protocol) {
 						case IPPROTO_TCP:
 							NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d skip hash=%d\n", DEBUG_TCP_ARG(iph,l4), d, hash);

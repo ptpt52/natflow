@@ -40,6 +40,9 @@ typedef struct natflow_route_t {
 #define NF_FF_REPLY_CHECK_BIT 13
 #define NF_FF_REPLY_CHECK (1 << NF_FF_REPLY_CHECK_BIT)
 
+#define NF_FF_FAIL_BIT 14
+#define NF_FF_FAIL (1 << NF_FF_FAIL_BIT)
+
 typedef struct natflow_t {
 	unsigned int magic;
 	unsigned int status;
