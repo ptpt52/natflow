@@ -701,6 +701,10 @@ fastnat_check:
 									}
 									nfn->ifindex = (u16)nfn_i->outdev->ifindex;
 									nfn_i->ifindex = (u16)nfn->outdev->ifindex;
+									if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.protonum == IPPROTO_TCP) {
+										ct->proto.tcp.seen[0].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
+										ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
+									}
 #ifdef CONFIG_NET_RALINK_OFFLOAD
 									if (natflow_hwnat &&
 									        get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev) == get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
@@ -740,11 +744,6 @@ fastnat_check:
 											if (nf->rroute[NF_FF_DIR_REPLY].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 												reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
 												reply.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
-											}
-
-											if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.protonum == IPPROTO_TCP) {
-												ct->proto.tcp.seen[0].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
-												ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 											}
 
 											if (real_dev->netdev_ops->ndo_flow_offload(FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
