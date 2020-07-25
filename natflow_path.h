@@ -24,6 +24,8 @@
 #include "natflow.h"
 #include "natflow_common.h"
 
+extern unsigned int natflow_hwnat;
+
 extern void natflow_disabled_set(int v);
 extern int natflow_disabled_get(void);
 

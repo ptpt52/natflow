@@ -43,6 +43,8 @@ static inline __be16 pppoe_proto(const struct sk_buff *skb)
 }
 #endif
 
+unsigned int natflow_hwnat = 1;
+
 static int disabled = 1;
 void natflow_disabled_set(int v)
 {
@@ -689,7 +691,8 @@ fastnat_check:
 								nfn->ifindex = (u16)nfn_i->outdev->ifindex;
 								nfn_i->ifindex = (u16)nfn->outdev->ifindex;
 #ifdef CONFIG_NET_RALINK_OFFLOAD
-								if (get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev) == get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
+								if (natflow_hwnat &&
+								        get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev) == get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
 									struct net_device *real_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 									__be16 orig_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 									__be16 reply_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_REPLY].outdev);
