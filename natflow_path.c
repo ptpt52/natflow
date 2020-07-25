@@ -592,199 +592,203 @@ slow_fastpath:
 	}
 
 #ifdef CONFIG_NETFILTER_INGRESS
-	if (!(nf->status & NF_FF_FAIL))
-	for (d = 0; d < NF_FF_DIR_MAX; d++) {
-		if (d == NF_FF_DIR_ORIGINAL) {
-			if (!(nf->status & NF_FF_ORIGINAL_CHECK) && !simple_test_and_set_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status)) {
+	if (!(nf->status & NF_FF_FAIL)) {
+		for (d = 0; d < NF_FF_DIR_MAX; d++) {
+			if (d == NF_FF_DIR_ORIGINAL) {
+				if (!(nf->status & NF_FF_ORIGINAL_CHECK) && !simple_test_and_set_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status)) {
 fastnat_check:
-				do {
-					__be32 saddr = ct->tuplehash[d].tuple.src.u3.ip;
-					__be32 daddr = ct->tuplehash[d].tuple.dst.u3.ip;
-					__be16 source = ct->tuplehash[d].tuple.src.u.all;
-					__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
-					__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
-					u32 hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
-					natflow_fastnat_node_t *nfn = &natflow_fast_nat_table[hash];
-					struct ethhdr *eth = (struct ethhdr *)nf->rroute[d].l2_head;
+					do {
+						__be32 saddr = ct->tuplehash[d].tuple.src.u3.ip;
+						__be32 daddr = ct->tuplehash[d].tuple.dst.u3.ip;
+						__be16 source = ct->tuplehash[d].tuple.src.u.all;
+						__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
+						__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
+						u32 hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
+						natflow_fastnat_node_t *nfn = &natflow_fast_nat_table[hash];
+						struct ethhdr *eth = (struct ethhdr *)nf->rroute[d].l2_head;
 
-					if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH ||
-					        (nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum)) {
-						switch (iph->protocol) {
-						case IPPROTO_TCP:
-							NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d use hash=%d\n", DEBUG_TCP_ARG(iph,l4), d, hash);
-							break;
-						case IPPROTO_UDP:
-							NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d use hash=%d\n", DEBUG_UDP_ARG(iph,l4), d, hash);
-							break;
-						}
-
-						if ((nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum) &&
-						        (nfn->flags & FASTNAT_HALF_LEARN)) {
-							nfn->ifindex = (u16)skb->dev->ifindex;
-						} else {
-							nfn->ifindex = (u16)-1;
-						}
-
-						nfn->saddr = saddr;
-						nfn->daddr = daddr;
-						nfn->source = source;
-						nfn->dest = dest;
-						nfn->protonum = protonum;
-
-						nfn->nat_saddr = ct->tuplehash[!d].tuple.dst.u3.ip;
-						nfn->nat_daddr = ct->tuplehash[!d].tuple.src.u3.ip;
-						nfn->nat_source = ct->tuplehash[!d].tuple.dst.u.all;
-						nfn->nat_dest = ct->tuplehash[!d].tuple.src.u.all;
-
-						nfn->flags = 0;
-						nfn->outdev = nf->rroute[d].outdev;
-						if (nf->rroute[d].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
-							struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth + ETH_HLEN);
-							nfn->pppoe_sid = ph->sid;
-							nfn->flags |= FASTNAT_PPPOE_FLAG;
-							nfn->flags &= ~FASTNAT_NO_ARP;
-							memcpy(nfn->h_source, eth->h_source, ETH_ALEN);
-							memcpy(nfn->h_dest, eth->h_dest, ETH_ALEN);
-						} else if (nf->rroute[d].l2_head_len == ETH_HLEN) {
-							nfn->pppoe_sid = 0;
-							memcpy(nfn->h_source, eth->h_source, ETH_ALEN);
-							memcpy(nfn->h_dest, eth->h_dest, ETH_ALEN);
-							nfn->flags &= ~FASTNAT_NO_ARP;
-						} else {
-							nfn->flags |= FASTNAT_NO_ARP;
-						}
-
-						nfn->magic = natflow_path_magic;
-						nfn->jiffies = jiffies;
-					} else {
-						/* mark FF_FAIL so never try FF */
-						simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
-						switch (iph->protocol) {
-						case IPPROTO_TCP:
-							NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d skip hash=%d\n", DEBUG_TCP_ARG(iph,l4), d, hash);
-							break;
-						case IPPROTO_UDP:
-							NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d skip hash=%d\n", DEBUG_UDP_ARG(iph,l4), d, hash);
-							break;
-						}
-					}
-
-					if ((nf->status & NF_FF_ORIGINAL_CHECK) && (nf->status & NF_FF_REPLY_CHECK)) {
-						if (nfn->magic == natflow_path_magic && ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+						if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH ||
 						        (nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum)) {
-							natflow_fastnat_node_t *nfn_i;
-							saddr = ct->tuplehash[!d].tuple.src.u3.ip;
-							daddr = ct->tuplehash[!d].tuple.dst.u3.ip;
-							source = ct->tuplehash[!d].tuple.src.u.all;
-							dest = ct->tuplehash[!d].tuple.dst.u.all;
-							protonum = ct->tuplehash[!d].tuple.dst.protonum;
-							hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
-							nfn_i = &natflow_fast_nat_table[hash];
-
-							if (nfn_i->magic == natflow_path_magic && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
-							        (nfn_i->saddr == saddr && nfn_i->daddr == daddr && nfn_i->source == source && nfn_i->dest == dest && nfn_i->protonum == protonum)) {
-								if ((nfn_i->flags & FASTNAT_NO_ARP) ||
-								        netif_is_bridge_master(nfn_i->outdev)) {
-									if (!(nfn->flags & FASTNAT_STOP_LEARN)) {
-										nfn->flags |= FASTNAT_RE_LEARN;
-										nfn->flags |= FASTNAT_STOP_LEARN;
-									}
-								}
-								if ((nfn->flags & FASTNAT_NO_ARP) ||
-								        netif_is_bridge_master(nfn->outdev)) {
-									if (!(nfn_i->flags & FASTNAT_STOP_LEARN)) {
-										nfn_i->flags |= FASTNAT_RE_LEARN;
-										nfn_i->flags |= FASTNAT_STOP_LEARN;
-									}
-								}
-								nfn->ifindex = (u16)nfn_i->outdev->ifindex;
-								nfn_i->ifindex = (u16)nfn->outdev->ifindex;
-#ifdef CONFIG_NET_RALINK_OFFLOAD
-								if (natflow_hwnat &&
-								        get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev) == get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
-									struct net_device *real_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
-									__be16 orig_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
-									__be16 reply_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_REPLY].outdev);
-									if (real_dev->netdev_ops->ndo_flow_offload) {
-										struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
-										struct flow_offload_hw_path orig = {
-											.dev = real_dev,
-											.flags = FLOW_OFFLOAD_PATH_ETHERNET,
-										};
-										struct flow_offload_hw_path reply = {
-											.dev = real_dev,
-											.flags = FLOW_OFFLOAD_PATH_ETHERNET,
-										};
-										memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
-										memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
-										memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
-										memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
-
-										if (orig_vid > 0) {
-											orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
-											orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
-											orig.vlan_id = orig_vid;
-										}
-										if (reply_vid > 0) {
-											reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
-											reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
-											reply.vlan_id = reply_vid;
-										}
-
-										if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
-											orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
-											orig.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
-										}
-										if (nf->rroute[NF_FF_DIR_REPLY].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
-											reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
-											reply.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
-										}
-
-										if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.protonum == IPPROTO_TCP) {
-											ct->proto.tcp.seen[0].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
-											ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
-										}
-
-										real_dev->netdev_ops->ndo_flow_offload(FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig);
-
-										NATFLOW_INFO("(PCO) set hwnat offload dev=%s s=%pI4:%u d=%pI4:%u dev=%s s=%pI4:%u d=%pI4:%u\n",
-										             nfn->outdev->name, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
-										             nfn_i->outdev->name, &nfn_i->saddr, ntohs(nfn_i->source), &nfn_i->daddr, ntohs(nfn_i->dest));
-									}
-								}
-#endif
-							} else {
-								if (!(nfn->flags & FASTNAT_HALF_LEARN)) {
-									nfn->flags |= FASTNAT_HALF_LEARN;
-								}
-								nfn->ifindex = (u16)skb->dev->ifindex;
+							switch (iph->protocol) {
+							case IPPROTO_TCP:
+								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d use hash=%d\n", DEBUG_TCP_ARG(iph,l4), d, hash);
+								break;
+							case IPPROTO_UDP:
+								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d use hash=%d\n", DEBUG_UDP_ARG(iph,l4), d, hash);
+								break;
 							}
-						} else {
-							natflow_fastnat_node_t *nfn_i;
-							saddr = ct->tuplehash[!d].tuple.src.u3.ip;
-							daddr = ct->tuplehash[!d].tuple.dst.u3.ip;
-							source = ct->tuplehash[!d].tuple.src.u.all;
-							dest = ct->tuplehash[!d].tuple.dst.u.all;
-							protonum = ct->tuplehash[!d].tuple.dst.protonum;
-							hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
-							nfn_i = &natflow_fast_nat_table[hash];
 
-							if (nfn_i->magic == natflow_path_magic && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
-							        (nfn_i->saddr == saddr && nfn_i->daddr == daddr && nfn_i->source == source && nfn_i->dest == dest && nfn_i->protonum == protonum)) {
-								if (!(nfn_i->flags & FASTNAT_HALF_LEARN)) {
-									nfn_i->flags |= FASTNAT_HALF_LEARN;
+							if ((nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum) &&
+							        (nfn->flags & FASTNAT_HALF_LEARN)) {
+								nfn->ifindex = (u16)skb->dev->ifindex;
+							} else {
+								nfn->ifindex = (u16)-1;
+							}
+
+							nfn->saddr = saddr;
+							nfn->daddr = daddr;
+							nfn->source = source;
+							nfn->dest = dest;
+							nfn->protonum = protonum;
+
+							nfn->nat_saddr = ct->tuplehash[!d].tuple.dst.u3.ip;
+							nfn->nat_daddr = ct->tuplehash[!d].tuple.src.u3.ip;
+							nfn->nat_source = ct->tuplehash[!d].tuple.dst.u.all;
+							nfn->nat_dest = ct->tuplehash[!d].tuple.src.u.all;
+
+							nfn->flags = 0;
+							nfn->outdev = nf->rroute[d].outdev;
+							if (nf->rroute[d].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+								struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth + ETH_HLEN);
+								nfn->pppoe_sid = ph->sid;
+								nfn->flags |= FASTNAT_PPPOE_FLAG;
+								nfn->flags &= ~FASTNAT_NO_ARP;
+								memcpy(nfn->h_source, eth->h_source, ETH_ALEN);
+								memcpy(nfn->h_dest, eth->h_dest, ETH_ALEN);
+							} else if (nf->rroute[d].l2_head_len == ETH_HLEN) {
+								nfn->pppoe_sid = 0;
+								memcpy(nfn->h_source, eth->h_source, ETH_ALEN);
+								memcpy(nfn->h_dest, eth->h_dest, ETH_ALEN);
+								nfn->flags &= ~FASTNAT_NO_ARP;
+							} else {
+								nfn->flags |= FASTNAT_NO_ARP;
+							}
+
+							nfn->magic = natflow_path_magic;
+							nfn->jiffies = jiffies;
+						} else {
+							/* mark FF_FAIL so never try FF */
+							simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
+							switch (iph->protocol) {
+							case IPPROTO_TCP:
+								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d skip hash=%d\n", DEBUG_TCP_ARG(iph,l4), d, hash);
+								break;
+							case IPPROTO_UDP:
+								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d skip hash=%d\n", DEBUG_UDP_ARG(iph,l4), d, hash);
+								break;
+							}
+						}
+
+						if ((nf->status & NF_FF_ORIGINAL_CHECK) && (nf->status & NF_FF_REPLY_CHECK)) {
+							if (nfn->magic == natflow_path_magic && ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+							        (nfn->saddr == saddr && nfn->daddr == daddr &&
+							         nfn->source == source && nfn->dest == dest && nfn->protonum == protonum)) {
+								natflow_fastnat_node_t *nfn_i;
+								saddr = ct->tuplehash[!d].tuple.src.u3.ip;
+								daddr = ct->tuplehash[!d].tuple.dst.u3.ip;
+								source = ct->tuplehash[!d].tuple.src.u.all;
+								dest = ct->tuplehash[!d].tuple.dst.u.all;
+								protonum = ct->tuplehash[!d].tuple.dst.protonum;
+								hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
+								nfn_i = &natflow_fast_nat_table[hash];
+
+								if (nfn_i->magic == natflow_path_magic && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+								        (nfn_i->saddr == saddr && nfn_i->daddr == daddr &&
+								         nfn_i->source == source && nfn_i->dest == dest && nfn_i->protonum == protonum)) {
+									if ((nfn_i->flags & FASTNAT_NO_ARP) ||
+									        netif_is_bridge_master(nfn_i->outdev)) {
+										if (!(nfn->flags & FASTNAT_STOP_LEARN)) {
+											nfn->flags |= FASTNAT_RE_LEARN;
+											nfn->flags |= FASTNAT_STOP_LEARN;
+										}
+									}
+									if ((nfn->flags & FASTNAT_NO_ARP) ||
+									        netif_is_bridge_master(nfn->outdev)) {
+										if (!(nfn_i->flags & FASTNAT_STOP_LEARN)) {
+											nfn_i->flags |= FASTNAT_RE_LEARN;
+											nfn_i->flags |= FASTNAT_STOP_LEARN;
+										}
+									}
+									nfn->ifindex = (u16)nfn_i->outdev->ifindex;
+									nfn_i->ifindex = (u16)nfn->outdev->ifindex;
+#ifdef CONFIG_NET_RALINK_OFFLOAD
+									if (natflow_hwnat &&
+									        get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev) == get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
+										struct net_device *real_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
+										__be16 orig_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
+										__be16 reply_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_REPLY].outdev);
+										if (real_dev->netdev_ops->ndo_flow_offload) {
+											struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
+											struct flow_offload_hw_path orig = {
+												.dev = real_dev,
+												.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+											};
+											struct flow_offload_hw_path reply = {
+												.dev = real_dev,
+												.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+											};
+											memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
+											memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
+											memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
+											memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
+
+											if (orig_vid > 0) {
+												orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+												orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
+												orig.vlan_id = orig_vid;
+											}
+											if (reply_vid > 0) {
+												reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+												reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
+												reply.vlan_id = reply_vid;
+											}
+
+											if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+												orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+												orig.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
+											}
+											if (nf->rroute[NF_FF_DIR_REPLY].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+												reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+												reply.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
+											}
+
+											if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.protonum == IPPROTO_TCP) {
+												ct->proto.tcp.seen[0].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
+												ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
+											}
+
+											real_dev->netdev_ops->ndo_flow_offload(FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig);
+
+											NATFLOW_INFO("(PCO) set hwnat offload dev=%s s=%pI4:%u d=%pI4:%u dev=%s s=%pI4:%u d=%pI4:%u\n",
+											             nfn->outdev->name, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
+											             nfn_i->outdev->name, &nfn_i->saddr, ntohs(nfn_i->source), &nfn_i->daddr, ntohs(nfn_i->dest));
+										}
+									}
+#endif
+								} else {
+									if (!(nfn->flags & FASTNAT_HALF_LEARN)) {
+										nfn->flags |= FASTNAT_HALF_LEARN;
+									}
+									nfn->ifindex = (u16)skb->dev->ifindex;
+								}
+							} else {
+								natflow_fastnat_node_t *nfn_i;
+								saddr = ct->tuplehash[!d].tuple.src.u3.ip;
+								daddr = ct->tuplehash[!d].tuple.dst.u3.ip;
+								source = ct->tuplehash[!d].tuple.src.u.all;
+								dest = ct->tuplehash[!d].tuple.dst.u.all;
+								protonum = ct->tuplehash[!d].tuple.dst.protonum;
+								hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
+								nfn_i = &natflow_fast_nat_table[hash];
+
+								if (nfn_i->magic == natflow_path_magic && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+								        (nfn_i->saddr == saddr && nfn_i->daddr == daddr &&
+								         nfn_i->source == source && nfn_i->dest == dest && nfn_i->protonum == protonum)) {
+									if (!(nfn_i->flags & FASTNAT_HALF_LEARN)) {
+										nfn_i->flags |= FASTNAT_HALF_LEARN;
+									}
 								}
 							}
 						}
-					}
-				} while (0);
-			}
-		} else {
-			if (!(nf->status & NF_FF_REPLY_CHECK) && !simple_test_and_set_bit(NF_FF_REPLY_CHECK_BIT, &nf->status)) {
-				goto fastnat_check;
+					} while (0);
+				}
+			} else {
+				if (!(nf->status & NF_FF_REPLY_CHECK) && !simple_test_and_set_bit(NF_FF_REPLY_CHECK_BIT, &nf->status)) {
+					goto fastnat_check;
+				}
 			}
 		}
-	}
+	} /* end NF_FF_FAIL */
 #endif
 
 	ingress_trim_off = (nf->rroute[dir].outdev->features & NETIF_F_TSO) && \
