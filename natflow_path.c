@@ -267,6 +267,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 						l4 = (void *)iph + iph->ihl * 4;
 						_I = natflow_hash_v4(iph->daddr, iph->saddr, TCPH(l4)->dest, TCPH(l4)->source, IPPROTO_TCP);
 						nfn = &natflow_fast_nat_table[_I];
+						if (nfn->saddr != iph->daddr || nfn->daddr != iph->saddr ||
+						        nfn->source != TCPH(l4)->dest || nfn->dest != TCPH(l4)->source ||
+						        nfn->protonum != IPPROTO_TCP) {
+							_I += 1;
+							nfn = &natflow_fast_nat_table[_I];
+						}
 						_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 						if (nfn->magic == natflow_path_magic &&
 						        _I <= NATFLOW_FF_TIMEOUT_LOW &&
@@ -296,6 +302,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 						l4 = (void *)iph + iph->ihl * 4;
 						_I = natflow_hash_v4(iph->daddr, iph->saddr, UDPH(l4)->dest, UDPH(l4)->source, IPPROTO_UDP);
 						nfn = &natflow_fast_nat_table[_I];
+						if (nfn->saddr != iph->daddr || nfn->daddr != iph->saddr ||
+						        nfn->source != UDPH(l4)->dest || nfn->dest != UDPH(l4)->source ||
+						        nfn->protonum != IPPROTO_UDP) {
+							_I += 1;
+							nfn = &natflow_fast_nat_table[_I];
+						}
 						_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 						if (nfn->magic == natflow_path_magic &&
 						        _I <= NATFLOW_FF_TIMEOUT_LOW &&
@@ -381,6 +393,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			l4 = (void *)iph + iph->ihl * 4;
 			_I = natflow_hash_v4(iph->saddr, iph->daddr, TCPH(l4)->source, TCPH(l4)->dest, IPPROTO_TCP);
 			nfn = &natflow_fast_nat_table[_I];
+			if (nfn->saddr != iph->saddr || nfn->daddr != iph->daddr ||
+			        nfn->source != TCPH(l4)->source || nfn->dest != TCPH(l4)->dest ||
+			        nfn->protonum != IPPROTO_TCP) {
+				_I += 1;
+				nfn = &natflow_fast_nat_table[_I];
+			}
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 			if (nfn->magic == natflow_path_magic &&
 			        nfn->saddr == iph->saddr && nfn->daddr == iph->daddr &&
@@ -487,6 +505,12 @@ fast_output:
 			l4 = (void *)iph + iph->ihl * 4;
 			_I = natflow_hash_v4(iph->saddr, iph->daddr, UDPH(l4)->source, UDPH(l4)->dest, IPPROTO_UDP);
 			nfn = &natflow_fast_nat_table[_I];
+			if (nfn->saddr != iph->saddr || nfn->daddr != iph->daddr ||
+			        nfn->source != UDPH(l4)->source || nfn->dest != UDPH(l4)->dest ||
+			        nfn->protonum != IPPROTO_UDP) {
+				_I += 1;
+				nfn = &natflow_fast_nat_table[_I];
+			}
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 			if (nfn->magic == natflow_path_magic &&
 			        nfn->saddr == iph->saddr && nfn->daddr == iph->daddr &&
@@ -686,6 +710,11 @@ fastnat_check:
 						natflow_fastnat_node_t *nfn = &natflow_fast_nat_table[hash];
 						struct ethhdr *eth = (struct ethhdr *)nf->rroute[d].l2_head;
 
+						if (ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_HIGH &&
+						        (nfn->saddr != saddr || nfn->daddr != daddr || nfn->source != source || nfn->dest != dest || nfn->protonum != protonum)) {
+							hash += 1;
+							nfn = &natflow_fast_nat_table[hash];
+						}
 						if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH ||
 						        (nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum)) {
 							switch (iph->protocol) {
@@ -761,6 +790,11 @@ fastnat_check:
 								hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
 								nfn_i = &natflow_fast_nat_table[hash];
 
+								if (nfn_i->saddr != saddr || nfn_i->daddr != daddr ||
+								        nfn_i->source != source || nfn_i->dest != dest || nfn_i->protonum != protonum) {
+									hash += 1;
+									nfn_i = &natflow_fast_nat_table[hash];
+								}
 								if (nfn_i->magic == natflow_path_magic && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
 								        (nfn_i->saddr == saddr && nfn_i->daddr == daddr &&
 								         nfn_i->source == source && nfn_i->dest == dest && nfn_i->protonum == protonum)) {
@@ -965,6 +999,11 @@ fastnat_check:
 								hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
 								nfn_i = &natflow_fast_nat_table[hash];
 
+								if (nfn_i->saddr != saddr || nfn_i->daddr != daddr ||
+								        nfn_i->source != source || nfn_i->dest != dest || nfn_i->protonum != protonum) {
+									hash += 1;
+									nfn_i = &natflow_fast_nat_table[hash];
+								}
 								if (nfn_i->magic == natflow_path_magic && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
 								        (nfn_i->saddr == saddr && nfn_i->daddr == daddr &&
 								         nfn_i->source == source && nfn_i->dest == dest && nfn_i->protonum == protonum)) {
