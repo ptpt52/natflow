@@ -244,6 +244,85 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		u32 _I;
 		natflow_fastnat_node_t *nfn;
 
+#ifdef CONFIG_NET_RALINK_OFFLOAD
+		/* XXX: check MTK_CPU_REASON_HIT_BIND_FORCE_CPU
+		 * nated-skb come to cpu from ppe, we just forward to ext dev(Wi-Fi)
+		 * skb->queue_mapping stored the hash key
+		 */
+		if (skb->dev->netdev_ops->ndo_flow_offload) {
+			//skb->vlan_present = 0;
+			if (!pskb_may_pull(skb, sizeof(struct iphdr))) {
+				return NF_DROP;
+			}
+			iph = ip_hdr(skb);
+			if (iph->protocol == IPPROTO_TCP || iph->protocol == IPPROTO_UDP) {
+				if (pskb_may_pull(skb, iph->ihl * 4)) {
+					iph = ip_hdr(skb);
+					l4 = (void *)iph + iph->ihl * 4;
+					if (iph->protocol == IPPROTO_TCP) {
+						if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct tcphdr)) || skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct tcphdr))) {
+							return NF_DROP;
+						}
+						iph = ip_hdr(skb);
+						l4 = (void *)iph + iph->ihl * 4;
+						_I = natflow_hash_v4(iph->daddr, iph->saddr, TCPH(l4)->dest, TCPH(l4)->source, IPPROTO_TCP);
+						nfn = &natflow_fast_nat_table[_I];
+						_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
+						if (nfn->magic == natflow_path_magic &&
+						        _I <= NATFLOW_FF_TIMEOUT_LOW &&
+						        nfn->saddr == iph->daddr && nfn->daddr == iph->saddr &&
+						        nfn->source == TCPH(l4)->dest && nfn->dest == TCPH(l4)->source &&
+						        nfn->protonum == IPPROTO_TCP) {
+							nfn->jiffies = jiffies;
+							_I = skb->queue_mapping % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
+							nfn = &natflow_fast_nat_table[_I];
+							_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
+
+							if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW) {
+								nfn->jiffies = jiffies;
+								skb->vlan_present = 0;
+								skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
+								skb->dev = nfn->outdev;
+								skb->queue_mapping = 0;
+								dev_queue_xmit(skb);
+								return NF_STOLEN;
+							}
+						}
+					} else {
+						if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr)) || skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct udphdr))) {
+							return NF_DROP;
+						}
+						iph = ip_hdr(skb);
+						l4 = (void *)iph + iph->ihl * 4;
+						_I = natflow_hash_v4(iph->daddr, iph->saddr, UDPH(l4)->dest, UDPH(l4)->source, IPPROTO_UDP);
+						nfn = &natflow_fast_nat_table[_I];
+						_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
+						if (nfn->magic == natflow_path_magic &&
+						        _I <= NATFLOW_FF_TIMEOUT_LOW &&
+						        nfn->saddr == iph->daddr && nfn->daddr == iph->saddr &&
+						        nfn->source == UDPH(l4)->dest && nfn->dest == UDPH(l4)->source &&
+						        nfn->protonum == IPPROTO_UDP) {
+							nfn->jiffies = jiffies;
+							_I = skb->queue_mapping % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
+							nfn = &natflow_fast_nat_table[_I];
+							_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
+
+							if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW) {
+								nfn->jiffies = jiffies;
+								skb->vlan_present = 0;
+								skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
+								skb->dev = nfn->outdev;
+								skb->queue_mapping = 0;
+								dev_queue_xmit(skb);
+								return NF_STOLEN;
+							}
+						}
+					}
+				}
+			}
+		}
+#endif
+
 		if (skb_vlan_tag_present(skb) || skb->mac_len != ETH_HLEN) {
 			return NF_ACCEPT;
 		}
@@ -706,64 +785,169 @@ fastnat_check:
 										ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 									}
 #ifdef CONFIG_NET_RALINK_OFFLOAD
-									if (natflow_hwnat &&
-									        get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev) == get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
-										struct net_device *real_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
-										__be16 orig_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
-										__be16 reply_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_REPLY].outdev);
-										if (real_dev->netdev_ops->ndo_flow_offload) {
-											struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
-											struct flow_offload_hw_path orig = {
-												.dev = real_dev,
-												.flags = FLOW_OFFLOAD_PATH_ETHERNET,
-											};
-											struct flow_offload_hw_path reply = {
-												.dev = real_dev,
-												.flags = FLOW_OFFLOAD_PATH_ETHERNET,
-											};
-											memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
-											memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
-											memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
-											memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
-
-											if (orig_vid > 0) {
-												orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
-												orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
-												orig.vlan_id = orig_vid;
-											}
-											if (reply_vid > 0) {
-												reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
-												reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
-												reply.vlan_id = reply_vid;
-											}
-
-											if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
-												orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
-												orig.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
-											}
-											if (nf->rroute[NF_FF_DIR_REPLY].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
-												reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
-												reply.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
-											}
-
-											if (real_dev->netdev_ops->ndo_flow_offload(FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-												NATFLOW_INFO("(PCO) set hwnat offload dev=%s s=%pI4:%u d=%pI4:%u dev=%s s=%pI4:%u d=%pI4:%u\n",
-												             nfn->outdev->name, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
-												             nfn_i->outdev->name, &nfn_i->saddr, ntohs(nfn_i->source), &nfn_i->daddr, ntohs(nfn_i->dest));
-											} else {
-												/* mark FF_FAIL so never try FF */
-												simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
-												switch (iph->protocol) {
-												case IPPROTO_TCP:
-													NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d set hwnat offload fail\n", DEBUG_TCP_ARG(iph,l4), d);
-													break;
-												case IPPROTO_UDP:
-													NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d set hwnat offload fail\n", DEBUG_UDP_ARG(iph,l4), d);
-													break;
+									if (natflow_hwnat) {
+										if (!(nfn->flags & FASTNAT_NO_ARP) && !(nfn_i->flags & FASTNAT_NO_ARP) &&
+										        !netif_is_bridge_master(nfn->outdev) && !netif_is_bridge_master(nfn_i->outdev)) {
+											struct net_device *orig_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
+											struct net_device *reply_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev);
+											__be16 orig_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
+											__be16 reply_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_REPLY].outdev);
+											if (orig_dev->netdev_ops->ndo_flow_offload) {
+												if (orig_dev == reply_dev) {
+													struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
+													struct flow_offload_hw_path orig = {
+														.dev = orig_dev,
+														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+													};
+													struct flow_offload_hw_path reply = {
+														.dev = reply_dev,
+														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+													};
+													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
+													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
+													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
+													memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
+													if (orig_vid > 0) {
+														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+														orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
+														orig.vlan_id = orig_vid;
+													}
+													if (reply_vid > 0) {
+														reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+														reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
+														reply.vlan_id = reply_vid;
+													}
+													if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+														orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+														orig.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
+													}
+													if (nf->rroute[NF_FF_DIR_REPLY].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+														reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+														reply.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
+													}
+													if (orig_dev->netdev_ops->ndo_flow_offload(FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
+														NATFLOW_INFO("(PCO) set hwnat offload dev=%s s=%pI4:%u d=%pI4:%u dev=%s s=%pI4:%u d=%pI4:%u\n",
+														             nfn->outdev->name, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
+														             nfn_i->outdev->name, &nfn_i->saddr, ntohs(nfn_i->source), &nfn_i->daddr, ntohs(nfn_i->dest));
+													} else {
+														/* mark FF_FAIL so never try FF */
+														simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
+														switch (iph->protocol) {
+														case IPPROTO_TCP:
+															NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d set hwnat offload fail\n", DEBUG_TCP_ARG(iph,l4), d);
+															break;
+														case IPPROTO_UDP:
+															NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d set hwnat offload fail\n", DEBUG_UDP_ARG(iph,l4), d);
+															break;
+														}
+													}
+												} else {
+													//reply_dev is ext dev
+													struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
+													struct flow_offload_hw_path orig = {
+														.dev = orig_dev,
+														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+													};
+													struct flow_offload_hw_path reply = {
+														.dev = reply_dev,
+														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+													};
+													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
+													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
+													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
+													memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
+													if (orig_vid > 0) {
+														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+														orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
+														orig.vlan_id = orig_vid;
+													}
+													if (reply_vid > 0) {
+														reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+														reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
+														reply.vlan_id = reply_vid;
+													}
+													if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+														orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+														orig.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
+													}
+													if (nf->rroute[NF_FF_DIR_REPLY].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+														reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+														reply.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
+													}
+													if (orig_dev->netdev_ops->ndo_flow_offload(FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
+														NATFLOW_INFO("(PCO) set hwnat offload dev=%s s=%pI4:%u d=%pI4:%u dev=%s s=%pI4:%u d=%pI4:%u\n",
+														             nfn->outdev->name, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
+														             nfn_i->outdev->name, &nfn_i->saddr, ntohs(nfn_i->source), &nfn_i->daddr, ntohs(nfn_i->dest));
+													} else {
+														/* mark FF_FAIL so never try FF */
+														simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
+														switch (iph->protocol) {
+														case IPPROTO_TCP:
+															NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d set hwnat offload fail\n", DEBUG_TCP_ARG(iph,l4), d);
+															break;
+														case IPPROTO_UDP:
+															NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d set hwnat offload fail\n", DEBUG_UDP_ARG(iph,l4), d);
+															break;
+														}
+													}
+												}
+											} else if (reply_dev->netdev_ops->ndo_flow_offload) {
+												if (reply_dev == orig_dev) {
+													//never happened
+													BUG();
+												} else {
+													//orig_dev is ext dev
+													struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
+													struct flow_offload_hw_path orig = {
+														.dev = orig_dev,
+														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+													};
+													struct flow_offload_hw_path reply = {
+														.dev = reply_dev,
+														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+													};
+													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
+													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
+													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
+													memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
+													if (orig_vid > 0) {
+														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+														orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
+														orig.vlan_id = orig_vid;
+													}
+													if (reply_vid > 0) {
+														reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+														reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
+														reply.vlan_id = reply_vid;
+													}
+													if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+														orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+														orig.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
+													}
+													if (nf->rroute[NF_FF_DIR_REPLY].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+														reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+														reply.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
+													}
+													if (reply_dev->netdev_ops->ndo_flow_offload(FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
+														NATFLOW_INFO("(PCO) set hwnat offload dev=%s s=%pI4:%u d=%pI4:%u dev=%s s=%pI4:%u d=%pI4:%u\n",
+														             nfn->outdev->name, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
+														             nfn_i->outdev->name, &nfn_i->saddr, ntohs(nfn_i->source), &nfn_i->daddr, ntohs(nfn_i->dest));
+													} else {
+														/* mark FF_FAIL so never try FF */
+														simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
+														switch (iph->protocol) {
+														case IPPROTO_TCP:
+															NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d set hwnat offload fail\n", DEBUG_TCP_ARG(iph,l4), d);
+															break;
+														case IPPROTO_UDP:
+															NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d set hwnat offload fail\n", DEBUG_UDP_ARG(iph,l4), d);
+															break;
+														}
+													}
 												}
 											}
 										}
-									}
+									} /* natflow_hwnat */
 #endif
 								} else {
 									if (!(nfn->flags & FASTNAT_HALF_LEARN)) {
@@ -1112,7 +1296,7 @@ int natflow_path_init(void)
 	int ret = 0;
 
 #ifdef CONFIG_NETFILTER_INGRESS
-	natflow_fast_nat_table = kmalloc(sizeof(natflow_fastnat_node_t) * NATFLOW_FASTNAT_TABLE_SIZE, GFP_KERNEL);
+	natflow_fast_nat_table = kmalloc(sizeof(natflow_fastnat_node_t) * NATFLOW_FASTNAT_TABLE_SIZE * 2, GFP_KERNEL);
 	if (natflow_fast_nat_table == NULL) {
 		return -ENOMEM;
 	}
