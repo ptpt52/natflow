@@ -114,7 +114,7 @@ struct natflow_fastnat_node_t {
 	struct net_device *outdev;
 	unsigned long jiffies;
 	unsigned int magic;
-#define FASTNAT_VLAN_FLAG  0x01
+#define FASTNAT_EXT_HWNAT_FLAG 0x01
 #define FASTNAT_PPPOE_FLAG 0x02
 #define FASTNAT_NO_ARP     0x04
 #define FASTNAT_RE_LEARN   0x08

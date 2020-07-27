@@ -410,6 +410,18 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					goto out;
 				}
 
+//#ifdef CONFIG_NET_RALINK_OFFLOAD
+#if 0
+				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
+					__vlan_hwaccel_clear_tag(skb);
+					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
+					skb->dev = nfn->outdev;
+					dev_queue_xmit(skb);
+					/*FIXME what if gso? */
+					return NF_STOLEN;
+				}
+#endif
+
 				if (iph->ttl <= 1) {
 					return NF_DROP;
 				}
@@ -521,6 +533,18 @@ fast_output:
 					}
 					goto out;
 				}
+
+//#ifdef CONFIG_NET_RALINK_OFFLOAD
+#if 0
+				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
+					__vlan_hwaccel_clear_tag(skb);
+					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
+					skb->dev = nfn->outdev;
+					dev_queue_xmit(skb);
+					/*FIXME what if gso? */
+					return NF_STOLEN;
+				}
+#endif
 
 				if (iph->ttl <= 1) {
 					return NF_DROP;
@@ -890,11 +914,10 @@ fastnat_check:
 														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
 														orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 														orig.vlan_id = orig_vid;
-													}
-													if (reply_vid > 0) {
+														/* let reply vlan same as orig */
 														reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
-														reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
-														reply.vlan_id = reply_vid;
+														reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
+														reply.vlan_id = orig_vid;
 													}
 													if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 														orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
@@ -908,6 +931,11 @@ fastnat_check:
 														NATFLOW_INFO("(PCO) set hwnat offload dev=%s s=%pI4:%u d=%pI4:%u dev=%s s=%pI4:%u d=%pI4:%u\n",
 														             nfn->outdev->name, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
 														             nfn_i->outdev->name, &nfn_i->saddr, ntohs(nfn_i->source), &nfn_i->daddr, ntohs(nfn_i->dest));
+														if (nf->rroute[NF_FF_DIR_REPLY].outdev == nfn->outdev) {
+															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														} else {
+															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														}
 													} else {
 														/* mark FF_FAIL so never try FF */
 														simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
@@ -943,15 +971,14 @@ fastnat_check:
 													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
 													memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
-													if (orig_vid > 0) {
-														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
-														orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
-														orig.vlan_id = orig_vid;
-													}
 													if (reply_vid > 0) {
 														reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
 														reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
 														reply.vlan_id = reply_vid;
+														/* let orig vlan same as reply */
+														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+														orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
+														orig.vlan_id = reply_vid;
 													}
 													if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 														orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
@@ -965,6 +992,11 @@ fastnat_check:
 														NATFLOW_INFO("(PCO) set hwnat offload dev=%s s=%pI4:%u d=%pI4:%u dev=%s s=%pI4:%u d=%pI4:%u\n",
 														             nfn->outdev->name, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
 														             nfn_i->outdev->name, &nfn_i->saddr, ntohs(nfn_i->source), &nfn_i->daddr, ntohs(nfn_i->dest));
+														if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
+															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														} else {
+															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														}
 													} else {
 														/* mark FF_FAIL so never try FF */
 														simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
