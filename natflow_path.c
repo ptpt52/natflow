@@ -43,7 +43,7 @@ static inline __be16 pppoe_proto(const struct sk_buff *skb)
 }
 #endif
 
-unsigned int natflow_hwnat = 1;
+unsigned int hwnat = 1;
 
 static int disabled = 1;
 void natflow_disabled_set(int v)
@@ -299,7 +299,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		 * nated-skb come to cpu from ppe, we just forward to ext dev(Wi-Fi)
 		 * skb->queue_mapping stored the hash key
 		 */
-		if (natflow_hwnat && skb->dev->netdev_ops->ndo_flow_offload &&
+		if (hwnat && skb->dev->netdev_ops->ndo_flow_offload &&
 		        (skb->queue_mapping & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC) {
 			_I = (skb->queue_mapping & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
 			nfn = &natflow_fast_nat_table[_I];
@@ -779,7 +779,7 @@ fastnat_check:
 										ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 									}
 #ifdef CONFIG_NET_RALINK_OFFLOAD
-									if (natflow_hwnat) {
+									if (hwnat) {
 										if (!(nfn->flags & FASTNAT_NO_ARP) && !(nfn_i->flags & FASTNAT_NO_ARP) &&
 										        !netif_is_bridge_master(nfn->outdev) && !netif_is_bridge_master(nfn_i->outdev)) {
 											struct net_device *orig_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
@@ -955,7 +955,7 @@ fastnat_check:
 												}
 											}
 										}
-									} /* natflow_hwnat */
+									} /* hwnat */
 #endif
 								} else {
 									if (!(nfn->flags & FASTNAT_HALF_LEARN)) {

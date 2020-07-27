@@ -62,14 +62,14 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             "#\n"
 		             "# Info:\n"
 		             "#    ...\n"
-		             "#    natflow_hwnat=%u\n"
+		             "#    hwnat=%u\n"
 		             "#\n"
 		             "# Reload cmd:\n"
 		             "\n"
 		             "disabled=%u\n"
 		             "debug=%d\n"
 		             "\n",
-		             natflow_hwnat,
+		             hwnat,
 		             natflow_disabled_get(),
 		             debug);
 		natflow_ctl_buffer[n] = 0;
@@ -160,11 +160,11 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 			natflow_disabled_set(!!d);
 			goto done;
 		}
-	} else if (strncmp(data, "natflow_hwnat=", 14) == 0) {
+	} else if (strncmp(data, "hwnat=", 6) == 0) {
 		int d;
-		n = sscanf(data, "natflow_hwnat=%u", &d);
+		n = sscanf(data, "hwnat=%u", &d);
 		if (n == 1) {
-			natflow_hwnat = d;
+			hwnat = d;
 			goto done;
 		}
 	} else if (strncmp(data, "update_magic", 12) == 0) {
