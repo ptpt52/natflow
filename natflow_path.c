@@ -315,11 +315,14 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					nfn = &natflow_fast_nat_table[_I];
 				}
 				_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
-				if (nfn->magic == natflow_path_magic &&
-				        _I <= NATFLOW_FF_TIMEOUT_LOW &&
+				if (_I <= NATFLOW_FF_TIMEOUT_LOW &&
 				        nfn->saddr == iph->daddr && nfn->daddr == iph->saddr &&
 				        nfn->source == TCPH(l4)->dest && nfn->dest == TCPH(l4)->source &&
 				        nfn->protonum == IPPROTO_TCP) {
+					if (nfn->magic != natflow_path_magic) {
+						//TODO del hwnat foe
+						return NF_DROP;
+					}
 					nfn->jiffies = jiffies;
 					_I = skb->queue_mapping % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
 					nfn = &natflow_fast_nat_table[_I];
@@ -350,11 +353,14 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					nfn = &natflow_fast_nat_table[_I];
 				}
 				_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
-				if (nfn->magic == natflow_path_magic &&
-				        _I <= NATFLOW_FF_TIMEOUT_LOW &&
+				if (_I <= NATFLOW_FF_TIMEOUT_LOW &&
 				        nfn->saddr == iph->daddr && nfn->daddr == iph->saddr &&
 				        nfn->source == UDPH(l4)->dest && nfn->dest == UDPH(l4)->source &&
 				        nfn->protonum == IPPROTO_UDP) {
+					if (nfn->magic != natflow_path_magic) {
+						//TODO del hwnat foe
+						return NF_DROP;
+					}
 					nfn->jiffies = jiffies;
 					_I = skb->queue_mapping % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
 					nfn = &natflow_fast_nat_table[_I];
