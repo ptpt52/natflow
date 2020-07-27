@@ -327,7 +327,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 
 					if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW) {
 						nfn->jiffies = jiffies;
-						skb->vlan_present = 0;
+						__vlan_hwaccel_clear_tag(skb);
 						skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
 						skb->dev = nfn->outdev;
 						skb->queue_mapping = 0;
@@ -362,7 +362,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 
 					if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW) {
 						nfn->jiffies = jiffies;
-						skb->vlan_present = 0;
+						__vlan_hwaccel_clear_tag(skb);
 						skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
 						skb->dev = nfn->outdev;
 						skb->queue_mapping = 0;
