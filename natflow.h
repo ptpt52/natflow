@@ -164,4 +164,10 @@ static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __b
 	return hash;
 }
 
+#ifdef CONFIG_NET_RALINK_OFFLOAD
+#define HWNAT_QUEUE_MAPPING_MAGIC      0x9000
+#define HWNAT_QUEUE_MAPPING_MAGIC_MASK 0xf000
+#define HWNAT_QUEUE_MAPPING_HASH_MASK  0x0fff
+#endif
+
 #endif /* _NATFLOW_H_ */

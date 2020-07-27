@@ -299,83 +299,20 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		 * nated-skb come to cpu from ppe, we just forward to ext dev(Wi-Fi)
 		 * skb->queue_mapping stored the hash key
 		 */
-		if (natflow_hwnat && skb->dev->netdev_ops->ndo_flow_offload) {
-			if (iph->protocol == IPPROTO_TCP) {
-				if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct tcphdr)) || skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct tcphdr))) {
-					return NF_DROP;
-				}
-				iph = ip_hdr(skb);
-				l4 = (void *)iph + iph->ihl * 4;
-				_I = natflow_hash_v4(iph->daddr, iph->saddr, TCPH(l4)->dest, TCPH(l4)->source, IPPROTO_TCP);
-				nfn = &natflow_fast_nat_table[_I];
-				if (nfn->saddr != iph->daddr || nfn->daddr != iph->saddr ||
-				        nfn->source != TCPH(l4)->dest || nfn->dest != TCPH(l4)->source ||
-				        nfn->protonum != IPPROTO_TCP) {
-					_I += 1;
-					nfn = &natflow_fast_nat_table[_I];
-				}
-				_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
-				if (_I <= NATFLOW_FF_TIMEOUT_LOW &&
-				        nfn->saddr == iph->daddr && nfn->daddr == iph->saddr &&
-				        nfn->source == TCPH(l4)->dest && nfn->dest == TCPH(l4)->source &&
-				        nfn->protonum == IPPROTO_TCP) {
-					if (nfn->magic != natflow_path_magic) {
-						//TODO del hwnat foe
-						return NF_DROP;
-					}
-					nfn->jiffies = jiffies;
-					_I = skb->queue_mapping % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
-					nfn = &natflow_fast_nat_table[_I];
-					_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
+		if (natflow_hwnat && skb->dev->netdev_ops->ndo_flow_offload &&
+		        (skb->queue_mapping & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC) {
+			_I = (skb->queue_mapping & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
+			nfn = &natflow_fast_nat_table[_I];
+			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 
-					if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW) {
-						nfn->jiffies = jiffies;
-						__vlan_hwaccel_clear_tag(skb);
-						skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
-						skb->dev = nfn->outdev;
-						skb->queue_mapping = 0;
-						dev_queue_xmit(skb);
-						return NF_STOLEN;
-					}
-				}
-			} else {
-				if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr)) || skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct udphdr))) {
-					return NF_DROP;
-				}
-				iph = ip_hdr(skb);
-				l4 = (void *)iph + iph->ihl * 4;
-				_I = natflow_hash_v4(iph->daddr, iph->saddr, UDPH(l4)->dest, UDPH(l4)->source, IPPROTO_UDP);
-				nfn = &natflow_fast_nat_table[_I];
-				if (nfn->saddr != iph->daddr || nfn->daddr != iph->saddr ||
-				        nfn->source != UDPH(l4)->dest || nfn->dest != UDPH(l4)->source ||
-				        nfn->protonum != IPPROTO_UDP) {
-					_I += 1;
-					nfn = &natflow_fast_nat_table[_I];
-				}
-				_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
-				if (_I <= NATFLOW_FF_TIMEOUT_LOW &&
-				        nfn->saddr == iph->daddr && nfn->daddr == iph->saddr &&
-				        nfn->source == UDPH(l4)->dest && nfn->dest == UDPH(l4)->source &&
-				        nfn->protonum == IPPROTO_UDP) {
-					if (nfn->magic != natflow_path_magic) {
-						//TODO del hwnat foe
-						return NF_DROP;
-					}
-					nfn->jiffies = jiffies;
-					_I = skb->queue_mapping % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
-					nfn = &natflow_fast_nat_table[_I];
-					_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
-
-					if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW) {
-						nfn->jiffies = jiffies;
-						__vlan_hwaccel_clear_tag(skb);
-						skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
-						skb->dev = nfn->outdev;
-						skb->queue_mapping = 0;
-						dev_queue_xmit(skb);
-						return NF_STOLEN;
-					}
-				}
+			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW) {
+				nfn->jiffies = jiffies;
+				__vlan_hwaccel_clear_tag(skb);
+				skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
+				skb->dev = nfn->outdev;
+				skb->queue_mapping = 0;
+				dev_queue_xmit(skb);
+				return NF_STOLEN;
 			}
 		}
 #endif
