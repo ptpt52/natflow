@@ -876,9 +876,12 @@ fastnat_check:
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 													};
 													struct flow_offload_hw_path reply = {
-														.dev = reply_dev,
+														.dev = nf->rroute[NF_FF_DIR_REPLY].outdev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 													};
+													/* no vlan for ext dev */
+													reply_dev = nf->rroute[NF_FF_DIR_REPLY].outdev;
+													reply_vid = 0;
 													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
@@ -926,13 +929,16 @@ fastnat_check:
 													//orig_dev is ext dev
 													struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 													struct flow_offload_hw_path orig = {
-														.dev = orig_dev,
+														.dev = nf->rroute[NF_FF_DIR_ORIGINAL].outdev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 													};
 													struct flow_offload_hw_path reply = {
 														.dev = reply_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 													};
+													/* no vlan for ext dev */
+													orig_dev = nf->rroute[NF_FF_DIR_ORIGINAL].outdev;
+													orig_vid = 0;
 													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
