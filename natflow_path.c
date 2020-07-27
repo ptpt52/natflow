@@ -300,7 +300,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		 * skb->queue_mapping stored the hash key
 		 */
 		if (hwnat && skb->dev->netdev_ops->ndo_flow_offload &&
-		        skb->vlan_proto == skb->queue_mapping &&
+		        (skb->vlan_tci & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC &&
 		        (skb->queue_mapping & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC) {
 			_I = (skb->queue_mapping & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
 			nfn = &natflow_fast_nat_table[_I];
