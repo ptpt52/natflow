@@ -123,9 +123,11 @@ static void natflow_offload_keepalive(unsigned int hash)
 			struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
 			int d = !NF_CT_DIRECTION(h);
 
-			natflow_update_ct_timeout(ct, diff_jiffies);
-			NATFLOW_INFO("do keep alive update ct: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
-			             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies, HZ);
+			if (d == IP_CT_DIR_ORIGINAL) {
+				natflow_update_ct_timeout(ct, diff_jiffies);
+				NATFLOW_INFO("do keep alive update ct: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
+				             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies, HZ);
+			}
 
 			hash = natflow_hash_v4(ct->tuplehash[d].tuple.src.u3.ip,
 			                       ct->tuplehash[d].tuple.dst.u3.ip,
@@ -136,6 +138,12 @@ static void natflow_offload_keepalive(unsigned int hash)
 			diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
 
 			if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_HIGH) {
+				if (d == IP_CT_DIR_REPLY) {
+					natflow_update_ct_timeout(ct, diff_jiffies);
+					NATFLOW_INFO("do keep alive update ct: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
+					             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies, HZ);
+				}
+
 				nfn->jiffies = current_jiffies;
 				NATFLOW_INFO("do keep alive[%u]: %pI4:%u->%pI4:%u\n", hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest));
 			}
