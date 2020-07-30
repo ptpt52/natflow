@@ -433,7 +433,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				}
 
 				/* sample up to slow path every 5s */
-				if ((u32)ulongmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME) {
+				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME) {
 					nfn->count = (nfn->jiffies / HZ) & 0xff;
 					goto out;
 				}
@@ -563,7 +563,7 @@ fast_output:
 				}
 
 				/* sample up to slow path every 5s */
-				if ((u32)ulongmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME) {
+				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME) {
 					nfn->count = (nfn->jiffies / HZ) & 0xff;
 					goto out;
 				}

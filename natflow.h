@@ -108,6 +108,21 @@ static inline unsigned long ulongmindiff(unsigned long a, unsigned long b)
 	return (a - b < b - a ? a - b : b - a);
 }
 
+static inline unsigned int uintmindiff(unsigned int a, unsigned int b)
+{
+	return (a - b < b - a ? a - b : b - a);
+}
+
+static inline unsigned short ushortmindiff(unsigned short a, unsigned short b)
+{
+	return (a - b < b - a ? a - b : b - a);
+}
+
+static inline unsigned char ucharmindiff(unsigned char a, unsigned char b)
+{
+	return (a - b < b - a ? a - b : b - a);
+}
+
 typedef struct natflow_fastnat_node_t natflow_fastnat_node_t;
 
 struct natflow_fastnat_node_t {
