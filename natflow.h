@@ -134,7 +134,6 @@ struct natflow_fastnat_node_t {
 #define FASTNAT_NO_ARP     0x04
 #define FASTNAT_RE_LEARN   0x08
 #define FASTNAT_STOP_LEARN 0x10
-#define FASTNAT_HALF_LEARN 0x20
 	unsigned char flags;
 	unsigned char count;
 	__be16 protonum;

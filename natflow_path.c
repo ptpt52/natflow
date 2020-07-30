@@ -785,13 +785,6 @@ fastnat_check:
 								break;
 							}
 
-							if ((nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum) &&
-							        (nfn->flags & FASTNAT_HALF_LEARN)) {
-								nfn->ifindex = (u16)skb->dev->ifindex;
-							} else {
-								nfn->ifindex = (u16)-1;
-							}
-
 							nfn->saddr = saddr;
 							nfn->daddr = daddr;
 							nfn->source = source;
@@ -805,6 +798,7 @@ fastnat_check:
 
 							nfn->flags = 0;
 							nfn->outdev = nf->rroute[d].outdev;
+							nfn->ifindex = nf->rroute[!d].outdev->ifindex;
 							if (nf->rroute[d].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 								struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth + ETH_HLEN);
 								nfn->pppoe_sid = ph->sid;
@@ -1057,34 +1051,13 @@ fastnat_check:
 									} /* hwnat */
 #endif
 								} else {
-									if (!(nfn->flags & FASTNAT_HALF_LEARN)) {
-										nfn->flags |= FASTNAT_HALF_LEARN;
-									}
-									nfn->ifindex = (u16)skb->dev->ifindex;
+									/* nfn is ready, but nfn_i is not */
 								}
 							} else {
-								natflow_fastnat_node_t *nfn_i;
-								saddr = ct->tuplehash[!d].tuple.src.u3.ip;
-								daddr = ct->tuplehash[!d].tuple.dst.u3.ip;
-								source = ct->tuplehash[!d].tuple.src.u.all;
-								dest = ct->tuplehash[!d].tuple.dst.u.all;
-								protonum = ct->tuplehash[!d].tuple.dst.protonum;
-								hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
-								nfn_i = &natflow_fast_nat_table[hash];
-
-								if (nfn_i->saddr != saddr || nfn_i->daddr != daddr ||
-								        nfn_i->source != source || nfn_i->dest != dest || nfn_i->protonum != protonum) {
-									hash += 1;
-									nfn_i = &natflow_fast_nat_table[hash];
-								}
-								if (nfn_i->magic == natflow_path_magic && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
-								        (nfn_i->saddr == saddr && nfn_i->daddr == daddr &&
-								         nfn_i->source == source && nfn_i->dest == dest && nfn_i->protonum == protonum)) {
-									if (!(nfn_i->flags & FASTNAT_HALF_LEARN)) {
-										nfn_i->flags |= FASTNAT_HALF_LEARN;
-									}
-								}
+								/* nfn is not ready */
 							}
+						} else {
+							/* either NF_FF_ORIGINAL_CHECK or NF_FF_REPLY_CHECK is not ready */
 						}
 					} while (0);
 				}
