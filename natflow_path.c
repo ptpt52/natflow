@@ -124,8 +124,8 @@ static void natflow_offload_keepalive(unsigned int hash)
 			int d = !NF_CT_DIRECTION(h);
 
 			natflow_update_ct_timeout(ct, diff_jiffies);
-			NATFLOW_INFO("do keep alive update ct: %pI4:%u->%pI4:%u diff_jiffies=%u\n",
-			             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies);
+			NATFLOW_INFO("do keep alive update ct: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
+			             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies, HZ);
 
 			hash = natflow_hash_v4(ct->tuplehash[d].tuple.src.u3.ip,
 			                       ct->tuplehash[d].tuple.dst.u3.ip,
