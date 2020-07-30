@@ -139,6 +139,7 @@ struct natflow_fastnat_node_t {
 
 #define NATFLOW_FF_TIMEOUT_HIGH (30 * HZ)
 #define NATFLOW_FF_TIMEOUT_LOW (25 * HZ)
+#define NATFLOW_FF_SAMPLE_TIME 5
 
 /* MAX 65536 for now we use 2048 */
 #if defined(CONFIG_64BIT) || defined(CONFIG_X86) || defined(CONFIG_X86_64) || defined(CONFIG_ARM) || defined(CONFIG_ARM64)

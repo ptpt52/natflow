@@ -432,6 +432,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					goto out;
 				}
 
+				/* sample up to slow path every 5s */
+				if ((u32)ulongmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME) {
+					nfn->count = (nfn->jiffies / HZ) & 0xff;
+					goto out;
+				}
+
 //#ifdef CONFIG_NET_RALINK_OFFLOAD
 #if 0
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
@@ -553,6 +559,12 @@ fast_output:
 						nfn->flags &= ~FASTNAT_RE_LEARN;
 						goto slow_fastpath;
 					}
+					goto out;
+				}
+
+				/* sample up to slow path every 5s */
+				if ((u32)ulongmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME) {
+					nfn->count = (nfn->jiffies / HZ) & 0xff;
 					goto out;
 				}
 
