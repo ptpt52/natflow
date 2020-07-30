@@ -67,12 +67,85 @@ void natflow_update_magic(int init)
 
 #ifdef CONFIG_NETFILTER_INGRESS
 static natflow_fastnat_node_t *natflow_fast_nat_table = NULL;
-#endif
 
 #ifdef CONFIG_NET_RALINK_OFFLOAD
 struct natflow_offload {
 	struct flow_offload flow;
 };
+
+void natflow_update_ct_timeout(struct nf_conn *ct, unsigned long extra_jiffies)
+{
+	if (!nf_ct_is_confirmed(ct)) {
+		/* nothing to do */
+	} else {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
+		extra_jiffies += ct->timeout.expires;
+		if (extra_jiffies - ct->timeout.expires >= HZ) {
+			mod_timer_pending(&ct->timeout, extra_jiffies);
+		}
+#else
+		extra_jiffies += ct->timeout;
+		ct->timeout = extra_jiffies;
+#endif
+	}
+}
+
+static void natflow_offload_keepalive(unsigned int hash)
+{
+	natflow_fastnat_node_t *nfn;
+	unsigned long diff_jiffies = 0;
+	unsigned long current_jiffies = jiffies;
+
+	hash = hash % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
+	nfn = &natflow_fast_nat_table[hash];
+	diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
+
+	if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_HIGH) {
+		struct nf_conntrack_tuple tuple;
+		struct nf_conntrack_tuple_hash *h;
+
+		nfn->jiffies = current_jiffies;
+		NATFLOW_INFO("do keep alive[%u]: %pI4:%u->%pI4:%u\n", hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest));
+
+		memset(&tuple, 0, sizeof(tuple));
+		tuple.src.u3.ip = nfn->saddr;
+		tuple.src.u.tcp.port = nfn->source;
+		tuple.dst.u3.ip = nfn->daddr;
+		tuple.dst.u.tcp.port = nfn->dest;
+		tuple.src.l3num = PF_INET;
+		tuple.dst.protonum = nfn->protonum;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
+		h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
+#else
+		h = nf_conntrack_find_get(&init_net, &nf_ct_zone_dflt, &tuple);
+#endif
+		if (h) {
+			struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
+			int d = !NF_CT_DIRECTION(h);
+
+			natflow_update_ct_timeout(ct, diff_jiffies);
+			NATFLOW_INFO("do keep alive update ct: %pI4:%u->%pI4:%u diff_jiffies=%u\n",
+			             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies);
+
+			hash = natflow_hash_v4(ct->tuplehash[d].tuple.src.u3.ip,
+			                       ct->tuplehash[d].tuple.dst.u3.ip,
+			                       ct->tuplehash[d].tuple.src.u.all,
+			                       ct->tuplehash[d].tuple.dst.u.all,
+			                       ct->tuplehash[d].tuple.dst.protonum);
+			nfn = &natflow_fast_nat_table[hash];
+			diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
+
+			if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_HIGH) {
+				nfn->jiffies = current_jiffies;
+				NATFLOW_INFO("do keep alive[%u]: %pI4:%u->%pI4:%u\n", hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest));
+			}
+			nf_ct_put(ct);
+			return;
+		}
+		NATFLOW_WARN("do not keep alive: ct no found\n");
+	}
+	NATFLOW_WARN("do not keep alive\n");
+}
 
 static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow_t *nf)
 {
@@ -106,13 +179,13 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 
 	/*XXX: in fact ppe don't care flags  */
 	flow->flags = 0;
-	if (ct->status & IPS_SRC_NAT)
-		flow->flags |= FLOW_OFFLOAD_SNAT;
-	if (ct->status & IPS_DST_NAT)
-		flow->flags |= FLOW_OFFLOAD_DNAT;
+	if ((void *)flow->priv != (void *)natflow_offload_keepalive) {
+		flow->priv = (void *)natflow_offload_keepalive;
+	}
 
 	return natflow;
 }
+#endif
 #endif
 
 void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir)
@@ -307,7 +380,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 
 			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == natflow_path_magic) {
-				nfn->jiffies = jiffies;
+				//nfn->jiffies = jiffies; /* we update jiffies in keepalive */
 				__vlan_hwaccel_clear_tag(skb);
 				skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
 				skb->dev = nfn->outdev;
