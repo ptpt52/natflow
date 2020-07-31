@@ -432,7 +432,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					goto slow_fastpath;
 				}
 				nfn->jiffies = jiffies;
-				if ((re_learn = ((nfn->flags & FASTNAT_RE_LEARN) || (u16)skb->dev->ifindex != nfn->ifindex)) || _I > HZ) {
+				if ((re_learn = (nfn->flags & FASTNAT_RE_LEARN)) || (u16)skb->dev->ifindex != nfn->ifindex || _I > HZ) {
 					if (re_learn) {
 						nfn->flags &= ~FASTNAT_RE_LEARN;
 						goto slow_fastpath;
@@ -565,7 +565,7 @@ fast_output:
 					goto slow_fastpath;
 				}
 				nfn->jiffies = jiffies;
-				if ((re_learn = ((nfn->flags & FASTNAT_RE_LEARN) || (u16)skb->dev->ifindex != nfn->ifindex)) || _I > HZ) {
+				if ((re_learn = (nfn->flags & FASTNAT_RE_LEARN)) || (u16)skb->dev->ifindex != nfn->ifindex || _I > HZ) {
 					if (re_learn) {
 						nfn->flags &= ~FASTNAT_RE_LEARN;
 						goto slow_fastpath;
