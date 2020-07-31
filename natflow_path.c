@@ -439,7 +439,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					}
 					goto out;
 				}
-				if (TCPH(l4)->fin || TCPH(l4)->rst) {
+				if (TCPH(l4)->fin || TCPH(l4)->rst || TCPH(l4)->syn) {
 					goto out;
 				}
 
