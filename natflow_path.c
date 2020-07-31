@@ -439,6 +439,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					}
 					goto out;
 				}
+				if (TCPH(l4)->fin || TCPH(l4)->rst) {
+					goto out;
+				}
 
 				/* sample up to slow path every 5s */
 				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME) {
@@ -635,6 +638,9 @@ slow_fastpath:
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
+		goto out;
+	}
+	if (iph->protocol == IPPROTO_TCP && (TCPH(l4)->fin || TCPH(l4)->rst)) {
 		goto out;
 	}
 	/*
