@@ -171,6 +171,8 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 	struct nf_conntrack_tuple *ctt;
 	struct natflow_offload *natflow = &natflow_offload[smp_processor_id()];
 	struct flow_offload *flow = &natflow->flow;
+	int orig_hash, reply_hash;
+	natflow_fastnat_node_t *nfn;
 
 	dir = 0;
 	ft = &flow->tuplehash[dir].tuple;
@@ -182,6 +184,13 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 	ft->src_port = ctt->src.u.tcp.port;
 	ft->dst_port = ctt->dst.u.tcp.port;
 
+	orig_hash = natflow_hash_v4(ft->src_v4.s_addr, ft->dst_v4.s_addr, ft->src_port, ft->dst_port, ft->l4proto);
+	nfn = &natflow_fast_nat_table[orig_hash];
+	if (nfn->saddr != ft->src_v4.s_addr || nfn->daddr != ft->dst_v4.s_addr || nfn->source != ft->src_port || nfn->dest != ft->dst_port || nfn->protonum != ft->l4proto)
+	{
+		orig_hash += 1;
+	}
+
 	dir = 1;
 	ft = &flow->tuplehash[dir].tuple;
 	ctt = &ct->tuplehash[dir].tuple;
@@ -192,11 +201,20 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 	ft->src_port = ctt->src.u.tcp.port;
 	ft->dst_port = ctt->dst.u.tcp.port;
 
+	reply_hash = natflow_hash_v4(ft->src_v4.s_addr, ft->dst_v4.s_addr, ft->src_port, ft->dst_port, ft->l4proto);
+	nfn = &natflow_fast_nat_table[reply_hash];
+	if (nfn->saddr != ft->src_v4.s_addr || nfn->daddr != ft->dst_v4.s_addr || nfn->source != ft->src_port || nfn->dest != ft->dst_port || nfn->protonum != ft->l4proto)
+	{
+		reply_hash += 1;
+	}
+
 	/*XXX: in fact ppe don't care flags  */
 	flow->flags = 0;
 	if ((void *)flow->priv != (void *)natflow_offload_keepalive) {
 		flow->priv = (void *)natflow_offload_keepalive;
 	}
+
+	flow->timeout = (orig_hash << 16) | reply_hash;
 
 	return natflow;
 }
