@@ -122,6 +122,11 @@ static void natflow_offload_keepalive(unsigned int hash)
 		if (h) {
 			struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
 			int d = !NF_CT_DIRECTION(h);
+			__be32 saddr = ct->tuplehash[d].tuple.src.u3.ip;
+			__be32 daddr = ct->tuplehash[d].tuple.dst.u3.ip;
+			__be16 source = ct->tuplehash[d].tuple.src.u.all;
+			__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
+			__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
 
 			if (d == IP_CT_DIR_ORIGINAL) {
 				natflow_update_ct_timeout(ct, diff_jiffies);
@@ -129,15 +134,9 @@ static void natflow_offload_keepalive(unsigned int hash)
 				             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies, HZ);
 			}
 
-			hash = natflow_hash_v4(ct->tuplehash[d].tuple.src.u3.ip,
-			                       ct->tuplehash[d].tuple.dst.u3.ip,
-			                       ct->tuplehash[d].tuple.src.u.all,
-			                       ct->tuplehash[d].tuple.dst.u.all,
-			                       ct->tuplehash[d].tuple.dst.protonum);
+			hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
 			nfn = &natflow_fast_nat_table[hash];
-			if (nfn->saddr != ct->tuplehash[d].tuple.src.u3.ip || nfn->daddr != ct->tuplehash[d].tuple.dst.u3.ip ||
-			        nfn->source != ct->tuplehash[d].tuple.src.u.all || nfn->dest != ct->tuplehash[d].tuple.dst.u.all ||
-			        nfn->protonum != ct->tuplehash[d].tuple.dst.protonum) {
+			if (nfn->saddr != saddr || nfn->daddr != daddr || nfn->source != source || nfn->dest != dest || nfn->protonum != protonum) {
 				hash += 1;
 				nfn = &natflow_fast_nat_table[hash];
 			}
@@ -145,9 +144,7 @@ static void natflow_offload_keepalive(unsigned int hash)
 			diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
 
 			if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_HIGH &&
-			        nfn->saddr == ct->tuplehash[d].tuple.src.u3.ip && nfn->daddr == ct->tuplehash[d].tuple.dst.u3.ip &&
-			        nfn->source == ct->tuplehash[d].tuple.src.u.all && nfn->dest == ct->tuplehash[d].tuple.dst.u.all &&
-			        nfn->protonum == ct->tuplehash[d].tuple.dst.protonum) {
+			        nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum) {
 				if (d == IP_CT_DIR_REPLY) {
 					natflow_update_ct_timeout(ct, diff_jiffies);
 					NATFLOW_INFO("do keep alive update ct: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
