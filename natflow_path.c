@@ -135,9 +135,19 @@ static void natflow_offload_keepalive(unsigned int hash)
 			                       ct->tuplehash[d].tuple.dst.u.all,
 			                       ct->tuplehash[d].tuple.dst.protonum);
 			nfn = &natflow_fast_nat_table[hash];
+			if (nfn->saddr != ct->tuplehash[d].tuple.src.u3.ip || nfn->daddr != ct->tuplehash[d].tuple.dst.u3.ip ||
+			        nfn->source != ct->tuplehash[d].tuple.src.u.all || nfn->dest != ct->tuplehash[d].tuple.dst.u.all ||
+			        nfn->protonum != ct->tuplehash[d].tuple.dst.protonum) {
+				hash += 1;
+				nfn = &natflow_fast_nat_table[hash];
+			}
+
 			diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
 
-			if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_HIGH) {
+			if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_HIGH &&
+			        nfn->saddr == ct->tuplehash[d].tuple.src.u3.ip && nfn->daddr == ct->tuplehash[d].tuple.dst.u3.ip &&
+			        nfn->source == ct->tuplehash[d].tuple.src.u.all && nfn->dest == ct->tuplehash[d].tuple.dst.u.all &&
+			        nfn->protonum == ct->tuplehash[d].tuple.dst.protonum) {
 				if (d == IP_CT_DIR_REPLY) {
 					natflow_update_ct_timeout(ct, diff_jiffies);
 					NATFLOW_INFO("do keep alive update ct: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
