@@ -336,11 +336,11 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	natflow_t *nf;
 	int ret = NF_ACCEPT;
 #ifdef CONFIG_NETFILTER_INGRESS
+	int d;
+	unsigned int re_learn = 0;
 	unsigned int ingress_pad_len = 0;
 #endif
 	unsigned int ingress_trim_off = 0;
-	unsigned int re_learn = 0;
-	int d;
 
 	if (disabled)
 		return NF_ACCEPT;
@@ -680,6 +680,7 @@ slow_fastpath:
 	}
 
 	dir = CTINFO2DIR(ctinfo);
+#ifdef CONFIG_NETFILTER_INGRESS
 	if (re_learn != 0) {
 		if (dir == NF_FF_DIR_ORIGINAL) {
 			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
@@ -691,6 +692,7 @@ slow_fastpath:
 			simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
 		}
 	}
+#endif
 	natflow_session_learn(skb, ct, nf, dir);
 
 	if (!nf_ct_is_confirmed(ct)) {
