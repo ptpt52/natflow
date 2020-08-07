@@ -21,6 +21,7 @@
 #include <net/netfilter/nf_conntrack_core.h>
 #include <net/netfilter/nf_conntrack_zones.h>
 #include <net/netfilter/nf_nat.h>
+#include <linux/if_macvlan.h>
 #include "natflow.h"
 #include "natflow_common.h"
 
@@ -229,6 +230,16 @@ static inline __be16 get_vlan_proto(struct net_device *dev)
 		return vlan->vlan_proto;
 	}
 	return 0;
+}
+
+static inline struct net_device *get_macvlan_real_dev(struct net_device *dev)
+{
+#if IS_ENABLED(CONFIG_MACVLAN)
+	if (netif_is_macvlan(dev)) {
+		return macvlan_dev_real_dev(dev);
+	}
+#endif
+	return dev;
 }
 
 void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir);

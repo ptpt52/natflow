@@ -225,6 +225,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 {
 	int magic = natflow_path_magic;
 	struct iphdr *iph = ip_hdr(skb);
+	struct net_device *dev;
 
 	if (nf->magic != magic) {
 		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
@@ -239,12 +240,13 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 	if (!skb->dev) {
 		return;
 	}
+	dev = get_macvlan_real_dev(skb->dev);
 
 	if (dir == IP_CT_DIR_ORIGINAL) {
 		if (!(nf->status & NF_FF_REPLY) && !simple_test_and_set_bit(NF_FF_REPLY_BIT, &nf->status)) {
 			void *l2 = (void *)skb_mac_header(skb);
 			int l2_len = (void *)iph - l2;
-			if (skb->dev->flags & IFF_NOARP) {
+			if (dev->flags & IFF_NOARP) {
 				l2_len = 0;
 			}
 			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
@@ -255,7 +257,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 					ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_proto = ETH(l2)->h_proto;
 					memcpy(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN, l2 + ETH_HLEN, l2_len - ETH_HLEN);
 				}
-				nf->rroute[NF_FF_DIR_REPLY].outdev = skb->dev;
+				nf->rroute[NF_FF_DIR_REPLY].outdev = dev;
 				simple_set_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 			}
 		}
@@ -263,7 +265,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 		if (!(nf->status & NF_FF_ORIGINAL) && !simple_test_and_set_bit(NF_FF_ORIGINAL_BIT, &nf->status)) {
 			void *l2 = (void *)skb_mac_header(skb);
 			int l2_len = (void *)iph - l2;
-			if (skb->dev->flags & IFF_NOARP) {
+			if (dev->flags & IFF_NOARP) {
 				l2_len = 0;
 			}
 			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
@@ -274,7 +276,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 					ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_proto = ETH(l2)->h_proto;
 					memcpy(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN, l2 + ETH_HLEN, l2_len - ETH_HLEN);
 				}
-				nf->rroute[NF_FF_DIR_ORIGINAL].outdev = skb->dev;
+				nf->rroute[NF_FF_DIR_ORIGINAL].outdev = dev;
 				simple_set_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 			}
 		}
