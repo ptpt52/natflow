@@ -938,6 +938,10 @@ fastnat_check:
 													reply_dsa_port = reply.dsa_port;
 												}
 											}
+											if (!((orig_dsa_port == 0xffff && reply_dsa_port == 0xffff) ||
+											        (orig_dsa_port != 0xffff && reply_dsa_port != 0xffff))) {
+												goto skip_hwnat;
+											}
 											if (orig_dev->netdev_ops->ndo_flow_offload) {
 												if (orig_dev == reply_dev) {
 													struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
@@ -1109,7 +1113,11 @@ fastnat_check:
 												}
 											}
 										}
-									} /* hwnat */
+									} else {
+										/* hwnat */
+skip_hwnat:
+										;
+									}
 #endif
 								} else {
 									/* nfn is ready, but nfn_i is not */
