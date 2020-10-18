@@ -914,16 +914,42 @@ fastnat_check:
 											struct net_device *reply_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev);
 											__be16 orig_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 											__be16 reply_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_REPLY].outdev);
+											u16 orig_dsa_port = 0xffff;
+											u16 reply_dsa_port = 0xffff;
+											if (!orig_dev->netdev_ops->ndo_flow_offload && orig_dev->netdev_ops->ndo_flow_offload_check) {
+												struct flow_offload_hw_path orig = {
+													.dev = orig_dev,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+												};
+												orig_dev->netdev_ops->ndo_flow_offload_check(&orig);
+												if (orig.dev != orig_dev) {
+													orig_dev = orig.dev;
+													orig_dsa_port = orig.dsa_port;
+												}
+											}
+											if (!reply_dev->netdev_ops->ndo_flow_offload && reply_dev->netdev_ops->ndo_flow_offload_check) {
+												struct flow_offload_hw_path reply = {
+													.dev = reply_dev,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+												};
+												reply_dev->netdev_ops->ndo_flow_offload_check(&reply);
+												if (reply.dev != reply_dev) {
+													reply_dev = reply.dev;
+													reply_dsa_port = reply.dsa_port;
+												}
+											}
 											if (orig_dev->netdev_ops->ndo_flow_offload) {
 												if (orig_dev == reply_dev) {
 													struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 													struct flow_offload_hw_path orig = {
 														.dev = orig_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+														.dsa_port = orig_dsa_port,
 													};
 													struct flow_offload_hw_path reply = {
 														.dev = reply_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+														.dsa_port = reply_dsa_port,
 													};
 													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);

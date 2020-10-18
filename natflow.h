@@ -159,7 +159,7 @@ struct natflow_fastnat_node_t {
 #if defined(CONFIG_64BIT) || defined(CONFIG_X86) || defined(CONFIG_X86_64) || defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 #define NATFLOW_FASTNAT_TABLE_SIZE 4096
 #else
-#define NATFLOW_FASTNAT_TABLE_SIZE 2048
+#define NATFLOW_FASTNAT_TABLE_SIZE 4096
 #endif
 
 static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __be16 dest, __be16 proto)
@@ -180,9 +180,9 @@ static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __b
 }
 
 #ifdef CONFIG_NET_RALINK_OFFLOAD
-#define HWNAT_QUEUE_MAPPING_MAGIC      0x9000
-#define HWNAT_QUEUE_MAPPING_MAGIC_MASK 0xf000
-#define HWNAT_QUEUE_MAPPING_HASH_MASK  0x0fff
+#define HWNAT_QUEUE_MAPPING_MAGIC      0x8000
+#define HWNAT_QUEUE_MAPPING_MAGIC_MASK 0xe000
+#define HWNAT_QUEUE_MAPPING_HASH_MASK  0x1fff
 #endif
 
 #endif /* _NATFLOW_H_ */
