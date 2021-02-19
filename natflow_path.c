@@ -28,7 +28,7 @@
 #include <linux/if_pppox.h>
 #include <linux/ppp_defs.h>
 #endif
-#ifdef CONFIG_NET_RALINK_OFFLOAD
+#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
 #include <net/netfilter/nf_flow_table.h>
 #endif
 #include "natflow_common.h"
@@ -68,7 +68,7 @@ void natflow_update_magic(int init)
 #ifdef CONFIG_NETFILTER_INGRESS
 static natflow_fastnat_node_t *natflow_fast_nat_table = NULL;
 
-#ifdef CONFIG_NET_RALINK_OFFLOAD
+#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
 struct natflow_offload {
 	struct flow_offload flow;
 };
@@ -402,7 +402,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		skb->protocol = __constant_htons(ETH_P_IP);
 		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
 
-#ifdef CONFIG_NET_RALINK_OFFLOAD
+#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
 		/* XXX: check MTK_CPU_REASON_HIT_BIND_FORCE_CPU
 		 * nated-skb come to cpu from ppe, we just forward to ext dev(Wi-Fi)
 		 * skb->queue_mapping stored the hash key
@@ -906,7 +906,7 @@ fastnat_check:
 										ct->proto.tcp.seen[0].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 										ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 									}
-#ifdef CONFIG_NET_RALINK_OFFLOAD
+#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
 									if (hwnat) {
 										if (!(nfn->flags & FASTNAT_NO_ARP) && !(nfn_i->flags & FASTNAT_NO_ARP) &&
 										        !netif_is_bridge_master(nfn->outdev) && !netif_is_bridge_master(nfn_i->outdev)) {
