@@ -476,12 +476,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					goto out;
 				}
 
-//#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
-#if 0
+#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					__vlan_hwaccel_clear_tag(skb);
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
 					skb->dev = get_vlan_real_dev(nfn->outdev);
+					skb->vlan_tci |= HWNAT_QUEUE_MAPPING_MAGIC;
 					dev_queue_xmit(skb);
 					/*FIXME what if gso? */
 					return NF_STOLEN;
@@ -606,12 +606,12 @@ fast_output:
 					goto out;
 				}
 
-//#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
-#if 0
+#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					__vlan_hwaccel_clear_tag(skb);
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
 					skb->dev = get_vlan_real_dev(nfn->outdev);
+					skb->vlan_tci |= HWNAT_QUEUE_MAPPING_MAGIC;
 					dev_queue_xmit(skb);
 					/*FIXME what if gso? */
 					return NF_STOLEN;
@@ -982,10 +982,10 @@ fastnat_check:
 														simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
 														switch (iph->protocol) {
 														case IPPROTO_TCP:
-															NATFLOW_WARN("(PCO)" DEBUG_TCP_FMT ": dir=%d set hwnat offload fail1\n", DEBUG_TCP_ARG(iph,l4), d);
+															NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d set hwnat offload fail1\n", DEBUG_TCP_ARG(iph,l4), d);
 															break;
 														case IPPROTO_UDP:
-															NATFLOW_WARN("(PCO)" DEBUG_UDP_FMT ": dir=%d set hwnat offload fail1\n", DEBUG_UDP_ARG(iph,l4), d);
+															NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d set hwnat offload fail1\n", DEBUG_UDP_ARG(iph,l4), d);
 															break;
 														}
 													}
@@ -1040,10 +1040,10 @@ fastnat_check:
 														simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
 														switch (iph->protocol) {
 														case IPPROTO_TCP:
-															NATFLOW_WARN("(PCO)" DEBUG_TCP_FMT ": dir=%d set hwnat offload fail2\n", DEBUG_TCP_ARG(iph,l4), d);
+															NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d set hwnat offload fail2\n", DEBUG_TCP_ARG(iph,l4), d);
 															break;
 														case IPPROTO_UDP:
-															NATFLOW_WARN("(PCO)" DEBUG_UDP_FMT ": dir=%d set hwnat offload fail2\n", DEBUG_UDP_ARG(iph,l4), d);
+															NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d set hwnat offload fail2\n", DEBUG_UDP_ARG(iph,l4), d);
 															break;
 														}
 													}
@@ -1103,10 +1103,10 @@ fastnat_check:
 														simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
 														switch (iph->protocol) {
 														case IPPROTO_TCP:
-															NATFLOW_WARN("(PCO)" DEBUG_TCP_FMT ": dir=%d set hwnat offload fail3\n", DEBUG_TCP_ARG(iph,l4), d);
+															NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d set hwnat offload fail3\n", DEBUG_TCP_ARG(iph,l4), d);
 															break;
 														case IPPROTO_UDP:
-															NATFLOW_WARN("(PCO)" DEBUG_UDP_FMT ": dir=%d set hwnat offload fail3\n", DEBUG_UDP_ARG(iph,l4), d);
+															NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d set hwnat offload fail3\n", DEBUG_UDP_ARG(iph,l4), d);
 															break;
 														}
 													}
