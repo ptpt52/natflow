@@ -405,12 +405,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 #if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
 		/* XXX: check MTK_CPU_REASON_HIT_BIND_FORCE_CPU
 		 * nated-skb come to cpu from ppe, we just forward to ext dev(Wi-Fi)
-		 * skb->queue_mapping stored the hash key
+		 * skb->hash stored the hash key
 		 */
 		if (hwnat && skb->dev->netdev_ops->ndo_flow_offload &&
 		        (skb->vlan_tci & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC &&
-		        (skb->queue_mapping & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC) {
-			_I = (skb->queue_mapping & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
+		        (skb->hash & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC) {
+			_I = (skb->hash & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
 			nfn = &natflow_fast_nat_table[_I];
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 
@@ -419,7 +419,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				__vlan_hwaccel_clear_tag(skb);
 				skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
 				skb->dev = nfn->outdev;
-				skb->queue_mapping = 0;
 				dev_queue_xmit(skb);
 				return NF_STOLEN;
 			}
@@ -481,7 +480,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					__vlan_hwaccel_clear_tag(skb);
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
 					skb->dev = get_vlan_real_dev(nfn->outdev);
-					skb->vlan_tci |= HWNAT_QUEUE_MAPPING_MAGIC;
+					skb->vlan_tci = HWNAT_QUEUE_MAPPING_MAGIC;
+					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
 					dev_queue_xmit(skb);
 					/*FIXME what if gso? */
 					return NF_STOLEN;
@@ -611,7 +611,8 @@ fast_output:
 					__vlan_hwaccel_clear_tag(skb);
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
 					skb->dev = get_vlan_real_dev(nfn->outdev);
-					skb->vlan_tci |= HWNAT_QUEUE_MAPPING_MAGIC;
+					skb->vlan_tci = HWNAT_QUEUE_MAPPING_MAGIC;
+					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
 					dev_queue_xmit(skb);
 					/*FIXME what if gso? */
 					return NF_STOLEN;
