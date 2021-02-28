@@ -105,7 +105,7 @@ static void natflow_offload_keepalive(unsigned int hash)
 		struct nf_conntrack_tuple_hash *h;
 
 		nfn->jiffies = current_jiffies;
-		NATFLOW_INFO("do keep alive[%u]: %pI4:%u->%pI4:%u\n", hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest));
+		NATFLOW_INFO("do keep alive[%u]: %pI4:%u->%pI4:%u update jiffies=%u\n", hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)nfn->jiffies);
 
 		memset(&tuple, 0, sizeof(tuple));
 		tuple.src.u3.ip = nfn->saddr;
@@ -130,7 +130,7 @@ static void natflow_offload_keepalive(unsigned int hash)
 
 			if (d == IP_CT_DIR_ORIGINAL) {
 				natflow_update_ct_timeout(ct, diff_jiffies);
-				NATFLOW_INFO("do keep alive update ct: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
+				NATFLOW_INFO("do keep alive update ct0: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
 				             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies, HZ);
 			}
 
@@ -147,12 +147,12 @@ static void natflow_offload_keepalive(unsigned int hash)
 			        nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum) {
 				if (d == IP_CT_DIR_REPLY) {
 					natflow_update_ct_timeout(ct, diff_jiffies);
-					NATFLOW_INFO("do keep alive update ct: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
+					NATFLOW_INFO("do keep alive update ct1: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
 					             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies, HZ);
 				}
 
 				nfn->jiffies = current_jiffies;
-				NATFLOW_INFO("do keep alive[%u]: %pI4:%u->%pI4:%u\n", hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest));
+				NATFLOW_INFO("do keep alive[%u]: %pI4:%u->%pI4:%u update jiffies=%u\n", hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)nfn->jiffies);
 			}
 			nf_ct_put(ct);
 			return;
