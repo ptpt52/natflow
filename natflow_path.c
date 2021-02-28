@@ -454,7 +454,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			        nfn->source == TCPH(l4)->source && nfn->dest == TCPH(l4)->dest &&
 			        nfn->protonum == IPPROTO_TCP) {
 				if (_I > NATFLOW_FF_TIMEOUT_LOW) {
-					re_learn = 1;
+					re_learn = 2;
 					goto slow_fastpath;
 				}
 				nfn->jiffies = jiffies;
@@ -588,7 +588,7 @@ fast_output:
 			        nfn->source == UDPH(l4)->source && nfn->dest == UDPH(l4)->dest &&
 			        nfn->protonum == IPPROTO_UDP) {
 				if (_I > NATFLOW_FF_TIMEOUT_LOW) {
-					re_learn = 1;
+					re_learn = 2;
 					goto slow_fastpath;
 				}
 				nfn->jiffies = jiffies;
@@ -689,10 +689,12 @@ slow_fastpath:
 			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
+			if (re_learn == 2) simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 		} else {
 			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
+			if (re_learn == 2) simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 		}
 	}
 #endif
@@ -903,6 +905,7 @@ fastnat_check:
 									}
 									nfn->ifindex = (u16)nfn_i->outdev->ifindex;
 									nfn_i->ifindex = (u16)nfn->outdev->ifindex;
+									nfn_i->jiffies = jiffies;
 									if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.protonum == IPPROTO_TCP) {
 										ct->proto.tcp.seen[0].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 										ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
