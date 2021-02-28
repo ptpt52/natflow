@@ -725,12 +725,12 @@ slow_fastpath:
 		struct nf_conn_counter *counter = acct->counter;
 		int packets = atomic64_read(&counter[0].packets) + atomic64_read(&counter[1].packets);
 		/* do FF check every 1024 packets */
-		if (packets % 1024 == 0) {
+		if (packets % 1024 == 1) {
 			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 		}
 		/* skip 1/64 packets to slow path */
-		if (packets % 64 == 0) {
+		if (packets % 64 == 63) {
 			goto out;
 		}
 	}
