@@ -179,6 +179,21 @@ static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __b
 	return hash;
 }
 
+static inline int natflow_hash_skip(u32 hash)
+{
+	static const u8 skip[] = { 12, 25, 38, 51, 76, 89, 102 };
+	u32 i = hash % 128;
+	int k;
+
+	for (k = 0; k < ARRAY_SIZE(skip); k++) {
+		if (i == skip[k]) {
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
 #if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
 #define HWNAT_QUEUE_MAPPING_MAGIC      0x8000
 #define HWNAT_QUEUE_MAPPING_MAGIC_MASK 0xe000

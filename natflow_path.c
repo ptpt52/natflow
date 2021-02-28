@@ -807,13 +807,15 @@ fastnat_check:
 						natflow_fastnat_node_t *nfn = &natflow_fast_nat_table[hash];
 						struct ethhdr *eth = (struct ethhdr *)nf->rroute[d].l2_head;
 
-						if (ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_HIGH &&
-						        (nfn->saddr != saddr || nfn->daddr != daddr || nfn->source != source || nfn->dest != dest || nfn->protonum != protonum)) {
+						if (natflow_hash_skip(hash) ||
+						        (ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_HIGH &&
+						         (nfn->saddr != saddr || nfn->daddr != daddr || nfn->source != source || nfn->dest != dest || nfn->protonum != protonum))) {
 							hash += 1;
 							nfn = &natflow_fast_nat_table[hash];
 						}
-						if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH ||
-						        (nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum)) {
+						if (!natflow_hash_skip(hash) &&
+						        (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH ||
+						         (nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum))) {
 							switch (iph->protocol) {
 							case IPPROTO_TCP:
 								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d use hash=%d\n", DEBUG_TCP_ARG(iph,l4), d, hash);
