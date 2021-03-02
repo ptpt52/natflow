@@ -352,6 +352,34 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		u32 _I;
 		natflow_fastnat_node_t *nfn;
 
+#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
+		/* XXX: check MTK_CPU_REASON_HIT_BIND_FORCE_CPU
+		 * nated-skb come to cpu from ppe, we just forward to ext dev(Wi-Fi)
+		 * skb->hash stored the hash key
+		 */
+		if (hwnat && skb->dev->netdev_ops->ndo_flow_offload &&
+		        (skb->vlan_tci & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC &&
+		        (skb->hash & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC) {
+			_I = (skb->hash & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
+			nfn = &natflow_fast_nat_table[_I];
+			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
+
+			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == natflow_path_magic) {
+				//nfn->jiffies = jiffies; /* we update jiffies in keepalive */
+				__vlan_hwaccel_clear_tag(skb);
+				skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
+				skb->dev = nfn->outdev;
+				dev_queue_xmit(skb);
+				return NF_STOLEN;
+			}
+			/* Strict conditions can determine that it is a specially marked skb
+			 * so it is safe to drop
+			 * TODO: del foe
+			 */
+			return NF_DROP;
+		}
+#endif
+
 		if (skb->mac_len != ETH_HLEN) {
 			return NF_ACCEPT;
 		}
@@ -401,34 +429,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 
 		skb->protocol = __constant_htons(ETH_P_IP);
 		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
-
-#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
-		/* XXX: check MTK_CPU_REASON_HIT_BIND_FORCE_CPU
-		 * nated-skb come to cpu from ppe, we just forward to ext dev(Wi-Fi)
-		 * skb->hash stored the hash key
-		 */
-		if (hwnat && skb->dev->netdev_ops->ndo_flow_offload &&
-		        (skb->vlan_tci & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC &&
-		        (skb->hash & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC) {
-			_I = (skb->hash & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
-			nfn = &natflow_fast_nat_table[_I];
-			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
-
-			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == natflow_path_magic) {
-				//nfn->jiffies = jiffies; /* we update jiffies in keepalive */
-				__vlan_hwaccel_clear_tag(skb);
-				skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
-				skb->dev = nfn->outdev;
-				dev_queue_xmit(skb);
-				return NF_STOLEN;
-			}
-			/* Strict conditions can determine that it is a specially marked skb
-			 * so it is safe to drop
-			 * TODO: del foe
-			 */
-			return NF_DROP;
-		}
-#endif
 
 		if (skb_vlan_tag_present(skb)) {
 			goto out;
