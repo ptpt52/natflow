@@ -361,6 +361,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		        (skb->vlan_tci & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC &&
 		        (skb->hash & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC) {
 			_I = (skb->hash & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
+			if (_I == 0) _I = (skb->vlan_tci & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
 			nfn = &natflow_fast_nat_table[_I];
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 
@@ -1010,7 +1011,7 @@ fastnat_check:
 													};
 													/* no vlan for ext dev */
 													reply_dev = nf->rroute[NF_FF_DIR_REPLY].outdev;
-													reply_vid = 0;
+													reply_vid = (natflow->flow.timeout) & 0xffff;
 													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
@@ -1019,11 +1020,11 @@ fastnat_check:
 														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
 														orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 														orig.vlan_id = orig_vid;
-														/* let reply vlan same as orig */
-														reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
-														reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
-														reply.vlan_id = orig_vid;
 													}
+													/* must set reply_vid */
+													reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+													reply.vlan_proto = htons(ETH_P_8021Q);
+													reply.vlan_id = reply_vid;
 													if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 														orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
 														orig.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
@@ -1073,7 +1074,7 @@ fastnat_check:
 													};
 													/* no vlan for ext dev */
 													orig_dev = nf->rroute[NF_FF_DIR_ORIGINAL].outdev;
-													orig_vid = 0;
+													orig_vid = (natflow->flow.timeout >> 16) & 0xffff;
 													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
@@ -1082,11 +1083,11 @@ fastnat_check:
 														reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
 														reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
 														reply.vlan_id = reply_vid;
-														/* let orig vlan same as reply */
-														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
-														orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
-														orig.vlan_id = reply_vid;
 													}
+													/* must set orig_vid */
+													orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+													orig.vlan_proto = htons(ETH_P_8021Q);
+													orig.vlan_id = orig_vid;
 													if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 														orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
 														orig.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
