@@ -128,11 +128,9 @@ static void natflow_offload_keepalive(unsigned int hash)
 			__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
 			__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
 
-			if (d == IP_CT_DIR_ORIGINAL) {
-				natflow_update_ct_timeout(ct, diff_jiffies);
-				NATFLOW_INFO("do keep alive update ct0: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
-				             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies, HZ);
-			}
+			natflow_update_ct_timeout(ct, diff_jiffies);
+			NATFLOW_INFO("do keep alive update ct%d: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
+					d, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies, HZ);
 
 			hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
 			nfn = &natflow_fast_nat_table[hash];
@@ -145,14 +143,10 @@ static void natflow_offload_keepalive(unsigned int hash)
 
 			if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_HIGH &&
 			        nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum) {
-				if (d == IP_CT_DIR_REPLY) {
-					natflow_update_ct_timeout(ct, diff_jiffies);
-					NATFLOW_INFO("do keep alive update ct1: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
-					             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies, HZ);
+				if (!(nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
+					nfn->jiffies = current_jiffies;
+					NATFLOW_INFO("do keep alive[%u]: %pI4:%u->%pI4:%u update jiffies=%u\n", hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)nfn->jiffies);
 				}
-
-				nfn->jiffies = current_jiffies;
-				NATFLOW_INFO("do keep alive[%u]: %pI4:%u->%pI4:%u update jiffies=%u\n", hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)nfn->jiffies);
 			}
 			nf_ct_put(ct);
 			return;
@@ -458,6 +452,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					re_learn = 2;
 					goto slow_fastpath;
 				}
+#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
+				/* check hnat hw timeout */
+				if (_I > 7 * HZ && (nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
+					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
+				}
+#endif
 				nfn->jiffies = jiffies;
 				if ((re_learn = (nfn->flags & FASTNAT_RE_LEARN)) || (u16)skb->dev->ifindex != nfn->ifindex || _I > HZ) {
 					if (re_learn) {
@@ -592,6 +592,12 @@ fast_output:
 					re_learn = 2;
 					goto slow_fastpath;
 				}
+#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
+				/* check hnat hw timeout */
+				if (_I > 7 * HZ && (nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
+					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
+				}
+#endif
 				nfn->jiffies = jiffies;
 				if ((re_learn = (nfn->flags & FASTNAT_RE_LEARN)) || (u16)skb->dev->ifindex != nfn->ifindex || _I > HZ) {
 					if (re_learn) {
