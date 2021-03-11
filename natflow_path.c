@@ -454,7 +454,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				}
 #if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
 				/* check hnat hw timeout */
-				if (_I > 7 * HZ && (nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
+				if (_I > 14 * HZ && (nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
 				}
 #endif
@@ -594,7 +594,7 @@ fast_output:
 				}
 #if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
 				/* check hnat hw timeout */
-				if (_I > 7 * HZ && (nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
+				if (_I > 14 * HZ && (nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
 				}
 #endif
