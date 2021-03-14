@@ -130,7 +130,7 @@ static void natflow_offload_keepalive(unsigned int hash)
 
 			natflow_update_ct_timeout(ct, diff_jiffies);
 			NATFLOW_INFO("do keep alive update ct%d: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
-					d, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies, HZ);
+			             d, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies, HZ);
 
 			hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
 			nfn = &natflow_fast_nat_table[hash];
@@ -927,6 +927,7 @@ fastnat_check:
 											struct net_device *reply_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev);
 											__be16 orig_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 											__be16 reply_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_REPLY].outdev);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0) /* no dsa support before kernel 5.4 in openwrt */
 											u16 orig_dsa_port = 0xffff;
 											u16 reply_dsa_port = 0xffff;
 											if (!orig_dev->netdev_ops->ndo_flow_offload && orig_dev->netdev_ops->ndo_flow_offload_check) {
@@ -951,18 +952,23 @@ fastnat_check:
 													reply_dsa_port = reply.dsa_port;
 												}
 											}
+#endif
 											if (orig_dev->netdev_ops->ndo_flow_offload) {
 												if (orig_dev == reply_dev) {
 													struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 													struct flow_offload_hw_path orig = {
 														.dev = orig_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 														.dsa_port = orig_dsa_port,
+#endif
 													};
 													struct flow_offload_hw_path reply = {
 														.dev = reply_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 														.dsa_port = reply_dsa_port,
+#endif
 													};
 													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
@@ -1008,12 +1014,16 @@ fastnat_check:
 													struct flow_offload_hw_path orig = {
 														.dev = orig_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 														.dsa_port = orig_dsa_port,
+#endif
 													};
 													struct flow_offload_hw_path reply = {
 														.dev = reply_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 														.dsa_port = reply_dsa_port,
+#endif
 													};
 													/* no vlan for ext dev */
 													reply_dev = nf->rroute[NF_FF_DIR_REPLY].outdev;
@@ -1071,12 +1081,16 @@ fastnat_check:
 													struct flow_offload_hw_path orig = {
 														.dev = orig_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 														.dsa_port = orig_dsa_port,
+#endif
 													};
 													struct flow_offload_hw_path reply = {
 														.dev = reply_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 														.dsa_port = reply_dsa_port,
+#endif
 													};
 													/* no vlan for ext dev */
 													orig_dev = nf->rroute[NF_FF_DIR_ORIGINAL].outdev;
