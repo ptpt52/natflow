@@ -205,4 +205,11 @@ static inline int natflow_hash_skip(u32 hash)
 #define HWNAT_QUEUE_MAPPING_HASH_MASK  0x1fff
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)
+static inline void __vlan_hwaccel_clear_tag(struct sk_buff *skb)
+{
+	skb->vlan_tci &= ~VLAN_TAG_PRESENT;
+}
+#endif
+
 #endif /* _NATFLOW_H_ */
