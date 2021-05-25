@@ -240,7 +240,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 		if (!(nf->status & NF_FF_REPLY) && !simple_test_and_set_bit(NF_FF_REPLY_BIT, &nf->status)) {
 			void *l2 = (void *)skb_mac_header(skb);
 			int l2_len = (void *)iph - l2;
-			if (dev->flags & IFF_NOARP) {
+			if (dev->type == ARPHRD_PPP || dev->type == ARPHRD_NONE) {
 				l2_len = 0;
 			}
 			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
@@ -259,7 +259,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 		if (!(nf->status & NF_FF_ORIGINAL) && !simple_test_and_set_bit(NF_FF_ORIGINAL_BIT, &nf->status)) {
 			void *l2 = (void *)skb_mac_header(skb);
 			int l2_len = (void *)iph - l2;
-			if (dev->flags & IFF_NOARP) {
+			if (dev->type == ARPHRD_PPP || dev->type == ARPHRD_NONE) {
 				l2_len = 0;
 			}
 			if (l2_len >= 0 && l2_len <= NF_L2_MAX_LEN) {
@@ -1443,7 +1443,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (event == NETDEV_UP) {
-		if (!(dev->flags & (IFF_NOARP | IFF_LOOPBACK | IFF_POINTOPOINT))) {
+		if (!((dev->flags & (IFF_LOOPBACK | IFF_POINTOPOINT)) || (dev->type == ARPHRD_PPP || dev->type == ARPHRD_NONE))) {
 			natflow_check_device(dev);
 			NATFLOW_println("catch NETDEV_UP event for dev=%s, add ingress hook", dev->name);
 		}
