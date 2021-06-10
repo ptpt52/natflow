@@ -28,7 +28,7 @@
 #include <linux/if_pppox.h>
 #include <linux/ppp_defs.h>
 #endif
-#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 #include <net/netfilter/nf_flow_table.h>
 #endif
 #include "natflow_common.h"
@@ -68,7 +68,7 @@ void natflow_update_magic(int init)
 #ifdef CONFIG_NETFILTER_INGRESS
 static natflow_fastnat_node_t *natflow_fast_nat_table = NULL;
 
-#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 struct natflow_offload {
 	struct flow_offload flow;
 };
@@ -346,7 +346,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		u32 _I;
 		natflow_fastnat_node_t *nfn;
 
-#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 		/* XXX: check MTK_CPU_REASON_HIT_BIND_FORCE_CPU
 		 * nated-skb come to cpu from ppe, we just forward to ext dev(Wi-Fi)
 		 * skb->hash stored the hash key
@@ -452,7 +452,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					re_learn = 2;
 					goto slow_fastpath;
 				}
-#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 				/* check hnat hw timeout */
 				if (_I > 14 * HZ && (nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
@@ -476,7 +476,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					goto out;
 				}
 
-#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					__vlan_hwaccel_clear_tag(skb);
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
@@ -592,7 +592,7 @@ fast_output:
 					re_learn = 2;
 					goto slow_fastpath;
 				}
-#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 				/* check hnat hw timeout */
 				if (_I > 14 * HZ && (nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
@@ -613,7 +613,7 @@ fast_output:
 					goto out;
 				}
 
-#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					__vlan_hwaccel_clear_tag(skb);
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
@@ -919,7 +919,7 @@ fastnat_check:
 										ct->proto.tcp.seen[0].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 										ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 									}
-#if defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
 									if (hwnat) {
 										if (!(nfn->flags & FASTNAT_NO_ARP) && !(nfn_i->flags & FASTNAT_NO_ARP) &&
 										        !netif_is_bridge_master(nfn->outdev) && !netif_is_bridge_master(nfn_i->outdev)) {
