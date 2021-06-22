@@ -268,4 +268,48 @@ static inline unsigned int nf_conntrack_in_compat(struct net *net, u_int8_t pf, 
 #define endfor_ifa(in_dev) }
 #endif
 
+static inline unsigned char get_byte1(const unsigned char *p)
+{
+	return p[0];
+}
+
+static inline unsigned short get_byte2(const unsigned char *p)
+{
+	unsigned short v;
+	memcpy(&v, p, sizeof(v));
+	return v;
+}
+
+static inline unsigned int get_byte4(const unsigned char *p)
+{
+	unsigned int v;
+	memcpy(&v, p, sizeof(v));
+	return v;
+}
+
+static inline void set_byte1(unsigned char *p, unsigned char v)
+{
+	p[0] = v;
+}
+
+static inline void set_byte2(unsigned char *p, unsigned short v)
+{
+	memcpy(p, &v, sizeof(v));
+}
+
+static inline void set_byte4(unsigned char *p, unsigned int v)
+{
+	memcpy(p, &v, sizeof(v));
+}
+
+static inline void set_byte6(unsigned char *p, const unsigned char *pv)
+{
+	memcpy(p, pv, 6);
+}
+
+static inline void get_byte6(const unsigned char *p, unsigned char *pv)
+{
+	memcpy(pv, p, 6);
+}
+
 #endif /* _NATFLOW_COMMON_H_ */
