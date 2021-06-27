@@ -77,6 +77,10 @@ struct nat_key_t {
 #define IPS_NATFLOW_URLLOGGER_HANDLED_BIT 19
 #define IPS_NATFLOW_URLLOGGER_HANDLED (1 << IPS_NATFLOW_URLLOGGER_HANDLED_BIT)
 
+/*XXX refer to natcap/natcap.h */
+#define IPS_NATCAP_BIT 25
+#define IPS_NATCAP (1 << IPS_NATCAP_BIT)
+
 static inline int simple_test_bit(int nr, const unsigned int *addr)
 {
 	return 1U & (addr[nr/32] >> (nr & (32-1)));
