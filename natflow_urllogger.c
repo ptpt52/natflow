@@ -82,6 +82,7 @@ static inline void urlinfo_release(struct urlinfo *url)
 	kfree(url);
 }
 
+static unsigned int urllogger_store_timestamp_freq = TIMESTAMP_FREQ;
 static unsigned int urllogger_store_enable = 0;
 static unsigned int urllogger_store_memsize_limit = 1024 * 1024 * 10;
 static unsigned int urllogger_store_count_limit = 10000;
@@ -98,7 +99,7 @@ static void urllogger_store_record(struct urlinfo *url)
 	list_for_each_prev(pos, &urllogger_store_list) {
 		url_i = list_entry(pos, struct urlinfo, list);
 		/* merge the duplicate url request in 10s */
-		if (uintmindiff(url_i->timestamp, url->timestamp) > TIMESTAMP_FREQ)
+		if (uintmindiff(url_i->timestamp, url->timestamp) > urllogger_store_timestamp_freq)
 			break;
 		if (url_i->sip == url->sip && url_i->dip == url->dip && url_i->dport == url->dport &&
 		        url_i->data_len == url->data_len && memcmp(url_i->data, url->data, url_i->data_len) == 0 &&
@@ -521,7 +522,7 @@ static ssize_t urllogger_read(struct file *file, char __user *buf,
 
 	spin_lock_bh(&urllogger_store_lock);
 	url = list_first_entry_or_null(&urllogger_store_list, struct urlinfo, list);
-	if (url && uintmindiff(URLINFO_NOW, url->timestamp) > TIMESTAMP_FREQ) {
+	if (url && uintmindiff(URLINFO_NOW, url->timestamp) > urllogger_store_timestamp_freq) {
 		urllogger_store_memsize -= ALIGN(sizeof(struct urlinfo) + url->data_len, __URLINFO_ALIGN);
 		urllogger_store_count--;
 		list_del(&url->list);
@@ -628,6 +629,13 @@ static struct ctl_table urllogger_table[] = {
 	{
 		.procname       = "enable",
 		.data           = &urllogger_store_enable,
+		.maxlen         = sizeof(unsigned int),
+		.mode           = S_IRUGO|S_IWUSR,
+		.proc_handler   = proc_douintvec,
+	},
+	{
+		.procname       = "timestamp_freq",
+		.data           = &urllogger_store_timestamp_freq,
 		.maxlen         = sizeof(unsigned int),
 		.mode           = S_IRUGO|S_IWUSR,
 		.proc_handler   = proc_douintvec,
