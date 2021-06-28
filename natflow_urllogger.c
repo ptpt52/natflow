@@ -532,13 +532,14 @@ static ssize_t urllogger_read(struct file *file, char __user *buf,
 	spin_unlock_bh(&urllogger_store_lock);
 
 	if (url) {
-		/* timestamp, sip,            sport,dip,            dport,hits, meth,type, url\n
-		   4294967295,123.123.123.123,65535,111.111.111.111,65535,65535,POST,HTTPS,url\n
-		   ------------------------------------------------------------------------72bytes
+		/* timestamp, mac,              sip,            sport,dip,            dport,hits, meth,type, url\n
+		   4294967295,FF:AA:BB:CC:DD:EE,123.123.123.123,65535,111.111.111.111,65535,65535,POST,HTTP,url\n
+		   -----------------------------------------------------------------------------------------89bytes
 		 */
-		if (72 + url->data_len + 1 /* \n */ <= URLLOGGER_DATALEN) {
-			len = sprintf(user->data, "%u,%pI4,%u,%pI4,%u,%u,%s,%s,%s\n",
-			              url->timestamp, &url->sip, ntohs(url->sport), &url->dip, ntohs(url->dport), url->hits,
+		if (89 + url->data_len + 1 /* \n */ <= URLLOGGER_DATALEN) {
+			len = sprintf(user->data, "%u,%02X:%02X:%02X:%02X:%02X:%02X,%pI4,%u,%pI4,%u,%u,%s,%s,%s\n",
+			              url->timestamp, url->mac[0], url->mac[1], url->mac[2], url->mac[3], url->mac[4], url->mac[5],
+			              &url->sip, ntohs(url->sport), &url->dip, ntohs(url->dport), url->hits,
 			              NATFLOW_http_method[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->data);
 			if (len > count) {
 				ret = -EINVAL;
