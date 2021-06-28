@@ -48,7 +48,7 @@ static struct device *urllogger_dev;
 
 struct urlinfo {
 	struct list_head list;
-#define URLINFO_NOW (jiffies / HZ)
+#define URLINFO_NOW ((jiffies - INITIAL_JIFFIES) / HZ)
 #define TIMESTAMP_FREQ 10
 	unsigned int timestamp;
 	__be32 sip;
