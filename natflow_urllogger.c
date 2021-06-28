@@ -48,6 +48,8 @@ static struct device *urllogger_dev;
 
 struct urlinfo {
 	struct list_head list;
+#define URLINFO_NOW (jiffies / HZ)
+#define TIMESTAMP_FREQ 10
 	unsigned int timestamp;
 	__be32 sip;
 	__be32 dip;
@@ -96,7 +98,7 @@ static void urllogger_store_record(struct urlinfo *url)
 	list_for_each_prev(pos, &urllogger_store_list) {
 		url_i = list_entry(pos, struct urlinfo, list);
 		/* merge the duplicate url request in 10s */
-		if (uintmindiff(url_i->timestamp, url->timestamp) > 10)
+		if (uintmindiff(url_i->timestamp, url->timestamp) > TIMESTAMP_FREQ)
 			break;
 		if (url_i->sip == url->sip && url_i->dip == url->dip && url_i->dport == url->dport &&
 		        url_i->data_len == url->data_len && memcmp(url_i->data, url->data, url_i->data_len) == 0 &&
@@ -406,7 +408,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			url->dip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
 			url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
 			url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
-			url->timestamp = jiffies / HZ;
+			url->timestamp = URLINFO_NOW;
 			url->flags = URLINFO_HTTPS;
 			url->http_method = 0;
 			url->hits = 1;
@@ -432,7 +434,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 				url->dip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
 				url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
 				url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
-				url->timestamp = jiffies / HZ;
+				url->timestamp = URLINFO_NOW;
 				url->flags = 0;
 				url->http_method = http_method;
 				url->hits = 1;
@@ -519,10 +521,12 @@ static ssize_t urllogger_read(struct file *file, char __user *buf,
 
 	spin_lock_bh(&urllogger_store_lock);
 	url = list_first_entry_or_null(&urllogger_store_list, struct urlinfo, list);
-	if (url) {
+	if (url && uintmindiff(URLINFO_NOW, url->timestamp) > TIMESTAMP_FREQ) {
 		urllogger_store_memsize -= ALIGN(sizeof(struct urlinfo) + url->data_len, __URLINFO_ALIGN);
 		urllogger_store_count--;
 		list_del(&url->list);
+	} else {
+		url = NULL;
 	}
 	spin_unlock_bh(&urllogger_store_lock);
 
