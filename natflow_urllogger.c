@@ -82,6 +82,13 @@ static inline void urlinfo_release(struct urlinfo *url)
 	kfree(url);
 }
 
+/*
+tuple_type:
+0: dir0-src dir0-dst
+1: dir0-src dir1-src
+2: dir1-dst dir1-src
+ */
+static unsigned int urllogger_store_tuple_type = 0;
 static unsigned int urllogger_store_timestamp_freq = TIMESTAMP_FREQ;
 static unsigned int urllogger_store_enable = 0;
 static unsigned int urllogger_store_memsize_limit = 1024 * 1024 * 10;
@@ -405,10 +412,25 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			memcpy(url->data, host, host_len);
 			url->data[host_len] = 0;
 			url->data_len = host_len + 1;
-			url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
-			url->dip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
-			url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-			url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
+			if (urllogger_store_tuple_type == 0) {
+				/* 0: dir0-src dir0-dst */
+				url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+				url->dip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
+				url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+				url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
+			} else if (urllogger_store_tuple_type == 1) {
+				/* 1: dir0-src dir1-src */
+				url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+				url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
+				url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+				url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+			} else {
+				/* 2: dir1-dst dir1-src */
+				url->sip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip;
+				url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
+				url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
+				url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+			}
 			url->timestamp = URLINFO_NOW;
 			url->flags = URLINFO_HTTPS;
 			url->http_method = 0;
@@ -431,10 +453,25 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 				memcpy(url->data + host_len, uri, uri_len);
 				url->data[host_len + uri_len] = 0;
 				url->data_len = host_len + uri_len + 1;
-				url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
-				url->dip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
-				url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-				url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
+				if (urllogger_store_tuple_type == 0) {
+					/* 0: dir0-src dir0-dst */
+					url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+					url->dip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
+					url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+					url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
+				} else if (urllogger_store_tuple_type == 1) {
+					/* 1: dir0-src dir1-src */
+					url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+					url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
+					url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+					url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+				} else {
+					/* 2: dir1-dst dir1-src */
+					url->sip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip;
+					url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
+					url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
+					url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+				}
 				url->timestamp = URLINFO_NOW;
 				url->flags = 0;
 				url->http_method = http_method;
@@ -637,6 +674,13 @@ static struct ctl_table urllogger_table[] = {
 	{
 		.procname       = "timestamp_freq",
 		.data           = &urllogger_store_timestamp_freq,
+		.maxlen         = sizeof(unsigned int),
+		.mode           = S_IRUGO|S_IWUSR,
+		.proc_handler   = proc_douintvec,
+	},
+	{
+		.procname       = "tuple_type",
+		.data           = &urllogger_store_tuple_type,
 		.maxlen         = sizeof(unsigned int),
 		.mode           = S_IRUGO|S_IWUSR,
 		.proc_handler   = proc_douintvec,
