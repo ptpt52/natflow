@@ -921,6 +921,80 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	return NF_ACCEPT;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
+static unsigned int natflow_user_post_hook(unsigned int hooknum,
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
+{
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
+static unsigned int natflow_user_post_hook(const struct nf_hook_ops *ops,
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
+{
+	//unsigned int hooknum = ops->hooknum;
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+static unsigned int natflow_user_post_hook(const struct nf_hook_ops *ops,
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
+{
+	//unsigned int hooknum = state->hook;
+	//const struct net_device *in = state->in;
+	const struct net_device *out = state->out;
+#else
+static unsigned int natflow_user_post_hook(void *priv,
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
+{
+	//unsigned int hooknum = state->hook;
+	//const struct net_device *in = state->in;
+	const struct net_device *out = state->out;
+#endif
+	struct nf_conn_acct *acct;
+	natflow_fakeuser_t *user;
+	struct nf_conn *ct;
+	enum ip_conntrack_info ctinfo;
+
+	if (disabled)
+		return NF_ACCEPT;
+
+	if (skb->protocol != __constant_htons(ETH_P_IP))
+		return NF_ACCEPT;
+
+	if (out == NULL)
+		out = skb->dev;
+
+	ct = nf_ct_get(skb, &ctinfo);
+	if (NULL == ct) {
+		return NF_ACCEPT;
+	}
+
+	user = natflow_user_get(ct);
+	if (NULL == user) {
+		return NF_ACCEPT;
+	}
+
+	acct = nf_conn_acct_find(user);
+	if (acct) {
+		struct nf_conn_counter *counter = acct->counter;
+		if (natflow_is_lan_zone(out)) {
+			//download
+			atomic64_inc(&counter[0].packets);
+			atomic64_add(skb->len, &counter[0].bytes);
+		} else {
+			//upload
+			atomic64_inc(&counter[1].packets);
+			atomic64_add(skb->len, &counter[1].bytes);
+		}
+	}
+
+	return NF_ACCEPT;
+};
+
+
 static struct nf_hook_ops user_hooks[] = {
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
@@ -939,6 +1013,15 @@ static struct nf_hook_ops user_hooks[] = {
 		.pf = PF_INET,
 		.hooknum = NF_INET_FORWARD,
 		.priority = NF_IP_PRI_FILTER,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_user_post_hook,
+		.pf = PF_INET,
+		.hooknum = NF_INET_POST_ROUTING,
+		.priority = NF_IP_PRI_NAT_SRC + 10,
 	},
 };
 
