@@ -509,7 +509,8 @@ struct urllogger_user {
 #define URLLOGGER_MEMSIZE ALIGN(sizeof(struct urllogger_user), 2048)
 #define URLLOGGER_DATALEN (URLLOGGER_MEMSIZE - sizeof(struct urllogger_user))
 
-static ssize_t urllogger_write(struct kiocb *iocb, struct iov_iter *from)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+static ssize_t urllogger_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
 	char *buf;
 	struct file *file = iocb->ki_filp;
@@ -540,6 +541,64 @@ static ssize_t urllogger_write(struct kiocb *iocb, struct iov_iter *from)
 	kfree(buf);
 	return ret;
 }
+
+#else
+
+static ssize_t urllogger_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+{
+	int err = 0;
+	int n, l;
+	int cnt = MAX_IOCTL_LEN;
+	static char data[MAX_IOCTL_LEN];
+	static int data_left = 0;
+
+	cnt -= data_left;
+	if (buf_len < cnt)
+		cnt = buf_len;
+
+	if (copy_from_user(data + data_left, buf, cnt) != 0)
+		return -EACCES;
+
+	n = 0;
+	while(n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
+	if (n) {
+		*offset += n;
+		data_left = 0;
+		return n;
+	}
+
+	//make sure line ended with '\n' and line len <= MAX_IOCTL_LEN
+	l = 0;
+	while (l < cnt && data[l + data_left] != '\n') l++;
+	if (l >= cnt) {
+		data_left += l;
+		if (data_left >= MAX_IOCTL_LEN) {
+			NATFLOW_println("err: too long a line");
+			data_left = 0;
+			return -EINVAL;
+		}
+		goto done;
+	} else {
+		data[l + data_left] = '\0';
+		data_left = 0;
+		l++;
+	}
+
+	if (strncmp(data, "clear", 5) == 0) {
+		urllogger_store_clear();
+		goto done;
+	}
+
+	NATFLOW_println("ignoring line[%s]", data);
+	if (err != 0) {
+		return err;
+	}
+
+done:
+	*offset += l;
+	return l;
+}
+#endif
 
 /* read one and clear one */
 static ssize_t urllogger_read(struct file *file, char __user *buf,
@@ -631,7 +690,11 @@ static int urllogger_release(struct inode *inode, struct file *file)
 const struct file_operations urllogger_fops = {
 	.open = urllogger_open,
 	.read = urllogger_read,
-	.write_iter = urllogger_write,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	.write_iter = urllogger_write_iter,
+#else
+	.write = urllogger_write,
+#endif
 	.release = urllogger_release,
 };
 
