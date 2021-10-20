@@ -38,6 +38,7 @@
 #include "natflow_common.h"
 #include "natflow_path.h"
 #include "natflow_zone.h"
+#include "natflow_user.h"
 #include "natflow_urllogger.h"
 
 static int natflow_major = 0;
@@ -273,6 +274,12 @@ static int __init natflow_init(void) {
 		goto natflow_zone_init_failed;
 	}
 
+	retval = natflow_user_init();
+	if (retval) {
+		NATFLOW_println("natflow_user_init fail, error=%d", retval);
+		goto natflow_user_init_failed;
+	}
+
 	retval = natflow_path_init();
 	if (retval) {
 		NATFLOW_println("natflow_path_init fail, error=%d", retval);
@@ -291,6 +298,8 @@ static int __init natflow_init(void) {
 natflow_urllogger_init_failed:
 	natflow_path_exit();
 natflow_path_init_failed:
+	natflow_user_exit();
+natflow_user_init_failed:
 	natflow_zone_exit();
 natflow_zone_init_failed:
 	device_destroy(natflow_class, devno);
@@ -311,6 +320,7 @@ static void __exit natflow_exit(void) {
 
 	natflow_urllogger_exit();
 	natflow_path_exit();
+	natflow_user_exit();
 	natflow_zone_exit();
 
 	devno = MKDEV(natflow_major, natflow_minor);

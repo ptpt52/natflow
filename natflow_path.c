@@ -33,7 +33,6 @@
 #endif
 #include "natflow_common.h"
 #include "natflow_path.h"
-#include "natflow_user.h"
 
 #ifdef CONFIG_NETFILTER_INGRESS
 static inline __be16 pppoe_proto(const struct sk_buff *skb)
@@ -1484,10 +1483,6 @@ int natflow_path_init(void)
 	need_conntrack();
 	natflow_update_magic(1);
 
-	ret = natflow_user_init();
-	if (ret != 0)
-		goto natflow_user_init_failed;
-
 	register_netdevice_notifier(&natflow_netdev_notifier);
 
 	ret = nf_register_hooks(path_hooks, ARRAY_SIZE(path_hooks));
@@ -1497,8 +1492,6 @@ int natflow_path_init(void)
 	return 0;
 nf_register_hooks_failed:
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
-	natflow_user_exit();
-natflow_user_init_failed:
 #ifdef CONFIG_NETFILTER_INGRESS
 	kfree(natflow_fast_nat_table);
 #endif
@@ -1509,7 +1502,6 @@ void natflow_path_exit(void)
 {
 	nf_unregister_hooks(path_hooks, ARRAY_SIZE(path_hooks));
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
-	natflow_user_exit();
 #ifdef CONFIG_NETFILTER_INGRESS
 	synchronize_rcu();
 	kfree(natflow_fast_nat_table);
