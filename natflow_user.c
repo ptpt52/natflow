@@ -693,6 +693,9 @@ static unsigned int natflow_user_pre_hook(void *priv,
 						}
 					}
 
+					#if defined(CONFIG_NF_CONNTRACK_MARK)
+					user->mark = fud->auth_type;
+					#endif
 					break;
 				}
 			}
