@@ -36,7 +36,9 @@
 #include <net/udp.h>
 #include "natflow.h"
 #include "natflow_common.h"
+#if defined(CONFIG_NATFLOW_PATH)
 #include "natflow_path.h"
+#endif
 #include "natflow_zone.h"
 #include "natflow_user.h"
 #include "natflow_urllogger.h"
@@ -64,15 +66,21 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             "#\n"
 		             "# Info:\n"
 		             "#    ...\n"
+#if defined(CONFIG_NATFLOW_PATH)
 		             "#    hwnat=%u\n"
+#endif
 		             "#\n"
 		             "# Reload cmd:\n"
 		             "\n"
+#if defined(CONFIG_NATFLOW_PATH)
 		             "disabled=%u\n"
+#endif
 		             "debug=%d\n"
 		             "\n",
+#if defined(CONFIG_NATFLOW_PATH)
 		             hwnat,
 		             natflow_disabled_get(),
+#endif
 		             debug);
 		natflow_ctl_buffer[n] = 0;
 		return natflow_ctl_buffer;
@@ -155,6 +163,7 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 			debug = d;
 			goto done;
 		}
+#if defined(CONFIG_NATFLOW_PATH)
 	} else if (strncmp(data, "disabled=", 9) == 0) {
 		int d;
 		n = sscanf(data, "disabled=%u", &d);
@@ -172,6 +181,7 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 	} else if (strncmp(data, "update_magic", 12) == 0) {
 		natflow_update_magic(0);
 		goto done;
+#endif
 	}
 
 	NATFLOW_println("ignoring line[%s]", data);
@@ -280,11 +290,13 @@ static int __init natflow_init(void) {
 		goto natflow_user_init_failed;
 	}
 
+#if defined(CONFIG_NATFLOW_PATH)
 	retval = natflow_path_init();
 	if (retval) {
 		NATFLOW_println("natflow_path_init fail, error=%d", retval);
 		goto natflow_path_init_failed;
 	}
+#endif
 
 	retval = natflow_urllogger_init();
 	if (retval) {
@@ -296,8 +308,10 @@ static int __init natflow_init(void) {
 
 	//natflow_urllogger_exit();
 natflow_urllogger_init_failed:
+#if defined(CONFIG_NATFLOW_PATH)
 	natflow_path_exit();
 natflow_path_init_failed:
+#endif
 	natflow_user_exit();
 natflow_user_init_failed:
 	natflow_zone_exit();
@@ -319,7 +333,9 @@ static void __exit natflow_exit(void) {
 	NATFLOW_println("removing");
 
 	natflow_urllogger_exit();
+#if defined(CONFIG_NATFLOW_PATH)
 	natflow_path_exit();
+#endif
 	natflow_user_exit();
 	natflow_zone_exit();
 
