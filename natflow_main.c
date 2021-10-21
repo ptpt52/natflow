@@ -41,7 +41,9 @@
 #endif
 #include "natflow_zone.h"
 #include "natflow_user.h"
+#if defined(CONFIG_NATFLOW_URLLOGGER)
 #include "natflow_urllogger.h"
+#endif
 
 static int natflow_major = 0;
 static int natflow_minor = 0;
@@ -298,16 +300,20 @@ static int __init natflow_init(void) {
 	}
 #endif
 
+#if defined(CONFIG_NATFLOW_URLLOGGER)
 	retval = natflow_urllogger_init();
 	if (retval) {
 		NATFLOW_println("natflow_urllogger_init fail, error=%d", retval);
 		goto natflow_urllogger_init_failed;
 	}
+#endif
 
 	return 0;
 
+#if defined(CONFIG_NATFLOW_URLLOGGER)
 	//natflow_urllogger_exit();
 natflow_urllogger_init_failed:
+#endif
 #if defined(CONFIG_NATFLOW_PATH)
 	natflow_path_exit();
 natflow_path_init_failed:
@@ -332,7 +338,9 @@ static void __exit natflow_exit(void) {
 
 	NATFLOW_println("removing");
 
+#if defined(CONFIG_NATFLOW_URLLOGGER)
 	natflow_urllogger_exit();
+#endif
 #if defined(CONFIG_NATFLOW_PATH)
 	natflow_path_exit();
 #endif
