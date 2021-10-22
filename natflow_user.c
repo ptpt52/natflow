@@ -161,7 +161,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 
 	user = natflow_user_get(ct);
 
-	if (!user && !ct->master) {
+	if (!user && (!ct->master || !ct->master->master)) {
 		struct nf_ct_ext *new = NULL;
 		unsigned int newoff = 0;
 		int ret;
@@ -266,7 +266,11 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 		}
 
 		nf_conntrack_get(&user->ct_general);
-		ct->master = user;
+		if (ct->master) {
+			ct->master->master = user;
+		} else {
+			ct->master = user;
+		}
 		skb_nfct_reset(uskb);
 
 		natflow_user_timeout_touch(user);
