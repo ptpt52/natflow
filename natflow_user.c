@@ -1006,7 +1006,7 @@ static struct nf_hook_ops user_hooks[] = {
 		.hook = natflow_user_pre_hook,
 		.pf = PF_INET,
 		.hooknum = NF_INET_PRE_ROUTING,
-		.priority = NF_IP_PRI_NAT_DST - 10,
+		.priority = NF_IP_PRI_NAT_DST - 10 + 1,
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
