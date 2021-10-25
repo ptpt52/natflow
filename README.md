@@ -18,3 +18,9 @@ the wifi pure hardware nat for mt7622 is not supported yet. for now it just work
 ```
 wifi--cpu--ppe--port
 ```
+
+## build
+To build with path and urllogger module run:
+```
+make EXTRA_CFLAGS="-DCONFIG_NATFLOW_PATH -DCONFIG_NATFLOW_URLLOGGER"
+```
