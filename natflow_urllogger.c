@@ -502,8 +502,6 @@ static struct nf_hook_ops urllogger_hooks[] = {
 
 struct urllogger_user {
 	struct mutex lock;
-	struct urlinfo *last_url;
-	unsigned int last_index;
 	unsigned char data[0];
 };
 #define URLLOGGER_MEMSIZE ALIGN(sizeof(struct urllogger_user), 2048)
@@ -668,8 +666,6 @@ static int urllogger_open(struct inode *inode, struct file *file)
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
 	mutex_init(&user->lock);
-	user->last_url = NULL;
-	user->last_index = 0;
 
 	file->private_data = user;
 	return 0;
