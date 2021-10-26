@@ -697,9 +697,9 @@ static unsigned int natflow_user_pre_hook(void *priv,
 						}
 					}
 
-					#if defined(CONFIG_NF_CONNTRACK_MARK)
+#if defined(CONFIG_NF_CONNTRACK_MARK)
 					user->mark = fud->auth_type;
-					#endif
+#endif
 					break;
 				}
 			}
@@ -1403,6 +1403,303 @@ static struct file_operations natflow_user_fops = {
 	.llseek  = seq_lseek,
 };
 
+struct userinfo {
+	struct list_head list;
+	unsigned int timeout;
+	__be32 ip;
+	uint8_t macaddr[ETH_ALEN];
+	uint8_t auth_type;
+	uint8_t auth_status;
+	uint16_t auth_rule_id;
+	unsigned long long rx_packets;
+	unsigned long long rx_bytes;
+	unsigned long long tx_packets;
+	unsigned long long tx_bytes;
+};
+
+struct userinfo_user {
+	struct mutex lock;
+	struct list_head head;
+	unsigned int next_bucket;
+	unsigned int status;
+	unsigned char data[0];
+};
+#define USERINFO_MEMSIZE ALIGN(sizeof(struct userinfo_user), 2048)
+#define USERINFO_DATALEN (USERINFO_MEMSIZE - sizeof(struct userinfo_user))
+
+static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+{
+	int err = 0;
+	int n, l;
+	int cnt = MAX_IOCTL_LEN;
+	static char data[MAX_IOCTL_LEN];
+	static int data_left = 0;
+
+	cnt -= data_left;
+	if (buf_len < cnt)
+		cnt = buf_len;
+
+	if (copy_from_user(data + data_left, buf, cnt) != 0)
+		return -EACCES;
+
+	n = 0;
+	while(n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
+	if (n) {
+		*offset += n;
+		data_left = 0;
+		return n;
+	}
+
+	//make sure line ended with '\n' and line len <= MAX_IOCTL_LEN
+	l = 0;
+	while (l < cnt && data[l + data_left] != '\n') l++;
+	if (l >= cnt) {
+		data_left += l;
+		if (data_left >= MAX_IOCTL_LEN) {
+			NATFLOW_println("err: too long a line");
+			data_left = 0;
+			return -EINVAL;
+		}
+		goto done;
+	} else {
+		data[l + data_left] = '\0';
+		data_left = 0;
+		l++;
+	}
+
+	if (strncmp(data, "clear", 5) == 0) {
+		goto done;
+	}
+
+	NATFLOW_println("ignoring line[%s]", data);
+	if (err != 0) {
+		return err;
+	}
+
+done:
+	*offset += l;
+	return l;
+}
+
+/* read one and clear one */
+static ssize_t userinfo_read(struct file *file, char __user *buf,
+                             size_t count, loff_t *ppos)
+{
+	unsigned long end_time = jiffies + msecs_to_jiffies(100);
+	size_t len;
+	ssize_t ret;
+	struct userinfo *user_i;
+	struct userinfo_user *user = file->private_data;
+
+	if (!user)
+		return -EBADF;
+
+	ret = mutex_lock_interruptible(&user->lock);
+	if (ret)
+		return ret;
+	if (user->status == 0) {
+		unsigned int i, hashsz;
+		struct nf_conntrack_tuple_hash *h;
+		struct hlist_nulls_head *ct_hash;
+		struct hlist_nulls_node *n;
+		struct nf_conn *ct;
+		struct nf_conn_acct *acct;
+		struct fakeuser_data_t *fud;
+
+		user->status = 1;
+		rcu_read_lock();
+
+		ct_hash = nf_conntrack_hash;
+		hashsz = nf_conntrack_htable_size;
+		for (i = user->next_bucket; i < hashsz; i++) {
+			hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
+				/* we only want to print DIR_ORIGINAL */
+				if (NF_CT_DIRECTION(h))
+					continue;
+				ct = nf_ct_tuplehash_to_ctrack(h);
+				if (nf_ct_is_expired(ct)) {
+					continue;
+				}
+				if (!(IPS_NATFLOW_USER & ct->status)) {
+					continue;
+				}
+				fud = natflow_fakeuser_data(ct);
+				acct = nf_conn_acct_find(ct);
+				if (acct) {
+					user_i = kmalloc(sizeof(struct userinfo), GFP_ATOMIC);
+					INIT_LIST_HEAD(&user_i->list);
+					user_i->timeout = nf_ct_expires(ct)  / HZ;
+					user_i->ip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+					memcpy(user_i->macaddr, fud->macaddr, ETH_ALEN);
+					user_i->auth_type = fud->auth_type;
+					user_i->auth_status = fud->auth_status;
+					user_i->auth_rule_id = fud->auth_rule_id;
+					user_i->rx_packets = atomic64_read(&acct->counter[0].packets);
+					user_i->rx_bytes = atomic64_read(&acct->counter[0].bytes);
+					user_i->tx_packets = atomic64_read(&acct->counter[1].packets);
+					user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
+					list_add_tail(&user_i->list, &user->head);
+				}
+			}
+
+			if (time_after(jiffies, end_time) && i < hashsz) {
+				user->next_bucket = i;
+				user->status = 0;
+				break;
+			}
+		}
+
+		rcu_read_unlock();
+	}
+
+	user_i = list_first_entry_or_null(&user->head, struct userinfo, list);
+	if (user_i) {
+		list_del(&user_i->list);
+		len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu\n",
+		              &user_i->ip, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
+		              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
+		              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes);
+		if (len > count) {
+			ret = -EINVAL;
+			goto out;
+		}
+		if (copy_to_user(buf, user->data, len)) {
+			ret = -EFAULT;
+			goto out;
+		}
+		ret = len;
+	} else if (user->status == 0) {
+		ret = -EAGAIN;
+	} else {
+		user->status = 0;
+		ret = 0;
+	}
+
+out:
+	if (user_i)
+		kfree(user_i);
+	mutex_unlock(&user->lock);
+	return ret;
+}
+
+static int userinfo_open(struct inode *inode, struct file *file)
+{
+	struct userinfo_user *user;
+
+	user = kmalloc(USERINFO_MEMSIZE, GFP_KERNEL);
+	if (!user)
+		return -ENOMEM;
+
+	//set nonseekable
+	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
+
+	mutex_init(&user->lock);
+	user->next_bucket = 0;
+	user->status = 0;
+	INIT_LIST_HEAD(&user->head);
+
+	file->private_data = user;
+	return 0;
+}
+
+static int userinfo_release(struct inode *inode, struct file *file)
+{
+	struct userinfo *user_i;
+	struct userinfo_user *user = file->private_data;
+
+	if (!user)
+		return 0;
+
+	while ((user_i = list_first_entry_or_null(&user->head, struct userinfo, list))) {
+		list_del(&user_i->list);
+		kfree(user_i);
+	}
+
+	mutex_destroy(&user->lock);
+	kfree(user);
+	return 0;
+}
+
+const struct file_operations userinfo_fops = {
+	.open = userinfo_open,
+	.read = userinfo_read,
+	.write = userinfo_write,
+	.release = userinfo_release,
+};
+
+static int userinfo_major = 0;
+static int userinfo_minor = 0;
+static struct cdev userinfo_cdev;
+const char *userinfo_dev_name = "userinfo_ctl";
+static struct class *userinfo_class;
+static struct device *userinfo_dev;
+
+static int userinfo_init(void)
+{
+	int retval = 0;
+	dev_t devno;
+
+	if (userinfo_major > 0) {
+		devno = MKDEV(userinfo_major, userinfo_minor);
+		retval = register_chrdev_region(devno, number_of_devices, userinfo_dev_name);
+	} else {
+		retval = alloc_chrdev_region(&devno, userinfo_minor, number_of_devices, userinfo_dev_name);
+	}
+	if (retval < 0) {
+		NATFLOW_println("alloc_chrdev_region failed!");
+		goto chrdev_region_failed;
+	}
+	userinfo_major = MAJOR(devno);
+	userinfo_minor = MINOR(devno);
+	NATFLOW_println("userinfo_major=%d, userinfo_minor=%d", userinfo_major, userinfo_minor);
+
+	cdev_init(&userinfo_cdev, &userinfo_fops);
+	userinfo_cdev.owner = THIS_MODULE;
+	userinfo_cdev.ops = &userinfo_fops;
+
+	retval = cdev_add(&userinfo_cdev, devno, 1);
+	if (retval) {
+		NATFLOW_println("adding chardev, error=%d", retval);
+		goto cdev_add_failed;
+	}
+
+	userinfo_class = class_create(THIS_MODULE,"userinfo_class");
+	if (IS_ERR(userinfo_class)) {
+		NATFLOW_println("failed in creating class");
+		retval = -EINVAL;
+		goto class_create_failed;
+	}
+
+	userinfo_dev = device_create(userinfo_class, NULL, devno, NULL, userinfo_dev_name);
+	if (!userinfo_dev) {
+		retval = -EINVAL;
+		goto device_create_failed;
+	}
+
+	return 0;
+
+	//device_destroy(userinfo_class, devno);
+device_create_failed:
+	class_destroy(userinfo_class);
+class_create_failed:
+	cdev_del(&userinfo_cdev);
+cdev_add_failed:
+	unregister_chrdev_region(devno, number_of_devices);
+chrdev_region_failed:
+	return retval;
+}
+
+static void userinfo_exit(void)
+{
+	dev_t devno;
+
+	devno = MKDEV(userinfo_major, userinfo_minor);
+	device_destroy(userinfo_class, devno);
+	class_destroy(userinfo_class);
+	cdev_del(&userinfo_cdev);
+	unregister_chrdev_region(devno, number_of_devices);
+}
+
 int natflow_user_init(void)
 {
 	int i;
@@ -1460,9 +1757,16 @@ int natflow_user_init(void)
 		goto device_create_failed;
 	}
 
+	retval = userinfo_init();
+	if (retval) {
+		goto userinfo_init_failed;
+	}
+
 	return 0;
 
-	//device_destroy(natflow_user_class, devno);
+	//userinfo_exit();
+userinfo_init_failed:
+	device_destroy(natflow_user_class, devno);
 device_create_failed:
 	class_destroy(natflow_user_class);
 class_create_failed:
@@ -1481,6 +1785,8 @@ void natflow_user_exit(void)
 {
 	int i;
 	dev_t devno;
+
+	userinfo_exit();
 
 	devno = MKDEV(natflow_user_major, natflow_user_minor);
 	device_destroy(natflow_user_class, devno);
