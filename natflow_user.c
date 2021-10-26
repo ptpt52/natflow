@@ -152,6 +152,42 @@ natflow_fakeuser_t *natflow_user_get(struct nf_conn *ct)
 	return user;
 }
 
+natflow_fakeuser_t *natflow_user_find_get(__be32 ip)
+{
+	natflow_fakeuser_t *user = NULL;
+
+	struct nf_conntrack_tuple tuple;
+	struct nf_conntrack_tuple_hash *h;
+
+	memset(&tuple, 0, sizeof(tuple));
+	tuple.src.u3.ip = ip;
+	tuple.src.u.udp.port = __constant_htons(0);
+	tuple.dst.u3.ip = NATFLOW_FAKEUSER_DADDR;
+	tuple.dst.u.udp.port = __constant_htons(65535);
+	tuple.src.l3num = PF_INET;
+	tuple.dst.protonum = IPPROTO_UDP;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
+	h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
+#else
+	h = nf_conntrack_find_get(&init_net, &nf_ct_zone_dflt, &tuple);
+#endif
+	if (h) {
+		struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
+		if (!(IPS_NATFLOW_USER & ct->status) || NF_CT_DIRECTION(h) != IP_CT_DIR_ORIGINAL) {
+			nf_ct_put(ct);
+		} else {
+			user = ct;
+		}
+	}
+
+	return user;
+}
+
+void natflow_user_put(natflow_fakeuser_t *user)
+{
+	nf_ct_put(user);
+}
+
 natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 {
 	natflow_fakeuser_t *user = NULL;
@@ -1526,6 +1562,9 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 		mutex_unlock(&user->lock);
 		goto done;
 	} else if (strncmp(data, "kick ", 5) == 0) {
+		struct nf_conn_acct *acct;
+		struct fakeuser_data_t *fud;
+		natflow_fakeuser_t *user = NULL;
 		__be32 ip;
 		unsigned int a, b, c, d;
 		n = sscanf(data, "kick %u.%u.%u.%u", &a, &b, &c, &d);
@@ -1538,68 +1577,48 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 		}
 		ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
 
-		err = mutex_lock_interruptible(&user->lock);
-		if (err)
-			return err;
-		if (user->status == 0) {
-			unsigned int i, hashsz;
-			struct nf_conntrack_tuple_hash *h;
-			struct hlist_nulls_head *ct_hash;
-			struct hlist_nulls_node *n;
-			struct nf_conn *ct;
-			struct nf_conn_acct *acct;
-			struct fakeuser_data_t *fud;
+		user = natflow_user_find_get(ip);
+		if (!user)
+			return -EINVAL;
 
-			user->status = 1;
-			rcu_read_lock();
-
-			ct_hash = nf_conntrack_hash;
-			hashsz = nf_conntrack_htable_size;
-			for (i = user->next_bucket; i < hashsz; i++) {
-				hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
-					/* we only want to print DIR_ORIGINAL */
-					if (NF_CT_DIRECTION(h))
-						continue;
-					ct = nf_ct_tuplehash_to_ctrack(h);
-					if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ip) {
-						continue;
-					}
-					if (nf_ct_is_expired(ct)) {
-						continue;
-					}
-					if (!(IPS_NATFLOW_USER & ct->status)) {
-						continue;
-					}
-					fud = natflow_fakeuser_data(ct);
-					acct = nf_conn_acct_find(ct);
-					if (acct) {
-						fud->timestamp = 0;
-						fud->auth_type = AUTH_TYPE_UNKNOWN;
-						fud->auth_status = AUTH_NONE;
-						fud->auth_rule_id = INVALID_AUTH_RULE_ID;
-						atomic64_set(&acct->counter[0].packets, 0);
-						atomic64_set(&acct->counter[0].bytes, 0);
-						atomic64_set(&acct->counter[1].packets, 0);
-						atomic64_set(&acct->counter[1].bytes, 0);
-
-						rcu_read_unlock();
-						mutex_unlock(&user->lock);
-						goto done;
-					}
-				}
-
-				if (time_after(jiffies, end_time) && i < hashsz) {
-					user->next_bucket = i;
-					user->status = 0;
-					rcu_read_unlock();
-					mutex_unlock(&user->lock);
-					goto again;
-				}
-			}
-			rcu_read_unlock();
+		fud = natflow_fakeuser_data(user);
+		acct = nf_conn_acct_find(user);
+		if (acct) {
+			fud->timestamp = 0;
+			fud->auth_type = AUTH_TYPE_UNKNOWN;
+			fud->auth_status = AUTH_NONE;
+			fud->auth_rule_id = INVALID_AUTH_RULE_ID;
+			atomic64_set(&acct->counter[0].packets, 0);
+			atomic64_set(&acct->counter[0].bytes, 0);
+			atomic64_set(&acct->counter[1].packets, 0);
+			atomic64_set(&acct->counter[1].bytes, 0);
 		}
-		mutex_unlock(&user->lock);
 
+		natflow_user_put(user);
+		goto done;
+	} else if (strncmp(data, "set-status ", 11) == 0) {
+		struct fakeuser_data_t *fud;
+		natflow_fakeuser_t *user = NULL;
+		__be32 ip;
+		unsigned int a, b, c, d, e;
+		n = sscanf(data, "set-status %u.%u.%u.%u %u", &a, &b, &c, &d, &e);
+		if ( !(n == 5 &&
+		        (((a & 0xff) == a) &&
+		         ((b & 0xff) == b) &&
+		         ((c & 0xff) == c) &&
+		         ((d & 0xff) == d)) )) {
+			return -EINVAL;
+		}
+		ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
+
+		user = natflow_user_find_get(ip);
+		if (!user)
+			return -EINVAL;
+
+		fud = natflow_fakeuser_data(user);
+		fud->auth_status = e;
+
+		natflow_user_put(user);
 		goto done;
 	}
 
