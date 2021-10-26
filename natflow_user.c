@@ -1429,6 +1429,8 @@ struct userinfo_user {
 
 static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
 {
+	unsigned long end_time = jiffies + msecs_to_jiffies(100);
+	struct userinfo_user *user = file->private_data;
 	int err = 0;
 	int n, l;
 	int cnt = MAX_IOCTL_LEN;
@@ -1467,7 +1469,137 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 		l++;
 	}
 
-	if (strncmp(data, "clear", 5) == 0) {
+	if (strncmp(data, "kickall", 7) == 0) {
+		err = mutex_lock_interruptible(&user->lock);
+		if (err)
+			return err;
+		if (user->status == 0) {
+			unsigned int i, hashsz;
+			struct nf_conntrack_tuple_hash *h;
+			struct hlist_nulls_head *ct_hash;
+			struct hlist_nulls_node *n;
+			struct nf_conn *ct;
+			struct nf_conn_acct *acct;
+			struct fakeuser_data_t *fud;
+
+			user->status = 1;
+			rcu_read_lock();
+
+			ct_hash = nf_conntrack_hash;
+			hashsz = nf_conntrack_htable_size;
+			for (i = user->next_bucket; i < hashsz; i++) {
+				hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
+					/* we only want to print DIR_ORIGINAL */
+					if (NF_CT_DIRECTION(h))
+						continue;
+					ct = nf_ct_tuplehash_to_ctrack(h);
+					if (nf_ct_is_expired(ct)) {
+						continue;
+					}
+					if (!(IPS_NATFLOW_USER & ct->status)) {
+						continue;
+					}
+					fud = natflow_fakeuser_data(ct);
+					acct = nf_conn_acct_find(ct);
+					if (acct) {
+						fud->timestamp = 0;
+						fud->auth_type = AUTH_TYPE_UNKNOWN;
+						fud->auth_status = AUTH_NONE;
+						fud->auth_rule_id = INVALID_AUTH_RULE_ID;
+						atomic64_set(&acct->counter[0].packets, 0);
+						atomic64_set(&acct->counter[0].bytes, 0);
+						atomic64_set(&acct->counter[1].packets, 0);
+						atomic64_set(&acct->counter[1].bytes, 0);
+					}
+				}
+
+				if (time_after(jiffies, end_time) && i < hashsz) {
+					user->next_bucket = i;
+					user->status = 0;
+					rcu_read_unlock();
+					mutex_unlock(&user->lock);
+					goto again;
+				}
+			}
+			rcu_read_unlock();
+		}
+		mutex_unlock(&user->lock);
+		goto done;
+	} else if (strncmp(data, "kick ", 5) == 0) {
+		__be32 ip;
+		unsigned int a, b, c, d;
+		n = sscanf(data, "kick %u.%u.%u.%u", &a, &b, &c, &d);
+		if ( !(n == 4 &&
+		        (((a & 0xff) == a) &&
+		         ((b & 0xff) == b) &&
+		         ((c & 0xff) == c) &&
+		         ((d & 0xff) == d)) )) {
+			return -EINVAL;
+		}
+		ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
+
+		err = mutex_lock_interruptible(&user->lock);
+		if (err)
+			return err;
+		if (user->status == 0) {
+			unsigned int i, hashsz;
+			struct nf_conntrack_tuple_hash *h;
+			struct hlist_nulls_head *ct_hash;
+			struct hlist_nulls_node *n;
+			struct nf_conn *ct;
+			struct nf_conn_acct *acct;
+			struct fakeuser_data_t *fud;
+
+			user->status = 1;
+			rcu_read_lock();
+
+			ct_hash = nf_conntrack_hash;
+			hashsz = nf_conntrack_htable_size;
+			for (i = user->next_bucket; i < hashsz; i++) {
+				hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
+					/* we only want to print DIR_ORIGINAL */
+					if (NF_CT_DIRECTION(h))
+						continue;
+					ct = nf_ct_tuplehash_to_ctrack(h);
+					if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ip) {
+						continue;
+					}
+					if (nf_ct_is_expired(ct)) {
+						continue;
+					}
+					if (!(IPS_NATFLOW_USER & ct->status)) {
+						continue;
+					}
+					fud = natflow_fakeuser_data(ct);
+					acct = nf_conn_acct_find(ct);
+					if (acct) {
+						fud->timestamp = 0;
+						fud->auth_type = AUTH_TYPE_UNKNOWN;
+						fud->auth_status = AUTH_NONE;
+						fud->auth_rule_id = INVALID_AUTH_RULE_ID;
+						atomic64_set(&acct->counter[0].packets, 0);
+						atomic64_set(&acct->counter[0].bytes, 0);
+						atomic64_set(&acct->counter[1].packets, 0);
+						atomic64_set(&acct->counter[1].bytes, 0);
+
+						rcu_read_unlock();
+						mutex_unlock(&user->lock);
+						goto done;
+					}
+				}
+
+				if (time_after(jiffies, end_time) && i < hashsz) {
+					user->next_bucket = i;
+					user->status = 0;
+					rcu_read_unlock();
+					mutex_unlock(&user->lock);
+					goto again;
+				}
+			}
+			rcu_read_unlock();
+		}
+		mutex_unlock(&user->lock);
+
 		goto done;
 	}
 
@@ -1479,6 +1611,8 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 done:
 	*offset += l;
 	return l;
+again:
+	return -EAGAIN;
 }
 
 /* read one and clear one */
