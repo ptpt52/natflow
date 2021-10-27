@@ -1521,7 +1521,11 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 			user->status = 1;
 			rcu_read_lock();
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+			ct_hash = init_net.ct.hash;
+#else
 			ct_hash = nf_conntrack_hash;
+#endif
 			hashsz = nf_conntrack_htable_size;
 			for (i = user->next_bucket; i < hashsz; i++) {
 				hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
@@ -1529,9 +1533,11 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 					if (NF_CT_DIRECTION(h))
 						continue;
 					ct = nf_ct_tuplehash_to_ctrack(h);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
 					if (nf_ct_is_expired(ct)) {
 						continue;
 					}
+#endif
 					if (!(IPS_NATFLOW_USER & ct->status)) {
 						continue;
 					}
@@ -1662,7 +1668,11 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 		user->status = 1;
 		rcu_read_lock();
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+		ct_hash = init_net.ct.hash;
+#else
 		ct_hash = nf_conntrack_hash;
+#endif
 		hashsz = nf_conntrack_htable_size;
 		for (i = user->next_bucket; i < hashsz; i++) {
 			hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
@@ -1670,9 +1680,11 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 				if (NF_CT_DIRECTION(h))
 					continue;
 				ct = nf_ct_tuplehash_to_ctrack(h);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
 				if (nf_ct_is_expired(ct)) {
 					continue;
 				}
+#endif
 				if (!(IPS_NATFLOW_USER & ct->status)) {
 					continue;
 				}

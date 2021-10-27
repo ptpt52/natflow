@@ -312,4 +312,14 @@ static inline void get_byte6(const unsigned char *p, unsigned char *pv)
 	memcpy(pv, p, 6);
 }
 
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+static inline unsigned long nf_ct_expires(const struct nf_conn *ct)
+{
+	long timeout = (long)ct->timeout.expires - (long)jiffies;
+
+	return timeout > 0 ? timeout : 0;
+}
+#endif
+
 #endif /* _NATFLOW_COMMON_H_ */
