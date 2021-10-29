@@ -677,7 +677,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	if ((ct->status & IPS_NATFLOW_USER_BYPASS)) {
 		return NF_ACCEPT;
 	}
-	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL) {
+	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL || ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip == 0) {
 		return NF_ACCEPT;
 	}
 
@@ -745,8 +745,6 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	if (timestamp_offset(fud->timestamp, jiffies) >= 32 * HZ) {
 		if (memcmp(eth_hdr(skb)->h_source, fud->macaddr, ETH_ALEN) != 0) {
 			memcpy(fud->macaddr, eth_hdr(skb)->h_source, ETH_ALEN);
-			memcpy(&user->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, eth_hdr(skb)->h_source, 4);
-			memcpy(&user->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all, eth_hdr(skb)->h_source + 4, 2);
 		}
 		fud->timestamp = jiffies;
 		natflow_user_timeout_touch(user);
