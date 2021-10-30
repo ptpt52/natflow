@@ -54,6 +54,7 @@ struct conntrackinfo_user {
 	struct mutex lock;
 	struct list_head head;
 	unsigned int next_bucket;
+	unsigned int count;
 	unsigned int status;
 };
 
@@ -243,6 +244,7 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 					INIT_LIST_HEAD(&ct_i->list);
 					ct_i->len = 0;
 					list_add_tail(&ct_i->list, &user->head);
+					user->count++;
 				}
 
 				l4proto = nf_ct_l4proto_find(nf_ct_protonum(ct));
@@ -466,8 +468,9 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 				ct_i->len += sprintf(ct_i->data + ct_i->len, "use=%u\n", atomic_read(&ct->ct_general.use));
 			}
 
-			if (time_after(jiffies, end_time) && i < hashsz) {
-				user->next_bucket = i;
+			/* limit memory usage: 256 x 4096 = 1Mbytes */
+			if ((time_after(jiffies, end_time) || user->count >= 256) && i < hashsz) {
+				user->next_bucket = i + 1;
 				user->status = 0;
 				break;
 			}
@@ -493,6 +496,7 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 			}
 			list_del(&ct_i->list);
 			kfree(ct_i);
+			user->count--;
 			ret = ct_i->len;
 		}
 	} else if (user->status == 0) {
@@ -520,6 +524,7 @@ static int conntrackinfo_open(struct inode *inode, struct file *file)
 
 	mutex_init(&user->lock);
 	user->next_bucket = 0;
+	user->count = 0;
 	user->status = 0;
 	INIT_LIST_HEAD(&user->head);
 
