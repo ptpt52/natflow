@@ -44,6 +44,7 @@
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 #include "natflow_urllogger.h"
 #endif
+#include "natflow_conntrack.h"
 
 static int natflow_major = 0;
 static int natflow_minor = 0;
@@ -292,6 +293,12 @@ static int __init natflow_init(void) {
 		goto natflow_user_init_failed;
 	}
 
+	retval = conntrackinfo_init();
+	if (retval) {
+		NATFLOW_println("conntrackinfo_init fail, error=%d", retval);
+		goto conntrackinfo_init_failed;
+	}
+
 #if defined(CONFIG_NATFLOW_PATH)
 	retval = natflow_path_init();
 	if (retval) {
@@ -318,6 +325,8 @@ natflow_urllogger_init_failed:
 	natflow_path_exit();
 natflow_path_init_failed:
 #endif
+	conntrackinfo_exit();
+conntrackinfo_init_failed:
 	natflow_user_exit();
 natflow_user_init_failed:
 	natflow_zone_exit();
@@ -344,6 +353,7 @@ static void __exit natflow_exit(void) {
 #if defined(CONFIG_NATFLOW_PATH)
 	natflow_path_exit();
 #endif
+	conntrackinfo_exit();
 	natflow_user_exit();
 	natflow_zone_exit();
 
