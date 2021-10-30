@@ -1654,7 +1654,7 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 	ret = mutex_lock_interruptible(&user->lock);
 	if (ret)
 		return ret;
-	if (user->status == 0) {
+	if (user->status == 0 && list_empty(&user->head)) {
 		unsigned int i, hashsz;
 		struct nf_conntrack_tuple_hash *h;
 		struct hlist_nulls_head *ct_hash;
