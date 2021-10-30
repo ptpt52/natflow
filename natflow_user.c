@@ -1455,6 +1455,7 @@ struct userinfo_user {
 	struct mutex lock;
 	struct list_head head;
 	unsigned int next_bucket;
+	unsigned int count;
 	unsigned int status;
 	unsigned char data[0];
 };
@@ -1554,7 +1555,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 				}
 
 				if (time_after(jiffies, end_time) && i < hashsz) {
-					user->next_bucket = i;
+					user->next_bucket = i + 1;
 					user->status = 0;
 					rcu_read_unlock();
 					mutex_unlock(&user->lock);
@@ -1702,11 +1703,12 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 					user_i->tx_packets = atomic64_read(&acct->counter[1].packets);
 					user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
 					list_add_tail(&user_i->list, &user->head);
+					user->count++;
 				}
 			}
 
-			if (time_after(jiffies, end_time) && i < hashsz) {
-				user->next_bucket = i;
+			if ((time_after(jiffies, end_time) || user->count >= 4096) && i < hashsz) {
+				user->next_bucket = i + 1;
 				user->status = 0;
 				break;
 			}
@@ -1717,7 +1719,6 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 
 	user_i = list_first_entry_or_null(&user->head, struct userinfo, list);
 	if (user_i) {
-		list_del(&user_i->list);
 		len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu\n",
 		              &user_i->ip, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
 		              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
@@ -1730,6 +1731,9 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 			ret = -EFAULT;
 			goto out;
 		}
+		list_del(&user_i->list);
+		kfree(user_i);
+		user->count--;
 		ret = len;
 	} else if (user->status == 0) {
 		ret = -EAGAIN;
@@ -1739,8 +1743,6 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 	}
 
 out:
-	if (user_i)
-		kfree(user_i);
 	mutex_unlock(&user->lock);
 	return ret;
 }
@@ -1758,6 +1760,7 @@ static int userinfo_open(struct inode *inode, struct file *file)
 
 	mutex_init(&user->lock);
 	user->next_bucket = 0;
+	user->count = 0;
 	user->status = 0;
 	INIT_LIST_HEAD(&user->head);
 
