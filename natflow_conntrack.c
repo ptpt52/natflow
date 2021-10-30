@@ -195,7 +195,7 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 {
 	unsigned long end_time = jiffies + msecs_to_jiffies(100);
 	ssize_t ret;
-	struct conntrackinfo *ct_i;
+	struct conntrackinfo *ct_i = NULL;
 	struct conntrackinfo_user *user = file->private_data;
 
 	if (!user)
