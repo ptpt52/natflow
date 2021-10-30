@@ -247,7 +247,14 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 					user->count++;
 				}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
 				l4proto = nf_ct_l4proto_find(nf_ct_protonum(ct));
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
+				l4proto = __nf_ct_l4proto_find(nf_ct_protonum(ct));
+#else
+				l4proto = __nf_ct_l4proto_find(nf_ct_l3num(ct), nf_ct_protonum(ct));
+#endif
+
 				ct_i->len += sprintf(ct_i->data + ct_i->len, "%-8s %u %-8s %u ",
 				                     l3proto_name(nf_ct_l3num(ct)), nf_ct_l3num(ct),
 				                     l4proto_name(l4proto->l4proto), nf_ct_protonum(ct));
