@@ -1,0 +1,42 @@
+modname := natflow
+DKMS := dkms
+modver := $(shell awk -F'"' '/define *NATFLOW_VERSION/{print $$2}' < natflow_common.h)
+
+# directory in which generated files are stored
+DKMS_DEST := /usr/src/$(modname)-$(modver)
+
+all: install
+
+src_install:
+	mkdir -p '$(DKMS_DEST)'
+	cp \
+		natflow_common.c \
+		natflow_common.h \
+		natflow_conntrack.c \
+		natflow_conntrack.h \
+		natflow.h \
+		natflow_main.c \
+		natflow.mod.c \
+		natflow_path.c \
+		natflow_path.h \
+		natflow_urllogger.c \
+		natflow_urllogger.h \
+		natflow_user.c \
+		natflow_user.h \
+		natflow_zone.c \
+		natflow_zone.h \
+		'$(DKMS_DEST)'
+	cat Makefile | sed 's/^#EXTRA_CFLAGS.*/EXTRA_CFLAGS = -DCONFIG_NATFLOW_PATH -DCONFIG_NATFLOW_URLLOGGER/' > '$(DKMS_DEST)/Makefile'
+	sed 's/#MODULE_VERSION#/$(modver)/' dkms.conf > '$(DKMS_DEST)/dkms.conf'
+
+build: src_install
+	$(DKMS) add -m natflow -v $(modver) 2>/dev/null || true
+	$(DKMS) build -m natflow -v $(modver)
+
+install: build
+	$(DKMS) install -m natflow -v $(modver)
+
+uninstall:
+	$(DKMS) remove -m natflow -v $(modver) --all
+
+.PHONY: all src_install build install uninstall
