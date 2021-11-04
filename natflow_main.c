@@ -94,6 +94,10 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 
 static void *natflow_next(struct seq_file *m, void *v, loff_t *pos)
 {
+	(*pos)++;
+	if ((*pos) > 0) {
+		return natflow_start(m, pos);
+	}
 	return NULL;
 }
 
