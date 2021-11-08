@@ -265,7 +265,22 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 			return NULL;
 		}
 		if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status) && !test_and_set_bit(IPS_NATFLOW_USER_BIT, &user->status)) {
-			newoff = ALIGN(user->ext->len, __ALIGN_64BITS);
+			int i;
+			for (i = 0; i < ARRAY_SIZE((((struct nf_ct_ext *)0)->offset)); i++) {
+				if (!nf_ct_ext_exist(user, i)) compat_nf_ct_ext_add(user, i, GFP_ATOMIC);
+			}
+			if (!user->ext) {
+				skb_nfct_reset(uskb);
+				return NULL;
+			}
+
+			newoff = user->ext->len;
+			newoff = ALIGN(newoff, __ALIGN_64BITS);
+			if (newoff > NATCAP_MAX_OFF) {
+				NATFLOW_ERROR(DEBUG_FMT_PREFIX "realloc ct->ext->len > %u not supported!\n", DEBUG_ARG_PREFIX, NATCAP_MAX_OFF);
+				skb_nfct_reset(uskb);
+				return NULL;
+			}
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
 			new = __krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
 #else
@@ -291,7 +306,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 				user->ext = new;
 #endif
 			}
-			new->len = newoff;
+			new->len = newoff / NATCAP_FACTOR;
 			memset((void *)new + newoff, 0, sizeof(struct fakeuser_data_t));
 		}
 

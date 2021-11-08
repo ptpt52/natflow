@@ -25,19 +25,6 @@ unsigned int debug = 0;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0=none,1=error,2=warn,4=info,8=debug,16=fixme,...,31=all) default=0");
 
-#if defined(nf_ct_ext_add)
-void *compat_nf_ct_ext_add(struct nf_conn *ct, int id, gfp_t gfp)
-{
-	return __nf_ct_ext_add_length(ct, id, 0, gfp);
-}
-#else
-#define compat_nf_ct_ext_add nf_ct_ext_add
-#endif
-
-#define NATCAP_MAX_OFF 512u
-#define __ALIGN_64BYTES (__ALIGN_64BITS * 8)
-#define NATCAP_FACTOR (__ALIGN_64BITS * 2)
-
 int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 {
 	int i;

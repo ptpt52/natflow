@@ -35,7 +35,7 @@ extern int natflow_user_disabled_get(void);
 
 static inline struct fakeuser_data_t *natflow_fakeuser_data(natflow_fakeuser_t *nfu)
 {
-	return (void *)nfu->ext + nfu->ext->len;
+	return (void *)nfu->ext + nfu->ext->len * NATCAP_FACTOR;
 }
 #define FAKEUSER_IPADDR(u) ((natflow_fakeuser_t *)(u)->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip)
 

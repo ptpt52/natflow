@@ -95,6 +95,19 @@ static inline void nf_unregister_hooks(struct nf_hook_ops *reg, unsigned int n)
 }
 #endif
 
+#if defined(nf_ct_ext_add)
+void *compat_nf_ct_ext_add(struct nf_conn *ct, int id, gfp_t gfp)
+{
+	return __nf_ct_ext_add_length(ct, id, 0, gfp);
+}
+#else
+#define compat_nf_ct_ext_add nf_ct_ext_add
+#endif
+
+#define NATCAP_MAX_OFF 512u
+#define __ALIGN_64BYTES (__ALIGN_64BITS * 8)
+#define NATCAP_FACTOR (__ALIGN_64BITS * 2)
+
 #define __ALIGN_64BITS 8
 
 extern int natflow_session_init(struct nf_conn *ct, gfp_t gfp);
