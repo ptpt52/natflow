@@ -97,7 +97,7 @@ static unsigned int natflow_user_timeout = 1800;
 
 static struct sk_buff *natflow_user_uskbs[NR_CPUS];
 #define NATFLOW_USKB_SIZE (sizeof(struct iphdr) + sizeof(struct udphdr))
-#define NATFLOW_FAKEUSER_DADDR __constant_htonl(0x7fffffff)
+#define NATFLOW_FAKEUSER_DADDR __constant_htonl(0x7ffffffd)
 
 static inline struct sk_buff *uskb_of_this_cpu(int id)
 {
