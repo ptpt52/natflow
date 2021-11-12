@@ -62,10 +62,10 @@ struct nat_key_t {
 	unsigned short natflow_off;
 };
 /*XXX refer to drivers/nos/src/nos.h */
-#define IPS_NATFLOW_USER_BIT 15
+#define IPS_NATFLOW_USER_BIT 16
 #define IPS_NATFLOW_USER (1 << IPS_NATFLOW_USER_BIT)
 
-#define IPS_NATFLOW_USER_BYPASS_BIT 16
+#define IPS_NATFLOW_USER_BYPASS_BIT 15
 #define IPS_NATFLOW_USER_BYPASS (1 << IPS_NATFLOW_USER_BYPASS_BIT)
 
 #define IPS_NATFLOW_USER_DROP_BIT 17
