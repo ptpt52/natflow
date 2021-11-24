@@ -89,8 +89,9 @@ void natflow_update_ct_timeout(struct nf_conn *ct, unsigned long extra_jiffies)
 	}
 }
 
-static void natflow_offload_keepalive(unsigned int hash)
+static void natflow_offload_keepalive(unsigned int hash, unsigned long long bytes, unsigned long long packets)
 {
+	struct nf_conn_acct *acct;
 	natflow_fastnat_node_t *nfn;
 	unsigned long diff_jiffies = 0;
 	unsigned long current_jiffies = jiffies;
@@ -146,6 +147,13 @@ static void natflow_offload_keepalive(unsigned int hash)
 					nfn->jiffies = current_jiffies;
 					NATFLOW_INFO("do keep alive[%u]: %pI4:%u->%pI4:%u update jiffies=%u\n", hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)nfn->jiffies);
 				}
+			}
+
+			acct = nf_conn_acct_find(ct);
+			if (acct) {
+				struct nf_conn_counter *counter = acct->counter;
+				atomic64_add(packets, &counter[!d].packets);
+				atomic64_add(bytes, &counter[!d].bytes);
 			}
 			nf_ct_put(ct);
 			return;
