@@ -166,6 +166,7 @@ natflow_fakeuser_t *natflow_user_find_get(__be32 ip)
 	tuple.dst.u.udp.port = __constant_htons(65535);
 	tuple.src.l3num = PF_INET;
 	tuple.dst.protonum = IPPROTO_UDP;
+	local_bh_disable();
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
 	h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
 #else
@@ -179,13 +180,16 @@ natflow_fakeuser_t *natflow_user_find_get(__be32 ip)
 			user = ct;
 		}
 	}
+	local_bh_enable();
 
 	return user;
 }
 
 void natflow_user_put(natflow_fakeuser_t *user)
 {
+	local_bh_disable();
 	nf_ct_put(user);
+	local_bh_enable();
 }
 
 natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
@@ -1528,16 +1532,23 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 			hashsz = nf_conntrack_htable_size;
 			for (i = user->next_bucket; i < hashsz; i++) {
 				hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
-					/* we only want to print DIR_ORIGINAL */
-					if (NF_CT_DIRECTION(h))
-						continue;
 					ct = nf_ct_tuplehash_to_ctrack(h);
+					if (unlikely(!atomic_inc_not_zero(&ct->ct_general.use)))
+						continue;
+
+					/* we only want to print DIR_ORIGINAL */
+					if (NF_CT_DIRECTION(h)) {
+						nf_ct_put(ct);
+						continue;
+					}
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
 					if (nf_ct_is_expired(ct)) {
+						nf_ct_put(ct);
 						continue;
 					}
 #endif
 					if (!(IPS_NATFLOW_USER & ct->status)) {
+						nf_ct_put(ct);
 						continue;
 					}
 					fud = natflow_fakeuser_data(ct);
@@ -1552,6 +1563,8 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 						atomic64_set(&acct->counter[1].packets, 0);
 						atomic64_set(&acct->counter[1].bytes, 0);
 					}
+
+					nf_ct_put(ct);
 				}
 
 				if (time_after(jiffies, end_time) && i < hashsz) {
@@ -1675,16 +1688,23 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 		hashsz = nf_conntrack_htable_size;
 		for (i = user->next_bucket; i < hashsz; i++) {
 			hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
-				/* we only want to print DIR_ORIGINAL */
-				if (NF_CT_DIRECTION(h))
-					continue;
 				ct = nf_ct_tuplehash_to_ctrack(h);
+				if (unlikely(!atomic_inc_not_zero(&ct->ct_general.use)))
+					continue;
+
+				/* we only want to print DIR_ORIGINAL */
+				if (NF_CT_DIRECTION(h)) {
+					nf_ct_put(ct);
+					continue;
+				}
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
 				if (nf_ct_is_expired(ct)) {
+					nf_ct_put(ct);
 					continue;
 				}
 #endif
 				if (!(IPS_NATFLOW_USER & ct->status)) {
+					nf_ct_put(ct);
 					continue;
 				}
 				fud = natflow_fakeuser_data(ct);
@@ -1705,6 +1725,8 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 					list_add_tail(&user_i->list, &user->head);
 					user->count++;
 				}
+
+				nf_ct_put(ct);
 			}
 
 			if ((time_after(jiffies, end_time) || user->count >= 4096) && i < hashsz) {

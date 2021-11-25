@@ -226,16 +226,23 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 		hashsz = nf_conntrack_htable_size;
 		for (i = user->next_bucket; i < hashsz; i++) {
 			hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
-				/* we only want to print DIR_ORIGINAL */
-				if (NF_CT_DIRECTION(h))
-					continue;
 				ct = nf_ct_tuplehash_to_ctrack(h);
+				if (unlikely(!atomic_inc_not_zero(&ct->ct_general.use)))
+					continue;
+
+				/* we only want to print DIR_ORIGINAL */
+				if (NF_CT_DIRECTION(h)) {
+					nf_ct_put(ct);
+					continue;
+				}
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
 				if (nf_ct_is_expired(ct)) {
+					nf_ct_put(ct);
 					continue;
 				}
 #endif
 				if ((IPS_NATFLOW_USER & ct->status)) {
+					nf_ct_put(ct);
 					continue;
 				}
 
@@ -473,6 +480,8 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 				ct_i->len += sprintf(ct_i->data + ct_i->len, "mark=%u ", ct->mark);
 
 				ct_i->len += sprintf(ct_i->data + ct_i->len, "use=%u\n", atomic_read(&ct->ct_general.use));
+
+				nf_ct_put(ct);
 			}
 
 			/* limit memory usage: 256 x 4096 = 1Mbytes */
