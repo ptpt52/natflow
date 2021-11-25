@@ -33,6 +33,7 @@
 #endif
 #include "natflow_common.h"
 #include "natflow_path.h"
+#include "natflow_user.h"
 
 #ifdef CONFIG_NETFILTER_INGRESS
 static inline __be16 pppoe_proto(const struct sk_buff *skb)
@@ -155,6 +156,25 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long long byte
 				atomic64_add(packets, &counter[!d].packets);
 				atomic64_add(bytes, &counter[!d].bytes);
 			}
+			do {
+				natflow_fakeuser_t *user;
+				user = natflow_user_get(ct);
+				if (NULL == user) {
+					break;
+				}
+				if (ct->master == user) {
+					d = (d == 0) ? 0 : 1;
+				} else {
+					d = (d == 1) ? 0 : 1;
+				}
+
+				acct = nf_conn_acct_find(user);
+				if (acct) {
+					struct nf_conn_counter *counter = acct->counter;
+					atomic64_add(packets, &counter[d].packets);
+					atomic64_add(bytes, &counter[d].bytes);
+				}
+			} while (0);
 			nf_ct_put(ct);
 			return;
 		}
