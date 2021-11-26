@@ -166,7 +166,6 @@ natflow_fakeuser_t *natflow_user_find_get(__be32 ip)
 	tuple.dst.u.udp.port = __constant_htons(65535);
 	tuple.src.l3num = PF_INET;
 	tuple.dst.protonum = IPPROTO_UDP;
-	local_bh_disable();
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
 	h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
 #else
@@ -180,16 +179,13 @@ natflow_fakeuser_t *natflow_user_find_get(__be32 ip)
 			user = ct;
 		}
 	}
-	local_bh_enable();
 
 	return user;
 }
 
 void natflow_user_put(natflow_fakeuser_t *user)
 {
-	local_bh_disable();
 	nf_ct_put(user);
-	local_bh_enable();
 }
 
 natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
