@@ -138,13 +138,16 @@ natflow_fakeuser_t *natflow_user_get(struct nf_conn *ct)
 {
 	natflow_fakeuser_t *user = NULL;
 
-	if (disabled)
-		return NULL;
-
 	if (ct->master) {
 		if ((IPS_NATFLOW_USER & ct->master->status)) {
+			if (unlikely(nf_ct_is_dying(ct->master))) {
+				return NULL;
+			}
 			user = ct->master;
 		} else if (ct->master->master && (IPS_NATFLOW_USER & ct->master->master->status)) {
+			if (unlikely(nf_ct_is_dying(ct->master->master))) {
+				return NULL;
+			}
 			user = ct->master->master;
 		}
 	}
@@ -192,10 +195,19 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 {
 	natflow_fakeuser_t *user = NULL;
 
-	if (disabled)
-		return NULL;
-
-	user = natflow_user_get(ct);
+	if (ct->master) {
+		if ((IPS_NATFLOW_USER & ct->master->status)) {
+			if (unlikely(nf_ct_is_dying(ct->master))) {
+				return NULL;
+			}
+			user = ct->master;
+		} else if (ct->master->master && (IPS_NATFLOW_USER & ct->master->master->status)) {
+			if (unlikely(nf_ct_is_dying(ct->master->master))) {
+				return NULL;
+			}
+			user = ct->master->master;
+		}
+	}
 
 	if (!user && (!ct->master || !ct->master->master)) {
 		struct nf_ct_ext *new = NULL;
