@@ -209,7 +209,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 		}
 	}
 
-	if (!user && (!ct->master || !ct->master->master)) {
+	if (!nf_ct_is_confirmed(ct) && !user && (!ct->master || !ct->master->master)) {
 		struct nf_ct_ext *new = NULL;
 		unsigned int newoff = 0;
 		int ret;
