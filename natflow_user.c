@@ -312,6 +312,10 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 			skb_nfct_reset(uskb);
 			return NULL;
 		}
+		/* XXX: in race loser_ct may be replaced in nf_conntrack_confirm,
+		 * here reload ct(user) from uskb, and it can't be NULL
+		 */
+		user = nf_ct_get(uskb, &ctinfo);
 
 		nf_conntrack_get(&user->ct_general);
 		if (ct->master) {
