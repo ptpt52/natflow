@@ -78,6 +78,9 @@ struct nat_key_t {
 #define IPS_NATFLOW_URLLOGGER_HANDLED (1 << IPS_NATFLOW_URLLOGGER_HANDLED_BIT)
 
 /*XXX refer to natcap/natcap.h */
+#define IPS_NATCAP_PEER_BIT 22
+#define IPS_NATCAP_PEER (1 << IPS_NATCAP_PEER_BIT)
+
 #define IPS_NATCAP_BIT 25
 #define IPS_NATCAP (1 << IPS_NATCAP_BIT)
 

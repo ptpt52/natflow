@@ -241,7 +241,7 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 					continue;
 				}
 #endif
-				if ((IPS_NATFLOW_USER & ct->status)) {
+				if ((IPS_NATFLOW_USER & ct->status) || (IPS_NATCAP_PEER & ct->status)) {
 					nf_ct_put(ct);
 					continue;
 				}
