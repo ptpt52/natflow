@@ -202,8 +202,8 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 		return -EBADF;
 
 	ret = mutex_lock_interruptible(&user->lock);
-	if (ret)
-		return ret;
+	if (ret != 0)
+		return -EAGAIN;
 	if (user->status == 0 && list_empty(&user->head)) {
 		unsigned int i, hashsz;
 		struct nf_conntrack_tuple_hash *h;
@@ -247,7 +247,7 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 				}
 
 				if (!ct_i || ct_i->len + 448 > CONNTRACKINFO_DATALEN) {
-					ct_i = kmalloc(CONNTRACKINFO_MEMSIZE, GFP_ATOMIC);
+					ct_i = kmalloc(CONNTRACKINFO_MEMSIZE, GFP_KERNEL);
 					INIT_LIST_HEAD(&ct_i->list);
 					ct_i->len = 0;
 					list_add_tail(&ct_i->list, &user->head);
@@ -510,10 +510,10 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 				ret = -EFAULT;
 				goto out;
 			}
+			ret = ct_i->len;
 			list_del(&ct_i->list);
 			kfree(ct_i);
 			user->count--;
-			ret = ct_i->len;
 		}
 	} else if (user->status == 0) {
 		ret = -EAGAIN;
@@ -524,6 +524,7 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 
 out:
 	mutex_unlock(&user->lock);
+
 	return ret;
 }
 

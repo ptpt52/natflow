@@ -1522,8 +1522,8 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 
 	if (strncmp(data, "kickall", 7) == 0) {
 		err = mutex_lock_interruptible(&user->lock);
-		if (err)
-			return err;
+		if (err != 0)
+			return -EAGAIN;
 		if (user->status == 0) {
 			unsigned int i, hashsz;
 			struct nf_conntrack_tuple_hash *h;
@@ -1678,8 +1678,8 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 		return -EBADF;
 
 	ret = mutex_lock_interruptible(&user->lock);
-	if (ret)
-		return ret;
+	if (ret != 0)
+		return -EAGAIN;
 	if (user->status == 0 && list_empty(&user->head)) {
 		unsigned int i, hashsz;
 		struct nf_conntrack_tuple_hash *h;
@@ -1722,7 +1722,7 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 				fud = natflow_fakeuser_data(ct);
 				acct = nf_conn_acct_find(ct);
 				if (acct) {
-					user_i = kmalloc(sizeof(struct userinfo), GFP_ATOMIC);
+					user_i = kmalloc(sizeof(struct userinfo), GFP_KERNEL);
 					INIT_LIST_HEAD(&user_i->list);
 					user_i->timeout = nf_ct_expires(ct)  / HZ;
 					user_i->ip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
@@ -1765,10 +1765,10 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 			ret = -EFAULT;
 			goto out;
 		}
+		ret = len;
 		list_del(&user_i->list);
 		kfree(user_i);
 		user->count--;
-		ret = len;
 	} else if (user->status == 0) {
 		ret = -EAGAIN;
 	} else {
