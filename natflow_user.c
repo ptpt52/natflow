@@ -31,6 +31,7 @@
 #include <linux/vmalloc.h>
 #include <linux/highmem.h>
 #include <linux/netfilter.h>
+#include <linux/netfilter_bridge.h>
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_core.h>
 #include <net/netfilter/nf_conntrack_helper.h>
@@ -674,6 +675,10 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	const struct net_device *out = state->out;
 #endif
 #endif
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+	const struct net_device *br_in = NULL;
+	struct nf_bridge_info *nf_bridge;
+#endif
 	struct fakeuser_data_t *fud;
 	natflow_fakeuser_t *user;
 	struct nf_conn *ct;
@@ -699,7 +704,13 @@ static unsigned int natflow_user_pre_hook(void *priv,
 
 	if (in == NULL)
 		in = skb->dev;
-	if (!natflow_is_lan_zone(in)) {
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+	nf_bridge = nf_bridge_info_get(skb);
+	if (nf_bridge) {
+		br_in = nf_bridge_get_physindev(skb);
+	}
+#endif
+	if (!natflow_is_lan_zone(in) && (br_in == NULL || !natflow_is_lan_zone(br_in))) {
 		return NF_ACCEPT;
 	}
 
@@ -844,6 +855,10 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	const struct net_device *out = state->out;
 #endif
 #endif
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+	const struct net_device *br_in = NULL;
+	struct nf_bridge_info *nf_bridge;
+#endif
 	struct fakeuser_data_t *fud;
 	natflow_fakeuser_t *user;
 	struct nf_conn *ct;
@@ -857,6 +872,12 @@ static unsigned int natflow_user_forward_hook(void *priv,
 
 	if (in == NULL)
 		in = skb->dev;
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+	nf_bridge = nf_bridge_info_get(skb);
+	if (nf_bridge) {
+		br_in = nf_bridge_get_physindev(skb);
+	}
+#endif
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
@@ -882,7 +903,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 
 	user = natflow_user_get(ct);
 	if (NULL == user) {
-		if (!natflow_is_lan_zone(in)) {
+		if (!natflow_is_lan_zone(in) && (br_in == NULL || !natflow_is_lan_zone(br_in))) {
 			//TODO check flow from wan to user
 			return NF_ACCEPT;
 		}
@@ -1010,6 +1031,10 @@ static unsigned int natflow_user_post_hook(void *priv,
 	//const struct net_device *in = state->in;
 	const struct net_device *out = state->out;
 #endif
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+	const struct net_device *br_out = NULL;
+	struct nf_bridge_info *nf_bridge;
+#endif
 	struct nf_conn_acct *acct;
 	natflow_fakeuser_t *user;
 	struct nf_conn *ct;
@@ -1023,6 +1048,12 @@ static unsigned int natflow_user_post_hook(void *priv,
 
 	if (out == NULL)
 		out = skb->dev;
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+	nf_bridge = nf_bridge_info_get(skb);
+	if (nf_bridge) {
+		br_out = nf_bridge_get_physoutdev(skb);
+	}
+#endif
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
@@ -1037,7 +1068,7 @@ static unsigned int natflow_user_post_hook(void *priv,
 	acct = nf_conn_acct_find(user);
 	if (acct) {
 		struct nf_conn_counter *counter = acct->counter;
-		if (natflow_is_lan_zone(out)) {
+		if (natflow_is_lan_zone(out) || (br_out && natflow_is_lan_zone(br_out))) {
 			//download
 			atomic64_inc(&counter[0].packets);
 			atomic64_add(skb->len, &counter[0].bytes);
