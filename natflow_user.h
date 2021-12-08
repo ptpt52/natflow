@@ -74,6 +74,7 @@ typedef enum {
 	AUTH_REQ = 3,
 	AUTH_NOAUTH = 4,
 	AUTH_VIP = 5,
+	AUTH_BLOCK = 6,
 	AUTH_UNKNOWN = 15,
 } auth_status_t;
 

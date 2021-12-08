@@ -716,8 +716,8 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	}
 	fud = natflow_fakeuser_data(user);
 
-	if ( (fud->auth_rule_magic != auth_conf_magic && fud->auth_status != AUTH_OK && fud->auth_status != AUTH_VIP) ||
-	        fud->auth_status == AUTH_NONE ) {
+	if ( fud->auth_status == AUTH_NONE ||
+	        (fud->auth_rule_magic != auth_conf_magic && fud->auth_status != AUTH_OK && fud->auth_status != AUTH_VIP && fud->auth_status != AUTH_BLOCK) ) {
 		int i;
 		int zid = natflow_zone_id_get_safe(in);
 		int br_zid = natflow_zone_id_get_safe(br_in);
@@ -987,6 +987,9 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	case AUTH_VIP:
 	case AUTH_BYPASS:
 		break;
+	case AUTH_BLOCK:
+		/* temporary block user */
+		return NF_DROP;
 	}
 
 	return NF_ACCEPT;
