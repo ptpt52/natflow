@@ -720,17 +720,18 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	        fud->auth_status == AUTH_NONE ) {
 		int i;
 		int zid = natflow_zone_id_get_safe(in);
+		int br_zid = natflow_zone_id_get_safe(br_in);
 
 		fud->auth_rule_magic = auth_conf_magic;
 		fud->auth_type = AUTH_TYPE_UNKNOWN;
 		fud->auth_rule_id = INVALID_AUTH_RULE_ID;
 
-		if (zid == INVALID_ZONE_ID) {
+		if (zid == INVALID_ZONE_ID && br_zid == INVALID_ZONE_ID) {
 			return NF_ACCEPT;
 		}
 
 		for (i = 0; i < auth_conf->num; i++) {
-			if (zid == auth_conf->auth[i].src_zone_id) {
+			if (zid == auth_conf->auth[i].src_zone_id || br_zid == auth_conf->auth[i].src_zone_id) {
 				//zone match ok
 				if (IP_SET_test_src_ip(state, in, out, skb, auth_conf->auth[i].src_ipgrp_name) > 0) {
 					//ipgrp match ok
