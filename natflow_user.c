@@ -989,6 +989,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		break;
 	case AUTH_BLOCK:
 		/* temporary block user */
+		set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
 		return NF_DROP;
 	}
 
