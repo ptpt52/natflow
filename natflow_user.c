@@ -706,7 +706,11 @@ static unsigned int natflow_user_pre_hook(void *priv,
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
 	br_in = nf_bridge_get_physindev(skb);
 #endif
-	if (!natflow_is_lan_zone(in) && (br_in == NULL || !natflow_is_lan_zone(br_in))) {
+	if (!natflow_is_lan_zone(in)
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+	        && (br_in == NULL || !natflow_is_lan_zone(br_in))
+#endif
+	   ) {
 		return NF_ACCEPT;
 	}
 
@@ -720,18 +724,28 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	        (fud->auth_rule_magic != auth_conf_magic && fud->auth_status != AUTH_OK && fud->auth_status != AUTH_VIP && fud->auth_status != AUTH_BLOCK) ) {
 		int i;
 		int zid = natflow_zone_id_get_safe(in);
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
 		int br_zid = natflow_zone_id_get_safe(br_in);
+#endif
 
 		fud->auth_rule_magic = auth_conf_magic;
 		fud->auth_type = AUTH_TYPE_UNKNOWN;
 		fud->auth_rule_id = INVALID_AUTH_RULE_ID;
 
-		if (zid == INVALID_ZONE_ID && br_zid == INVALID_ZONE_ID) {
+		if (zid == INVALID_ZONE_ID
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+		        && br_zid == INVALID_ZONE_ID
+#endif
+		   ) {
 			return NF_ACCEPT;
 		}
 
 		for (i = 0; i < auth_conf->num; i++) {
-			if (zid == auth_conf->auth[i].src_zone_id || br_zid == auth_conf->auth[i].src_zone_id) {
+			if (zid == auth_conf->auth[i].src_zone_id
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+			        || br_zid == auth_conf->auth[i].src_zone_id
+#endif
+			   ) {
 				//zone match ok
 				if (IP_SET_test_src_ip(state, in, out, skb, auth_conf->auth[i].src_ipgrp_name) > 0) {
 					//ipgrp match ok
@@ -896,7 +910,11 @@ static unsigned int natflow_user_forward_hook(void *priv,
 
 	user = natflow_user_get(ct);
 	if (NULL == user) {
-		if (!natflow_is_lan_zone(in) && (br_in == NULL || !natflow_is_lan_zone(br_in))) {
+		if (!natflow_is_lan_zone(in)
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+		        && (br_in == NULL || !natflow_is_lan_zone(br_in))
+#endif
+		   ) {
 			//TODO check flow from wan to user
 			return NF_ACCEPT;
 		}
@@ -1061,7 +1079,11 @@ static unsigned int natflow_user_post_hook(void *priv,
 	acct = nf_conn_acct_find(user);
 	if (acct) {
 		struct nf_conn_counter *counter = acct->counter;
-		if (natflow_is_lan_zone(out) || (br_out && natflow_is_lan_zone(br_out))) {
+		if (natflow_is_lan_zone(out)
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+		        || (br_out && natflow_is_lan_zone(br_out))
+#endif
+		   ) {
 			//download
 			atomic64_inc(&counter[0].packets);
 			atomic64_add(skb->len, &counter[0].bytes);
