@@ -196,6 +196,11 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 {
 	natflow_fakeuser_t *user = NULL;
 
+	/* FIXME: cannot use ct->master for user since destroy_gre_conntrack() may double free gre helper in master */
+	if (unlikely(nf_ct_protonum(ct) == IPPROTO_GRE)) {
+		return NULL;
+	}
+
 	if (ct->master) {
 		if ((IPS_NATFLOW_USER & ct->master->status)) {
 			if (unlikely(nf_ct_is_dying(ct->master))) {
