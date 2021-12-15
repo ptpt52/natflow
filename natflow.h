@@ -191,7 +191,7 @@ static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __b
 
 static inline int natflow_hash_skip(u32 hash)
 {
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 	static const u8 skip[] = { 12, 25, 38, 51, 76, 89, 102 };
 	u32 i = hash % 128;
 	int k;
@@ -209,7 +209,7 @@ static inline int natflow_hash_skip(u32 hash)
 	return 0;
 }
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 #define HWNAT_QUEUE_MAPPING_MAGIC      0x8000
 #define HWNAT_QUEUE_MAPPING_MAGIC_MASK 0xe000
 #define HWNAT_QUEUE_MAPPING_HASH_MASK  0x1fff

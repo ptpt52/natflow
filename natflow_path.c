@@ -28,7 +28,7 @@
 #include <linux/if_pppox.h>
 #include <linux/ppp_defs.h>
 #endif
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 #include <net/netfilter/nf_flow_table.h>
 #endif
 #include "natflow_common.h"
@@ -68,9 +68,16 @@ void natflow_update_magic(int init)
 #ifdef CONFIG_NETFILTER_INGRESS
 static natflow_fastnat_node_t *natflow_fast_nat_table = NULL;
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if defined(NATFLOW_OFFLOAD_HWNAT_FAKE)
+#else
+typedef struct flow_offload flow_offload_t;
+typedef struct flow_offload_tuple flow_offload_tuple_t;
+typedef struct flow_offload_hw_path flow_offload_hw_path_t;
+typedef enum flow_offload_type flow_offload_type_t;
+#endif
 struct natflow_offload {
-	struct flow_offload flow;
+	flow_offload_t flow;
 };
 
 void natflow_update_ct_timeout(struct nf_conn *ct, unsigned long extra_jiffies)
@@ -188,10 +195,10 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 	static struct natflow_offload natflow_offload[NR_CPUS];
 
 	int dir;
-	struct flow_offload_tuple *ft;
+	flow_offload_tuple_t *ft;
 	struct nf_conntrack_tuple *ctt;
 	struct natflow_offload *natflow = &natflow_offload[smp_processor_id()];
-	struct flow_offload *flow = &natflow->flow;
+	flow_offload_t *flow = &natflow->flow;
 	int orig_hash, reply_hash;
 	natflow_fastnat_node_t *nfn;
 
@@ -373,7 +380,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		u32 _I;
 		natflow_fastnat_node_t *nfn;
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 		/* XXX: check MTK_CPU_REASON_HIT_BIND_FORCE_CPU
 		 * nated-skb come to cpu from ppe, we just forward to ext dev(Wi-Fi)
 		 * skb->hash stored the hash key
@@ -479,7 +486,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					re_learn = 2;
 					goto slow_fastpath;
 				}
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 				/* check hnat hw timeout */
 				if (_I > 14 * HZ && (nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
@@ -503,7 +510,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					goto out;
 				}
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					__vlan_hwaccel_clear_tag(skb);
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
@@ -619,7 +626,7 @@ fast_output:
 					re_learn = 2;
 					goto slow_fastpath;
 				}
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 				/* check hnat hw timeout */
 				if (_I > 14 * HZ && (nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
@@ -640,7 +647,7 @@ fast_output:
 					goto out;
 				}
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					__vlan_hwaccel_clear_tag(skb);
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
@@ -946,7 +953,7 @@ fastnat_check:
 										ct->proto.tcp.seen[0].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 										ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 									}
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(CONFIG_NET_MEDIATEK_SOC)) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 									if (hwnat) {
 										if (!(nfn->flags & FASTNAT_NO_ARP) && !(nfn_i->flags & FASTNAT_NO_ARP) &&
 										        !netif_is_bridge_master(nfn->outdev) && !netif_is_bridge_master(nfn_i->outdev)) {
@@ -958,7 +965,7 @@ fastnat_check:
 											u16 orig_dsa_port = 0xffff;
 											u16 reply_dsa_port = 0xffff;
 											if (!orig_dev->netdev_ops->ndo_flow_offload && orig_dev->netdev_ops->ndo_flow_offload_check) {
-												struct flow_offload_hw_path orig = {
+												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 												};
@@ -969,7 +976,7 @@ fastnat_check:
 												}
 											}
 											if (!reply_dev->netdev_ops->ndo_flow_offload && reply_dev->netdev_ops->ndo_flow_offload_check) {
-												struct flow_offload_hw_path reply = {
+												flow_offload_hw_path_t reply = {
 													.dev = reply_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 												};
@@ -983,14 +990,14 @@ fastnat_check:
 											if (orig_dev->netdev_ops->ndo_flow_offload) {
 												if (orig_dev == reply_dev || reply_dev->netdev_ops->ndo_flow_offload) {
 													struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
-													struct flow_offload_hw_path orig = {
+													flow_offload_hw_path_t orig = {
 														.dev = orig_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 														.dsa_port = orig_dsa_port,
 #endif
 													};
-													struct flow_offload_hw_path reply = {
+													flow_offload_hw_path_t reply = {
 														.dev = reply_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
@@ -1038,14 +1045,14 @@ fastnat_check:
 												} else {
 													//reply_dev is ext dev
 													struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
-													struct flow_offload_hw_path orig = {
+													flow_offload_hw_path_t orig = {
 														.dev = orig_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 														.dsa_port = orig_dsa_port,
 #endif
 													};
-													struct flow_offload_hw_path reply = {
+													flow_offload_hw_path_t reply = {
 														.dev = reply_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
@@ -1105,14 +1112,14 @@ fastnat_check:
 												} else {
 													//orig_dev is ext dev
 													struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
-													struct flow_offload_hw_path orig = {
+													flow_offload_hw_path_t orig = {
 														.dev = orig_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 														.dsa_port = orig_dsa_port,
 #endif
 													};
-													struct flow_offload_hw_path reply = {
+													flow_offload_hw_path_t reply = {
 														.dev = reply_dev,
 														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
