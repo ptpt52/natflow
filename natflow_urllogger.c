@@ -398,9 +398,6 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 		int host_len = data_len;
 		/* check one packet only */
 		set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
-		if (!(IPS_NATCAP & ct->status)) {
-			clear_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
-		}
 
 		/* try to get HTTPS/TLS SNI HOST */
 		host = tls_sni_search(data, &host_len);
