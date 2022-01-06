@@ -42,9 +42,50 @@
 #include "natflow_user.h"
 #include "natflow_zone.h"
 
+struct userinfo {
+	struct list_head list;
+	unsigned int timeout;
+	__be32 ip;
+	uint8_t macaddr[ETH_ALEN];
+	uint8_t auth_type;
+	uint8_t auth_status;
+	uint16_t auth_rule_id;
+	unsigned long long rx_packets;
+	unsigned long long rx_bytes;
+	unsigned long long tx_packets;
+	unsigned long long tx_bytes;
+};
+
+struct userinfo_event {
+	spinlock_t lock;
+	struct list_head head;
+	wait_queue_head_t wait;
+#define USERINFO_EVENT_STOPPED 0
+#define USERINFO_EVENT_RUNNING 1
+	unsigned int stage;
+};
+
+static struct userinfo_event userinfo_event_store;
+
+static inline void userinfo_event_store_init(void)
+{
+	spin_lock_init(&userinfo_event_store.lock);
+	INIT_LIST_HEAD(&userinfo_event_store.head);
+	init_waitqueue_head(&userinfo_event_store.wait);
+	userinfo_event_store.stage = USERINFO_EVENT_STOPPED;
+}
+
+static inline void userinfo_event_store_exit(void)
+{
+	struct userinfo *user_i, *n;
+	list_for_each_entry_safe(user_i, n, &userinfo_event_store.head, list) {
+		list_del(&user_i->list);
+		kfree(user_i);
+	}
+}
+
 static int natflow_user_major = 0;
 static int natflow_user_minor = 0;
-static int number_of_devices = 1;
 static struct cdev natflow_user_cdev;
 const char *natflow_user_dev_name = "natflow_user_ctl";
 static struct class *natflow_user_class;
@@ -792,6 +833,31 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		fud->timestamp = jiffies;
 		natflow_user_timeout_touch(user);
 		//TODO notify user update
+		if (userinfo_event_store.stage == USERINFO_EVENT_RUNNING) {
+			struct nf_conn_acct *acct = nf_conn_acct_find(user);
+			if (acct) {
+				struct userinfo *user_i = kmalloc(sizeof(struct userinfo), GFP_ATOMIC);
+				if (user_i) {
+					INIT_LIST_HEAD(&user_i->list);
+					user_i->timeout = nf_ct_expires(user)  / HZ;
+					user_i->ip = user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+					memcpy(user_i->macaddr, fud->macaddr, ETH_ALEN);
+					user_i->auth_type = fud->auth_type;
+					user_i->auth_status = fud->auth_status;
+					user_i->auth_rule_id = fud->auth_rule_id;
+					user_i->rx_packets = atomic64_read(&acct->counter[0].packets);
+					user_i->rx_bytes = atomic64_read(&acct->counter[0].bytes);
+					user_i->tx_packets = atomic64_read(&acct->counter[1].packets);
+					user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
+
+					spin_lock(&userinfo_event_store.lock);
+					list_add_tail(&user_i->list, &userinfo_event_store.head);
+					spin_unlock(&userinfo_event_store.lock);
+
+					wake_up(&userinfo_event_store.wait);
+				}
+			}
+		}
 	}
 
 	if (fud->auth_status == AUTH_REQ && fud->auth_type == AUTH_TYPE_WEB && https_redirect_en != 0) {
@@ -1504,20 +1570,6 @@ static struct file_operations natflow_user_fops = {
 	.llseek  = seq_lseek,
 };
 
-struct userinfo {
-	struct list_head list;
-	unsigned int timeout;
-	__be32 ip;
-	uint8_t macaddr[ETH_ALEN];
-	uint8_t auth_type;
-	uint8_t auth_status;
-	uint16_t auth_rule_id;
-	unsigned long long rx_packets;
-	unsigned long long rx_bytes;
-	unsigned long long tx_packets;
-	unsigned long long tx_bytes;
-};
-
 struct userinfo_user {
 	struct mutex lock;
 	struct list_head head;
@@ -1892,9 +1944,9 @@ static int userinfo_init(void)
 
 	if (userinfo_major > 0) {
 		devno = MKDEV(userinfo_major, userinfo_minor);
-		retval = register_chrdev_region(devno, number_of_devices, userinfo_dev_name);
+		retval = register_chrdev_region(devno, 1, userinfo_dev_name);
 	} else {
-		retval = alloc_chrdev_region(&devno, userinfo_minor, number_of_devices, userinfo_dev_name);
+		retval = alloc_chrdev_region(&devno, userinfo_minor, 1, userinfo_dev_name);
 	}
 	if (retval < 0) {
 		NATFLOW_println("alloc_chrdev_region failed!");
@@ -1935,7 +1987,7 @@ device_create_failed:
 class_create_failed:
 	cdev_del(&userinfo_cdev);
 cdev_add_failed:
-	unregister_chrdev_region(devno, number_of_devices);
+	unregister_chrdev_region(devno, 1);
 chrdev_region_failed:
 	return retval;
 }
@@ -1948,7 +2000,195 @@ static void userinfo_exit(void)
 	device_destroy(userinfo_class, devno);
 	class_destroy(userinfo_class);
 	cdev_del(&userinfo_cdev);
-	unregister_chrdev_region(devno, number_of_devices);
+	unregister_chrdev_region(devno, 1);
+}
+
+
+static ssize_t userinfo_event_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+{
+	return -ENOSYS;
+}
+static ssize_t userinfo_event_read(struct file *file, char __user *buf,
+                             size_t count, loff_t *ppos)
+{
+	size_t len;
+	ssize_t ret = 0;
+	struct userinfo *user_i;
+	struct userinfo_user *user = file->private_data;
+
+	if (!user)
+		return -EBADF;
+
+	ret = mutex_lock_interruptible(&user->lock);
+	if (ret != 0)
+		return -EAGAIN;
+	if (list_empty(&user->head)) {
+		struct userinfo *n;
+
+		if (userinfo_event_store.stage != USERINFO_EVENT_RUNNING) {
+			userinfo_event_store.stage = USERINFO_EVENT_RUNNING;
+		}
+		if (list_empty(&userinfo_event_store.head)) {
+			//wait
+			ret = wait_event_interruptible(userinfo_event_store.wait, !list_empty(&userinfo_event_store.head));
+			if (ret != 0) {
+				userinfo_event_store.stage = USERINFO_EVENT_STOPPED;
+			}
+		}
+		spin_lock_bh(&userinfo_event_store.lock);
+		list_for_each_entry_safe(user_i, n, &userinfo_event_store.head, list) {
+			list_del(&user_i->list);
+			list_add_tail(&user_i->list, &user->head);
+		}
+		spin_unlock_bh(&userinfo_event_store.lock);
+	}
+
+	user_i = list_first_entry_or_null(&user->head, struct userinfo, list);
+	if (user_i) {
+		len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu\n",
+		              &user_i->ip, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
+		              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
+		              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes);
+		if (len > count) {
+			ret = -EINVAL;
+			goto out;
+		}
+		if (copy_to_user(buf, user->data, len)) {
+			ret = -EFAULT;
+			goto out;
+		}
+		ret = len;
+		list_del(&user_i->list);
+		kfree(user_i);
+		user->count--;
+	} else {
+		ret = -EAGAIN;
+	}
+
+out:
+	mutex_unlock(&user->lock);
+	return ret;
+}
+
+static int userinfo_event_open(struct inode *inode, struct file *file)
+{
+	struct userinfo_user *user;
+
+	user = kmalloc(USERINFO_MEMSIZE, GFP_KERNEL);
+	if (!user)
+		return -ENOMEM;
+
+	//set nonseekable
+	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
+
+	mutex_init(&user->lock);
+	user->next_bucket = 0;
+	user->count = 0;
+	user->status = 0;
+	INIT_LIST_HEAD(&user->head);
+
+	file->private_data = user;
+	return 0;
+}
+
+static int userinfo_event_release(struct inode *inode, struct file *file)
+{
+	struct userinfo *user_i;
+	struct userinfo_user *user = file->private_data;
+
+	userinfo_event_store.stage = USERINFO_EVENT_STOPPED;
+
+	if (!user)
+		return 0;
+
+	while ((user_i = list_first_entry_or_null(&user->head, struct userinfo, list))) {
+		list_del(&user_i->list);
+		kfree(user_i);
+	}
+
+	mutex_destroy(&user->lock);
+	kfree(user);
+	return 0;
+}
+
+const struct file_operations userinfo_event_fops = {
+	.open = userinfo_event_open,
+	.read = userinfo_event_read,
+	.write = userinfo_event_write,
+	.release = userinfo_event_release,
+};
+
+static int userinfo_event_major = 0;
+static int userinfo_event_minor = 0;
+static struct cdev userinfo_event_cdev;
+const char *userinfo_event_dev_name = "userinfo_event_ctl";
+static struct class *userinfo_event_class;
+static struct device *userinfo_event_dev;
+
+static int userinfo_event_init(void)
+{
+	int retval = 0;
+	dev_t devno;
+
+	if (userinfo_event_major > 0) {
+		devno = MKDEV(userinfo_event_major, userinfo_event_minor);
+		retval = register_chrdev_region(devno, 1, userinfo_event_dev_name);
+	} else {
+		retval = alloc_chrdev_region(&devno, userinfo_event_minor, 1, userinfo_event_dev_name);
+	}
+	if (retval < 0) {
+		NATFLOW_println("alloc_chrdev_region failed!");
+		goto chrdev_region_failed;
+	}
+	userinfo_event_major = MAJOR(devno);
+	userinfo_event_minor = MINOR(devno);
+	NATFLOW_println("userinfo_event_major=%d, userinfo_event_minor=%d", userinfo_event_major, userinfo_event_minor);
+
+	cdev_init(&userinfo_event_cdev, &userinfo_event_fops);
+	userinfo_event_cdev.owner = THIS_MODULE;
+	userinfo_event_cdev.ops = &userinfo_event_fops;
+
+	retval = cdev_add(&userinfo_event_cdev, devno, 1);
+	if (retval) {
+		NATFLOW_println("adding chardev, error=%d", retval);
+		goto cdev_add_failed;
+	}
+
+	userinfo_event_class = class_create(THIS_MODULE,"userinfo_event_class");
+	if (IS_ERR(userinfo_event_class)) {
+		NATFLOW_println("failed in creating class");
+		retval = -EINVAL;
+		goto class_create_failed;
+	}
+
+	userinfo_event_dev = device_create(userinfo_event_class, NULL, devno, NULL, userinfo_event_dev_name);
+	if (!userinfo_event_dev) {
+		retval = -EINVAL;
+		goto device_create_failed;
+	}
+
+	return 0;
+
+	//device_destroy(userinfo_event_class, devno);
+device_create_failed:
+	class_destroy(userinfo_event_class);
+class_create_failed:
+	cdev_del(&userinfo_event_cdev);
+cdev_add_failed:
+	unregister_chrdev_region(devno, 1);
+chrdev_region_failed:
+	return retval;
+}
+
+static void userinfo_event_exit(void)
+{
+	dev_t devno;
+
+	devno = MKDEV(userinfo_event_major, userinfo_event_minor);
+	device_destroy(userinfo_event_class, devno);
+	class_destroy(userinfo_event_class);
+	cdev_del(&userinfo_event_cdev);
+	unregister_chrdev_region(devno, 1);
 }
 
 int natflow_user_init(void)
@@ -1973,9 +2213,9 @@ int natflow_user_init(void)
 
 	if (natflow_user_major > 0) {
 		devno = MKDEV(natflow_user_major, natflow_user_minor);
-		retval = register_chrdev_region(devno, number_of_devices, natflow_user_dev_name);
+		retval = register_chrdev_region(devno, 1, natflow_user_dev_name);
 	} else {
-		retval = alloc_chrdev_region(&devno, natflow_user_minor, number_of_devices, natflow_user_dev_name);
+		retval = alloc_chrdev_region(&devno, natflow_user_minor, 1, natflow_user_dev_name);
 	}
 	if (retval < 0) {
 		NATFLOW_println("alloc_chrdev_region failed!");
@@ -2013,9 +2253,18 @@ int natflow_user_init(void)
 		goto userinfo_init_failed;
 	}
 
+	retval = userinfo_event_init();
+	if (retval) {
+		goto userinfo_event_init_failed;
+	}
+
+	userinfo_event_store_init();
+
 	return 0;
 
-	//userinfo_exit();
+	//userinfo_event_exit();
+userinfo_event_init_failed:
+	userinfo_exit();
 userinfo_init_failed:
 	device_destroy(natflow_user_class, devno);
 device_create_failed:
@@ -2023,7 +2272,7 @@ device_create_failed:
 class_create_failed:
 	cdev_del(&natflow_user_cdev);
 cdev_add_failed:
-	unregister_chrdev_region(devno, number_of_devices);
+	unregister_chrdev_region(devno, 1);
 chrdev_region_failed:
 	auth_conf_exit();
 auth_conf_init_failed:
@@ -2037,13 +2286,16 @@ void natflow_user_exit(void)
 	int i;
 	dev_t devno;
 
+	userinfo_event_exit();
 	userinfo_exit();
+
+	userinfo_event_store_exit();
 
 	devno = MKDEV(natflow_user_major, natflow_user_minor);
 	device_destroy(natflow_user_class, devno);
 	class_destroy(natflow_user_class);
 	cdev_del(&natflow_user_cdev);
-	unregister_chrdev_region(devno, number_of_devices);
+	unregister_chrdev_region(devno, 1);
 
 	natflow_user_disabled_set(1);
 	synchronize_rcu();
