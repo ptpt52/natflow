@@ -2074,6 +2074,10 @@ static int userinfo_event_open(struct inode *inode, struct file *file)
 {
 	struct userinfo_user *user;
 
+	/* just allow one user to read */
+	if (userinfo_event_store.stage == USERINFO_EVENT_RUNNING)
+		return -EBUSY;
+
 	user = kmalloc(USERINFO_MEMSIZE, GFP_KERNEL);
 	if (!user)
 		return -ENOMEM;
@@ -2096,8 +2100,6 @@ static int userinfo_event_release(struct inode *inode, struct file *file)
 	struct userinfo *user_i;
 	struct userinfo_user *user = file->private_data;
 
-	userinfo_event_store.stage = USERINFO_EVENT_STOPPED;
-
 	if (!user)
 		return 0;
 
@@ -2108,6 +2110,8 @@ static int userinfo_event_release(struct inode *inode, struct file *file)
 
 	mutex_destroy(&user->lock);
 	kfree(user);
+
+	userinfo_event_store.stage = USERINFO_EVENT_STOPPED;
 	return 0;
 }
 
