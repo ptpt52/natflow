@@ -68,19 +68,7 @@ void natflow_update_magic(int init)
 #ifdef CONFIG_NETFILTER_INGRESS
 static natflow_fastnat_node_t *natflow_fast_nat_table = NULL;
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
-#if defined(NATFLOW_OFFLOAD_HWNAT_FAKE)
-#else
-typedef struct flow_offload flow_offload_t;
-typedef struct flow_offload_tuple flow_offload_tuple_t;
-typedef struct flow_offload_hw_path flow_offload_hw_path_t;
-typedef enum flow_offload_type flow_offload_type_t;
-#endif
-struct natflow_offload {
-	flow_offload_t flow;
-};
-
-void natflow_update_ct_timeout(struct nf_conn *ct, unsigned long extra_jiffies)
+static inline void natflow_update_ct_timeout(struct nf_conn *ct, unsigned long extra_jiffies)
 {
 	if (!nf_ct_is_confirmed(ct)) {
 		/* nothing to do */
@@ -97,7 +85,7 @@ void natflow_update_ct_timeout(struct nf_conn *ct, unsigned long extra_jiffies)
 	}
 }
 
-static void natflow_offload_keepalive(unsigned int hash, unsigned long long bytes, unsigned long long packets)
+static inline void natflow_offload_keepalive(unsigned int hash, unsigned long long bytes, unsigned long long packets, unsigned int *speed_bytes, unsigned int *speed_packets)
 {
 	struct nf_conn_acct *acct;
 	natflow_fastnat_node_t *nfn;
@@ -165,6 +153,7 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long long byte
 			}
 			do {
 				natflow_fakeuser_t *user;
+				struct fakeuser_data_t *fud;
 				user = natflow_user_get(ct);
 				if (NULL == user) {
 					break;
@@ -181,6 +170,60 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long long byte
 					atomic64_add(packets, &counter[d].packets);
 					atomic64_add(bytes, &counter[d].bytes);
 				}
+				fud = natflow_fakeuser_data(user);
+				if (d == 0) {
+					int i = (current_jiffies/HZ) % 8;
+					int j = (fud->rx_speed_jiffies/HZ) % 8;
+					int diff = 0;
+					diff_jiffies = ulongmindiff(current_jiffies, fud->rx_speed_jiffies);
+					fud->rx_speed_jiffies = current_jiffies;
+					if (diff_jiffies >= HZ * 8) {
+						for(j = 0; j < 8; j++) {
+							fud->rx_speed_bytes[j] = 0;
+							fud->rx_speed_packets[j] = 0;
+						}
+						j = i;
+					}
+					for (; j != i; ) {
+						diff++;
+						j = (j + 1) % 8;
+						fud->rx_speed_bytes[j] = speed_bytes[j];
+						fud->rx_speed_packets[j] = speed_packets[j];
+						speed_bytes[j] = speed_packets[j] = 0;
+					}
+					for (; diff < 8; diff++) {
+						j = (j + 1) % 8;
+						fud->rx_speed_bytes[j] += speed_bytes[j];
+						fud->rx_speed_packets[j] += speed_packets[j];
+						speed_bytes[j] = speed_packets[j] = 0;
+					}
+				} else {
+					int i = (current_jiffies/HZ) % 8;
+					int j = (fud->tx_speed_jiffies/HZ) % 8;
+					int diff = 0;
+					diff_jiffies = ulongmindiff(current_jiffies, fud->tx_speed_jiffies);
+					fud->tx_speed_jiffies = current_jiffies;
+					if (diff_jiffies >= HZ * 8) {
+						for(j = 0; j < 8; j++) {
+							fud->tx_speed_bytes[j] = 0;
+							fud->tx_speed_packets[j] = 0;
+						}
+						j = i;
+					}
+					for (; j != i; ) {
+						diff++;
+						j = (j + 1) % 8;
+						fud->tx_speed_bytes[j] = speed_bytes[j];
+						fud->tx_speed_packets[j] = speed_packets[j];
+						speed_bytes[j] = speed_packets[j] = 0;
+					}
+					for (; diff < 8; diff++) {
+						j = (j + 1) % 8;
+						fud->tx_speed_bytes[j] += speed_bytes[j];
+						fud->tx_speed_packets[j] += speed_packets[j];
+						speed_bytes[j] = speed_packets[j] = 0;
+					}
+				}
 			} while (0);
 			nf_ct_put(ct);
 			return;
@@ -189,6 +232,18 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long long byte
 	}
 	NATFLOW_WARN("do not keep alive\n");
 }
+
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if defined(NATFLOW_OFFLOAD_HWNAT_FAKE)
+#else
+typedef struct flow_offload flow_offload_t;
+typedef struct flow_offload_tuple flow_offload_tuple_t;
+typedef struct flow_offload_hw_path flow_offload_hw_path_t;
+typedef enum flow_offload_type flow_offload_type_t;
+#endif
+struct natflow_offload {
+	flow_offload_t flow;
+};
 
 static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow_t *nf)
 {
