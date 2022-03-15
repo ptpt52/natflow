@@ -853,23 +853,61 @@ static unsigned int natflow_user_pre_hook(void *priv,
 					user_i->rx_bytes = atomic64_read(&acct->counter[0].bytes);
 					user_i->tx_packets = atomic64_read(&acct->counter[1].packets);
 					user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
-					user_i->rx_speed_packets = (fud->rx_speed_packets[0] + fud->rx_speed_packets[1] + \
-					                            fud->rx_speed_packets[2] + fud->rx_speed_packets[3] + \
-					                            fud->rx_speed_packets[4] + fud->rx_speed_packets[5] + \
-					                            fud->rx_speed_packets[6] + fud->rx_speed_packets[7]) / 8;
-					user_i->rx_speed_bytes = (fud->rx_speed_bytes[0] + fud->rx_speed_bytes[1] + \
-					                          fud->rx_speed_bytes[2] + fud->rx_speed_bytes[3] + \
-					                          fud->rx_speed_bytes[4] + fud->rx_speed_bytes[5] + \
-					                          fud->rx_speed_bytes[6] + fud->rx_speed_bytes[7]) / 8;
-					user_i->tx_speed_packets = (fud->tx_speed_packets[0] + fud->tx_speed_packets[1] + \
-					                            fud->tx_speed_packets[2] + fud->tx_speed_packets[3] + \
-					                            fud->tx_speed_packets[4] + fud->tx_speed_packets[5] + \
-					                            fud->tx_speed_packets[6] + fud->tx_speed_packets[7]) / 8;
-					user_i->tx_speed_bytes = (fud->tx_speed_bytes[0] + fud->tx_speed_bytes[1] + \
-					                          fud->tx_speed_bytes[2] + fud->tx_speed_bytes[3] + \
-					                          fud->tx_speed_bytes[4] + fud->tx_speed_bytes[5] + \
-					                          fud->tx_speed_bytes[6] + fud->tx_speed_bytes[7]) / 8;
 
+					do {
+						int y = (fud->rx_speed_jiffies/HZ) % 8;
+						int x = (y + 1) % 8;
+						unsigned long diff = ulongmindiff(jiffies, fud->rx_speed_jiffies);
+						int cnt;
+						if (diff >= HZ * 8) {
+							user_i->rx_speed_packets = 0;
+							user_i->rx_speed_bytes = 0;
+						} else {
+							cnt = (diff / HZ) % 8;
+							user_i->rx_speed_packets = fud->rx_speed_packets[y];
+							user_i->rx_speed_bytes = fud->rx_speed_bytes[y];
+							for (; cnt > 0; cnt--) {
+								x = (x + 1) % 8;
+							}
+							cnt = 1;
+							for (; x != y; x = (x + 1) % 8) {
+								cnt++;
+								user_i->rx_speed_packets += fud->rx_speed_packets[x];
+								user_i->rx_speed_bytes += fud->rx_speed_bytes[x];
+							}
+							if (cnt > 1) {
+								user_i->rx_speed_packets /= cnt;
+								user_i->rx_speed_bytes /= cnt;
+							}
+						}
+					} while (0);
+					do {
+						int y = (fud->tx_speed_jiffies/HZ) % 8;
+						int x = (y + 1) % 8;
+						unsigned long diff = ulongmindiff(jiffies, fud->tx_speed_jiffies);
+						int cnt;
+						if (diff >= HZ * 8) {
+							user_i->tx_speed_packets = 0;
+							user_i->tx_speed_bytes = 0;
+						} else {
+							cnt = (diff / HZ) % 8;
+							user_i->tx_speed_packets = fud->tx_speed_packets[y];
+							user_i->tx_speed_bytes = fud->tx_speed_bytes[y];
+							for (; cnt > 0; cnt--) {
+								x = (x + 1) % 8;
+							}
+							cnt = 1;
+							for (; x != y; x = (x + 1) % 8) {
+								cnt++;
+								user_i->tx_speed_packets += fud->tx_speed_packets[x];
+								user_i->tx_speed_bytes += fud->tx_speed_bytes[x];
+							}
+							if (cnt > 1) {
+								user_i->tx_speed_packets /= cnt;
+								user_i->tx_speed_bytes /= cnt;
+							}
+						}
+					} while (0);
 					spin_lock(&userinfo_event_store.lock);
 					list_add_tail(&user_i->list, &userinfo_event_store.head);
 					spin_unlock(&userinfo_event_store.lock);
@@ -1898,22 +1936,61 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 					user_i->rx_bytes = atomic64_read(&acct->counter[0].bytes);
 					user_i->tx_packets = atomic64_read(&acct->counter[1].packets);
 					user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
-					user_i->rx_speed_packets = (fud->rx_speed_packets[0] + fud->rx_speed_packets[1] + \
-					                            fud->rx_speed_packets[2] + fud->rx_speed_packets[3] + \
-					                            fud->rx_speed_packets[4] + fud->rx_speed_packets[5] + \
-					                            fud->rx_speed_packets[6] + fud->rx_speed_packets[7]) / 8;
-					user_i->rx_speed_bytes = (fud->rx_speed_bytes[0] + fud->rx_speed_bytes[1] + \
-					                          fud->rx_speed_bytes[2] + fud->rx_speed_bytes[3] + \
-					                          fud->rx_speed_bytes[4] + fud->rx_speed_bytes[5] + \
-					                          fud->rx_speed_bytes[6] + fud->rx_speed_bytes[7]) / 8;
-					user_i->tx_speed_packets = (fud->tx_speed_packets[0] + fud->tx_speed_packets[1] + \
-					                            fud->tx_speed_packets[2] + fud->tx_speed_packets[3] + \
-					                            fud->tx_speed_packets[4] + fud->tx_speed_packets[5] + \
-					                            fud->tx_speed_packets[6] + fud->tx_speed_packets[7]) / 8;
-					user_i->tx_speed_bytes = (fud->tx_speed_bytes[0] + fud->tx_speed_bytes[1] + \
-					                          fud->tx_speed_bytes[2] + fud->tx_speed_bytes[3] + \
-					                          fud->tx_speed_bytes[4] + fud->tx_speed_bytes[5] + \
-					                          fud->tx_speed_bytes[6] + fud->tx_speed_bytes[7]) / 8;
+
+					do {
+						int y = (fud->rx_speed_jiffies/HZ) % 8;
+						int x = (y + 1) % 8;
+						unsigned long diff = ulongmindiff(jiffies, fud->rx_speed_jiffies);
+						int cnt;
+						if (diff >= HZ * 8) {
+							user_i->rx_speed_packets = 0;
+							user_i->rx_speed_bytes = 0;
+						} else {
+							cnt = (diff / HZ) % 8;
+							user_i->rx_speed_packets = fud->rx_speed_packets[y];
+							user_i->rx_speed_bytes = fud->rx_speed_bytes[y];
+							for (; cnt > 0; cnt--) {
+								x = (x + 1) % 8;
+							}
+							cnt = 1;
+							for (; x != y; x = (x + 1) % 8) {
+								cnt++;
+								user_i->rx_speed_packets += fud->rx_speed_packets[x];
+								user_i->rx_speed_bytes += fud->rx_speed_bytes[x];
+							}
+							if (cnt > 1) {
+								user_i->rx_speed_packets /= cnt;
+								user_i->rx_speed_bytes /= cnt;
+							}
+						}
+					} while (0);
+					do {
+						int y = (fud->tx_speed_jiffies/HZ) % 8;
+						int x = (y + 1) % 8;
+						unsigned long diff = ulongmindiff(jiffies, fud->tx_speed_jiffies);
+						int cnt;
+						if (diff >= HZ * 8) {
+							user_i->tx_speed_packets = 0;
+							user_i->tx_speed_bytes = 0;
+						} else {
+							cnt = (diff / HZ) % 8;
+							user_i->tx_speed_packets = fud->tx_speed_packets[y];
+							user_i->tx_speed_bytes = fud->tx_speed_bytes[y];
+							for (; cnt > 0; cnt--) {
+								x = (x + 1) % 8;
+							}
+							cnt = 1;
+							for (; x != y; x = (x + 1) % 8) {
+								cnt++;
+								user_i->tx_speed_packets += fud->tx_speed_packets[x];
+								user_i->tx_speed_bytes += fud->tx_speed_bytes[x];
+							}
+							if (cnt > 1) {
+								user_i->tx_speed_packets /= cnt;
+								user_i->tx_speed_bytes /= cnt;
+							}
+						}
+					} while (0);
 					list_add_tail(&user_i->list, &user->head);
 					user->count++;
 				}
