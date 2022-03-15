@@ -54,6 +54,10 @@ struct userinfo {
 	unsigned long long rx_bytes;
 	unsigned long long tx_packets;
 	unsigned long long tx_bytes;
+	unsigned int rx_speed_packets;
+	unsigned int rx_speed_bytes;
+	unsigned int tx_speed_packets;
+	unsigned int tx_speed_bytes;
 };
 
 struct userinfo_event {
@@ -849,6 +853,22 @@ static unsigned int natflow_user_pre_hook(void *priv,
 					user_i->rx_bytes = atomic64_read(&acct->counter[0].bytes);
 					user_i->tx_packets = atomic64_read(&acct->counter[1].packets);
 					user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
+					user_i->rx_speed_packets = (fud->rx_speed_packets[0] + fud->rx_speed_packets[1] + \
+					                            fud->rx_speed_packets[2] + fud->rx_speed_packets[3] + \
+					                            fud->rx_speed_packets[4] + fud->rx_speed_packets[5] + \
+					                            fud->rx_speed_packets[6] + fud->rx_speed_packets[7]) / 8;
+					user_i->rx_speed_bytes = (fud->rx_speed_bytes[0] + fud->rx_speed_bytes[1] + \
+					                          fud->rx_speed_bytes[2] + fud->rx_speed_bytes[3] + \
+					                          fud->rx_speed_bytes[4] + fud->rx_speed_bytes[5] + \
+					                          fud->rx_speed_bytes[6] + fud->rx_speed_bytes[7]) / 8;
+					user_i->tx_speed_packets = (fud->tx_speed_packets[0] + fud->tx_speed_packets[1] + \
+					                            fud->tx_speed_packets[2] + fud->tx_speed_packets[3] + \
+					                            fud->tx_speed_packets[4] + fud->tx_speed_packets[5] + \
+					                            fud->tx_speed_packets[6] + fud->tx_speed_packets[7]) / 8;
+					user_i->tx_speed_bytes = (fud->tx_speed_bytes[0] + fud->tx_speed_bytes[1] + \
+					                          fud->tx_speed_bytes[2] + fud->tx_speed_bytes[3] + \
+					                          fud->tx_speed_bytes[4] + fud->tx_speed_bytes[5] + \
+					                          fud->tx_speed_bytes[6] + fud->tx_speed_bytes[7]) / 8;
 
 					spin_lock(&userinfo_event_store.lock);
 					list_add_tail(&user_i->list, &userinfo_event_store.head);
@@ -1150,15 +1170,56 @@ static unsigned int natflow_user_post_hook(void *priv,
 	acct = nf_conn_acct_find(user);
 	if (acct) {
 		struct nf_conn_counter *counter = acct->counter;
+		struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 		if (natflow_is_lan_zone(out)
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
 		        || (br_out && natflow_is_lan_zone(br_out))
 #endif
 		   ) {
+			int i = (jiffies/HZ) % 8;
+			int j = (fud->rx_speed_jiffies/HZ) % 8;
+			//int diff = 0;
+			unsigned long diff_jiffies = ulongmindiff(jiffies, fud->rx_speed_jiffies);
+			fud->rx_speed_jiffies = jiffies;
+			if (diff_jiffies >= HZ * 8) {
+				for(j = 0; j < 8; j++) {
+					fud->rx_speed_bytes[j] = 0;
+					fud->rx_speed_packets[j] = 0;
+				}
+				j = i;
+			}
+			for (; j != i; ) {
+				//diff++;
+				j = (j + 1) % 8;
+				fud->rx_speed_bytes[j] = 0;
+				fud->rx_speed_packets[j] = 0;
+			}
+			fud->rx_speed_packets[j] += 1;
+			fud->rx_speed_bytes[j] += skb->len;
 			//download
 			atomic64_inc(&counter[0].packets);
 			atomic64_add(skb->len, &counter[0].bytes);
 		} else {
+			int i = (jiffies/HZ) % 8;
+			int j = (fud->tx_speed_jiffies/HZ) % 8;
+			//int diff = 0;
+			unsigned long diff_jiffies = ulongmindiff(jiffies, fud->tx_speed_jiffies);
+			fud->tx_speed_jiffies = jiffies;
+			if (diff_jiffies >= HZ * 8) {
+				for(j = 0; j < 8; j++) {
+					fud->tx_speed_bytes[j] = 0;
+					fud->tx_speed_packets[j] = 0;
+				}
+				j = i;
+			}
+			for (; j != i; ) {
+				//diff++;
+				j = (j + 1) % 8;
+				fud->tx_speed_bytes[j] = 0;
+				fud->tx_speed_packets[j] = 0;
+			}
+			fud->tx_speed_packets[j] += 1;
+			fud->tx_speed_bytes[j] += skb->len;
 			//upload
 			atomic64_inc(&counter[1].packets);
 			atomic64_add(skb->len, &counter[1].bytes);
@@ -1837,6 +1898,22 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 					user_i->rx_bytes = atomic64_read(&acct->counter[0].bytes);
 					user_i->tx_packets = atomic64_read(&acct->counter[1].packets);
 					user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
+					user_i->rx_speed_packets = (fud->rx_speed_packets[0] + fud->rx_speed_packets[1] + \
+					                            fud->rx_speed_packets[2] + fud->rx_speed_packets[3] + \
+					                            fud->rx_speed_packets[4] + fud->rx_speed_packets[5] + \
+					                            fud->rx_speed_packets[6] + fud->rx_speed_packets[7]) / 8;
+					user_i->rx_speed_bytes = (fud->rx_speed_bytes[0] + fud->rx_speed_bytes[1] + \
+					                          fud->rx_speed_bytes[2] + fud->rx_speed_bytes[3] + \
+					                          fud->rx_speed_bytes[4] + fud->rx_speed_bytes[5] + \
+					                          fud->rx_speed_bytes[6] + fud->rx_speed_bytes[7]) / 8;
+					user_i->tx_speed_packets = (fud->tx_speed_packets[0] + fud->tx_speed_packets[1] + \
+					                            fud->tx_speed_packets[2] + fud->tx_speed_packets[3] + \
+					                            fud->tx_speed_packets[4] + fud->tx_speed_packets[5] + \
+					                            fud->tx_speed_packets[6] + fud->tx_speed_packets[7]) / 8;
+					user_i->tx_speed_bytes = (fud->tx_speed_bytes[0] + fud->tx_speed_bytes[1] + \
+					                          fud->tx_speed_bytes[2] + fud->tx_speed_bytes[3] + \
+					                          fud->tx_speed_bytes[4] + fud->tx_speed_bytes[5] + \
+					                          fud->tx_speed_bytes[6] + fud->tx_speed_bytes[7]) / 8;
 					list_add_tail(&user_i->list, &user->head);
 					user->count++;
 				}
@@ -1856,10 +1933,11 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 
 	user_i = list_first_entry_or_null(&user->head, struct userinfo, list);
 	if (user_i) {
-		len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu\n",
+		len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
 		              &user_i->ip, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
 		              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
-		              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes);
+		              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
+		              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
 		if (len > count) {
 			ret = -EINVAL;
 			goto out;
@@ -2009,7 +2087,7 @@ static ssize_t userinfo_event_write(struct file *file, const char __user *buf, s
 	return -ENOSYS;
 }
 static ssize_t userinfo_event_read(struct file *file, char __user *buf,
-                             size_t count, loff_t *ppos)
+                                   size_t count, loff_t *ppos)
 {
 	size_t len;
 	ssize_t ret = 0;
@@ -2045,10 +2123,11 @@ static ssize_t userinfo_event_read(struct file *file, char __user *buf,
 
 	user_i = list_first_entry_or_null(&user->head, struct userinfo, list);
 	if (user_i) {
-		len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu\n",
+		len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
 		              &user_i->ip, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
 		              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
-		              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes);
+		              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
+		              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
 		if (len > count) {
 			ret = -EINVAL;
 			goto out;
