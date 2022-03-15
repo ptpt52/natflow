@@ -170,6 +170,9 @@ static inline void natflow_offload_keepalive(unsigned int hash, unsigned long lo
 					atomic64_add(packets, &counter[d].packets);
 					atomic64_add(bytes, &counter[d].bytes);
 				}
+				if (!speed_bytes) {
+					break;
+				}
 				fud = natflow_fakeuser_data(user);
 				if (d == 0) {
 					int i = (current_jiffies/HZ) % 4;
