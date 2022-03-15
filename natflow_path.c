@@ -172,13 +172,13 @@ static inline void natflow_offload_keepalive(unsigned int hash, unsigned long lo
 				}
 				fud = natflow_fakeuser_data(user);
 				if (d == 0) {
-					int i = (current_jiffies/HZ) % 8;
-					int j = (fud->rx_speed_jiffies/HZ) % 8;
+					int i = (current_jiffies/HZ) % 4;
+					int j = (fud->rx_speed_jiffies/HZ) % 4;
 					int diff = 0;
 					diff_jiffies = ulongmindiff(current_jiffies, fud->rx_speed_jiffies);
 					fud->rx_speed_jiffies = current_jiffies;
-					if (diff_jiffies >= HZ * 8) {
-						for(j = 0; j < 8; j++) {
+					if (diff_jiffies >= HZ * 4) {
+						for(j = 0; j < 4; j++) {
 							fud->rx_speed_bytes[j] = 0;
 							fud->rx_speed_packets[j] = 0;
 						}
@@ -186,25 +186,25 @@ static inline void natflow_offload_keepalive(unsigned int hash, unsigned long lo
 					}
 					for (; j != i; ) {
 						diff++;
-						j = (j + 1) % 8;
+						j = (j + 1) % 4;
 						fud->rx_speed_bytes[j] = speed_bytes[j];
 						fud->rx_speed_packets[j] = speed_packets[j];
 						speed_bytes[j] = speed_packets[j] = 0;
 					}
-					for (; diff < 8; diff++) {
-						j = (j + 1) % 8;
+					for (; diff < 4; diff++) {
+						j = (j + 1) % 4;
 						fud->rx_speed_bytes[j] += speed_bytes[j];
 						fud->rx_speed_packets[j] += speed_packets[j];
 						speed_bytes[j] = speed_packets[j] = 0;
 					}
 				} else {
-					int i = (current_jiffies/HZ) % 8;
-					int j = (fud->tx_speed_jiffies/HZ) % 8;
+					int i = (current_jiffies/HZ) % 4;
+					int j = (fud->tx_speed_jiffies/HZ) % 4;
 					int diff = 0;
 					diff_jiffies = ulongmindiff(current_jiffies, fud->tx_speed_jiffies);
 					fud->tx_speed_jiffies = current_jiffies;
-					if (diff_jiffies >= HZ * 8) {
-						for(j = 0; j < 8; j++) {
+					if (diff_jiffies >= HZ * 4) {
+						for(j = 0; j < 4; j++) {
 							fud->tx_speed_bytes[j] = 0;
 							fud->tx_speed_packets[j] = 0;
 						}
@@ -212,13 +212,13 @@ static inline void natflow_offload_keepalive(unsigned int hash, unsigned long lo
 					}
 					for (; j != i; ) {
 						diff++;
-						j = (j + 1) % 8;
+						j = (j + 1) % 4;
 						fud->tx_speed_bytes[j] = speed_bytes[j];
 						fud->tx_speed_packets[j] = speed_packets[j];
 						speed_bytes[j] = speed_packets[j] = 0;
 					}
-					for (; diff < 8; diff++) {
-						j = (j + 1) % 8;
+					for (; diff < 4; diff++) {
+						j = (j + 1) % 4;
 						fud->tx_speed_bytes[j] += speed_bytes[j];
 						fud->tx_speed_packets[j] += speed_packets[j];
 						speed_bytes[j] = speed_packets[j] = 0;
