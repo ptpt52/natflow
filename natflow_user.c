@@ -855,9 +855,9 @@ static unsigned int natflow_user_pre_hook(void *priv,
 					user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
 
 					do {
-						int x = (jiffies/HZ) % 4;
+						int x = (fud->rx_speed_jiffies/HZ) % 4;
 						unsigned long diff = ulongmindiff(jiffies, fud->rx_speed_jiffies);
-						if (diff >= HZ * 2) {
+						if (diff > HZ * 4) {
 							user_i->rx_speed_packets = 0;
 							user_i->rx_speed_bytes = 0;
 						} else {
@@ -866,9 +866,9 @@ static unsigned int natflow_user_pre_hook(void *priv,
 							user_i->rx_speed_bytes = fud->rx_speed_bytes[x];
 						}
 
-						x = (jiffies/HZ) % 4;
+						x = (fud->rx_speed_jiffies/HZ) % 4;
 						diff = ulongmindiff(jiffies, fud->tx_speed_jiffies);
-						if (diff >= HZ * 2) {
+						if (diff > HZ * 4) {
 							user_i->tx_speed_packets = 0;
 							user_i->tx_speed_bytes = 0;
 						} else {
@@ -1903,9 +1903,9 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 					user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
 
 					do {
-						int x = (jiffies/HZ) % 4;
+						int x = (fud->rx_speed_jiffies/HZ) % 4;
 						unsigned long diff = ulongmindiff(jiffies, fud->rx_speed_jiffies);
-						if (diff >= HZ * 2) {
+						if (diff > HZ * 4) {
 							user_i->rx_speed_packets = 0;
 							user_i->rx_speed_bytes = 0;
 						} else {
@@ -1914,9 +1914,9 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 							user_i->rx_speed_bytes = fud->rx_speed_bytes[x];
 						}
 
-						x = (jiffies/HZ) % 4;
+						x = (fud->rx_speed_jiffies/HZ) % 4;
 						diff = ulongmindiff(jiffies, fud->tx_speed_jiffies);
-						if (diff >= HZ * 2) {
+						if (diff > HZ * 4) {
 							user_i->tx_speed_packets = 0;
 							user_i->tx_speed_bytes = 0;
 						} else {
