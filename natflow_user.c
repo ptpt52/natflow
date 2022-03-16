@@ -237,7 +237,7 @@ void natflow_user_put(natflow_fakeuser_t *user)
 	nf_ct_put(user);
 }
 
-natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
+natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 {
 	natflow_fakeuser_t *user = NULL;
 
@@ -286,7 +286,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct)
 		iph = ip_hdr(uskb);
 		iph->version = 4;
 		iph->ihl = 5;
-		iph->saddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+		iph->saddr = ct->tuplehash[dir].tuple.src.u3.ip;
 		iph->daddr = NATFLOW_FAKEUSER_DADDR;
 		iph->tos = 0;
 		iph->tot_len = htons(NATFLOW_USKB_SIZE);
@@ -764,7 +764,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		return NF_ACCEPT;
 	}
 
-	user = natflow_user_in(ct);
+	user = natflow_user_in(ct, IP_CT_DIR_ORIGINAL);
 	if (NULL == user) {
 		return NF_ACCEPT;
 	}
@@ -1171,7 +1171,22 @@ static unsigned int natflow_user_post_hook(void *priv,
 
 	user = natflow_user_get(ct);
 	if (NULL == user) {
-		return NF_ACCEPT;
+		/* XXX: no user found, maybe connection from wan to lan */
+		if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL) {
+			return NF_ACCEPT;
+		}
+		if (!natflow_is_lan_zone(out)
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+		        && (br_out == NULL || !natflow_is_lan_zone(br_out))
+#endif
+		   ) {
+			return NF_ACCEPT;
+		}
+
+		user = natflow_user_in(ct, IP_CT_DIR_REPLY);
+		if (NULL == user) {
+			return NF_ACCEPT;
+		}
 	}
 
 	acct = nf_conn_acct_find(user);
