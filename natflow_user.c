@@ -747,7 +747,11 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	if ((ct->status & IPS_NATFLOW_USER_BYPASS)) {
 		return NF_ACCEPT;
 	}
-	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL || ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip == 0) {
+	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL ||
+	        ipv4_is_zeronet(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
+	        ipv4_is_loopback(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
+	        ipv4_is_multicast(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
+	        ipv4_is_lbcast(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip)) {
 		return NF_ACCEPT;
 	}
 
@@ -1172,7 +1176,11 @@ static unsigned int natflow_user_post_hook(void *priv,
 	user = natflow_user_get(ct);
 	if (NULL == user) {
 		/* XXX: no user found, maybe connection from wan to lan */
-		if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL) {
+		if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL ||
+		        ipv4_is_zeronet(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip) ||
+		        ipv4_is_loopback(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip) ||
+		        ipv4_is_multicast(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip) ||
+		        ipv4_is_lbcast(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip)) {
 			return NF_ACCEPT;
 		}
 		if (!natflow_is_lan_zone(out)
