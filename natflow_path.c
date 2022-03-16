@@ -158,10 +158,8 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 				if (NULL == user) {
 					break;
 				}
-				if (ct->master == user) {
-					d = (d == 0) ? 0 : 1;
-				} else {
-					d = (d == 1) ? 0 : 1;
+				if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+					d = !d;
 				}
 
 				acct = nf_conn_acct_find(user);
