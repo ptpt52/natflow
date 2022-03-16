@@ -136,8 +136,14 @@ static inline unsigned char ucharmindiff(unsigned char a, unsigned char b)
 typedef struct natflow_fastnat_node_t natflow_fastnat_node_t;
 
 struct natflow_fastnat_node_t {
-	struct net_device *outdev;
-	unsigned long jiffies;
+	union {
+		struct net_device *outdev;
+		unsigned int _pad0[2];
+	};
+	union {
+		unsigned long jiffies;
+		unsigned int _pad1[2];
+	};
 	unsigned int magic;
 #define FASTNAT_EXT_HWNAT_FLAG 0x01
 #define FASTNAT_PPPOE_FLAG 0x02
@@ -159,11 +165,19 @@ struct natflow_fastnat_node_t {
 	u16 ifindex;
 	unsigned char h_dest[ETH_ALEN];
 	__be16 pppoe_sid;
+	/* XXX: -- 64 bytes above -- */
+	struct nf_conn *cache_ct;
+	unsigned long status;
+	unsigned int flow_bytes;
+	unsigned int flow_packets;
+	unsigned int speed_bytes[4];
+	unsigned int speed_packets[4];
+	unsigned long speed_jiffies;
 } __attribute__((__aligned__(SMP_CACHE_BYTES)));
 
 #define NATFLOW_FF_TIMEOUT_HIGH (30 * HZ)
 #define NATFLOW_FF_TIMEOUT_LOW (25 * HZ)
-#define NATFLOW_FF_SAMPLE_TIME 5
+#define NATFLOW_FF_SAMPLE_TIME 2
 
 /* MAX 65536 for now we use 2048 */
 #if defined(CONFIG_64BIT) || defined(CONFIG_X86) || defined(CONFIG_X86_64) || defined(CONFIG_ARM) || defined(CONFIG_ARM64)

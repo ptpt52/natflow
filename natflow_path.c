@@ -85,7 +85,7 @@ static inline void natflow_update_ct_timeout(struct nf_conn *ct, unsigned long e
 	}
 }
 
-static inline void natflow_offload_keepalive(unsigned int hash, unsigned long long bytes, unsigned long long packets, unsigned int *speed_bytes, unsigned int *speed_packets)
+static void natflow_offload_keepalive(unsigned int hash, unsigned long long bytes, unsigned long long packets, unsigned int *speed_bytes, unsigned int *speed_packets)
 {
 	struct nf_conn_acct *acct;
 	natflow_fastnat_node_t *nfn;
@@ -169,6 +169,7 @@ static inline void natflow_offload_keepalive(unsigned int hash, unsigned long lo
 					struct nf_conn_counter *counter = acct->counter;
 					atomic64_add(packets, &counter[d].packets);
 					atomic64_add(bytes, &counter[d].bytes);
+					//printk("hash=%u add bytes=%llu packets=%llu, b=%llu p=%llu\n", hash, bytes, packets, atomic64_read(&counter[d].bytes), atomic64_read(&counter[d].packets));
 				}
 				if (!speed_bytes) {
 					break;
@@ -436,6 +437,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (pf == NFPROTO_NETDEV) {
 		u32 _I;
+		u32 hash;
 		natflow_fastnat_node_t *nfn;
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
@@ -535,6 +537,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				_I += 1;
 				nfn = &natflow_fast_nat_table[_I];
 			}
+			hash = _I;
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 			if (nfn->magic == natflow_path_magic &&
 			        nfn->saddr == iph->saddr && nfn->daddr == iph->daddr &&
@@ -562,9 +565,30 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					goto out;
 				}
 
+				do {
+					_I = (jiffies / HZ) % 4;
+					nfn->speed_bytes[_I] += skb->len;
+					nfn->speed_packets[_I] += 1;
+					nfn->flow_bytes += skb->len;
+					nfn->flow_packets += 1;
+					_I = (_I + 1) % 4;
+					if (nfn->speed_bytes[_I] != 0) {
+						nfn->speed_bytes[_I] = 0;
+						nfn->speed_packets[_I] = 0;
+					}
+					nfn->speed_jiffies = jiffies;
+				} while (0);
+
 				/* sample up to slow path every 5s */
-				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME) {
+				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
+					unsigned long bytes = nfn->flow_bytes;
+					unsigned long packets = nfn->flow_packets;
 					nfn->count = (nfn->jiffies / HZ) & 0xff;
+					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets);
+					nfn->flow_bytes -= bytes;
+					nfn->flow_packets -= packets;
+					wmb();
+					clear_bit(0, &nfn->status);
 					goto out;
 				}
 
@@ -923,6 +947,8 @@ fastnat_check:
 								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d use hash=%d\n", DEBUG_UDP_ARG(iph,l4), d, hash);
 								break;
 							}
+
+							memset(nfn, 0, sizeof(*nfn));
 
 							nfn->saddr = saddr;
 							nfn->daddr = daddr;
