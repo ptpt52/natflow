@@ -3,7 +3,7 @@
 
 API: `cat /dev/userinfo_ctl`
 
-OUTPUT: `ip,mac,auth_type,auth_status,rule_id,timeout,rx_pkts:rx_bytes,tx_pkts:tx_bytes`
+OUTPUT: `ip,mac,auth_type,auth_status,rule_id,timeout,rx_pkts:rx_bytes,tx_pkts:tx_bytes,rx_speed_pkts:rx_speed_bytes,tx_speed_pkts:tx_speed_bytes`
 
 define:
 ```
