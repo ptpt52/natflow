@@ -85,7 +85,7 @@ static inline void natflow_update_ct_timeout(struct nf_conn *ct, unsigned long e
 	}
 }
 
-static void natflow_offload_keepalive(unsigned int hash, unsigned long long bytes, unsigned long long packets, unsigned int *speed_bytes, unsigned int *speed_packets)
+static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, unsigned long packets, unsigned int *speed_bytes, unsigned int *speed_packets)
 {
 	struct nf_conn_acct *acct;
 	natflow_fastnat_node_t *nfn;
@@ -169,7 +169,6 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long long byte
 					struct nf_conn_counter *counter = acct->counter;
 					atomic64_add(packets, &counter[d].packets);
 					atomic64_add(bytes, &counter[d].bytes);
-					//printk("hash=%u add bytes=%llu packets=%llu, b=%llu p=%llu\n", hash, bytes, packets, atomic64_read(&counter[d].bytes), atomic64_read(&counter[d].packets));
 				}
 				if (!speed_bytes) {
 					break;
