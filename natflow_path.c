@@ -961,8 +961,14 @@ fastnat_check:
 								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d use hash=%d\n", DEBUG_UDP_ARG(iph,l4), d, hash);
 								break;
 							}
-
-							memset(nfn, 0, sizeof(*nfn));
+							if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH) {
+								nfn->status = 0;
+								nfn->flow_bytes = 0;
+								nfn->flow_packets = 0;
+								memset(nfn->speed_bytes, 0, sizeof(*nfn->speed_bytes) * 4);
+								memset(nfn->speed_packets, 0, sizeof(*nfn->speed_packets) * 4);
+								nfn->speed_jiffies = 0;
+							}
 
 							nfn->saddr = saddr;
 							nfn->daddr = daddr;
