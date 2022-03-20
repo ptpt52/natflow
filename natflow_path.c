@@ -101,7 +101,6 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 		struct nf_conntrack_tuple_hash *h;
 
 		nfn->jiffies = current_jiffies;
-		NATFLOW_INFO("do keep alive[%u]: %pI4:%u->%pI4:%u update jiffies=%u\n", hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)nfn->jiffies);
 
 		memset(&tuple, 0, sizeof(tuple));
 		tuple.src.u3.ip = nfn->saddr;
@@ -124,9 +123,10 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 			__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
 			__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
 
+			NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] ct%d diff_jiffies=%u HZ=%u\n",
+			             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), !d, (unsigned int)diff_jiffies, HZ);
+
 			natflow_update_ct_timeout(ct, diff_jiffies);
-			NATFLOW_INFO("do keep alive update ct%d: %pI4:%u->%pI4:%u diff_jiffies=%u HZ=%u\n",
-			             d, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)diff_jiffies, HZ);
 
 			hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
 			nfn = &natflow_fast_nat_table[hash];
@@ -141,7 +141,8 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 			        nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum) {
 				if (!(nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					nfn->jiffies = current_jiffies;
-					NATFLOW_INFO("do keep alive[%u]: %pI4:%u->%pI4:%u update jiffies=%u\n", hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (int)nfn->jiffies);
+					NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] diff_jiffies=%u\n",
+					             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (unsigned int)diff_jiffies);
 				}
 			}
 
@@ -892,7 +893,7 @@ slow_fastpath:
 		}
 
 		fud = natflow_fakeuser_data(user);
-		if (d == 0){
+		if (d == 0) {
 			int i = (jiffies/HZ) % 4;
 			int j = (fud->rx_speed_jiffies/HZ) % 4;
 			unsigned long diff_jiffies = ulongmindiff(jiffies, fud->rx_speed_jiffies);
@@ -1012,14 +1013,7 @@ fastnat_check:
 						if (!natflow_hash_skip(hash) &&
 						        (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH ||
 						         (nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum))) {
-							switch (iph->protocol) {
-							case IPPROTO_TCP:
-								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d use hash=%d\n", DEBUG_TCP_ARG(iph,l4), d, hash);
-								break;
-							case IPPROTO_UDP:
-								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d use hash=%d\n", DEBUG_UDP_ARG(iph,l4), d, hash);
-								break;
-							}
+
 							if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH) {
 								nfn->status = 0;
 								nfn->flow_bytes = 0;
@@ -1061,6 +1055,15 @@ fastnat_check:
 
 							nfn->magic = natflow_path_magic;
 							nfn->jiffies = jiffies;
+
+							switch (iph->protocol) {
+							case IPPROTO_TCP:
+								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d use hash=%d outdev=%s\n", DEBUG_TCP_ARG(iph,l4), d, hash, nfn->outdev->name);
+								break;
+							case IPPROTO_UDP:
+								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d use hash=%d outdev=%s\n", DEBUG_UDP_ARG(iph,l4), d, hash, nfn->outdev->name);
+								break;
+							}
 						} else {
 							/* mark FF_FAIL so never try FF */
 							simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
