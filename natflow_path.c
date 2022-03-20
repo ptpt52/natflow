@@ -173,11 +173,11 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 				}
 				fud = natflow_fakeuser_data(user);
 				if (d == 0) {
-					int i = (current_jiffies/HZ) % 4;
+					int i = (jiffies/HZ) % 4;
 					int j = (fud->rx_speed_jiffies/HZ) % 4;
 					int diff = 0;
-					diff_jiffies = ulongmindiff(current_jiffies, fud->rx_speed_jiffies);
-					fud->rx_speed_jiffies = current_jiffies;
+					diff_jiffies = ulongmindiff(jiffies, fud->rx_speed_jiffies);
+					fud->rx_speed_jiffies = jiffies;
 					if (diff_jiffies >= HZ * 4) {
 						for(j = 0; j < 4; j++) {
 							fud->rx_speed_bytes[j] = 0;
@@ -199,11 +199,11 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 						speed_bytes[j] = speed_packets[j] = 0;
 					}
 				} else {
-					int i = (current_jiffies/HZ) % 4;
+					int i = (jiffies/HZ) % 4;
 					int j = (fud->tx_speed_jiffies/HZ) % 4;
 					int diff = 0;
-					diff_jiffies = ulongmindiff(current_jiffies, fud->tx_speed_jiffies);
-					fud->tx_speed_jiffies = current_jiffies;
+					diff_jiffies = ulongmindiff(jiffies, fud->tx_speed_jiffies);
+					fud->tx_speed_jiffies = jiffies;
 					if (diff_jiffies >= HZ * 4) {
 						for(j = 0; j < 4; j++) {
 							fud->tx_speed_bytes[j] = 0;
