@@ -562,19 +562,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					goto out;
 				}
 
-				/* sample up to slow path every 5s */
-				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
-					unsigned long bytes = nfn->flow_bytes;
-					unsigned long packets = nfn->flow_packets;
-					nfn->count = (nfn->jiffies / HZ) & 0xff;
-					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets);
-					nfn->flow_bytes -= bytes;
-					nfn->flow_packets -= packets;
-					wmb();
-					clear_bit(0, &nfn->status);
-					goto out;
-				}
-
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					__vlan_hwaccel_clear_tag(skb);
@@ -587,6 +574,18 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					return NF_STOLEN;
 				}
 #endif
+				/* sample up to slow path every 5s */
+				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
+					unsigned long bytes = nfn->flow_bytes;
+					unsigned long packets = nfn->flow_packets;
+					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets);
+					nfn->flow_bytes -= bytes;
+					nfn->flow_packets -= packets;
+					nfn->count = (nfn->jiffies / HZ) & 0xff;
+					wmb();
+					clear_bit(0, &nfn->status);
+					goto out;
+				}
 				do {
 					_I = (jiffies / HZ) % 4;
 					nfn->speed_bytes[_I] += skb->len;
@@ -719,19 +718,6 @@ fast_output:
 					goto out;
 				}
 
-				/* sample up to slow path every 5s */
-				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
-					unsigned long bytes = nfn->flow_bytes;
-					unsigned long packets = nfn->flow_packets;
-					nfn->count = (nfn->jiffies / HZ) & 0xff;
-					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets);
-					nfn->flow_bytes -= bytes;
-					nfn->flow_packets -= packets;
-					wmb();
-					clear_bit(0, &nfn->status);
-					goto out;
-				}
-
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					__vlan_hwaccel_clear_tag(skb);
@@ -744,6 +730,18 @@ fast_output:
 					return NF_STOLEN;
 				}
 #endif
+				/* sample up to slow path every 5s */
+				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
+					unsigned long bytes = nfn->flow_bytes;
+					unsigned long packets = nfn->flow_packets;
+					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets);
+					nfn->flow_bytes -= bytes;
+					nfn->flow_packets -= packets;
+					nfn->count = (nfn->jiffies / HZ) & 0xff;
+					wmb();
+					clear_bit(0, &nfn->status);
+					goto out;
+				}
 				do {
 					_I = (jiffies / HZ) % 4;
 					nfn->speed_bytes[_I] += skb->len;
