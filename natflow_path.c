@@ -161,7 +161,6 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 				if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
 					d = !d;
 				}
-
 				acct = nf_conn_acct_find(user);
 				if (acct) {
 					struct nf_conn_counter *counter = acct->counter;
@@ -873,6 +872,66 @@ slow_fastpath:
 			goto out;
 		}
 	}
+
+	do {
+		int d = !dir;
+		natflow_fakeuser_t *user;
+		struct fakeuser_data_t *fud;
+		user = natflow_user_get(ct);
+		if (NULL == user) {
+			break;
+		}
+		if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+			d = !d;
+		}
+		acct = nf_conn_acct_find(user);
+		if (acct) {
+			struct nf_conn_counter *counter = acct->counter;
+			atomic64_inc(&counter[d].packets);
+			atomic64_add(skb->len, &counter[d].bytes);
+		}
+
+		fud = natflow_fakeuser_data(user);
+		if (d == 0){
+			int i = (jiffies/HZ) % 4;
+			int j = (fud->rx_speed_jiffies/HZ) % 4;
+			unsigned long diff_jiffies = ulongmindiff(jiffies, fud->rx_speed_jiffies);
+			fud->rx_speed_jiffies = jiffies;
+			if (diff_jiffies >= HZ * 4) {
+				for(j = 0; j < 4; j++) {
+					fud->rx_speed_bytes[j] = 0;
+					fud->rx_speed_packets[j] = 0;
+				}
+				j = i;
+			}
+			for (; j != i; ) {
+				j = (j + 1) % 4;
+				fud->rx_speed_bytes[j] = 0;
+				fud->rx_speed_packets[j] = 0;
+			}
+			fud->rx_speed_packets[j] += 1;
+			fud->rx_speed_bytes[j] += skb->len;
+		} else {
+			int i = (jiffies/HZ) % 4;
+			int j = (fud->tx_speed_jiffies/HZ) % 4;
+			unsigned long diff_jiffies = ulongmindiff(jiffies, fud->tx_speed_jiffies);
+			fud->tx_speed_jiffies = jiffies;
+			if (diff_jiffies >= HZ * 4) {
+				for(j = 0; j < 4; j++) {
+					fud->tx_speed_bytes[j] = 0;
+					fud->tx_speed_packets[j] = 0;
+				}
+				j = i;
+			}
+			for (; j != i; ) {
+				j = (j + 1) % 4;
+				fud->tx_speed_bytes[j] = 0;
+				fud->tx_speed_packets[j] = 0;
+			}
+			fud->tx_speed_packets[j] += 1;
+			fud->tx_speed_bytes[j] += skb->len;
+		}
+	} while (0);
 
 	if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
 		switch (iph->protocol) {
