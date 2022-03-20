@@ -575,6 +575,18 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					goto out;
 				}
 
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
+					__vlan_hwaccel_clear_tag(skb);
+					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
+					skb->dev = get_vlan_real_dev(nfn->outdev);
+					skb->vlan_tci = HWNAT_QUEUE_MAPPING_MAGIC;
+					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
+					dev_queue_xmit(skb);
+					/*FIXME what if gso? */
+					return NF_STOLEN;
+				}
+#endif
 				do {
 					_I = (jiffies / HZ) % 4;
 					nfn->speed_bytes[_I] += skb->len;
@@ -588,19 +600,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					}
 					nfn->speed_jiffies = jiffies;
 				} while (0);
-
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
-				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
-					__vlan_hwaccel_clear_tag(skb);
-					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
-					skb->dev = get_vlan_real_dev(nfn->outdev);
-					skb->vlan_tci = HWNAT_QUEUE_MAPPING_MAGIC;
-					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
-					dev_queue_xmit(skb);
-					/*FIXME what if gso? */
-					return NF_STOLEN;
-				}
-#endif
 
 				if (iph->ttl <= 1) {
 					return NF_DROP;
@@ -721,8 +720,15 @@ fast_output:
 				}
 
 				/* sample up to slow path every 5s */
-				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME) {
+				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
+					unsigned long bytes = nfn->flow_bytes;
+					unsigned long packets = nfn->flow_packets;
 					nfn->count = (nfn->jiffies / HZ) & 0xff;
+					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets);
+					nfn->flow_bytes -= bytes;
+					nfn->flow_packets -= packets;
+					wmb();
+					clear_bit(0, &nfn->status);
 					goto out;
 				}
 
@@ -738,6 +744,19 @@ fast_output:
 					return NF_STOLEN;
 				}
 #endif
+				do {
+					_I = (jiffies / HZ) % 4;
+					nfn->speed_bytes[_I] += skb->len;
+					nfn->speed_packets[_I] += 1;
+					nfn->flow_bytes += skb->len;
+					nfn->flow_packets += 1;
+					_I = (_I + 1) % 4;
+					if (nfn->speed_bytes[_I] != 0) {
+						nfn->speed_bytes[_I] = 0;
+						nfn->speed_packets[_I] = 0;
+					}
+					nfn->speed_jiffies = jiffies;
+				} while (0);
 
 				if (iph->ttl <= 1) {
 					return NF_DROP;
