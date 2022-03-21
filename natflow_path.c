@@ -229,9 +229,12 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 			nf_ct_put(ct);
 			return;
 		}
-		NATFLOW_WARN("do not keep alive: ct no found\n");
+		NATFLOW_WARN("keepalive[%u] nfn[%pI4:%u->%pI4:%u] diff_jiffies=%u ct not found\n",
+		             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (unsigned int)diff_jiffies);
+
 	}
-	NATFLOW_WARN("do not keep alive\n");
+	NATFLOW_WARN("keepalive[%u] nfn[%pI4:%u->%pI4:%u] diff_jiffies=%u timeout\n",
+	             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (unsigned int)diff_jiffies);
 }
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
