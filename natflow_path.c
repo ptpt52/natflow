@@ -697,6 +697,7 @@ fast_output:
 				_I += 1;
 				nfn = &natflow_fast_nat_table[_I];
 			}
+			hash = _I;
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 			if (nfn->magic == natflow_path_magic &&
 			        nfn->saddr == iph->saddr && nfn->daddr == iph->daddr &&
