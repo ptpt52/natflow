@@ -20,6 +20,8 @@
 #include <linux/tcp.h>
 #include <linux/udp.h>
 #include <linux/version.h>
+#include <linux/netfilter.h>
+#include <linux/netfilter_bridge.h>
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_extend.h>
@@ -683,6 +685,8 @@ fast_output:
 
 				return NF_STOLEN;
 			}
+			/* for TCP */
+			goto slow_fastpath;
 		} else {
 			if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr)) || skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct udphdr))) {
 				return NF_DROP;
@@ -785,6 +789,8 @@ fast_output:
 
 				goto fast_output;
 			}
+			/* for UDP */
+			goto slow_fastpath;
 		}
 		goto out;
 
