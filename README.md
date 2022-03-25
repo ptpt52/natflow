@@ -24,3 +24,8 @@ To build with path and urllogger module run:
 ```
 make EXTRA_CFLAGS="-DCONFIG_NATFLOW_PATH -DCONFIG_NATFLOW_URLLOGGER"
 ```
+
+To disable hwnat for ext dev, e.g. on MT7622
+```
+make EXTRA_CFLAGS="-DCONFIG_HWNAT_EXTDEV_DISABLED"
+```

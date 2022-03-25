@@ -467,7 +467,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		        (skb->vlan_tci & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC &&
 		        (skb->hash & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC) {
 			_I = (skb->hash & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
-#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED))
 			if (_I == 0) _I = (skb->vlan_tci & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
 #endif
 			nfn = &natflow_fast_nat_table[_I];
@@ -475,7 +475,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 
 			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == natflow_path_magic) {
 				//nfn->jiffies = jiffies; /* we update jiffies in keepalive */
-#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED))
 				__vlan_hwaccel_clear_tag(skb);
 				skb->dev = nfn->outdev;
 #else
@@ -543,7 +543,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		skb->protocol = __constant_htons(ETH_P_IP);
 		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
 
-#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED))
 		/* XXX:
 		 * MT7622 hwnat cannot handle vlan for ext dev
 		 * Route forwarding: all good
@@ -1187,15 +1187,17 @@ fastnat_check:
 									}
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 									if (hwnat) {
+										/* hwnat enabled */
 										if (!(nfn->flags & FASTNAT_NO_ARP) && !(nfn_i->flags & FASTNAT_NO_ARP) &&
 										        !netif_is_bridge_master(nfn->outdev) && !netif_is_bridge_master(nfn_i->outdev)) {
 											struct net_device *orig_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 											struct net_device *reply_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev);
-#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED))
 											__be16 orig_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 											__be16 reply_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_REPLY].outdev);
 #endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0) /* no dsa support before kernel 5.4 in openwrt */
+											/* hwnat ready to go */
 											u16 orig_dsa_port = 0xffff;
 											u16 reply_dsa_port = 0xffff;
 											if (!orig_dev->netdev_ops->ndo_flow_offload && orig_dev->netdev_ops->ndo_flow_offload_check) {
@@ -1222,7 +1224,9 @@ fastnat_check:
 											}
 #endif
 											if (orig_dev->netdev_ops->ndo_flow_offload) {
+												/* xxx: orig_dev has offload api */
 												if (orig_dev == reply_dev || reply_dev->netdev_ops->ndo_flow_offload) {
+													/* xxx: both orig_dev and reply_dev has offload api */
 													struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 													flow_offload_hw_path_t orig = {
 														.dev = orig_dev,
@@ -1242,7 +1246,7 @@ fastnat_check:
 													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
 													memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
-#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED))
 													if (orig_vid > 0) {
 														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
 														orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
@@ -1307,8 +1311,12 @@ fastnat_check:
 															break;
 														}
 													}
-												} else {
-													//reply_dev is ext dev
+													/* end: both orig_dev and reply_dev has offload api */
+												}
+#if defined(CONFIG_HWNAT_EXTDEV_DISABLED)
+												else
+												{
+													/* xxx: olny orig_dev has offload api */
 													struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 													flow_offload_hw_path_t orig = {
 														.dev = orig_dev,
@@ -1326,14 +1334,14 @@ fastnat_check:
 													};
 													/* no vlan for ext dev */
 													reply_dev = nf->rroute[NF_FF_DIR_REPLY].outdev;
-#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED))
 													reply_vid = (natflow->flow.timeout) & 0xffff;
 #endif
 													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
 													memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
-#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED))
 													if (orig_vid > 0) {
 														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
 														orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
@@ -1403,111 +1411,114 @@ fastnat_check:
 															break;
 														}
 													}
+													/* end: olny orig_dev has offload api */
 												}
+												/* end: orig_dev has offload api */
 											} else if (reply_dev->netdev_ops->ndo_flow_offload) {
-												if (reply_dev == orig_dev) {
-													//never happened
-													BUG();
-												} else {
-													//orig_dev is ext dev
-													struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
-													flow_offload_hw_path_t orig = {
-														.dev = orig_dev,
-														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+												/* xxx: only reply_dev has offload api */
+												struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
+												flow_offload_hw_path_t orig = {
+													.dev = orig_dev,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
-														.dsa_port = orig_dsa_port,
+													.dsa_port = orig_dsa_port,
 #endif
-													};
-													flow_offload_hw_path_t reply = {
-														.dev = reply_dev,
-														.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+												};
+												flow_offload_hw_path_t reply = {
+													.dev = reply_dev,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
-														.dsa_port = reply_dsa_port,
+													.dsa_port = reply_dsa_port,
 #endif
-													};
-													/* no vlan for ext dev */
-													orig_dev = nf->rroute[NF_FF_DIR_ORIGINAL].outdev;
-#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
-													orig_vid = (natflow->flow.timeout >> 16) & 0xffff;
+												};
+												/* no vlan for ext dev */
+												orig_dev = nf->rroute[NF_FF_DIR_ORIGINAL].outdev;
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED))
+												orig_vid = (natflow->flow.timeout >> 16) & 0xffff;
 #endif
-													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
-													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
-													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
-													memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
-#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
-													if (reply_vid > 0) {
-														reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
-														reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
-														reply.vlan_id = reply_vid;
-													}
-													/* must set orig_vid */
-													orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
-													orig.vlan_proto = htons(ETH_P_8021Q);
-													orig.vlan_id = orig_vid;
+												memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
+												memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
+												memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
+												memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED))
+												if (reply_vid > 0) {
+													reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+													reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
+													reply.vlan_id = reply_vid;
+												}
+												/* must set orig_vid */
+												orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+												orig.vlan_proto = htons(ETH_P_8021Q);
+												orig.vlan_id = orig_vid;
 #else
-													if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
-														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
-														orig.vlan_proto = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
-														                  htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
-														orig.vlan_id = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci;
-													}
-													if (nf->rroute[NF_FF_DIR_REPLY].vlan_present) {
-														reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
-														reply.vlan_proto = nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
-														                   htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
-														reply.vlan_id = nf->rroute[NF_FF_DIR_REPLY].vlan_tci;
-													}
+												if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
+													orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+													orig.vlan_proto = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
+													                  htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+													orig.vlan_id = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci;
+												}
+												if (nf->rroute[NF_FF_DIR_REPLY].vlan_present) {
+													reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+													reply.vlan_proto = nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
+													                   htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+													reply.vlan_id = nf->rroute[NF_FF_DIR_REPLY].vlan_tci;
+												}
 #endif
-													if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
-														orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
-														orig.pppoe_sid =
-														    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
-													}
-													if (nf->rroute[NF_FF_DIR_REPLY].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
-														reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
-														reply.pppoe_sid =
-														    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
-													}
-													if (reply_dev->netdev_ops->ndo_flow_offload(
-													            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-														NATFLOW_INFO("(PCO) set hwnat offload 1 dev=%s(vlan:%d pppoe:%d)"
-														             " s=%pI4:%u d=%pI4:%u dev=%s(vlan:%d pppoe:%d)"
-														             " s=%pI4:%u d=%pI4:%u\n",
-														             nfn->outdev->name,
-														             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-														             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn->pppoe_sid : -1,
-														             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
-														             nfn_i->outdev->name,
-														             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
-														             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn->pppoe_sid : -1,
-														             &nfn_i->saddr, ntohs(nfn_i->source),
-														             &nfn_i->daddr, ntohs(nfn_i->dest));
-														if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
-															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														} else {
-															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														}
+												if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+													orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+													orig.pppoe_sid =
+													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
+												}
+												if (nf->rroute[NF_FF_DIR_REPLY].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+													reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+													reply.pppoe_sid =
+													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
+												}
+												if (reply_dev->netdev_ops->ndo_flow_offload(
+												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
+													NATFLOW_INFO("(PCO) set hwnat offload 1 dev=%s(vlan:%d pppoe:%d)"
+													             " s=%pI4:%u d=%pI4:%u dev=%s(vlan:%d pppoe:%d)"
+													             " s=%pI4:%u d=%pI4:%u\n",
+													             nfn->outdev->name,
+													             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
+													             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn->pppoe_sid : -1,
+													             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
+													             nfn_i->outdev->name,
+													             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
+													             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn->pppoe_sid : -1,
+													             &nfn_i->saddr, ntohs(nfn_i->source),
+													             &nfn_i->daddr, ntohs(nfn_i->dest));
+													if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
+														nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
 													} else {
-														/* mark FF_FAIL so never try FF */
-														simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
-														switch (iph->protocol) {
-														case IPPROTO_TCP:
-															NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT
-															             ": dir=%d set hwnat offload fail3\n",
-															             DEBUG_TCP_ARG(iph,l4), d);
-															break;
-														case IPPROTO_UDP:
-															NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT
-															             ": dir=%d set hwnat offload fail3\n",
-															             DEBUG_UDP_ARG(iph,l4), d);
-															break;
-														}
+														nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
+													}
+												} else {
+													/* mark FF_FAIL so never try FF */
+													simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
+													switch (iph->protocol) {
+													case IPPROTO_TCP:
+														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT
+														             ": dir=%d set hwnat offload fail3\n",
+														             DEBUG_TCP_ARG(iph,l4), d);
+														break;
+													case IPPROTO_UDP:
+														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT
+														             ": dir=%d set hwnat offload fail3\n",
+														             DEBUG_UDP_ARG(iph,l4), d);
+														break;
 													}
 												}
+												/* end: only reply_dev has offload api */
+#endif /* defined(CONFIG_HWNAT_EXTDEV_DISABLED) */
+											} else {
+												/* neither orig_dev nor reply_dev has offload api */
 											}
+										} else {
+											/* hwnat is not ready to go */
 										}
 									} else {
-										/* hwnat */
+										/* hwnat is not enabled */
 									}
 #endif
 								} else {
@@ -1526,7 +1537,7 @@ fastnat_check:
 					goto fastnat_check;
 				}
 			}
-		}
+		} /* for (d = 0; d < NF_FF_DIR_MAX; d++) */
 	} /* end NF_FF_FAIL */
 #endif
 
