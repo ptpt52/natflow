@@ -467,7 +467,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		        (skb->vlan_tci & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC &&
 		        (skb->hash & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC) {
 			_I = (skb->hash & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
-#if !IS_ENABLED(CONFIG_SOC_MT7621)
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
 			if (_I == 0) _I = (skb->vlan_tci & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
 #endif
 			nfn = &natflow_fast_nat_table[_I];
@@ -475,7 +475,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 
 			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == natflow_path_magic) {
 				//nfn->jiffies = jiffies; /* we update jiffies in keepalive */
-#if !IS_ENABLED(CONFIG_SOC_MT7621)
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
 				__vlan_hwaccel_clear_tag(skb);
 				skb->dev = nfn->outdev;
 #else
@@ -543,7 +543,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		skb->protocol = __constant_htons(ETH_P_IP);
 		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
 
-#if !IS_ENABLED(CONFIG_SOC_MT7621)
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
+		/* XXX:
+		 * MT7622 hwnat cannot handle vlan for ext dev
+		 * Route forwarding: all good
+		 * Bridge forwarding: cannot handle vlan tag packets, pppoe tag is good
+		 */
 		if (skb_vlan_tag_present(skb)) {
 			goto out;
 		}
@@ -1186,7 +1191,7 @@ fastnat_check:
 										        !netif_is_bridge_master(nfn->outdev) && !netif_is_bridge_master(nfn_i->outdev)) {
 											struct net_device *orig_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 											struct net_device *reply_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev);
-#if !IS_ENABLED(CONFIG_SOC_MT7621)
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
 											__be16 orig_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 											__be16 reply_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_REPLY].outdev);
 #endif
@@ -1237,7 +1242,7 @@ fastnat_check:
 													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
 													memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
-#if !IS_ENABLED(CONFIG_SOC_MT7621)
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
 													if (orig_vid > 0) {
 														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
 														orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
@@ -1321,14 +1326,14 @@ fastnat_check:
 													};
 													/* no vlan for ext dev */
 													reply_dev = nf->rroute[NF_FF_DIR_REPLY].outdev;
-#if !IS_ENABLED(CONFIG_SOC_MT7621)
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
 													reply_vid = (natflow->flow.timeout) & 0xffff;
 #endif
 													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
 													memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
-#if !IS_ENABLED(CONFIG_SOC_MT7621)
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
 													if (orig_vid > 0) {
 														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
 														orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
@@ -1422,14 +1427,14 @@ fastnat_check:
 													};
 													/* no vlan for ext dev */
 													orig_dev = nf->rroute[NF_FF_DIR_ORIGINAL].outdev;
-#if !IS_ENABLED(CONFIG_SOC_MT7621)
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
 													orig_vid = (natflow->flow.timeout >> 16) & 0xffff;
 #endif
 													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
 													memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
-#if !IS_ENABLED(CONFIG_SOC_MT7621)
+#if (IS_ENABLED(CONFIG_COMMON_CLK_MT7622) && IS_ENABLED(CONFIG_ARCH_MEDIATEK))
 													if (reply_vid > 0) {
 														reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
 														reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
