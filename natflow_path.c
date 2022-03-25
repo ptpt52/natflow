@@ -1313,7 +1313,7 @@ fastnat_check:
 													}
 													/* end: both orig_dev and reply_dev has offload api */
 												}
-#if defined(CONFIG_HWNAT_EXTDEV_DISABLED)
+#if !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 												else
 												{
 													/* xxx: olny orig_dev has offload api */
@@ -1510,7 +1510,7 @@ fastnat_check:
 													}
 												}
 												/* end: only reply_dev has offload api */
-#endif /* defined(CONFIG_HWNAT_EXTDEV_DISABLED) */
+#endif /* !defined(CONFIG_HWNAT_EXTDEV_DISABLED) */
 											} else {
 												/* neither orig_dev nor reply_dev has offload api */
 											}
