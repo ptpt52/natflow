@@ -14,10 +14,15 @@
 
 typedef struct natflow_route_t {
 	/* max L2 len supoorted
-	 * mac + vlan + pppoe (=14 + 4 + 8)
+	 * mac + pppoe (=14 + 8)
 	 */
-#define NF_L2_MAX_LEN (14 + 4 + 8)
+#define NF_L2_MAX_LEN (14 + 8)
 	unsigned short mtu;
+#define FF_ETH_P_8021Q 0
+#define FF_ETH_P_8021AD 1
+	unsigned short vlan_present:1;
+	unsigned short vlan_proto:3;
+	unsigned short vlan_tci:12;
 	unsigned char l2_head[NF_L2_MAX_LEN];
 	unsigned int l2_head_len;
 	struct net_device *outdev;
@@ -44,7 +49,7 @@ typedef struct natflow_route_t {
 #define NF_FF_FAIL (1 << NF_FF_FAIL_BIT)
 
 typedef struct natflow_t {
-	unsigned int magic;
+	unsigned short magic;
 	unsigned int status;
 #define NF_FF_DIR_ORIGINAL 0
 #define NF_FF_DIR_REPLY 1
@@ -144,7 +149,10 @@ struct natflow_fastnat_node_t {
 		unsigned long jiffies;
 		unsigned int _pad1[2];
 	};
-	unsigned int magic;
+	unsigned short magic;
+	unsigned short vlan_present:1;
+	unsigned short vlan_proto:3;
+	unsigned short vlan_tci:12;
 #define FASTNAT_EXT_HWNAT_FLAG 0x01
 #define FASTNAT_PPPOE_FLAG 0x02
 #define FASTNAT_NO_ARP     0x04
