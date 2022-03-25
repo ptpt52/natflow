@@ -451,15 +451,21 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		        (skb->vlan_tci & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC &&
 		        (skb->hash & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC) {
 			_I = (skb->hash & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
+#if !IS_ENABLED(CONFIG_SOC_MT7621)
 			if (_I == 0) _I = (skb->vlan_tci & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
+#endif
 			nfn = &natflow_fast_nat_table[_I];
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 
 			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == natflow_path_magic) {
 				//nfn->jiffies = jiffies; /* we update jiffies in keepalive */
+#if !IS_ENABLED(CONFIG_SOC_MT7621)
 				__vlan_hwaccel_clear_tag(skb);
-				skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
 				skb->dev = nfn->outdev;
+#else
+				skb->dev = get_vlan_real_dev(nfn->outdev);
+#endif
+				skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
 				dev_queue_xmit(skb);
 				return NF_STOLEN;
 			}
@@ -1237,7 +1243,9 @@ fastnat_check:
 													};
 													/* no vlan for ext dev */
 													reply_dev = nf->rroute[NF_FF_DIR_REPLY].outdev;
+#if !IS_ENABLED(CONFIG_SOC_MT7621)
 													reply_vid = (natflow->flow.timeout) & 0xffff;
+#endif
 													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
@@ -1247,10 +1255,18 @@ fastnat_check:
 														orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 														orig.vlan_id = orig_vid;
 													}
+#if IS_ENABLED(CONFIG_SOC_MT7621)
+													if (reply_vid > 0) {
+														reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+														reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
+														reply.vlan_id = reply_vid;
+													}
+#else
 													/* must set reply_vid */
 													reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
 													reply.vlan_proto = htons(ETH_P_8021Q);
 													reply.vlan_id = reply_vid;
+#endif
 													if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 														orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
 														orig.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
@@ -1304,7 +1320,9 @@ fastnat_check:
 													};
 													/* no vlan for ext dev */
 													orig_dev = nf->rroute[NF_FF_DIR_ORIGINAL].outdev;
+#if !IS_ENABLED(CONFIG_SOC_MT7621)
 													orig_vid = (natflow->flow.timeout >> 16) & 0xffff;
+#endif
 													memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 													memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 													memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
@@ -1314,10 +1332,18 @@ fastnat_check:
 														reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
 														reply.vlan_id = reply_vid;
 													}
+#if IS_ENABLED(CONFIG_SOC_MT7621)
+													if (orig_vid > 0) {
+														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+														orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
+														orig.vlan_id = orig_vid;
+													}
+#else
 													/* must set orig_vid */
 													orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
 													orig.vlan_proto = htons(ETH_P_8021Q);
 													orig.vlan_id = orig_vid;
+#endif
 													if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 														orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
 														orig.pppoe_sid = ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
