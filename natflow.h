@@ -48,6 +48,9 @@ typedef struct natflow_route_t {
 #define NF_FF_FAIL_BIT 14
 #define NF_FF_FAIL (1 << NF_FF_FAIL_BIT)
 
+#define NF_FF_BRIDGE_BIT 15
+#define NF_FF_BRIDGE (1 << NF_FF_BRIDGE_BIT)
+
 typedef struct natflow_t {
 	unsigned short magic;
 	unsigned int status;
@@ -158,6 +161,7 @@ struct natflow_fastnat_node_t {
 #define FASTNAT_NO_ARP     0x04
 #define FASTNAT_RE_LEARN   0x08
 #define FASTNAT_STOP_LEARN 0x10
+#define FASTNAT_BRIDGE_FWD 0x20
 	unsigned char flags;
 	unsigned char count;
 	__be16 protonum;

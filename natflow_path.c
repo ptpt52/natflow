@@ -629,10 +629,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					nfn->speed_jiffies = jiffies;
 				} while (0);
 
-				if (iph->ttl <= 1) {
-					return NF_DROP;
+				if (!(nfn->flags & FASTNAT_BRIDGE_FWD)) {
+					if (iph->ttl <= 1) {
+						return NF_DROP;
+					}
+					ip_decrease_ttl(iph);
 				}
-				ip_decrease_ttl(iph);
 				if (TCPH(l4)->source != nfn->nat_source) {
 					natflow_nat_port_tcp(skb, iph->ihl * 4, TCPH(l4)->source, nfn->nat_source);
 					TCPH(l4)->source = nfn->nat_source;
@@ -795,10 +797,12 @@ fast_output:
 					nfn->speed_jiffies = jiffies;
 				} while (0);
 
-				if (iph->ttl <= 1) {
-					return NF_DROP;
+				if (!(nfn->flags & FASTNAT_BRIDGE_FWD)) {
+					if (iph->ttl <= 1) {
+						return NF_DROP;
+					}
+					ip_decrease_ttl(iph);
 				}
-				ip_decrease_ttl(iph);
 				if (UDPH(l4)->source != nfn->nat_source) {
 					natflow_nat_port_udp(skb, iph->ihl * 4, UDPH(l4)->source, nfn->nat_source);
 					UDPH(l4)->source = nfn->nat_source;
@@ -975,22 +979,25 @@ slow_fastpath:
 		}
 	} while (0);
 
-	if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
-		switch (iph->protocol) {
-		case IPPROTO_TCP:
-			NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
-			break;
-		case IPPROTO_UDP:
-			NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
-			break;
-		}
-		goto out;
-	}
 
-	if (iph->ttl <= 1) {
-		return NF_DROP;
+	if (!simple_test_bit(NF_FF_BRIDGE_BIT, &nf->status)) {
+		if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
+			switch (iph->protocol) {
+				case IPPROTO_TCP:
+					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%p\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+					break;
+			}
+			goto out;
+		}
+
+		if (iph->ttl <= 1) {
+			return NF_DROP;
+		}
+		ip_decrease_ttl(iph);
 	}
-	ip_decrease_ttl(iph);
 	if ((ct->status & IPS_DST_NAT)) {
 		if (dir == NF_FF_DIR_ORIGINAL) {
 			//do DNAT
@@ -1093,6 +1100,8 @@ fastnat_check:
 							} else {
 								nfn->flags |= FASTNAT_NO_ARP;
 							}
+							if (simple_test_bit(NF_FF_BRIDGE_BIT, &nf->status))
+								nfn->flags |= FASTNAT_BRIDGE_FWD;
 
 							nfn->vlan_present = nf->rroute[d].vlan_present;
 							nfn->vlan_proto = nf->rroute[d].vlan_proto;
@@ -1523,6 +1532,7 @@ static unsigned int natflow_path_post_ct_out_hook(unsigned int hooknum,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
+	u_int8_t pf = PF_INET;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
 static unsigned int natflow_path_post_ct_out_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
@@ -1530,12 +1540,14 @@ static unsigned int natflow_path_post_ct_out_hook(const struct nf_hook_ops *ops,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
+	u_int8_t pf = ops->pf;
 	unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_path_post_ct_out_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
+	u_int8_t pf = state->pf;
 	unsigned int hooknum = state->hook;
 	//const struct net_device *in = state->in;
 	//const struct net_device *out = state->out;
@@ -1544,6 +1556,7 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
+	u_int8_t pf = state->pf;
 	unsigned int hooknum = state->hook;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
 	//const struct net_device *in = state->in;
@@ -1612,6 +1625,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
 			return NF_ACCEPT;
 		}
+
+		if (pf == NFPROTO_BRIDGE) {
+			/* this is bridge forward flow */
+			simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+		}
 	}
 
 	/* XXX I just confirm it first  */
@@ -1625,6 +1643,9 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	} else {
 		dir = NF_FF_DIR_REPLY;
 	}
+
+	if (!skb_dst(skb))
+		return NF_ACCEPT;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
 	mtu = ip_skb_dst_mtu(skb);
@@ -1653,6 +1674,15 @@ static struct nf_hook_ops path_hooks[] = {
 #endif
 		.hook = natflow_path_post_ct_out_hook,
 		.pf = PF_INET,
+		.hooknum = NF_INET_POST_ROUTING,
+		.priority = NF_IP_PRI_LAST - 10 - 1,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_path_post_ct_out_hook,
+		.pf = NFPROTO_BRIDGE,
 		.hooknum = NF_INET_POST_ROUTING,
 		.priority = NF_IP_PRI_LAST - 10 - 1,
 	},
