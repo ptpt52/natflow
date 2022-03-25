@@ -25,7 +25,12 @@ To build with path and urllogger module run:
 make EXTRA_CFLAGS="-DCONFIG_NATFLOW_PATH -DCONFIG_NATFLOW_URLLOGGER"
 ```
 
-To disable hwnat for ext dev, e.g. on MT7622
+`CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH` option to make hwnat ext dev work via vlan hash mode, this mode would disable bridge vlan filter. this is required on MT7622 if hwnat ext dev is needed.
+```
+make EXTRA_CFLAGS="-DCONFIG_HWNAT_EXTDEV_USE_VLAN_HASH"
+```
+
+`CONFIG_HWNAT_EXTDEV_DISABLED` option to disable hwnat ext dev. if this is set, bridge vlan filter could be sure to work on MT7622.
 ```
 make EXTRA_CFLAGS="-DCONFIG_HWNAT_EXTDEV_DISABLED"
 ```
