@@ -1696,22 +1696,6 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (disabled)
 		return NF_ACCEPT;
 
-	if (skb->protocol != __constant_htons(ETH_P_IP))
-		return NF_ACCEPT;
-
-	iph = ip_hdr(skb);
-	if (iph->protocol != IPPROTO_TCP && iph->protocol != IPPROTO_UDP) {
-		return NF_ACCEPT;
-	}
-	l4 = (void *)iph + iph->ihl * 4;
-
-	if (ipv4_is_lbcast(iph->daddr) ||
-	        ipv4_is_loopback(iph->daddr) ||
-	        ipv4_is_multicast(iph->daddr) ||
-	        ipv4_is_zeronet(iph->daddr)) {
-		return NF_ACCEPT;
-	}
-
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
 		return NF_ACCEPT;
@@ -1733,23 +1717,45 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 
 	//skip nf session for ct with helper
 	if (!nf_ct_is_confirmed(ct)) {
-		struct nf_conn_help *help = nfct_help(ct);
-		if (help && help->helper) {
-			switch (iph->protocol) {
-			case IPPROTO_TCP:
-				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": this conn need helper\n", DEBUG_TCP_ARG(iph,l4));
-				break;
-			case IPPROTO_UDP:
-				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": this conn need helper\n", DEBUG_UDP_ARG(iph,l4));
-				break;
-			}
-			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
-			return NF_ACCEPT;
-		}
-
 		if (pf == NFPROTO_BRIDGE) {
 			/* this is bridge forward flow */
 			simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+		} else {
+			struct nf_conn_help *help = nfct_help(ct);
+			if (help && help->helper) {
+				/* this conn need helper */
+				set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
+				return NF_ACCEPT;
+			}
+		}
+	}
+
+	iph = ip_hdr(skb);
+	l4 = (void *)iph + iph->ihl * 4;
+
+	if (pf == NFPROTO_BRIDGE) {
+		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+		        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IP);
+			skb->network_header += PPPOE_SES_HLEN;
+			skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
+
+			iph = ip_hdr(skb);
+			l4 = (void *)iph + iph->ihl * 4;
+
+			/* XXX I just confirm it first  */
+			ret = nf_conntrack_confirm(skb);
+
+			skb->network_header -= PPPOE_SES_HLEN;
+			skb->protocol = __constant_htons(ETH_P_PPP_SES);
+			skb_push(skb, PPPOE_SES_HLEN);
+
+			if (ret != NF_ACCEPT) {
+				return ret;
+			}
+		} else if (!(skb->protocol == __constant_htons(ETH_P_IP))) {
+			return NF_ACCEPT;
 		}
 	}
 
