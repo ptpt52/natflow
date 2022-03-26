@@ -1746,6 +1746,21 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	return NF_ACCEPT;
 }
 
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+void natflow_hwnat_stop(struct net_device *dev)
+{
+
+	flow_offload_hw_path_t stop = {
+		.dev = dev,
+		.flags = FLOW_OFFLOAD_PATH_ETHERNET | FLOW_OFFLOAD_PATH_STOP,
+	};
+
+	if (dev->netdev_ops && dev->netdev_ops->ndo_flow_offload && dev->netdev_ops->ndo_flow_offload_check) {
+		dev->netdev_ops->ndo_flow_offload_check(&stop);
+	}
+}
+#endif
+
 static struct nf_hook_ops path_hooks[] = {
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
@@ -1870,6 +1885,9 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 #endif
 
 	natflow_update_magic(0);
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+	natflow_hwnat_stop(dev);
+#endif
 
 	NATFLOW_println("catch NETDEV_UNREGISTER event for dev=%s", dev->name);
 
@@ -1911,7 +1929,9 @@ nf_register_hooks_failed:
 
 void natflow_path_exit(void)
 {
+	disabled = 1;
 	nf_unregister_hooks(path_hooks, ARRAY_SIZE(path_hooks));
+	synchronize_rcu();
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
 #ifdef CONFIG_NETFILTER_INGRESS
 	synchronize_rcu();
