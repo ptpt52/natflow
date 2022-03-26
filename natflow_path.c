@@ -607,7 +607,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
 						else if (nfn->vlan_proto == FF_ETH_P_8021AD)
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
-					} else
+					} else if (skb_vlan_tag_present(skb))
 						__vlan_hwaccel_clear_tag(skb);
 #endif
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
@@ -725,7 +725,7 @@ fast_output:
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
 						else if (nfn->vlan_proto == FF_ETH_P_8021AD)
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
-					} else
+					} else if (skb_vlan_tag_present(skb))
 						__vlan_hwaccel_clear_tag(skb);
 					skb->next = NULL;
 					dev_queue_xmit(skb);
@@ -785,7 +785,7 @@ fast_output:
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
 						else if (nfn->vlan_proto == FF_ETH_P_8021AD)
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
-					} else
+					} else if (skb_vlan_tag_present(skb))
 						__vlan_hwaccel_clear_tag(skb);
 #endif
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
@@ -1599,7 +1599,7 @@ fastnat_check:
 				__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nf->rroute[dir].vlan_tci);
 			else if (nf->rroute[dir].vlan_proto == FF_ETH_P_8021AD)
 				__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nf->rroute[dir].vlan_tci);
-		} else
+		} else if (skb_vlan_tag_present(skb))
 			__vlan_hwaccel_clear_tag(skb);
 #endif
 		skb->next = NULL;
