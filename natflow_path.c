@@ -611,6 +611,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 						__vlan_hwaccel_clear_tag(skb);
 #endif
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
+					skb_reset_mac_header(skb);
 					skb->dev = nfn->outdev;
 					skb->mark = HWNAT_QUEUE_MAPPING_MAGIC;
 					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
@@ -789,6 +790,7 @@ fast_output:
 						__vlan_hwaccel_clear_tag(skb);
 #endif
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
+					skb_reset_mac_header(skb);
 					skb->dev = nfn->outdev;
 					skb->mark = HWNAT_QUEUE_MAPPING_MAGIC;
 					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
