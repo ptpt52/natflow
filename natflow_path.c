@@ -1291,14 +1291,16 @@ fastnat_check:
 #else
 													if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
 														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
-														orig.vlan_proto = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
-														                  htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+														orig.vlan_proto =
+														    nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
+														    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
 														orig.vlan_id = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci;
 													}
 													if (nf->rroute[NF_FF_DIR_REPLY].vlan_present) {
 														reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
-														reply.vlan_proto = nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
-														                   htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+														reply.vlan_proto =
+														    nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
+														    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
 														reply.vlan_id = nf->rroute[NF_FF_DIR_REPLY].vlan_tci;
 													}
 #endif
@@ -1319,11 +1321,13 @@ fastnat_check:
 														             " s=%pI4:%u d=%pI4:%u\n",
 														             nfn->outdev->name,
 														             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-														             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1,
+														             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
+														             (int)ntohs(nfn->pppoe_sid) : -1,
 														             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
 														             nfn_i->outdev->name,
 														             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
-														             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn_i->pppoe_sid : -1,
+														             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
+														             (int)ntohs(nfn_i->pppoe_sid) : -1,
 														             &nfn_i->saddr, ntohs(nfn_i->source),
 														             &nfn_i->daddr, ntohs(nfn_i->dest));
 													} else {
@@ -1385,14 +1389,16 @@ fastnat_check:
 #else
 													if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
 														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
-														orig.vlan_proto = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
-														                  htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+														orig.vlan_proto =
+														    nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
+														    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
 														orig.vlan_id = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci;
 													}
 													if (nf->rroute[NF_FF_DIR_REPLY].vlan_present) {
 														reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
-														reply.vlan_proto = nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
-														                   htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+														reply.vlan_proto =
+														    nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
+														    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
 														reply.vlan_id = nf->rroute[NF_FF_DIR_REPLY].vlan_tci;
 													}
 #endif
@@ -1413,11 +1419,13 @@ fastnat_check:
 														             " s=%pI4:%u d=%pI4:%u\n",
 														             nfn->outdev->name,
 														             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-														             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1,
+														             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
+														             (int)ntohs(nfn->pppoe_sid) : -1,
 														             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
 														             nfn_i->outdev->name,
 														             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
-														             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn_i->pppoe_sid) : -1,
+														             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
+														             (int)ntohs(nfn_i->pppoe_sid) : -1,
 														             &nfn_i->saddr, ntohs(nfn_i->source),
 														             &nfn_i->daddr, ntohs(nfn_i->dest));
 
@@ -1484,14 +1492,16 @@ fastnat_check:
 #else
 												if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
 													orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
-													orig.vlan_proto = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
-													                  htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+													orig.vlan_proto =
+													    nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
+													    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
 													orig.vlan_id = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci;
 												}
 												if (nf->rroute[NF_FF_DIR_REPLY].vlan_present) {
 													reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
-													reply.vlan_proto = nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
-													                   htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+													reply.vlan_proto =
+													    nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
+													    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
 													reply.vlan_id = nf->rroute[NF_FF_DIR_REPLY].vlan_tci;
 												}
 #endif
@@ -1512,11 +1522,13 @@ fastnat_check:
 													             " s=%pI4:%u d=%pI4:%u\n",
 													             nfn->outdev->name,
 													             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-													             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1,
+													             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
+													             (int)ntohs(nfn->pppoe_sid) : -1,
 													             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
 													             nfn_i->outdev->name,
 													             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
-													             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn_i->pppoe_sid : -1,
+													             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
+													             (int)ntohs(nfn_i->pppoe_sid) : -1,
 													             &nfn_i->saddr, ntohs(nfn_i->source),
 													             &nfn_i->daddr, ntohs(nfn_i->dest));
 													if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
