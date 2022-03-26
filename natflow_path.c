@@ -1569,7 +1569,18 @@ fastnat_check:
 				}
 			}
 		} /* for (d = 0; d < NF_FF_DIR_MAX; d++) */
-	} /* end NF_FF_FAIL */
+	} else {
+		/* NF_FF_FAIL: loop try FF every 8 seconds */
+		if (!(nf->status & NF_FF_RETRY)) {
+			if ( ((jiffies + (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip^ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip)) / HZ) % 8 == 0 ) {
+				simple_clear_bit(NF_FF_FAIL_BIT, &nf->status);
+				simple_set_bit(NF_FF_RETRY_BIT, &nf->status);
+			}
+		} else {
+			if ( ((jiffies + (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip^ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip)) / HZ) % 8 == 3 )
+				simple_clear_bit(NF_FF_RETRY_BIT, &nf->status);
+		}
+	}
 #endif
 
 	ingress_trim_off = (nf->rroute[dir].outdev->features & NETIF_F_TSO) && \

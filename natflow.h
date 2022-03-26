@@ -51,6 +51,9 @@ typedef struct natflow_route_t {
 #define NF_FF_BRIDGE_BIT 15
 #define NF_FF_BRIDGE (1 << NF_FF_BRIDGE_BIT)
 
+#define NF_FF_RETRY_BIT 16
+#define NF_FF_RETRY (1 << NF_FF_RETRY_BIT)
+
 typedef struct natflow_t {
 	unsigned short magic;
 	unsigned int status;
