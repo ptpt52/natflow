@@ -598,10 +598,20 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
+#if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 					__vlan_hwaccel_clear_tag(skb);
+#else
+					if (nfn->vlan_present) {
+						if (nfn->vlan_proto == FF_ETH_P_8021Q)
+							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
+						else if (nfn->vlan_proto == FF_ETH_P_8021AD)
+							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
+					} else
+						__vlan_hwaccel_clear_tag(skb);
+#endif
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
-					skb->dev = get_vlan_real_dev(nfn->outdev);
-					skb->vlan_tci = HWNAT_QUEUE_MAPPING_MAGIC;
+					skb->dev = nfn->outdev;
+					skb->mark = HWNAT_QUEUE_MAPPING_MAGIC;
 					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
 					dev_queue_xmit(skb);
 					/*FIXME what if gso? */
@@ -766,10 +776,20 @@ fast_output:
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
+#if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 					__vlan_hwaccel_clear_tag(skb);
+#else
+					if (nfn->vlan_present) {
+						if (nfn->vlan_proto == FF_ETH_P_8021Q)
+							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
+						else if (nfn->vlan_proto == FF_ETH_P_8021AD)
+							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
+					} else
+						__vlan_hwaccel_clear_tag(skb);
+#endif
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
-					skb->dev = get_vlan_real_dev(nfn->outdev);
-					skb->vlan_tci = HWNAT_QUEUE_MAPPING_MAGIC;
+					skb->dev = nfn->outdev;
+					skb->mark = HWNAT_QUEUE_MAPPING_MAGIC;
 					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
 					dev_queue_xmit(skb);
 					/*FIXME what if gso? */
