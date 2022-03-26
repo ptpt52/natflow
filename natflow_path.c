@@ -1152,13 +1152,13 @@ fastnat_check:
 								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d use hash=%d outdev=%s(vlan:%d pppoe=%d)\n",
 								             DEBUG_TCP_ARG(iph,l4), d, hash, nfn->outdev->name,
 								             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-								             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn->pppoe_sid : -1);
+								             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1);
 								break;
 							case IPPROTO_UDP:
 								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d use hash=%d outdev=%s(vlan:%d pppoe=%d)\n",
 								             DEBUG_UDP_ARG(iph,l4), d, hash, nfn->outdev->name,
 								             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-								             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn->pppoe_sid : -1);
+								             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1);
 								break;
 							}
 						} else {
@@ -1319,11 +1319,11 @@ fastnat_check:
 														             " s=%pI4:%u d=%pI4:%u\n",
 														             nfn->outdev->name,
 														             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-														             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn->pppoe_sid : -1,
+														             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1,
 														             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
 														             nfn_i->outdev->name,
 														             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
-														             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn->pppoe_sid : -1,
+														             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn_i->pppoe_sid : -1,
 														             &nfn_i->saddr, ntohs(nfn_i->source),
 														             &nfn_i->daddr, ntohs(nfn_i->dest));
 													} else {
@@ -1413,11 +1413,11 @@ fastnat_check:
 														             " s=%pI4:%u d=%pI4:%u\n",
 														             nfn->outdev->name,
 														             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-														             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn->pppoe_sid : -1,
+														             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1,
 														             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
 														             nfn_i->outdev->name,
 														             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
-														             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn->pppoe_sid : -1,
+														             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn_i->pppoe_sid) : -1,
 														             &nfn_i->saddr, ntohs(nfn_i->source),
 														             &nfn_i->daddr, ntohs(nfn_i->dest));
 
@@ -1507,16 +1507,16 @@ fastnat_check:
 												}
 												if (reply_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-													NATFLOW_INFO("(PCO) set hwnat offload 1 dev=%s(vlan:%d pppoe:%d)"
+													NATFLOW_INFO("(PCO) set hwnat offload 3 dev=%s(vlan:%d pppoe:%d)"
 													             " s=%pI4:%u d=%pI4:%u dev=%s(vlan:%d pppoe:%d)"
 													             " s=%pI4:%u d=%pI4:%u\n",
 													             nfn->outdev->name,
 													             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-													             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn->pppoe_sid : -1,
+													             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1,
 													             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
 													             nfn_i->outdev->name,
 													             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
-													             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn->pppoe_sid : -1,
+													             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ? (int)nfn_i->pppoe_sid : -1,
 													             &nfn_i->saddr, ntohs(nfn_i->source),
 													             &nfn_i->daddr, ntohs(nfn_i->dest));
 													if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
