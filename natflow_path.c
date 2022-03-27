@@ -1731,18 +1731,20 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		return NF_ACCEPT;
 	}
 
+	if (pf != NFPROTO_BRIDGE && (nf->status & NF_FF_BRIDGE)) {
+		return NF_ACCEPT;
+	} else if (pf == NFPROTO_BRIDGE && !(nf->status & NF_FF_BRIDGE)) {
+		/* this is bridge forward flow */
+		simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+	}
+
 	//skip nf session for ct with helper
 	if (!nf_ct_is_confirmed(ct)) {
-		if (pf == NFPROTO_BRIDGE) {
-			/* this is bridge forward flow */
-			simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
-		} else {
-			struct nf_conn_help *help = nfct_help(ct);
-			if (help && help->helper) {
-				/* this conn need helper */
-				set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
-				return NF_ACCEPT;
-			}
+		struct nf_conn_help *help = nfct_help(ct);
+		if (help && help->helper) {
+			/* this conn need helper */
+			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
+			return NF_ACCEPT;
 		}
 	}
 
