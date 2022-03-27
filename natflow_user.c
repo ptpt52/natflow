@@ -37,6 +37,8 @@
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_extend.h>
 #include <net/netfilter/nf_conntrack_acct.h>
+#include <linux/if_pppox.h>
+#include <linux/ppp_defs.h>
 #include "natflow.h"
 #include "natflow_common.h"
 #include "natflow_user.h"
@@ -732,27 +734,36 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	natflow_fakeuser_t *user;
 	struct nf_conn *ct;
 	enum ip_conntrack_info ctinfo;
+	int bridge = 0;
 
 	if (disabled)
 		return NF_ACCEPT;
 
-	if (skb->protocol != __constant_htons(ETH_P_IP))
+	/* only bridge come here */
+	if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+	        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
+		skb_pull(skb, PPPOE_SES_HLEN);
+		skb->protocol = __constant_htons(ETH_P_IP);
+		skb->network_header += PPPOE_SES_HLEN;
+		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
+		bridge = 1;
+	} else if (skb->protocol != __constant_htons(ETH_P_IP))
 		return NF_ACCEPT;
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
-		return NF_ACCEPT;
+		goto out;
 	}
 
 	if ((ct->status & IPS_NATFLOW_USER_BYPASS)) {
-		return NF_ACCEPT;
+		goto out;
 	}
 	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL ||
 	        ipv4_is_zeronet(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
 	        ipv4_is_loopback(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
 	        ipv4_is_multicast(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
 	        ipv4_is_lbcast(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip)) {
-		return NF_ACCEPT;
+		goto out;
 	}
 
 	if (in == NULL)
@@ -765,12 +776,12 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	        && (br_in == NULL || !natflow_is_lan_zone(br_in))
 #endif
 	   ) {
-		return NF_ACCEPT;
+		goto out;
 	}
 
 	user = natflow_user_in(ct, IP_CT_DIR_ORIGINAL);
 	if (NULL == user) {
-		return NF_ACCEPT;
+		goto out;
 	}
 	fud = natflow_fakeuser_data(user);
 
@@ -791,7 +802,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		        && br_zid == INVALID_ZONE_ID
 #endif
 		   ) {
-			return NF_ACCEPT;
+			goto out;
 		}
 
 		for (i = 0; i < auth_conf->num; i++) {
@@ -900,11 +911,11 @@ static unsigned int natflow_user_pre_hook(void *priv,
 				if (auth_conf->dst_bypasslist_name[0] != 0 &&
 				        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
 					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
-					return NF_ACCEPT;
+					goto out;
 				} else if (auth_conf->src_bypasslist_name[0] != 0 &&
 				           IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
 					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
-					return NF_ACCEPT;
+					goto out;
 				}
 
 				do {
@@ -928,6 +939,12 @@ static unsigned int natflow_user_pre_hook(void *priv,
 				} while (0);
 			}
 		}
+	}
+out:
+	if (bridge) {
+		skb->network_header -= PPPOE_SES_HLEN;
+		skb->protocol = __constant_htons(ETH_P_PPP_SES);
+		skb_push(skb, PPPOE_SES_HLEN);
 	}
 
 	return NF_ACCEPT;
@@ -975,11 +992,20 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	natflow_fakeuser_t *user;
 	struct nf_conn *ct;
 	enum ip_conntrack_info ctinfo;
+	unsigned int ret = NF_ACCEPT;
+	int bridge = 0;
 
 	if (disabled)
 		return NF_ACCEPT;
 
-	if (skb->protocol != __constant_htons(ETH_P_IP))
+	if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+	        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
+		skb_pull(skb, PPPOE_SES_HLEN);
+		skb->protocol = __constant_htons(ETH_P_IP);
+		skb->network_header += PPPOE_SES_HLEN;
+		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
+		bridge = 1;
+	} else if (skb->protocol != __constant_htons(ETH_P_IP))
 		return NF_ACCEPT;
 
 	if (in == NULL)
@@ -990,11 +1016,11 @@ static unsigned int natflow_user_forward_hook(void *priv,
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
-		return NF_ACCEPT;
+		goto out;
 	}
 
 	if ((ct->status & IPS_NATFLOW_USER_BYPASS)) {
-		return NF_ACCEPT;
+		goto out;
 	}
 	if ((ct->status & IPS_NATFLOW_USER_DROP)) {
 		struct iphdr *iph = ip_hdr(skb);
@@ -1003,11 +1029,12 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		if (iph->protocol == IPPROTO_TCP && TCPH(l4)->fin && TCPH(l4)->ack) {
 			natflow_auth_tcp_reply_finack(in, skb);
 		}
-		return NF_DROP;
+		ret = NF_DROP;
+		goto out;
 	}
 
 	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL) {
-		return NF_ACCEPT;
+		goto out;
 	}
 
 	user = natflow_user_get(ct);
@@ -1018,9 +1045,9 @@ static unsigned int natflow_user_forward_hook(void *priv,
 #endif
 		   ) {
 			//TODO check flow from wan to user
-			return NF_ACCEPT;
+			goto out;
 		}
-		return NF_ACCEPT;
+		goto out;
 	}
 	fud = natflow_fakeuser_data(user);
 
@@ -1035,23 +1062,23 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			if (auth_conf->dst_bypasslist_name[0] != 0 &&
 			        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
 				set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
-				return NF_ACCEPT;
+				goto out;
 			} else if (auth_conf->src_bypasslist_name[0] != 0 &&
 			           IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
 				set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
-				return NF_ACCEPT;
+				goto out;
 			}
 
 			if (iph->protocol == IPPROTO_UDP) {
 				if (UDPH(l4)->dest == __constant_htons(53) || UDPH(l4)->dest == __constant_htons(67)) {
 					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
-					return NF_ACCEPT;
+					goto out;
 				}
 			}
 
 			if (iph->protocol != IPPROTO_TCP) {
 				set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
-				return NF_DROP;
+				goto out;
 			}
 
 			data = skb->data + (iph->ihl << 2) + (TCPH(l4)->doff << 2);
@@ -1060,13 +1087,15 @@ static unsigned int natflow_user_forward_hook(void *priv,
 				NATFLOW_DEBUG(DEBUG_TCP_FMT ": sending HTTP 302 redirect\n", DEBUG_TCP_ARG(iph,l4));
 				natflow_auth_http_302(in, skb, user);
 				set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
-				return NF_DROP;
+				ret = NF_DROP;
+				goto out;
 			} else if (data_len > 0) {
 				set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
-				return NF_DROP;
+				ret = NF_DROP;
+				goto out;
 			} else if (TCPH(l4)->ack && !TCPH(l4)->syn) {
 				natflow_auth_convert_tcprst(skb);
-				return NF_ACCEPT;
+				goto out;
 			}
 		} else if (fud->auth_type == AUTH_TYPE_AUTO) {
 			fud->auth_status = AUTH_OK;
@@ -1095,7 +1124,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 									natflow_auth_open_weixin_reply(in, skb);
 									natflow_auth_convert_tcprst(skb);
 									set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
-									return NF_ACCEPT;
+									goto out;
 								}
 							}
 						}
@@ -1110,10 +1139,18 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	case AUTH_BLOCK:
 		/* temporary block user */
 		set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
-		return NF_DROP;
+		ret = NF_DROP;
+		goto out;
 	}
 
-	return NF_ACCEPT;
+out:
+	if (bridge) {
+		skb->network_header -= PPPOE_SES_HLEN;
+		skb->protocol = __constant_htons(ETH_P_PPP_SES);
+		skb_push(skb, PPPOE_SES_HLEN);
+	}
+
+	return ret;
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
@@ -1155,11 +1192,19 @@ static unsigned int natflow_user_post_hook(void *priv,
 	natflow_fakeuser_t *user;
 	struct nf_conn *ct;
 	enum ip_conntrack_info ctinfo;
+	int bridge = 0;
 
 	if (disabled)
 		return NF_ACCEPT;
 
-	if (skb->protocol != __constant_htons(ETH_P_IP))
+	if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+	        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
+		skb_pull(skb, PPPOE_SES_HLEN);
+		skb->protocol = __constant_htons(ETH_P_IP);
+		skb->network_header += PPPOE_SES_HLEN;
+		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
+		bridge = 1;
+	} else if (skb->protocol != __constant_htons(ETH_P_IP))
 		return NF_ACCEPT;
 
 	if (out == NULL)
@@ -1170,7 +1215,7 @@ static unsigned int natflow_user_post_hook(void *priv,
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
-		return NF_ACCEPT;
+		goto out;
 	}
 
 	user = natflow_user_get(ct);
@@ -1181,19 +1226,19 @@ static unsigned int natflow_user_post_hook(void *priv,
 		        ipv4_is_loopback(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip) ||
 		        ipv4_is_multicast(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip) ||
 		        ipv4_is_lbcast(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip)) {
-			return NF_ACCEPT;
+			goto out;
 		}
 		if (!natflow_is_lan_zone(out)
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
 		        && (br_out == NULL || !natflow_is_lan_zone(br_out))
 #endif
 		   ) {
-			return NF_ACCEPT;
+			goto out;
 		}
 
 		user = natflow_user_in(ct, IP_CT_DIR_REPLY);
 		if (NULL == user) {
-			return NF_ACCEPT;
+			goto out;
 		}
 	}
 
@@ -1251,6 +1296,12 @@ static unsigned int natflow_user_post_hook(void *priv,
 			atomic64_add(skb->len, &counter[1].bytes);
 		}
 	}
+out:
+	if (bridge) {
+		skb->network_header -= PPPOE_SES_HLEN;
+		skb->protocol = __constant_htons(ETH_P_PPP_SES);
+		skb_push(skb, PPPOE_SES_HLEN);
+	}
 
 	return NF_ACCEPT;
 };
@@ -1281,6 +1332,15 @@ static struct nf_hook_ops user_hooks[] = {
 #endif
 		.hook = natflow_user_post_hook,
 		.pf = PF_INET,
+		.hooknum = NF_INET_POST_ROUTING,
+		.priority = NF_IP_PRI_NAT_SRC + 10,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_user_post_hook,
+		.pf = NFPROTO_BRIDGE,
 		.hooknum = NF_INET_POST_ROUTING,
 		.priority = NF_IP_PRI_NAT_SRC + 10,
 	},

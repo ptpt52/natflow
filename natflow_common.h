@@ -21,6 +21,8 @@
 #include <net/netfilter/nf_conntrack_core.h>
 #include <net/netfilter/nf_conntrack_zones.h>
 #include <net/netfilter/nf_nat.h>
+#include <linux/if_pppox.h>
+#include <linux/ppp_defs.h>
 #include "natflow.h"
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)
@@ -261,6 +263,12 @@ static inline unsigned int nf_conntrack_in_compat(struct net *net, u_int8_t pf, 
 
 #define endfor_ifa(in_dev) }
 #endif
+
+static inline __be16 pppoe_proto(const struct sk_buff *skb)
+{
+	return *((__be16 *)(skb_mac_header(skb) + ETH_HLEN +
+	                    sizeof(struct pppoe_hdr)));
+}
 
 static inline unsigned char get_byte1(const unsigned char *p)
 {

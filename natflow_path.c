@@ -26,24 +26,14 @@
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_extend.h>
 #include <net/netfilter/nf_conntrack_acct.h>
-#ifdef CONFIG_NETFILTER_INGRESS
 #include <linux/if_pppox.h>
 #include <linux/ppp_defs.h>
-#endif
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 #include <net/netfilter/nf_flow_table.h>
 #endif
 #include "natflow_common.h"
 #include "natflow_path.h"
 #include "natflow_user.h"
-
-#ifdef CONFIG_NETFILTER_INGRESS
-static inline __be16 pppoe_proto(const struct sk_buff *skb)
-{
-	return *((__be16 *)(skb_mac_header(skb) + ETH_HLEN +
-	                    sizeof(struct pppoe_hdr)));
-}
-#endif
 
 unsigned int hwnat = 1;
 
