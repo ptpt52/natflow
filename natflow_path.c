@@ -632,12 +632,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 #endif
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
 					if (unlikely(ingress_pad_len == PPPOE_SES_HLEN)) {
-						if ((nfn->flags & FASTNAT_BRIDGE_FWD)) {
-							skb->protocol = __constant_htons(ETH_P_PPP_SES);
-						} else {
-							memmove(skb->data + ingress_pad_len, skb->data, (long)((void *)ip_hdr(skb) - (void *)skb->data) - ingress_pad_len);
-							skb_pull(skb, ingress_pad_len);
-						}
+						skb->protocol = __constant_htons(ETH_P_PPP_SES);
 					}
 					skb_reset_mac_header(skb);
 					skb->dev = nfn->outdev;
@@ -820,12 +815,7 @@ fast_output:
 #endif
 					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
 					if (unlikely(ingress_pad_len == PPPOE_SES_HLEN)) {
-						if ((nfn->flags & FASTNAT_BRIDGE_FWD)) {
-							skb->protocol = __constant_htons(ETH_P_PPP_SES);
-						} else {
-							memmove(skb->data + ingress_pad_len, skb->data, (long)((void *)ip_hdr(skb) - (void *)skb->data) - ingress_pad_len);
-							skb_pull(skb, ingress_pad_len);
-						}
+						skb->protocol = __constant_htons(ETH_P_PPP_SES);
 					}
 					skb_reset_mac_header(skb);
 					skb->dev = nfn->outdev;
