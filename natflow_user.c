@@ -395,7 +395,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 	return user;
 }
 
-static inline void natflow_auth_reply_payload_fin(const char *payload, int payload_len, struct sk_buff *oskb, const struct net_device *dev)
+static inline void natflow_auth_reply_payload_fin(const char *payload, int payload_len, struct sk_buff *oskb, const struct net_device *dev, int pppoe_hdr)
 {
 	struct sk_buff *nskb;
 	struct ethhdr *neth, *oeth;
@@ -405,23 +405,30 @@ static inline void natflow_auth_reply_payload_fin(const char *payload, int paylo
 	unsigned int csum;
 	int offset, header_len;
 	char *data;
+	int pppoe_len = 0;
+
+	if (pppoe_hdr) {
+		pppoe_len = PPPOE_SES_HLEN;
+		skb_push(oskb, PPPOE_SES_HLEN);
+		oskb->protocol = __constant_htons(ETH_P_PPP_SES);
+	}
 
 	oeth = (struct ethhdr *)skb_mac_header(oskb);
 	oiph = ip_hdr(oskb);
 	otcph = (struct tcphdr *)((void *)oiph + oiph->ihl*4);
 
-	offset = sizeof(struct iphdr) + sizeof(struct tcphdr) + payload_len - oskb->len;
+	offset = pppoe_len + sizeof(struct iphdr) + sizeof(struct tcphdr) + payload_len - oskb->len;
 	header_len = offset < 0 ? 0 : offset;
 	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
 	if (!nskb) {
 		NATFLOW_ERROR("alloc_skb fail\n");
-		return;
+		goto out;
 	}
 	if (offset <= 0) {
 		if (pskb_trim(nskb, nskb->len + offset)) {
 			NATFLOW_ERROR("pskb_trim fail: len=%d, offset=%d\n", nskb->len, offset);
 			consume_skb(nskb);
-			return;
+			goto out;
 		}
 	} else {
 		nskb->len += offset;
@@ -443,7 +450,7 @@ static inline void natflow_auth_reply_payload_fin(const char *payload, int paylo
 	niph->version = oiph->version;
 	niph->ihl = 5;
 	niph->tos = 0;
-	niph->tot_len = htons(nskb->len);
+	niph->tot_len = htons(nskb->len - pppoe_len);
 	niph->ttl = 0x80;
 	niph->protocol = oiph->protocol;
 	niph->id = __constant_htons(0xDEAD);
@@ -469,14 +476,22 @@ static inline void natflow_auth_reply_payload_fin(const char *payload, int paylo
 	csum = csum_partial((char*)ntcph, len, 0);
 	ntcph->check = tcp_v4_check(len, niph->saddr, niph->daddr, csum);
 	//ready to send out
-	skb_push(nskb, (char *)niph - (char *)neth);
+	skb_push(nskb, (char *)niph - (char *)neth - pppoe_len);
+	if (pppoe_hdr) {
+		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(nskb) + ETH_HLEN);
+		ph->length = htons(ntohs(ip_hdr(nskb)->tot_len) + 2);
+	}
 	nskb->dev = (struct net_device *)dev;
 	nskb->ip_summed = CHECKSUM_UNNECESSARY;
-
 	dev_queue_xmit(nskb);
+out:
+	if (pppoe_hdr) {
+		oskb->protocol = __constant_htons(ETH_P_IP);
+		skb_pull(oskb, PPPOE_SES_HLEN);
+	}
 }
 
-static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *skb, natflow_fakeuser_t *user)
+static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *skb, natflow_fakeuser_t *user, int pppoe_hdr)
 {
 	struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 	const char *http_header_fmt = ""
@@ -516,11 +531,11 @@ static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *
 	http->header[sizeof(http->header) - 1] = 0;
 	n = sprintf(http->payload, "%s%s", http->header, http->data);
 
-	natflow_auth_reply_payload_fin(http->payload, n, skb, dev);
+	natflow_auth_reply_payload_fin(http->payload, n, skb, dev, pppoe_hdr);
 	kfree(http);
 }
 
-static inline void natflow_auth_open_weixin_reply(const struct net_device *dev, struct sk_buff *skb)
+static inline void natflow_auth_open_weixin_reply(const struct net_device *dev, struct sk_buff *skb, int pppoe_hdr)
 {
 	const char *http_header_fmt = ""
 	                              "HTTP/1.1 200 OK\r\n"
@@ -555,7 +570,7 @@ static inline void natflow_auth_open_weixin_reply(const struct net_device *dev, 
 	http->header[sizeof(http->header) - 1] = 0;
 	n = sprintf(http->payload, "%s%s", http->header, http->data);
 
-	natflow_auth_reply_payload_fin(http->payload, n, skb, dev);
+	natflow_auth_reply_payload_fin(http->payload, n, skb, dev, pppoe_hdr);
 	kfree(http);
 }
 
@@ -614,7 +629,7 @@ static inline void natflow_auth_convert_tcprst(struct sk_buff *skb)
 	}
 }
 
-static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, struct sk_buff *oskb)
+static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, struct sk_buff *oskb, int pppoe_hdr)
 {
 	struct sk_buff *nskb;
 	struct ethhdr *neth, *oeth;
@@ -623,23 +638,30 @@ static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, s
 	int len;
 	unsigned int csum;
 	int offset, header_len;
+	int pppoe_len = 0;
+
+	if (pppoe_hdr) {
+		pppoe_len = PPPOE_SES_HLEN;
+		skb_push(oskb, PPPOE_SES_HLEN);
+		oskb->protocol = __constant_htons(ETH_P_PPP_SES);
+	}
 
 	oeth = (struct ethhdr *)skb_mac_header(oskb);
 	oiph = ip_hdr(oskb);
 	otcph = (struct tcphdr *)((void *)oiph + oiph->ihl*4);
 
-	offset = sizeof(struct iphdr) + sizeof(struct tcphdr) - oskb->len;
+	offset = pppoe_len + sizeof(struct iphdr) + sizeof(struct tcphdr) - oskb->len;
 	header_len = offset < 0 ? 0 : offset;
 	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
 	if (!nskb) {
 		NATFLOW_ERROR("alloc_skb fail\n");
-		return;
+		goto out;
 	}
 	if (offset <= 0) {
 		if (pskb_trim(nskb, nskb->len + offset)) {
 			NATFLOW_ERROR("pskb_trim fail: len=%d, offset=%d\n", nskb->len, offset);
 			consume_skb(nskb);
-			return;
+			goto out;
 		}
 	} else {
 		nskb->len += offset;
@@ -661,7 +683,7 @@ static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, s
 	niph->version = oiph->version;
 	niph->ihl = 5;
 	niph->tos = 0;
-	niph->tot_len = htons(nskb->len);
+	niph->tot_len = htons(nskb->len - pppoe_len);
 	niph->ttl = 0x80;
 	niph->protocol = oiph->protocol;
 	niph->id = __constant_htons(0xDEAD);
@@ -685,11 +707,20 @@ static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, s
 	csum = csum_partial((char*)ntcph, len, 0);
 	ntcph->check = tcp_v4_check(len, niph->saddr, niph->daddr, csum);
 	//ready to send out
-	skb_push(nskb, (char *)niph - (char *)neth);
+	skb_push(nskb, (char *)niph - (char *)neth - pppoe_len);
+	if (pppoe_hdr) {
+		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(nskb) + ETH_HLEN);
+		ph->length = htons(ntohs(ip_hdr(nskb)->tot_len) + 2);
+	}
 	nskb->dev = (struct net_device *)dev;
 	nskb->ip_summed = CHECKSUM_UNNECESSARY;
 
 	dev_queue_xmit(nskb);
+out:
+	if (pppoe_hdr) {
+		oskb->protocol = __constant_htons(ETH_P_IP);
+		skb_pull(oskb, PPPOE_SES_HLEN);
+	}
 }
 
 
@@ -700,6 +731,7 @@ static unsigned int natflow_user_pre_hook(unsigned int hooknum,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
+	u_int8_t pf = PF_INET;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
 static unsigned int natflow_user_pre_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
@@ -707,12 +739,14 @@ static unsigned int natflow_user_pre_hook(const struct nf_hook_ops *ops,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
+	u_int8_t pf = ops->pf;
 	unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_user_pre_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
+	u_int8_t pf = state->pf;
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 	const struct net_device *out = state->out;
@@ -721,6 +755,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
+	u_int8_t pf = state->pf;
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
@@ -753,6 +788,12 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
 		goto out;
+	}
+
+	if (pf != NFPROTO_BRIDGE && (ct->status & IPS_NATFLOW_BRIDGE_FWD)) {
+		goto out;
+	} else if (pf == NFPROTO_BRIDGE && !(ct->status & IPS_NATFLOW_BRIDGE_FWD)) {
+		set_bit(IPS_NATFLOW_BRIDGE_FWD_BIT, &ct->status);
 	}
 
 	if ((ct->status & IPS_NATFLOW_USER_BYPASS)) {
@@ -958,6 +999,7 @@ static unsigned int natflow_user_forward_hook(unsigned int hooknum,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
+	//u_int8_t pf = PF_INET;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
 static unsigned int natflow_user_forward_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
@@ -965,12 +1007,14 @@ static unsigned int natflow_user_forward_hook(const struct nf_hook_ops *ops,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
+	//u_int8_t pf = ops->pf;
 	unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_user_forward_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
+	//u_int8_t pf = state->pf;
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 	const struct net_device *out = state->out;
@@ -979,6 +1023,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
+	//u_int8_t pf = state->pf;
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
@@ -1027,7 +1072,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		void *l4 = (void *)iph + iph->ihl * 4;
 
 		if (iph->protocol == IPPROTO_TCP && TCPH(l4)->fin && TCPH(l4)->ack) {
-			natflow_auth_tcp_reply_finack(in, skb);
+			natflow_auth_tcp_reply_finack(in, skb, bridge);
 		}
 		ret = NF_DROP;
 		goto out;
@@ -1059,6 +1104,13 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			struct iphdr *iph = ip_hdr(skb);
 			void *l4 = (void *)iph + iph->ihl * 4;
 
+			/* tell FF do not emit pkts */
+			if (!(IPS_NATFLOW_FF_STOP & ct->status)) set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
+
+			if (iph->daddr == redirect_ip) {
+				set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+				goto out;
+			}
 			if (auth_conf->dst_bypasslist_name[0] != 0 &&
 			        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
 				set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
@@ -1084,8 +1136,8 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			data = skb->data + (iph->ihl << 2) + (TCPH(l4)->doff << 2);
 			data_len = ntohs(iph->tot_len) - ((iph->ihl << 2) + (TCPH(l4)->doff << 2));
 			if ((data_len > 4 && strncasecmp(data, "GET ", 4) == 0) || (data_len > 5 && strncasecmp(data, "POST ", 5) == 0)) {
-				NATFLOW_DEBUG(DEBUG_TCP_FMT ": sending HTTP 302 redirect\n", DEBUG_TCP_ARG(iph,l4));
-				natflow_auth_http_302(in, skb, user);
+				NATFLOW_INFO(DEBUG_TCP_FMT ": sending HTTP 302 redirect dev=%s\n", DEBUG_TCP_ARG(iph,l4), in->name);
+				natflow_auth_http_302(in, skb, user, bridge);
 				set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
 				ret = NF_DROP;
 				goto out;
@@ -1121,7 +1173,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 								while (i < data_len && data[i] != '\n') i++;
 								i++;
 								if (i + 24 < data_len && strncasecmp(data + i, "Host: open.weixin.qq.com", 24) == 0) {
-									natflow_auth_open_weixin_reply(in, skb);
+									natflow_auth_open_weixin_reply(in, skb, bridge);
 									natflow_auth_convert_tcprst(skb);
 									set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
 									goto out;
@@ -1344,6 +1396,24 @@ static struct nf_hook_ops user_hooks[] = {
 		.pf = PF_INET,
 		.hooknum = NF_INET_POST_ROUTING,
 		.priority = NF_IP_PRI_NAT_SRC + 10,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_user_pre_hook,
+		.pf = NFPROTO_BRIDGE,
+		.hooknum = NF_INET_PRE_ROUTING,
+		.priority = NF_IP_PRI_NAT_DST - 10 + 1,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_user_forward_hook,
+		.pf = NFPROTO_BRIDGE,
+		.hooknum = NF_INET_FORWARD,
+		.priority = NF_IP_PRI_FILTER,
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
