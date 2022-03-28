@@ -226,7 +226,7 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 		nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
 		return;
 	}
-	NATFLOW_WARN("keepalive[%u] nfn[%pI4:%u->%pI4:%u] diff_jiffies=%u timeout\n",
+	NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] diff_jiffies=%u timeout\n",
 	             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (unsigned int)diff_jiffies);
 }
 
