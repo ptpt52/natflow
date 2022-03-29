@@ -917,7 +917,6 @@ static unsigned int natflow_user_pre_hook(void *priv,
 							user_i->rx_speed_packets = 0;
 							user_i->rx_speed_bytes = 0;
 						} else {
-							x = (x + 3) % 4;
 							user_i->rx_speed_packets = atomic_read(&fud->rx_speed_packets[x]);
 							user_i->rx_speed_bytes = atomic_read(&fud->rx_speed_bytes[x]);
 						}
@@ -928,7 +927,6 @@ static unsigned int natflow_user_pre_hook(void *priv,
 							user_i->tx_speed_packets = 0;
 							user_i->tx_speed_bytes = 0;
 						} else {
-							x = (x + 3) % 4;
 							user_i->tx_speed_packets = atomic_read(&fud->tx_speed_packets[x]);
 							user_i->tx_speed_bytes = atomic_read(&fud->tx_speed_bytes[x]);
 						}
@@ -1316,7 +1314,6 @@ static unsigned int natflow_user_post_hook(void *priv,
 			int i = (jiffies/HZ) % 4;
 			int j = (fud->rx_speed_jiffies/HZ) % 4;
 			unsigned long diff_jiffies = ulongmindiff(jiffies, fud->rx_speed_jiffies);
-			fud->rx_speed_jiffies = jiffies;
 			if (diff_jiffies >= HZ * 4) {
 				for(j = 0; j < 4; j++) {
 					atomic_set(&fud->rx_speed_bytes[j], 0);
@@ -1331,6 +1328,7 @@ static unsigned int natflow_user_post_hook(void *priv,
 			}
 			atomic_inc(&fud->rx_speed_packets[j]);
 			atomic_add(skb->len, &fud->rx_speed_bytes[j]);
+			fud->rx_speed_jiffies = jiffies;
 			//download
 			atomic64_inc(&counter[0].packets);
 			atomic64_add(skb->len, &counter[0].bytes);
@@ -1338,7 +1336,6 @@ static unsigned int natflow_user_post_hook(void *priv,
 			int i = (jiffies/HZ) % 4;
 			int j = (fud->tx_speed_jiffies/HZ) % 4;
 			unsigned long diff_jiffies = ulongmindiff(jiffies, fud->tx_speed_jiffies);
-			fud->tx_speed_jiffies = jiffies;
 			if (diff_jiffies >= HZ * 4) {
 				for(j = 0; j < 4; j++) {
 					atomic_set(&fud->tx_speed_bytes[j], 0);
@@ -1353,6 +1350,7 @@ static unsigned int natflow_user_post_hook(void *priv,
 			}
 			atomic_inc(&fud->tx_speed_packets[j]);
 			atomic_add(skb->len, &fud->tx_speed_bytes[j]);
+			fud->tx_speed_jiffies = jiffies;
 			//upload
 			atomic64_inc(&counter[1].packets);
 			atomic64_add(skb->len, &counter[1].bytes);
@@ -2072,7 +2070,6 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 							user_i->rx_speed_packets = 0;
 							user_i->rx_speed_bytes = 0;
 						} else {
-							x = (x + 3) % 4;
 							user_i->rx_speed_packets = atomic_read(&fud->rx_speed_packets[x]);
 							user_i->rx_speed_bytes = atomic_read(&fud->rx_speed_bytes[x]);
 						}
@@ -2083,7 +2080,6 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 							user_i->tx_speed_packets = 0;
 							user_i->tx_speed_bytes = 0;
 						} else {
-							x = (x + 3) % 4;
 							user_i->tx_speed_packets = atomic_read(&fud->tx_speed_packets[x]);
 							user_i->tx_speed_bytes = atomic_read(&fud->tx_speed_bytes[x]);
 						}
