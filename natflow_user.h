@@ -20,11 +20,11 @@ typedef struct fakeuser_data_t {
 	uint16_t auth_rule_id;
 	uint16_t auth_rule_magic;
 	unsigned long rx_speed_jiffies;
-	uint32_t rx_speed_bytes[4];
-	uint32_t rx_speed_packets[4];
+	atomic_t rx_speed_bytes[4];
+	atomic_t rx_speed_packets[4];
 	unsigned long tx_speed_jiffies;
-	uint32_t tx_speed_bytes[4];
-	uint32_t tx_speed_packets[4];
+	atomic_t tx_speed_bytes[4];
+	atomic_t tx_speed_packets[4];
 } fakeuser_data_t;
 
 typedef struct nf_conn natflow_fakeuser_t;

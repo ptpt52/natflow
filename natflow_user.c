@@ -918,8 +918,8 @@ static unsigned int natflow_user_pre_hook(void *priv,
 							user_i->rx_speed_bytes = 0;
 						} else {
 							x = (x + 3) % 4;
-							user_i->rx_speed_packets = fud->rx_speed_packets[x];
-							user_i->rx_speed_bytes = fud->rx_speed_bytes[x];
+							user_i->rx_speed_packets = atomic_read(&fud->rx_speed_packets[x]);
+							user_i->rx_speed_bytes = atomic_read(&fud->rx_speed_bytes[x]);
 						}
 
 						x = (fud->rx_speed_jiffies/HZ) % 4;
@@ -929,8 +929,8 @@ static unsigned int natflow_user_pre_hook(void *priv,
 							user_i->tx_speed_bytes = 0;
 						} else {
 							x = (x + 3) % 4;
-							user_i->tx_speed_packets = fud->tx_speed_packets[x];
-							user_i->tx_speed_bytes = fud->tx_speed_bytes[x];
+							user_i->tx_speed_packets = atomic_read(&fud->tx_speed_packets[x]);
+							user_i->tx_speed_bytes = atomic_read(&fud->tx_speed_bytes[x]);
 						}
 					} while (0);
 					spin_lock(&userinfo_event_store.lock);
@@ -1319,18 +1319,18 @@ static unsigned int natflow_user_post_hook(void *priv,
 			fud->rx_speed_jiffies = jiffies;
 			if (diff_jiffies >= HZ * 4) {
 				for(j = 0; j < 4; j++) {
-					fud->rx_speed_bytes[j] = 0;
-					fud->rx_speed_packets[j] = 0;
+					atomic_set(&fud->rx_speed_bytes[j], 0);
+					atomic_set(&fud->rx_speed_packets[j], 0);
 				}
 				j = i;
 			}
 			for (; j != i; ) {
 				j = (j + 1) % 4;
-				fud->rx_speed_bytes[j] = 0;
-				fud->rx_speed_packets[j] = 0;
+				atomic_set(&fud->rx_speed_bytes[j], 0);
+				atomic_set(&fud->rx_speed_packets[j], 0);
 			}
-			fud->rx_speed_packets[j] += 1;
-			fud->rx_speed_bytes[j] += skb->len;
+			atomic_inc(&fud->rx_speed_packets[j]);
+			atomic_add(skb->len, &fud->rx_speed_bytes[j]);
 			//download
 			atomic64_inc(&counter[0].packets);
 			atomic64_add(skb->len, &counter[0].bytes);
@@ -1341,18 +1341,18 @@ static unsigned int natflow_user_post_hook(void *priv,
 			fud->tx_speed_jiffies = jiffies;
 			if (diff_jiffies >= HZ * 4) {
 				for(j = 0; j < 4; j++) {
-					fud->tx_speed_bytes[j] = 0;
-					fud->tx_speed_packets[j] = 0;
+					atomic_set(&fud->tx_speed_bytes[j], 0);
+					atomic_set(&fud->tx_speed_packets[j], 0);
 				}
 				j = i;
 			}
 			for (; j != i; ) {
 				j = (j + 1) % 4;
-				fud->tx_speed_bytes[j] = 0;
-				fud->tx_speed_packets[j] = 0;
+				atomic_set(&fud->tx_speed_bytes[j], 0);
+				atomic_set(&fud->tx_speed_packets[j], 0);
 			}
-			fud->tx_speed_packets[j] += 1;
-			fud->tx_speed_bytes[j] += skb->len;
+			atomic_inc(&fud->tx_speed_packets[j]);
+			atomic_add(skb->len, &fud->tx_speed_bytes[j]);
 			//upload
 			atomic64_inc(&counter[1].packets);
 			atomic64_add(skb->len, &counter[1].bytes);
@@ -2073,8 +2073,8 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 							user_i->rx_speed_bytes = 0;
 						} else {
 							x = (x + 3) % 4;
-							user_i->rx_speed_packets = fud->rx_speed_packets[x];
-							user_i->rx_speed_bytes = fud->rx_speed_bytes[x];
+							user_i->rx_speed_packets = atomic_read(&fud->rx_speed_packets[x]);
+							user_i->rx_speed_bytes = atomic_read(&fud->rx_speed_bytes[x]);
 						}
 
 						x = (fud->rx_speed_jiffies/HZ) % 4;
@@ -2084,8 +2084,8 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 							user_i->tx_speed_bytes = 0;
 						} else {
 							x = (x + 3) % 4;
-							user_i->tx_speed_packets = fud->tx_speed_packets[x];
-							user_i->tx_speed_bytes = fud->tx_speed_bytes[x];
+							user_i->tx_speed_packets = atomic_read(&fud->tx_speed_packets[x]);
+							user_i->tx_speed_bytes = atomic_read(&fud->tx_speed_bytes[x]);
 						}
 					} while (0);
 					list_add_tail(&user_i->list, &user->head);

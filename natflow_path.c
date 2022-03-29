@@ -172,22 +172,22 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 					fud->rx_speed_jiffies = jiffies;
 					if (diff_jiffies >= HZ * 4) {
 						for(j = 0; j < 4; j++) {
-							fud->rx_speed_bytes[j] = 0;
-							fud->rx_speed_packets[j] = 0;
+							atomic_set(&fud->rx_speed_bytes[j], 0);
+							atomic_set(&fud->rx_speed_packets[j], 0);
 						}
 						j = i;
 					}
 					for (; j != i; ) {
 						diff++;
 						j = (j + 1) % 4;
-						fud->rx_speed_bytes[j] = speed_bytes[j];
-						fud->rx_speed_packets[j] = speed_packets[j];
+						atomic_set(&fud->rx_speed_bytes[j], speed_bytes[j]);
+						atomic_set(&fud->rx_speed_packets[j], speed_packets[j]);
 						speed_bytes[j] = speed_packets[j] = 0;
 					}
 					for (; diff < 4; diff++) {
 						j = (j + 1) % 4;
-						fud->rx_speed_bytes[j] += speed_bytes[j];
-						fud->rx_speed_packets[j] += speed_packets[j];
+						atomic_add(speed_bytes[j], &fud->rx_speed_bytes[j]);
+						atomic_add(speed_packets[j], &fud->rx_speed_packets[j]);
 						speed_bytes[j] = speed_packets[j] = 0;
 					}
 				} else {
@@ -198,22 +198,22 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 					fud->tx_speed_jiffies = jiffies;
 					if (diff_jiffies >= HZ * 4) {
 						for(j = 0; j < 4; j++) {
-							fud->tx_speed_bytes[j] = 0;
-							fud->tx_speed_packets[j] = 0;
+							atomic_set(&fud->tx_speed_bytes[j], 0);
+							atomic_set(&fud->tx_speed_packets[j], 0);
 						}
 						j = i;
 					}
 					for (; j != i; ) {
 						diff++;
 						j = (j + 1) % 4;
-						fud->tx_speed_bytes[j] = speed_bytes[j];
-						fud->tx_speed_packets[j] = speed_packets[j];
+						atomic_set(&fud->tx_speed_bytes[j], speed_bytes[j]);
+						atomic_set(&fud->tx_speed_packets[j], speed_packets[j]);
 						speed_bytes[j] = speed_packets[j] = 0;
 					}
 					for (; diff < 4; diff++) {
 						j = (j + 1) % 4;
-						fud->tx_speed_bytes[j] += speed_bytes[j];
-						fud->tx_speed_packets[j] += speed_packets[j];
+						atomic_add(speed_bytes[j], &fud->tx_speed_bytes[j]);
+						atomic_add(speed_packets[j], &fud->tx_speed_packets[j]);
 						speed_bytes[j] = speed_packets[j] = 0;
 					}
 				}
@@ -959,18 +959,18 @@ slow_fastpath:
 			fud->rx_speed_jiffies = jiffies;
 			if (diff_jiffies >= HZ * 4) {
 				for(j = 0; j < 4; j++) {
-					fud->rx_speed_bytes[j] = 0;
-					fud->rx_speed_packets[j] = 0;
+					atomic_set(&fud->rx_speed_bytes[j], 0);
+					atomic_set(&fud->rx_speed_packets[j], 0);
 				}
 				j = i;
 			}
 			for (; j != i; ) {
 				j = (j + 1) % 4;
-				fud->rx_speed_bytes[j] = 0;
-				fud->rx_speed_packets[j] = 0;
+				atomic_set(&fud->rx_speed_bytes[j], 0);
+				atomic_set(&fud->rx_speed_packets[j], 0);
 			}
-			fud->rx_speed_packets[j] += 1;
-			fud->rx_speed_bytes[j] += skb->len;
+			atomic_inc(&fud->rx_speed_packets[j]);
+			atomic_add(skb->len, &fud->rx_speed_bytes[j]);
 		} else {
 			int i = (jiffies/HZ) % 4;
 			int j = (fud->tx_speed_jiffies/HZ) % 4;
@@ -978,18 +978,18 @@ slow_fastpath:
 			fud->tx_speed_jiffies = jiffies;
 			if (diff_jiffies >= HZ * 4) {
 				for(j = 0; j < 4; j++) {
-					fud->tx_speed_bytes[j] = 0;
-					fud->tx_speed_packets[j] = 0;
+					atomic_set(&fud->tx_speed_bytes[j], 0);
+					atomic_set(&fud->tx_speed_packets[j], 0);
 				}
 				j = i;
 			}
 			for (; j != i; ) {
 				j = (j + 1) % 4;
-				fud->tx_speed_bytes[j] = 0;
-				fud->tx_speed_packets[j] = 0;
+				atomic_set(&fud->tx_speed_bytes[j], 0);
+				atomic_set(&fud->tx_speed_packets[j], 0);
 			}
-			fud->tx_speed_packets[j] += 1;
-			fud->tx_speed_bytes[j] += skb->len;
+			atomic_inc(&fud->tx_speed_packets[j]);
+			atomic_add(skb->len, &fud->tx_speed_bytes[j]);
 		}
 	} while (0);
 
