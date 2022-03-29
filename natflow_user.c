@@ -911,24 +911,62 @@ static unsigned int natflow_user_pre_hook(void *priv,
 					user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
 
 					do {
-						int x = (fud->rx_speed_jiffies/HZ) % 4;
+						int x = (jiffies/HZ) % 4;
 						unsigned long diff = ulongmindiff(jiffies, fud->rx_speed_jiffies);
 						if (diff > HZ * 4) {
 							user_i->rx_speed_packets = 0;
 							user_i->rx_speed_bytes = 0;
 						} else {
-							user_i->rx_speed_packets = atomic_read(&fud->rx_speed_packets[x]);
-							user_i->rx_speed_bytes = atomic_read(&fud->rx_speed_bytes[x]);
+							int rx_p1, rx_p2, rx_p3;
+							int rx_b1, rx_b2, rx_b3;
+							rx_p1 = atomic_read(&fud->rx_speed_packets[x]);
+							rx_b1 = atomic_read(&fud->rx_speed_bytes[x]);
+							x = (x + 2) % 4;
+							rx_p2 = atomic_read(&fud->rx_speed_packets[x]);
+							rx_b2 = atomic_read(&fud->rx_speed_bytes[x]);
+							x = (x + 1) % 4;
+							rx_p3 = atomic_read(&fud->rx_speed_packets[x]);
+							rx_b3 = atomic_read(&fud->rx_speed_bytes[x]);
+							if (rx_p1 > rx_p2) {
+								user_i->rx_speed_packets = rx_p1;
+								user_i->rx_speed_bytes = rx_b1;
+							} else {
+								user_i->rx_speed_packets = rx_p2;
+								user_i->rx_speed_bytes = rx_b2;
+							}
+							if (user_i->rx_speed_packets < rx_p3) {
+								user_i->rx_speed_packets = rx_p3;
+								user_i->rx_speed_bytes = rx_b3;
+							}
 						}
 
-						x = (fud->rx_speed_jiffies/HZ) % 4;
+						x = (jiffies/HZ) % 4;
 						diff = ulongmindiff(jiffies, fud->tx_speed_jiffies);
 						if (diff > HZ * 4) {
 							user_i->tx_speed_packets = 0;
 							user_i->tx_speed_bytes = 0;
 						} else {
-							user_i->tx_speed_packets = atomic_read(&fud->tx_speed_packets[x]);
-							user_i->tx_speed_bytes = atomic_read(&fud->tx_speed_bytes[x]);
+							int tx_p1, tx_p2, tx_p3;
+							int tx_b1, tx_b2, tx_b3;
+							tx_p1 = atomic_read(&fud->tx_speed_packets[x]);
+							tx_b1 = atomic_read(&fud->tx_speed_bytes[x]);
+							x = (x + 2) % 4;
+							tx_p2 = atomic_read(&fud->tx_speed_packets[x]);
+							tx_b2 = atomic_read(&fud->tx_speed_bytes[x]);
+							x = (x + 1) % 4;
+							tx_p3 = atomic_read(&fud->tx_speed_packets[x]);
+							tx_b3 = atomic_read(&fud->tx_speed_bytes[x]);
+							if (tx_p1 > tx_p2) {
+								user_i->tx_speed_packets = tx_p1;
+								user_i->tx_speed_bytes = tx_b1;
+							} else {
+								user_i->tx_speed_packets = tx_p2;
+								user_i->tx_speed_bytes = tx_b2;
+							}
+							if (user_i->tx_speed_packets < tx_p3) {
+								user_i->tx_speed_packets = tx_p3;
+								user_i->tx_speed_bytes = tx_b3;
+							}
 						}
 					} while (0);
 					spin_lock(&userinfo_event_store.lock);
@@ -2064,24 +2102,62 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 					user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
 
 					do {
-						int x = (fud->rx_speed_jiffies/HZ) % 4;
+						int x = (jiffies/HZ) % 4;
 						unsigned long diff = ulongmindiff(jiffies, fud->rx_speed_jiffies);
 						if (diff > HZ * 4) {
 							user_i->rx_speed_packets = 0;
 							user_i->rx_speed_bytes = 0;
 						} else {
-							user_i->rx_speed_packets = atomic_read(&fud->rx_speed_packets[x]);
-							user_i->rx_speed_bytes = atomic_read(&fud->rx_speed_bytes[x]);
+							int rx_p1, rx_p2, rx_p3;
+							int rx_b1, rx_b2, rx_b3;
+							rx_p1 = atomic_read(&fud->rx_speed_packets[x]);
+							rx_b1 = atomic_read(&fud->rx_speed_bytes[x]);
+							x = (x + 2) % 4;
+							rx_p2 = atomic_read(&fud->rx_speed_packets[x]);
+							rx_b2 = atomic_read(&fud->rx_speed_bytes[x]);
+							x = (x + 1) % 4;
+							rx_p3 = atomic_read(&fud->rx_speed_packets[x]);
+							rx_b3 = atomic_read(&fud->rx_speed_bytes[x]);
+							if (rx_p1 > rx_p2) {
+								user_i->rx_speed_packets = rx_p1;
+								user_i->rx_speed_bytes = rx_b1;
+							} else {
+								user_i->rx_speed_packets = rx_p2;
+								user_i->rx_speed_bytes = rx_b2;
+							}
+							if (user_i->rx_speed_packets < rx_p3) {
+								user_i->rx_speed_packets = rx_p3;
+								user_i->rx_speed_bytes = rx_b3;
+							}
 						}
 
-						x = (fud->rx_speed_jiffies/HZ) % 4;
+						x = (jiffies/HZ) % 4;
 						diff = ulongmindiff(jiffies, fud->tx_speed_jiffies);
 						if (diff > HZ * 4) {
 							user_i->tx_speed_packets = 0;
 							user_i->tx_speed_bytes = 0;
 						} else {
-							user_i->tx_speed_packets = atomic_read(&fud->tx_speed_packets[x]);
-							user_i->tx_speed_bytes = atomic_read(&fud->tx_speed_bytes[x]);
+							int tx_p1, tx_p2, tx_p3;
+							int tx_b1, tx_b2, tx_b3;
+							tx_p1 = atomic_read(&fud->tx_speed_packets[x]);
+							tx_b1 = atomic_read(&fud->tx_speed_bytes[x]);
+							x = (x + 2) % 4;
+							tx_p2 = atomic_read(&fud->tx_speed_packets[x]);
+							tx_b2 = atomic_read(&fud->tx_speed_bytes[x]);
+							x = (x + 1) % 4;
+							tx_p3 = atomic_read(&fud->tx_speed_packets[x]);
+							tx_b3 = atomic_read(&fud->tx_speed_bytes[x]);
+							if (tx_p1 > tx_p2) {
+								user_i->tx_speed_packets = tx_p1;
+								user_i->tx_speed_bytes = tx_b1;
+							} else {
+								user_i->tx_speed_packets = tx_p2;
+								user_i->tx_speed_bytes = tx_b2;
+							}
+							if (user_i->tx_speed_packets < tx_p3) {
+								user_i->tx_speed_packets = tx_p3;
+								user_i->tx_speed_bytes = tx_b3;
+							}
 						}
 					} while (0);
 					list_add_tail(&user_i->list, &user->head);

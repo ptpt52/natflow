@@ -164,6 +164,7 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 					break;
 				}
 				fud = natflow_fakeuser_data(user);
+				current_jiffies = jiffies;
 				if (d == 0) {
 					int i = (current_jiffies/HZ) % 4;
 					int j = (fud->rx_speed_jiffies/HZ) % 4;
