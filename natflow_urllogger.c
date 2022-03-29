@@ -387,7 +387,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 		goto out;
 
 	iph = ip_hdr(skb);
-	if (skb->protocol != __constant_htons(ETH_P_IP) || iph->protocol != IPPROTO_TCP) {
+	if (iph->protocol != IPPROTO_TCP) {
 		goto out;
 	}
 
