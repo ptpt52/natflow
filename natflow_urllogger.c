@@ -360,42 +360,59 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 	struct nf_conn *ct;
 	struct iphdr *iph;
 	void *l4;
+	int bridge = 0;
 
 	if (!urllogger_store_enable)
 		return NF_ACCEPT;
 
-	if (skb->protocol != __constant_htons(ETH_P_IP))
+	if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+	        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
+		skb_pull(skb, PPPOE_SES_HLEN);
+		skb->protocol = __constant_htons(ETH_P_IP);
+		skb->network_header += PPPOE_SES_HLEN;
+		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
+		bridge = 1;
+	} else if (skb->protocol != __constant_htons(ETH_P_IP))
 		return NF_ACCEPT;
-
-	iph = ip_hdr(skb);
-	if (iph->protocol != IPPROTO_TCP)
-		return NF_ACCEPT;
-	l4 = (void *)iph + iph->ihl * 4;
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct)
-		return NF_ACCEPT;
+		goto out;
 
 	dir = CTINFO2DIR(ctinfo);
 	if (dir != IP_CT_DIR_ORIGINAL)
-		return NF_ACCEPT;
+		goto out;
 
 	if ((ct->status & IPS_NATFLOW_URLLOGGER_HANDLED))
-		return NF_ACCEPT;
+		goto out;
 
-	if (!(IPS_NATFLOW_FF_STOP & ct->status)) set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
+	iph = ip_hdr(skb);
+	if (skb->protocol != __constant_htons(ETH_P_IP) || iph->protocol != IPPROTO_TCP) {
+		goto out;
+	}
 
-	if (skb_try_make_writable(skb, skb->len)) {
-		return NF_ACCEPT;
+	if (skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct tcphdr))) {
+		goto out;
 	}
 	iph = ip_hdr(skb);
 	l4 = (void *)iph + iph->ihl * 4;
 
-	data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
+	/* pause fastnat path */
+	if (!(IPS_NATFLOW_FF_STOP & ct->status)) set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
+
 	data_len = ntohs(iph->tot_len) - (iph->ihl * 4 + TCPH(l4)->doff * 4);
 	if (data_len > 0) {
 		unsigned char *host = NULL;
 		int host_len = data_len;
+
+		if (skb_try_make_writable(skb, skb->len)) {
+			goto out;
+		}
+		iph = ip_hdr(skb);
+		l4 = (void *)iph + iph->ihl * 4;
+
+		data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
+
 		/* check one packet only */
 		set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
 
@@ -404,7 +421,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 		if (host) {
 			struct urlinfo *url = kmalloc(ALIGN(sizeof(struct urlinfo) + host_len + 1, __URLINFO_ALIGN), GFP_ATOMIC);
 			if (!url)
-				return NF_ACCEPT;
+				goto out;
 			INIT_LIST_HEAD(&url->list);
 			memcpy(url->data, host, host_len);
 			url->data[host_len] = 0;
@@ -444,7 +461,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			if (http_url_search(data, &host_len, &host, &uri_len, &uri, &http_method) > 0) {
 				struct urlinfo *url = kmalloc(ALIGN(sizeof(struct urlinfo) + host_len + uri_len + 1, __URLINFO_ALIGN), GFP_ATOMIC);
 				if (!url)
-					return NF_ACCEPT;
+					goto out;
 				INIT_LIST_HEAD(&url->list);
 				memcpy(url->data, host, host_len);
 				memcpy(url->data + host_len, uri, uri_len);
@@ -481,6 +498,12 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			}
 		}
 	}
+out:
+	if (bridge) {
+		skb->network_header -= PPPOE_SES_HLEN;
+		skb->protocol = __constant_htons(ETH_P_PPP_SES);
+		skb_push(skb, PPPOE_SES_HLEN);
+	}
 
 	return NF_ACCEPT;
 }
@@ -492,6 +515,15 @@ static struct nf_hook_ops urllogger_hooks[] = {
 #endif
 		.hook = natflow_urllogger_hook_v1,
 		.pf = PF_INET,
+		.hooknum = NF_INET_FORWARD,
+		.priority = NF_IP_PRI_FILTER - 10,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_urllogger_hook_v1,
+		.pf = NFPROTO_BRIDGE,
 		.hooknum = NF_INET_FORWARD,
 		.priority = NF_IP_PRI_FILTER - 10,
 	},
