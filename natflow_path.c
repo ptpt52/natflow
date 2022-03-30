@@ -553,7 +553,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		}
 #endif
 		/* skip for defrag-skb or large packets */
-		if (skb_is_nonlinear(skb) || ntohs(iph->tot_len) > 1500)
+		if (skb_is_nonlinear(skb) || ntohs(iph->tot_len) > 1500 - ingress_pad_len)
 			goto out;
 
 		if (iph->protocol == IPPROTO_TCP) {
