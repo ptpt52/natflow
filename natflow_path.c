@@ -535,6 +535,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		if (pskb_trim_rcsum(skb, _I)) {
 			return NF_DROP;
 		}
+		iph = ip_hdr(skb);
 
 		skb->protocol = __constant_htons(ETH_P_IP);
 		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
@@ -549,6 +550,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			goto out;
 		}
 #endif
+		/* skip for defrag-skb or large packets */
+		if (skb_is_nonlinear(skb) || ntohs(iph->tot_len) > 1500)
+			goto out;
 
 		if (iph->protocol == IPPROTO_TCP) {
 			if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct tcphdr)) || skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct tcphdr))) {
@@ -727,7 +731,6 @@ fast_output:
 				return NF_STOLEN;
 			}
 			/* for TCP */
-			goto slow_fastpath;
 		} else {
 			if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr)) || skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct udphdr))) {
 				return NF_DROP;
@@ -840,9 +843,8 @@ fast_output:
 				goto fast_output;
 			}
 			/* for UDP */
-			goto slow_fastpath;
 		}
-		goto out;
+		/* fall to slow fastnat path */
 
 slow_fastpath:
 		ret = nf_conntrack_in_compat(dev_net(skb->dev), PF_INET, NF_INET_PRE_ROUTING, skb);
@@ -934,6 +936,31 @@ slow_fastpath:
 		}
 	}
 
+	/* skip for defrag-skb or large packets */
+	if (skb_is_nonlinear(skb) || ntohs(iph->tot_len) > 1500)
+		goto out;
+
+	if (!simple_test_bit(NF_FF_BRIDGE_BIT, &nf->status)) {
+		if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
+			switch (iph->protocol) {
+			case IPPROTO_TCP:
+				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": pmtu=%u FRAG=%p\n",
+				              DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+				break;
+			case IPPROTO_UDP:
+				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%p\n",
+				              DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+				break;
+			}
+			goto out;
+		}
+
+		if (iph->ttl <= 1) {
+			return NF_DROP;
+		}
+		ip_decrease_ttl(iph);
+	}
+
 	do {
 		int d = !dir;
 		natflow_fakeuser_t *user;
@@ -994,27 +1021,6 @@ slow_fastpath:
 		}
 	} while (0);
 
-
-	if (!simple_test_bit(NF_FF_BRIDGE_BIT, &nf->status)) {
-		if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
-			switch (iph->protocol) {
-			case IPPROTO_TCP:
-				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": pmtu=%u FRAG=%p\n",
-				              DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
-				break;
-			case IPPROTO_UDP:
-				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%p\n",
-				              DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
-				break;
-			}
-			goto out;
-		}
-
-		if (iph->ttl <= 1) {
-			return NF_DROP;
-		}
-		ip_decrease_ttl(iph);
-	}
 	if ((ct->status & IPS_DST_NAT)) {
 		if (dir == NF_FF_DIR_ORIGINAL) {
 			//do DNAT
