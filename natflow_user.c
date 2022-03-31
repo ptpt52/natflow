@@ -731,7 +731,7 @@ static unsigned int natflow_user_pre_hook(unsigned int hooknum,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
-	u_int8_t pf = PF_INET;
+	//u_int8_t pf = PF_INET;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
 static unsigned int natflow_user_pre_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
@@ -739,14 +739,14 @@ static unsigned int natflow_user_pre_hook(const struct nf_hook_ops *ops,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
-	u_int8_t pf = ops->pf;
+	//u_int8_t pf = ops->pf;
 	unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_user_pre_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
-	u_int8_t pf = state->pf;
+	//u_int8_t pf = state->pf;
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 	const struct net_device *out = state->out;
@@ -755,7 +755,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
-	u_int8_t pf = state->pf;
+	//u_int8_t pf = state->pf;
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
@@ -788,12 +788,6 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
 		goto out;
-	}
-
-	if (pf != NFPROTO_BRIDGE && (ct->status & IPS_NATFLOW_BRIDGE_FWD)) {
-		goto out;
-	} else if (pf == NFPROTO_BRIDGE && !(ct->status & IPS_NATFLOW_BRIDGE_FWD)) {
-		set_bit(IPS_NATFLOW_BRIDGE_FWD_BIT, &ct->status);
 	}
 
 	if ((ct->status & IPS_NATFLOW_USER_BYPASS)) {
@@ -1035,7 +1029,7 @@ static unsigned int natflow_user_forward_hook(unsigned int hooknum,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
-	//u_int8_t pf = PF_INET;
+	u_int8_t pf = PF_INET;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
 static unsigned int natflow_user_forward_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
@@ -1043,14 +1037,14 @@ static unsigned int natflow_user_forward_hook(const struct nf_hook_ops *ops,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
-	//u_int8_t pf = ops->pf;
+	u_int8_t pf = ops->pf;
 	unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_user_forward_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
-	//u_int8_t pf = state->pf;
+	u_int8_t pf = state->pf;
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 	const struct net_device *out = state->out;
@@ -1059,7 +1053,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
-	//u_int8_t pf = state->pf;
+	u_int8_t pf = state->pf;
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
@@ -1131,6 +1125,12 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		goto out;
 	}
 	fud = natflow_fakeuser_data(user);
+
+	if (pf != NFPROTO_BRIDGE && (ct->status & IPS_NATFLOW_BRIDGE_FWD)) {
+		goto out;
+	} else if (pf == NFPROTO_BRIDGE && !(ct->status & IPS_NATFLOW_BRIDGE_FWD)) {
+		set_bit(IPS_NATFLOW_BRIDGE_FWD_BIT, &ct->status);
+	}
 
 	switch(fud->auth_status) {
 	case AUTH_REQ:
@@ -1315,6 +1315,7 @@ static unsigned int natflow_user_post_hook(void *priv,
 	} else if (pf == NFPROTO_BRIDGE && !(ct->status & IPS_NATFLOW_BRIDGE_FWD)) {
 		set_bit(IPS_NATFLOW_BRIDGE_FWD_BIT, &ct->status);
 	}
+
 
 	user = natflow_user_get(ct);
 	if (NULL == user) {
