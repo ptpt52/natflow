@@ -1735,9 +1735,31 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		}
 
 		iph = ip_hdr(skb);
+		l4 = (void *)iph + iph->ihl * 4;
 		if (nf->rroute[!CTINFO2DIR(ctinfo)].ttl_in == iph->ttl) {
 			/* ttl no change, so assume bridge forward */
 			simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+			switch (iph->protocol) {
+			case IPPROTO_TCP:
+				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl no change, so assume bridge forward, pf=%d\n",
+				             DEBUG_TCP_ARG(iph,l4), CTINFO2DIR(ctinfo), pf);
+				break;
+			case IPPROTO_UDP:
+				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl no change, so assume bridge forward, pf=%d\n",
+				             DEBUG_UDP_ARG(iph,l4), CTINFO2DIR(ctinfo), pf);
+				break;
+			}
+		} else {
+			switch (iph->protocol) {
+			case IPPROTO_TCP:
+				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl change from %d to %d, pf=%d\n",
+				             DEBUG_TCP_ARG(iph,l4), CTINFO2DIR(ctinfo), nf->rroute[!CTINFO2DIR(ctinfo)].ttl_in, iph->ttl, pf);
+				break;
+			case IPPROTO_UDP:
+				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl change from %d to %d, pf=%d\n",
+				             DEBUG_UDP_ARG(iph,l4), CTINFO2DIR(ctinfo), nf->rroute[!CTINFO2DIR(ctinfo)].ttl_in, iph->ttl, pf);
+				break;
+			}
 		}
 	}
 
@@ -1829,7 +1851,6 @@ static struct nf_hook_ops path_hooks[] = {
 		.hooknum = NF_INET_POST_ROUTING,
 		.priority = NF_IP_PRI_LAST - 10 - 1,
 	},
-#if 0
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 		.owner = THIS_MODULE,
@@ -1839,7 +1860,6 @@ static struct nf_hook_ops path_hooks[] = {
 		.hooknum = NF_INET_POST_ROUTING,
 		.priority = NF_IP_PRI_LAST - 10 - 1,
 	},
-#endif
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 		.owner = THIS_MODULE,
