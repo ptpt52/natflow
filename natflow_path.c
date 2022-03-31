@@ -151,9 +151,10 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 				if (NULL == user) {
 					break;
 				}
-				if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
-					d = !d;
-				}
+				if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[!d].tuple.src.u3.ip)
+					d = 0; /* download */
+				else
+					d = 1; /* upload */
 				acct = nf_conn_acct_find(user);
 				if (acct) {
 					struct nf_conn_counter *counter = acct->counter;

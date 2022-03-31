@@ -1345,11 +1345,8 @@ static unsigned int natflow_user_post_hook(void *priv,
 	if (acct) {
 		struct nf_conn_counter *counter = acct->counter;
 		struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-		if (natflow_is_lan_zone(out)
-#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
-		        || (br_out && natflow_is_lan_zone(br_out))
-#endif
-		   ) {
+		if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[CTINFO2DIR(ctinfo)].tuple.src.u3.ip) {
+			/* download */
 			int i = (jiffies/HZ) % 4;
 			int j = (fud->rx_speed_jiffies/HZ) % 4;
 			unsigned long diff_jiffies = ulongmindiff(jiffies, fud->rx_speed_jiffies);
@@ -1368,10 +1365,10 @@ static unsigned int natflow_user_post_hook(void *priv,
 			atomic_inc(&fud->rx_speed_packets[j]);
 			atomic_add(skb->len, &fud->rx_speed_bytes[j]);
 			fud->rx_speed_jiffies = jiffies;
-			//download
 			atomic64_inc(&counter[0].packets);
 			atomic64_add(skb->len, &counter[0].bytes);
 		} else {
+			/* upload */
 			int i = (jiffies/HZ) % 4;
 			int j = (fud->tx_speed_jiffies/HZ) % 4;
 			unsigned long diff_jiffies = ulongmindiff(jiffies, fud->tx_speed_jiffies);
@@ -1390,7 +1387,6 @@ static unsigned int natflow_user_post_hook(void *priv,
 			atomic_inc(&fud->tx_speed_packets[j]);
 			atomic_add(skb->len, &fud->tx_speed_bytes[j]);
 			fud->tx_speed_jiffies = jiffies;
-			//upload
 			atomic64_inc(&counter[1].packets);
 			atomic64_add(skb->len, &counter[1].bytes);
 		}
