@@ -348,6 +348,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 					else if (skb->vlan_proto == htons(ETH_P_8021AD))
 						nf->rroute[NF_FF_DIR_REPLY].vlan_proto = FF_ETH_P_8021AD;
 				}
+				nf->rroute[NF_FF_DIR_REPLY].ttl_in = ip_hdr(skb)->ttl;
 				simple_set_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 			}
 		}
@@ -375,6 +376,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 					else if (skb->vlan_proto == htons(ETH_P_8021AD))
 						nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto = FF_ETH_P_8021AD;
 				}
+				nf->rroute[NF_FF_DIR_ORIGINAL].ttl_in = ip_hdr(skb)->ttl;
 				simple_set_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 			}
 		}
@@ -1713,13 +1715,6 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		return NF_ACCEPT;
 	}
 
-	if (pf != NFPROTO_BRIDGE && (nf->status & NF_FF_BRIDGE)) {
-		return NF_ACCEPT;
-	} else if (pf == NFPROTO_BRIDGE && !(nf->status & NF_FF_BRIDGE)) {
-		/* this is bridge forward flow */
-		simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
-	}
-
 	//skip nf session for ct with helper
 	if (!nf_ct_is_confirmed(ct)) {
 		struct nf_conn_help *help = nfct_help(ct);
@@ -1728,10 +1723,13 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
 			return NF_ACCEPT;
 		}
-	}
 
-	iph = ip_hdr(skb);
-	l4 = (void *)iph + iph->ihl * 4;
+		iph = ip_hdr(skb);
+		if (nf->rroute[!CTINFO2DIR(ctinfo)].ttl_in == iph->ttl) {
+			/* ttl no change, so assume bridge forward */
+			simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+		}
+	}
 
 	if (pf == NFPROTO_BRIDGE) {
 		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
@@ -1764,6 +1762,8 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (ret != NF_ACCEPT) {
 		return ret;
 	}
+	iph = ip_hdr(skb);
+	l4 = (void *)iph + iph->ihl * 4;
 
 	if (CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL) {
 		dir = NF_FF_DIR_ORIGINAL;
