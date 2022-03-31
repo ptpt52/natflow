@@ -518,6 +518,7 @@ static struct nf_hook_ops urllogger_hooks[] = {
 		.hooknum = NF_INET_FORWARD,
 		.priority = NF_IP_PRI_FILTER - 10,
 	},
+#if 0
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 		.owner = THIS_MODULE,
@@ -527,6 +528,7 @@ static struct nf_hook_ops urllogger_hooks[] = {
 		.hooknum = NF_INET_FORWARD,
 		.priority = NF_IP_PRI_FILTER - 10,
 	},
+#endif
 };
 
 struct urllogger_user {

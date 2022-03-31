@@ -1738,8 +1738,6 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		if (nf->rroute[!CTINFO2DIR(ctinfo)].ttl_in == iph->ttl) {
 			/* ttl no change, so assume bridge forward */
 			simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
-		} else {
-			set_bit(IPS_NATFLOW_ROUTE_FWD_BIT, &ct->status);
 		}
 	}
 
@@ -1831,6 +1829,7 @@ static struct nf_hook_ops path_hooks[] = {
 		.hooknum = NF_INET_POST_ROUTING,
 		.priority = NF_IP_PRI_LAST - 10 - 1,
 	},
+#if 0
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 		.owner = THIS_MODULE,
@@ -1840,6 +1839,7 @@ static struct nf_hook_ops path_hooks[] = {
 		.hooknum = NF_INET_POST_ROUTING,
 		.priority = NF_IP_PRI_LAST - 10 - 1,
 	},
+#endif
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 		.owner = THIS_MODULE,
