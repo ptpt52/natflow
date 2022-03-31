@@ -1735,6 +1735,8 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		if (nf->rroute[!CTINFO2DIR(ctinfo)].ttl_in == iph->ttl) {
 			/* ttl no change, so assume bridge forward */
 			simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+		} else {
+			set_bit(IPS_NATFLOW_ROUTE_FWD_BIT, &ct->status);
 		}
 	}
 

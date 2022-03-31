@@ -1126,10 +1126,8 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	}
 	fud = natflow_fakeuser_data(user);
 
-	if (pf != NFPROTO_BRIDGE && (ct->status & IPS_NATFLOW_BRIDGE_FWD)) {
+	if (pf == NFPROTO_BRIDGE && (ct->status & IPS_NATFLOW_ROUTE_FWD)) {
 		goto out;
-	} else if (pf == NFPROTO_BRIDGE && !(ct->status & IPS_NATFLOW_BRIDGE_FWD)) {
-		set_bit(IPS_NATFLOW_BRIDGE_FWD_BIT, &ct->status);
 	}
 
 	switch(fud->auth_status) {
@@ -1310,12 +1308,9 @@ static unsigned int natflow_user_post_hook(void *priv,
 		goto out;
 	}
 
-	if (pf != NFPROTO_BRIDGE && (ct->status & IPS_NATFLOW_BRIDGE_FWD)) {
+	if (pf == NFPROTO_BRIDGE && (ct->status & IPS_NATFLOW_ROUTE_FWD)) {
 		goto out;
-	} else if (pf == NFPROTO_BRIDGE && !(ct->status & IPS_NATFLOW_BRIDGE_FWD)) {
-		set_bit(IPS_NATFLOW_BRIDGE_FWD_BIT, &ct->status);
 	}
-
 
 	user = natflow_user_get(ct);
 	if (NULL == user) {
