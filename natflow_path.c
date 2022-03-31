@@ -558,7 +558,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		/* skip for defrag-skb or large packets */
 		if (skb_is_nonlinear(skb) || ntohs(iph->tot_len) > 1500 - ingress_pad_len) {
 			if (iph->protocol == IPPROTO_UDP || !skb_is_gso(skb))
-				goto out;
+				goto slow_fastpath;
 		}
 
 		if (iph->protocol == IPPROTO_TCP) {
@@ -647,8 +647,10 @@ extdev_to_ppe:
 				nfn->flow_bytes += skb->len;
 				nfn->flow_packets += 1;
 
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG) && skb_is_gso(skb) && (nfn->outdev->features & NETIF_F_TSO))
 					goto extdev_to_ppe;
+#endif
 
 				if (!(nfn->flags & FASTNAT_BRIDGE_FWD)) {
 					if (iph->ttl <= 1) {
