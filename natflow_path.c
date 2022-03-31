@@ -556,8 +556,10 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		}
 #endif
 		/* skip for defrag-skb or large packets */
-		if (skb_is_nonlinear(skb) || ntohs(iph->tot_len) > 1500 - ingress_pad_len)
-			goto out;
+		if (skb_is_nonlinear(skb) || ntohs(iph->tot_len) > 1500 - ingress_pad_len) {
+			if (iph->protocol == IPPROTO_UDP || !skb_is_gso(skb))
+				goto out;
+		}
 
 		if (iph->protocol == IPPROTO_TCP) {
 			if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct tcphdr)) || skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct tcphdr))) {
@@ -602,7 +604,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				}
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
-				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
+				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG) && !skb_is_gso(skb)) {
+extdev_to_ppe:
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 					__vlan_hwaccel_clear_tag(skb);
 #else
@@ -623,7 +626,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					skb->mark = HWNAT_QUEUE_MAPPING_MAGIC;
 					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
 					dev_queue_xmit(skb);
-					/*FIXME what if gso? */
 					return NF_STOLEN;
 				}
 #endif
@@ -644,6 +646,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				nfn->speed_packets[_I] += 1;
 				nfn->flow_bytes += skb->len;
 				nfn->flow_packets += 1;
+
+				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG) && skb_is_gso(skb) && (nfn->outdev->features & NETIF_F_TSO))
+					goto extdev_to_ppe;
 
 				if (!(nfn->flags & FASTNAT_BRIDGE_FWD)) {
 					if (iph->ttl <= 1) {
@@ -796,7 +801,6 @@ fast_output:
 					skb->mark = HWNAT_QUEUE_MAPPING_MAGIC;
 					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
 					dev_queue_xmit(skb);
-					/*FIXME what if gso? */
 					return NF_STOLEN;
 				}
 #endif
@@ -940,8 +944,10 @@ slow_fastpath:
 	}
 
 	/* skip for defrag-skb or large packets */
-	if (skb_is_nonlinear(skb) || ntohs(iph->tot_len) > 1500)
-		goto out;
+	if (skb_is_nonlinear(skb) || ntohs(iph->tot_len) > 1500 - ingress_pad_len) {
+		if (iph->protocol == IPPROTO_UDP || !skb_is_gso(skb))
+			goto out;
+	}
 
 	if (!simple_test_bit(NF_FF_BRIDGE_BIT, &nf->status)) {
 		if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
@@ -965,15 +971,16 @@ slow_fastpath:
 	}
 
 	do {
-		int d = !dir;
 		natflow_fakeuser_t *user;
 		struct fakeuser_data_t *fud;
 		user = natflow_user_get(ct);
 		if (NULL == user) {
 			break;
 		}
-		if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
-			d = !d;
+		if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[dir].tuple.src.u3.ip) {
+			d = 0;
+		} else {
+			d = 1;
 		}
 		acct = nf_conn_acct_find(user);
 		if (acct) {
