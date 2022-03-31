@@ -1710,15 +1710,6 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (NULL == ct) {
 		return NF_ACCEPT;
 	}
-	if ((ct->status & IPS_NATFLOW_URLLOGGER_HANDLED) && (ct->status & IPS_NATFLOW_FF_STOP) && !(IPS_NATCAP & ct->status)) {
-		struct nf_conn_help *help = nfct_help(ct);
-		if (!help || !help->helper) {
-			clear_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
-		}
-	}
-	if ((ct->status & IPS_NATFLOW_FF_STOP)) {
-		return NF_ACCEPT;
-	}
 
 	nf = natflow_session_get(ct);
 	if (NULL == nf) {
@@ -1786,6 +1777,13 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 			}
 		} else if (!(skb->protocol == __constant_htons(ETH_P_IP))) {
 			return NF_ACCEPT;
+		}
+	}
+
+	if ((ct->status & IPS_NATFLOW_URLLOGGER_HANDLED) && (ct->status & IPS_NATFLOW_FF_STOP) && !(IPS_NATCAP & ct->status)) {
+		struct nf_conn_help *help = nfct_help(ct);
+		if (!help || !help->helper) {
+			clear_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
 		}
 	}
 
