@@ -1705,11 +1705,6 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		return NF_ACCEPT;
 	}
 
-	if ((ct->status & IPS_NATFLOW_FF_STOP) && ((IPS_NATCAP | IPS_NATCAP_DUAL) & ct->status)) {
-		/* natcap need ct not to be comfirm too early XXX: natcap_client_post_master_out_hook*/
-		return NF_ACCEPT;
-	}
-
 	nf = natflow_session_get(ct);
 	if (NULL == nf) {
 		return NF_ACCEPT;
@@ -1753,6 +1748,13 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		}
 	}
 
+	if ((ct->status & IPS_NATFLOW_URLLOGGER_HANDLED) && (ct->status & IPS_NATFLOW_FF_STOP) && !(IPS_NATCAP & ct->status)) {
+		struct nf_conn_help *help = nfct_help(ct);
+		if (!help || !help->helper) {
+			clear_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
+		}
+	}
+
 	if (pf == NFPROTO_BRIDGE) {
 		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
 		        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
@@ -1776,13 +1778,6 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 			}
 		} else if (!(skb->protocol == __constant_htons(ETH_P_IP))) {
 			return NF_ACCEPT;
-		}
-	}
-
-	if ((ct->status & IPS_NATFLOW_URLLOGGER_HANDLED) && (ct->status & IPS_NATFLOW_FF_STOP) && !(IPS_NATCAP & ct->status)) {
-		struct nf_conn_help *help = nfct_help(ct);
-		if (!help || !help->helper) {
-			clear_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
 		}
 	}
 
@@ -1846,7 +1841,7 @@ static struct nf_hook_ops path_hooks[] = {
 		.hook = natflow_path_post_ct_out_hook,
 		.pf = PF_INET,
 		.hooknum = NF_INET_POST_ROUTING,
-		.priority = NF_IP_PRI_LAST - 10 - 1,
+		.priority = NF_IP_PRI_LAST - 10 + 8,
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
@@ -1855,7 +1850,7 @@ static struct nf_hook_ops path_hooks[] = {
 		.hook = natflow_path_post_ct_out_hook,
 		.pf = NFPROTO_BRIDGE,
 		.hooknum = NF_INET_POST_ROUTING,
-		.priority = NF_IP_PRI_LAST - 10 - 1,
+		.priority = NF_IP_PRI_LAST - 10 + 8,
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
