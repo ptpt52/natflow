@@ -1711,6 +1711,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		return NF_ACCEPT;
 	}
 
+	if ((ct->status & IPS_NATFLOW_FF_STOP) && ((IPS_NATCAP | IPS_NATCAP_DUAL) & ct->status)) {
+		/* natcap need ct not to be comfirm too early XXX: natcap_client_post_master_out_hook*/
+		return NF_ACCEPT;
+	}
+
 	nf = natflow_session_get(ct);
 	if (NULL == nf) {
 		return NF_ACCEPT;

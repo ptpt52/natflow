@@ -99,6 +99,9 @@ struct nat_key_t {
 #define IPS_NATCAP_BIT 25
 #define IPS_NATCAP (1 << IPS_NATCAP_BIT)
 
+#define IPS_NATCAP_DUAL_BIT 29
+#define IPS_NATCAP_DUAL (1 << IPS_NATCAP_DUAL_BIT)
+
 static inline int simple_test_bit(int nr, const unsigned int *addr)
 {
 	return 1U & (addr[nr/32] >> (nr & (32-1)));
