@@ -1099,7 +1099,6 @@ fastnat_check:
 								nfn->flow_packets = 0;
 								memset(nfn->speed_bytes, 0, sizeof(*nfn->speed_bytes) * 4);
 								memset(nfn->speed_packets, 0, sizeof(*nfn->speed_packets) * 4);
-								nfn->speed_jiffies = 0;
 							}
 
 							nfn->saddr = saddr;
