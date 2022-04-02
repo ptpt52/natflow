@@ -603,8 +603,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					}
 					goto out;
 				}
-				if (TCPH(l4)->fin || TCPH(l4)->rst || TCPH(l4)->syn) {
-					goto out;
+				if (TCPH(l4)->fin || TCPH(l4)->rst) {
+					/* just in case bridge to make sure conntrack_in */
+					goto slow_fastpath;
 				}
 
 				/* sample up to slow path every 2s */
