@@ -115,10 +115,13 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 			__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
 			__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
 
-			NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] ct%d diff_jiffies=%u HZ=%u bytes=%lu\n",
-			             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), !d, (unsigned int)diff_jiffies, HZ, bytes);
-
-			natflow_update_ct_timeout(ct, diff_jiffies);
+			if (d == 1) {
+				diff_jiffies = ulongmindiff(current_jiffies, nfn->keepalive_jiffies);
+				nfn->keepalive_jiffies = current_jiffies;
+				NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] ct%d diff_jiffies=%u HZ=%u bytes=%lu\n",
+				             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), !d, (unsigned int)diff_jiffies, HZ, bytes);
+				natflow_update_ct_timeout(ct, diff_jiffies);
+			}
 
 			hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
 			nfn = &natflow_fast_nat_table[hash];
@@ -127,14 +130,15 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 				nfn = &natflow_fast_nat_table[hash];
 			}
 
-			diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
-
 			if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_HIGH &&
 			        nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum) {
-				if (!(nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
-					nfn->jiffies = current_jiffies;
-					NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] diff_jiffies=%u\n",
-					             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (unsigned int)diff_jiffies);
+				nfn->jiffies = current_jiffies;
+				if (d == 0) {
+					diff_jiffies = ulongmindiff(current_jiffies, nfn->keepalive_jiffies);
+					nfn->keepalive_jiffies = current_jiffies;
+					NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] ct%d diff_jiffies=%u HZ=%u bytes=%lu\n",
+					             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), !d, (unsigned int)diff_jiffies, HZ, bytes);
+					natflow_update_ct_timeout(ct, diff_jiffies);
 				}
 			}
 
@@ -1141,6 +1145,7 @@ fastnat_check:
 							nfn->vlan_tci = nf->rroute[d].vlan_tci;
 							nfn->magic = natflow_path_magic;
 							nfn->jiffies = jiffies;
+							nfn->keepalive_jiffies = jiffies;
 
 							switch (iph->protocol) {
 							case IPPROTO_TCP:
@@ -1760,25 +1765,25 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 			/* ttl no change, so assume bridge forward */
 			simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
 			switch (iph->protocol) {
-				case IPPROTO_TCP:
-					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl no change, so assume bridge forward, pf=%d\n",
-							DEBUG_TCP_ARG(iph,l4), dir, pf);
-					break;
-				case IPPROTO_UDP:
-					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl no change, so assume bridge forward, pf=%d\n",
-							DEBUG_UDP_ARG(iph,l4), dir, pf);
-					break;
+			case IPPROTO_TCP:
+				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl no change, so assume bridge forward, pf=%d\n",
+				             DEBUG_TCP_ARG(iph,l4), dir, pf);
+				break;
+			case IPPROTO_UDP:
+				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl no change, so assume bridge forward, pf=%d\n",
+				             DEBUG_UDP_ARG(iph,l4), dir, pf);
+				break;
 			}
 		} else {
 			switch (iph->protocol) {
-				case IPPROTO_TCP:
-					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl change from %d to %d, pf=%d\n",
-							DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
-					break;
-				case IPPROTO_UDP:
-					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl change from %d to %d, pf=%d\n",
-							DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
-					break;
+			case IPPROTO_TCP:
+				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl change from %d to %d, pf=%d\n",
+				             DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+				break;
+			case IPPROTO_UDP:
+				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl change from %d to %d, pf=%d\n",
+				             DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+				break;
 			}
 		}
 	}
