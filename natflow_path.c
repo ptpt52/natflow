@@ -77,6 +77,52 @@ static inline void natflow_update_ct_timeout(struct nf_conn *ct, unsigned long e
 	}
 }
 
+static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn) {
+	unsigned int hash;
+	unsigned long diff_jiffies;
+	struct nf_conntrack_tuple tuple;
+	struct nf_conntrack_tuple_hash *h;
+
+	memset(&tuple, 0, sizeof(tuple));
+	tuple.src.u3.ip = nfn->saddr;
+	tuple.src.u.tcp.port = nfn->source;
+	tuple.dst.u3.ip = nfn->daddr;
+	tuple.dst.u.tcp.port = nfn->dest;
+	tuple.src.l3num = PF_INET;
+	tuple.dst.protonum = nfn->protonum;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
+	h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
+#else
+	h = nf_conntrack_find_get(&init_net, &nf_ct_zone_dflt, &tuple);
+#endif
+	if (h) {
+		struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
+		int d = !NF_CT_DIRECTION(h);
+		__be32 saddr = ct->tuplehash[d].tuple.src.u3.ip;
+		__be32 daddr = ct->tuplehash[d].tuple.dst.u3.ip;
+		__be16 source = ct->tuplehash[d].tuple.src.u.all;
+		__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
+		__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
+
+		hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
+		nfn = &natflow_fast_nat_table[hash];
+		if (nfn->saddr != saddr || nfn->daddr != daddr || nfn->source != source || nfn->dest != dest || nfn->protonum != protonum) {
+			hash += 1;
+			nfn = &natflow_fast_nat_table[hash];
+		}
+
+		diff_jiffies = ulongmindiff(jiffies, nfn->jiffies);
+		if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW &&
+		        nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum) {
+			nf_ct_put(ct);
+			return nfn;
+		}
+		nf_ct_put(ct);
+	}
+
+	return NULL;
+}
+
 static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, unsigned long packets, unsigned int *speed_bytes, unsigned int *speed_packets)
 {
 	struct nf_conn_acct *acct;
@@ -86,9 +132,9 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 
 	hash = hash % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
 	nfn = &natflow_fast_nat_table[hash];
-	diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
 
-	if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_HIGH) {
+	diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
+	if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW) {
 		struct nf_conntrack_tuple tuple;
 		struct nf_conntrack_tuple_hash *h;
 
@@ -130,7 +176,8 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 				nfn = &natflow_fast_nat_table[hash];
 			}
 
-			if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_HIGH &&
+			diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
+			if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW &&
 			        nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && nfn->protonum == protonum) {
 				nfn->jiffies = current_jiffies;
 				if (d == 0) {
@@ -603,10 +650,10 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					}
 					goto out;
 				}
-				if (TCPH(l4)->fin || TCPH(l4)->rst) {
+				if (unlikely(TCPH(l4)->fin || TCPH(l4)->rst)) {
 					/* just in case bridge to make sure conntrack_in */
 					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
-					nfn = nfn->nfn;
+					nfn = nfn_invert_get(nfn);
 					if (nfn && (u32)ulongmindiff(jiffies, nfn->jiffies) <= NATFLOW_FF_TIMEOUT_LOW)
 						nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
 					goto slow_fastpath;
@@ -1214,8 +1261,6 @@ fastnat_check:
 											nfn_i->flags |= FASTNAT_STOP_LEARN;
 										}
 									}
-									nfn_i->nfn = nfn;
-									nfn->nfn = nfn_i;
 									nfn->ifindex = (u16)nfn_i->outdev->ifindex;
 									nfn_i->ifindex = (u16)nfn->outdev->ifindex;
 									nfn_i->jiffies = jiffies;
