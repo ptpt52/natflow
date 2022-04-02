@@ -1756,7 +1756,7 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	dir = CTINFO2DIR(ctinfo);
 
 	/* fastnat in learning state */
-	if (!(nf->status & NF_FF_ORIGINAL_OK) || !(nf->status & NF_FF_REPLY_OK)) {
+	if (!(nf->status & (NF_FF_BRIDGE | NF_FF_ROUTE))) {
 		struct nf_conn_help *help = nfct_help(ct);
 		if (help && help->helper) {
 			/* this conn need helper */
@@ -1767,22 +1767,23 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 			simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
 			switch (iph->protocol) {
 			case IPPROTO_TCP:
-				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl no change, so assume bridge forward, pf=%d\n",
-				             DEBUG_TCP_ARG(iph,l4), dir, pf);
-				break;
-			case IPPROTO_UDP:
-				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl no change, so assume bridge forward, pf=%d\n",
-				             DEBUG_UDP_ARG(iph,l4), dir, pf);
-				break;
-			}
-		} else {
-			switch (iph->protocol) {
-			case IPPROTO_TCP:
-				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl change from %d to %d, pf=%d\n",
+				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl %d -> %d no change, pf=%d\n",
 				             DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
 				break;
 			case IPPROTO_UDP:
-				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl change from %d to %d, pf=%d\n",
+				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl %d -> %d no change, pf=%d\n",
+				             DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+				break;
+			}
+		} else {
+			simple_set_bit(NF_FF_ROUTE_BIT, &nf->status);
+			switch (iph->protocol) {
+			case IPPROTO_TCP:
+				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl %d -> %d, pf=%d\n",
+				             DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+				break;
+			case IPPROTO_UDP:
+				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl %d -> %d, pf=%d\n",
 				             DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
 				break;
 			}

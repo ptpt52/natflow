@@ -52,13 +52,16 @@ typedef struct natflow_route_t {
 #define NF_FF_BRIDGE_BIT 15
 #define NF_FF_BRIDGE (1 << NF_FF_BRIDGE_BIT)
 
-#define NF_FF_RETRY_BIT 16
+#define NF_FF_ROUTE_BIT 16
+#define NF_FF_ROUTE (1 << NF_FF_ROUTE_BIT)
+
+#define NF_FF_RETRY_BIT 17
 #define NF_FF_RETRY (1 << NF_FF_RETRY_BIT)
 
-#define NF_FF_USER_USE_BIT 17
+#define NF_FF_USER_USE_BIT 18
 #define NF_FF_USER_USE (1 << NF_FF_USER_USE_BIT)
 
-#define NF_FF_URLLOGGER_USE_BIT 18
+#define NF_FF_URLLOGGER_USE_BIT 19
 #define NF_FF_URLLOGGER_USE (1 << NF_FF_URLLOGGER_USE_BIT)
 
 /* XXX: ALL DONE */
