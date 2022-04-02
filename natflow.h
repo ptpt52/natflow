@@ -201,12 +201,12 @@ struct natflow_fastnat_node_t {
 	__be16 pppoe_sid;
 	/* XXX: -- 64 bytes above -- */
 	unsigned long keepalive_jiffies;
+	struct natflow_fastnat_node_t *nfn;
 	unsigned long status;
 	unsigned int flow_bytes;
 	unsigned int flow_packets;
 	unsigned int speed_bytes[4];
 	unsigned int speed_packets[4];
-	unsigned char _pad_end[8];
 } __attribute__((__aligned__(SMP_CACHE_BYTES)));
 
 #define NATFLOW_FF_TIMEOUT_HIGH (30 * HZ)

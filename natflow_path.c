@@ -605,6 +605,10 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				}
 				if (TCPH(l4)->fin || TCPH(l4)->rst) {
 					/* just in case bridge to make sure conntrack_in */
+					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
+					nfn = nfn->nfn;
+					if (nfn && (u32)ulongmindiff(jiffies, nfn->jiffies) <= NATFLOW_FF_TIMEOUT_LOW)
+						nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
 					goto slow_fastpath;
 				}
 
@@ -1210,9 +1214,12 @@ fastnat_check:
 											nfn_i->flags |= FASTNAT_STOP_LEARN;
 										}
 									}
+									nfn_i->nfn = nfn;
+									nfn->nfn = nfn_i;
 									nfn->ifindex = (u16)nfn_i->outdev->ifindex;
 									nfn_i->ifindex = (u16)nfn->outdev->ifindex;
 									nfn_i->jiffies = jiffies;
+									nfn_i->keepalive_jiffies = jiffies;
 									if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.protonum == IPPROTO_TCP) {
 										ct->proto.tcp.seen[0].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 										ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
