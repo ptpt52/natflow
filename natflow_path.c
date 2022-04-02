@@ -910,6 +910,9 @@ slow_fastpath:
 	if ((ct->status & IPS_NATFLOW_FF_STOP) || (nf->status & NF_FF_BUSY_USE)) {
 		goto out;
 	}
+	if (iph->protocol == IPPROTO_TCP && ct->proto.tcp.state != 3 /* ESTABLISHED */) {
+		goto out;
+	}
 
 	//if (!(nf->status & NF_FF_OFFLOAD)) {
 	if (!(nf->status & NF_FF_REPLY_OK) || !(nf->status & NF_FF_ORIGINAL_OK)) {
