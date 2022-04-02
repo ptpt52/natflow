@@ -1935,12 +1935,14 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 						continue;
 					}
 					fud = natflow_fakeuser_data(ct);
+					fud->rx_bytes_per_hz = 0;
+					fud->tx_bytes_per_hz = 0;
+					fud->timestamp = 0;
+					fud->auth_type = AUTH_TYPE_UNKNOWN;
+					fud->auth_status = AUTH_NONE;
+					fud->auth_rule_id = INVALID_AUTH_RULE_ID;
 					acct = nf_conn_acct_find(ct);
 					if (acct) {
-						fud->timestamp = 0;
-						fud->auth_type = AUTH_TYPE_UNKNOWN;
-						fud->auth_status = AUTH_NONE;
-						fud->auth_rule_id = INVALID_AUTH_RULE_ID;
 						atomic64_set(&acct->counter[0].packets, 0);
 						atomic64_set(&acct->counter[0].bytes, 0);
 						atomic64_set(&acct->counter[1].packets, 0);
@@ -1983,12 +1985,14 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 			return -EINVAL;
 
 		fud = natflow_fakeuser_data(user);
+		fud->rx_bytes_per_hz = 0;
+		fud->tx_bytes_per_hz = 0;
+		fud->timestamp = 0;
+		fud->auth_type = AUTH_TYPE_UNKNOWN;
+		fud->auth_status = AUTH_NONE;
+		fud->auth_rule_id = INVALID_AUTH_RULE_ID;
 		acct = nf_conn_acct_find(user);
 		if (acct) {
-			fud->timestamp = 0;
-			fud->auth_type = AUTH_TYPE_UNKNOWN;
-			fud->auth_status = AUTH_NONE;
-			fud->auth_rule_id = INVALID_AUTH_RULE_ID;
 			atomic64_set(&acct->counter[0].packets, 0);
 			atomic64_set(&acct->counter[0].bytes, 0);
 			atomic64_set(&acct->counter[1].packets, 0);
