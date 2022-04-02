@@ -907,7 +907,7 @@ slow_fastpath:
 	if (!nf_ct_is_confirmed(ct)) {
 		goto out;
 	}
-	if ((ct->status & IPS_NATFLOW_FF_STOP)) {
+	if ((ct->status & IPS_NATFLOW_FF_STOP) || (nf->status & NF_FF_BUSY_USE)) {
 		goto out;
 	}
 
@@ -1710,51 +1710,6 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		return NF_ACCEPT;
 	}
 
-	//skip nf session for ct with helper
-	if (!nf_ct_is_confirmed(ct)) {
-		struct nf_conn_help *help = nfct_help(ct);
-		if (help && help->helper) {
-			/* this conn need helper */
-			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
-			return NF_ACCEPT;
-		}
-
-		iph = ip_hdr(skb);
-		l4 = (void *)iph + iph->ihl * 4;
-		if (nf->rroute[!CTINFO2DIR(ctinfo)].ttl_in == iph->ttl) {
-			/* ttl no change, so assume bridge forward */
-			simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
-			switch (iph->protocol) {
-			case IPPROTO_TCP:
-				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl no change, so assume bridge forward, pf=%d\n",
-				             DEBUG_TCP_ARG(iph,l4), CTINFO2DIR(ctinfo), pf);
-				break;
-			case IPPROTO_UDP:
-				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl no change, so assume bridge forward, pf=%d\n",
-				             DEBUG_UDP_ARG(iph,l4), CTINFO2DIR(ctinfo), pf);
-				break;
-			}
-		} else {
-			switch (iph->protocol) {
-			case IPPROTO_TCP:
-				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl change from %d to %d, pf=%d\n",
-				             DEBUG_TCP_ARG(iph,l4), CTINFO2DIR(ctinfo), nf->rroute[!CTINFO2DIR(ctinfo)].ttl_in, iph->ttl, pf);
-				break;
-			case IPPROTO_UDP:
-				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl change from %d to %d, pf=%d\n",
-				             DEBUG_UDP_ARG(iph,l4), CTINFO2DIR(ctinfo), nf->rroute[!CTINFO2DIR(ctinfo)].ttl_in, iph->ttl, pf);
-				break;
-			}
-		}
-	}
-
-	if ((ct->status & IPS_NATFLOW_URLLOGGER_HANDLED) && (ct->status & IPS_NATFLOW_FF_STOP) && !(IPS_NATCAP & ct->status)) {
-		struct nf_conn_help *help = nfct_help(ct);
-		if (!help || !help->helper) {
-			clear_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
-		}
-	}
-
 	if (pf == NFPROTO_BRIDGE) {
 		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
 		        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
@@ -1789,10 +1744,40 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	iph = ip_hdr(skb);
 	l4 = (void *)iph + iph->ihl * 4;
 
-	if (CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL) {
-		dir = NF_FF_DIR_ORIGINAL;
-	} else {
-		dir = NF_FF_DIR_REPLY;
+	dir = CTINFO2DIR(ctinfo);
+
+	/* fastnat in learning state */
+	if (!(nf->status & NF_FF_ORIGINAL_OK) || !(nf->status & NF_FF_REPLY_OK)) {
+		struct nf_conn_help *help = nfct_help(ct);
+		if (help && help->helper) {
+			/* this conn need helper */
+			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
+		}
+		if (nf->rroute[!dir].ttl_in == iph->ttl) {
+			/* ttl no change, so assume bridge forward */
+			simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+			switch (iph->protocol) {
+				case IPPROTO_TCP:
+					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl no change, so assume bridge forward, pf=%d\n",
+							DEBUG_TCP_ARG(iph,l4), dir, pf);
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl no change, so assume bridge forward, pf=%d\n",
+							DEBUG_UDP_ARG(iph,l4), dir, pf);
+					break;
+			}
+		} else {
+			switch (iph->protocol) {
+				case IPPROTO_TCP:
+					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl change from %d to %d, pf=%d\n",
+							DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl change from %d to %d, pf=%d\n",
+							DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+					break;
+			}
+		}
 	}
 
 	if (!skb_dst(skb))

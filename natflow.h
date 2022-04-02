@@ -55,6 +55,15 @@ typedef struct natflow_route_t {
 #define NF_FF_RETRY_BIT 16
 #define NF_FF_RETRY (1 << NF_FF_RETRY_BIT)
 
+#define NF_FF_USER_USE_BIT 17
+#define NF_FF_USER_USE (1 << NF_FF_USER_USE_BIT)
+
+#define NF_FF_URLLOGGER_USE_BIT 18
+#define NF_FF_URLLOGGER_USE (1 << NF_FF_URLLOGGER_USE_BIT)
+
+/* XXX: ALL DONE */
+#define NF_FF_BUSY_USE (NF_FF_USER_USE | NF_FF_URLLOGGER_USE)
+
 typedef struct natflow_t {
 	unsigned short magic;
 	unsigned int status;

@@ -1063,6 +1063,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
 	const struct net_device *br_in = NULL;
 #endif
+	natflow_t *nf;
 	struct fakeuser_data_t *fud;
 	natflow_fakeuser_t *user;
 	struct nf_conn *ct;
@@ -1094,9 +1095,6 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		goto out;
 	}
 
-	if ((ct->status & IPS_NATFLOW_USER_BYPASS)) {
-		goto out;
-	}
 	if ((ct->status & IPS_NATFLOW_USER_DROP)) {
 		struct iphdr *iph = ip_hdr(skb);
 		void *l4 = (void *)iph + iph->ihl * 4;
@@ -1105,6 +1103,9 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			natflow_auth_tcp_reply_finack(in, skb, bridge);
 		}
 		ret = NF_DROP;
+		goto out;
+	}
+	if ((ct->status & IPS_NATFLOW_USER_BYPASS)) {
 		goto out;
 	}
 
@@ -1135,7 +1136,11 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			void *l4 = (void *)iph + iph->ihl * 4;
 
 			/* tell FF do not emit pkts */
-			if (!(IPS_NATFLOW_FF_STOP & ct->status)) set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
+			nf = natflow_session_get(ct);
+			if (nf && !(nf->status & NF_FF_USER_USE)) {
+				/* tell FF -user- need to use this conn */
+				simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+			}
 
 			if (iph->daddr == redirect_ip) {
 				set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
@@ -1214,9 +1219,11 @@ static unsigned int natflow_user_forward_hook(void *priv,
 				}
 			}
 		}
+		set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 		break;
 	case AUTH_VIP:
 	case AUTH_BYPASS:
+		set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 		break;
 	case AUTH_BLOCK:
 		/* temporary block user */
@@ -1230,6 +1237,14 @@ out:
 		skb->network_header -= PPPOE_SES_HLEN;
 		skb->protocol = __constant_htons(ETH_P_PPP_SES);
 		skb_push(skb, PPPOE_SES_HLEN);
+	}
+
+	if (ct && (ct->status & IPS_NATFLOW_USER_BYPASS)) {
+		nf = natflow_session_get(ct);
+		if (nf && (nf->status & NF_FF_USER_USE)) {
+			/* tell FF -user- has finished it's job */
+			simple_clear_bit(NF_FF_USER_USE_BIT, &nf->status);
+		}
 	}
 
 	return ret;

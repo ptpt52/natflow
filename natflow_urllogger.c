@@ -357,6 +357,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 	enum ip_conntrack_info ctinfo;
 	int data_len;
 	unsigned char *data;
+	natflow_t *nf;
 	struct nf_conn *ct;
 	struct iphdr *iph;
 	void *l4;
@@ -398,7 +399,11 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 	l4 = (void *)iph + iph->ihl * 4;
 
 	/* pause fastnat path */
-	if (!(IPS_NATFLOW_FF_STOP & ct->status)) set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
+	nf = natflow_session_get(ct);
+	if (nf && !(nf->status & NF_FF_URLLOGGER_USE)) {
+		/* tell FF -urllogger- need this conn */
+		simple_set_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+	}
 
 	data_len = ntohs(iph->tot_len) - (iph->ihl * 4 + TCPH(l4)->doff * 4);
 	if (data_len > 0) {
@@ -415,6 +420,10 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 
 		/* check one packet only */
 		set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
+		if (nf && (nf->status & NF_FF_URLLOGGER_USE)) {
+			/* tell FF -urllogger- has finished it's job */
+			simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+		}
 
 		/* try to get HTTPS/TLS SNI HOST */
 		host = tls_sni_search(data, &host_len);
