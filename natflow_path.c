@@ -124,7 +124,7 @@ static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn
 	return NULL;
 }
 
-static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, unsigned long packets, unsigned int *speed_bytes, unsigned int *speed_packets)
+static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, unsigned long packets, unsigned int *speed_bytes, unsigned int *speed_packets, int hw)
 {
 	struct nf_conn_acct *acct;
 	natflow_fastnat_node_t *nfn;
@@ -165,8 +165,8 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 			if (d == 1) {
 				diff_jiffies = ulongmindiff(current_jiffies, nfn->keepalive_jiffies);
 				nfn->keepalive_jiffies = current_jiffies;
-				NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] ct%d diff_jiffies=%u HZ=%u bytes=%lu\n",
-				             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), !d, (unsigned int)diff_jiffies, HZ, bytes);
+				NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] ct%d diff_jiffies=%u HZ=%u bytes=%lu hw=%d\n",
+				             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), !d, (unsigned int)diff_jiffies, HZ, bytes, hw);
 				natflow_update_ct_timeout(ct, diff_jiffies);
 			}
 
@@ -185,8 +185,8 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 				if (d == 0) {
 					diff_jiffies = ulongmindiff(current_jiffies, nfn->keepalive_jiffies);
 					nfn->keepalive_jiffies = current_jiffies;
-					NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] ct%d diff_jiffies=%u HZ=%u bytes=%lu\n",
-					             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), !d, (unsigned int)diff_jiffies, HZ, bytes);
+					NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] ct%d diff_jiffies=%u HZ=%u bytes=%lu hw=%d\n",
+					             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), !d, (unsigned int)diff_jiffies, HZ, bytes, hw);
 					natflow_update_ct_timeout(ct, diff_jiffies);
 				}
 			}
@@ -197,6 +197,55 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 				atomic64_add(packets, &counter[!d].packets);
 				atomic64_add(bytes, &counter[!d].bytes);
 			}
+			/* stats to net_device */
+			do {
+				struct natflow_t *nf;
+				nf = natflow_session_get(ct);
+				if (nf && nf->magic == natflow_path_magic) {
+					struct net_device *dev;
+
+					dev = nf->rroute[!d].outdev;
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+					if (hw && (((nf->status & NF_FF_ORIGINAL_DSA) && d == NF_FF_DIR_REPLY) ||
+					           ((nf->status & NF_FF_REPLY_DSA) && d == NF_FF_DIR_ORIGINAL))) {
+						struct net_device_stats *stats = &dev->stats;
+						stats->tx_bytes += bytes;
+						stats->tx_packets += packets;
+					}
+#endif
+					if (nf->rroute[!d].vlan_present) {
+						dev = vlan_lookup_dev(dev, nf->rroute[!d].vlan_tci);
+						if (dev) {
+							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
+							u64_stats_update_begin(&vpstats->syncp);
+							vpstats->tx_bytes += bytes;
+							vpstats->tx_packets += packets;
+							u64_stats_update_end(&vpstats->syncp);
+						}
+					}
+
+					dev = nf->rroute[d].outdev;
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+					if (hw && (((nf->status & NF_FF_ORIGINAL_DSA) && (!d) == NF_FF_DIR_REPLY) ||
+					           ((nf->status & NF_FF_REPLY_DSA) && (!d) == NF_FF_DIR_ORIGINAL))) {
+						struct net_device_stats *stats = &dev->stats;
+						stats->rx_bytes += bytes;
+						stats->rx_packets += packets;
+					}
+#endif
+					if (nf->rroute[d].vlan_present) {
+						dev = vlan_lookup_dev(dev, nf->rroute[d].vlan_tci);
+						if (dev) {
+							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
+							u64_stats_update_begin(&vpstats->syncp);
+							vpstats->rx_bytes += bytes;
+							vpstats->rx_packets += packets;
+							u64_stats_update_end(&vpstats->syncp);
+						}
+					}
+				}
+			} while(0);
+			/* stats to user */
 			do {
 				natflow_fakeuser_t *user;
 				struct fakeuser_data_t *fud;
@@ -667,7 +716,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					unsigned long packets = nfn->flow_packets;
 					nfn->flow_bytes -= bytes;
 					nfn->flow_packets -= packets;
-					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets);
+					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets, 0);
 					nfn->count = (nfn->jiffies / HZ) & 0xff;
 					wmb();
 					clear_bit(0, &nfn->status);
@@ -840,7 +889,7 @@ fast_output:
 					unsigned long packets = nfn->flow_packets;
 					nfn->flow_bytes -= bytes;
 					nfn->flow_packets -= packets;
-					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets);
+					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets, 0);
 					nfn->count = (nfn->jiffies / HZ) & 0xff;
 					wmb();
 					clear_bit(0, &nfn->status);
@@ -1296,6 +1345,8 @@ fastnat_check:
 													orig_dev = orig.dev;
 													orig_dsa_port = orig.dsa_port;
 												}
+												if ((orig.flags & FLOW_OFFLOAD_PATH_DSA))
+													simple_set_bit(NF_FF_ORIGINAL_DSA_BIT, &nf->status);
 											}
 											if (!reply_dev->netdev_ops->ndo_flow_offload && reply_dev->netdev_ops->ndo_flow_offload_check) {
 												flow_offload_hw_path_t reply = {
@@ -1307,6 +1358,8 @@ fastnat_check:
 													reply_dev = reply.dev;
 													reply_dsa_port = reply.dsa_port;
 												}
+												if ((reply.flags & FLOW_OFFLOAD_PATH_DSA))
+													simple_set_bit(NF_FF_REPLY_DSA_BIT, &nf->status);
 											}
 #endif
 											if (orig_dev->netdev_ops->ndo_flow_offload) {

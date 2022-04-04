@@ -205,6 +205,23 @@ static inline int natflow_do_dnat(struct sk_buff *skb, struct nf_conn *ct, int d
 	return 0;
 }
 
+static inline struct net_device *vlan_lookup_dev(struct net_device *dev, unsigned short vlan_id)
+{
+	struct net_device *vlan_dev;
+
+	vlan_dev = first_net_device(dev_net(dev));
+	while (vlan_dev) {
+		if (is_vlan_dev(vlan_dev)) {
+			struct vlan_dev_priv *vlan = vlan_dev_priv(vlan_dev);
+			if (vlan->vlan_id == vlan_id && vlan->real_dev == dev) {
+				return vlan_dev;
+			}
+		}
+		vlan_dev = next_net_device(vlan_dev);
+	}
+	return NULL;
+}
+
 static inline struct net_device *get_vlan_real_dev(struct net_device *dev)
 {
 	if (is_vlan_dev(dev)) {
