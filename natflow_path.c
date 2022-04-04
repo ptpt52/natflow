@@ -2005,10 +2005,10 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 	natflow_unhook_device(dev);
 #endif
 
-	natflow_update_magic(0);
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 	natflow_hwnat_stop(dev);
 #endif
+	natflow_update_magic(0);
 
 	NATFLOW_println("catch NETDEV_UNREGISTER event for dev=%s", dev->name);
 
