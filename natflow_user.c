@@ -369,6 +369,10 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 		 * here reload ct(user) from uskb, and it can't be NULL
 		 */
 		user = nf_ct_get(uskb, &ctinfo);
+		if (!user || nf_ct_is_dying(user)) {
+			skb_nfct_reset(uskb);
+			return NULL;
+		}
 
 		nf_conntrack_get(&user->ct_general);
 		if (ct->master) {
@@ -376,9 +380,9 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 		} else {
 			ct->master = user;
 		}
-		skb_nfct_reset(uskb);
 
 		natflow_user_timeout_touch(user);
+		skb_nfct_reset(uskb);
 
 		NATFLOW_INFO("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] user[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u]\n",
 		             &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
