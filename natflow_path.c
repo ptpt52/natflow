@@ -2030,10 +2030,12 @@ static void natflow_unhook_device(struct net_device *dev)
 	hook = natflow_lookup_hook(dev);
 	if (hook) {
 		hlist_del(&hook->list);
+	}
+	spin_unlock_bh(&natflow_hooks_lock);
+	if (hook) {
 		nf_unregister_net_hook(dev_net(dev), &hook->ops);
 		kfree(hook);
 	}
-	spin_unlock_bh(&natflow_hooks_lock);
 }
 #endif
 
