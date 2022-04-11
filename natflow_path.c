@@ -787,20 +787,26 @@ fast_output:
 					_I = 0;
 				}
 
-				ingress_trim_off = (nfn->outdev->features & NETIF_F_TSO) && \
-				                   iph->protocol == IPPROTO_TCP && \
-				                   !netif_is_bridge_master(nfn->outdev) && \
-				                   _I == ETH_HLEN;
-
-				if (skb_is_gso(skb) && !ingress_trim_off) {
-					struct sk_buff *segs;
-					skb->ip_summed = CHECKSUM_UNNECESSARY;
-					segs = skb_gso_segment(skb, 0);
-					if (IS_ERR(segs)) {
-						return NF_DROP;
+				if (skb_is_gso(skb)) {
+					/* XXX: to xmit gso directly
+					 * 1. hw offload features needed
+					 * 2. hw csum features needed
+					 * 3. ether type only
+					 */
+					ingress_trim_off = (iph->protocol == IPPROTO_TCP && (nfn->outdev->features & NETIF_F_TSO)) && \
+					                   (nfn->outdev->features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)) && \
+					                   !netif_is_bridge_master(nfn->outdev) && \
+					                   _I == ETH_HLEN;
+					if (!ingress_trim_off) {
+						struct sk_buff *segs;
+						skb->ip_summed = CHECKSUM_PARTIAL;
+						segs = skb_gso_segment(skb, 0);
+						if (IS_ERR(segs)) {
+							return NF_DROP;
+						}
+						consume_skb(skb);
+						skb = segs;
 					}
-					consume_skb(skb);
-					skb = segs;
 				}
 
 				do {
@@ -1703,20 +1709,26 @@ fastnat_check:
 	}
 #endif
 
-	ingress_trim_off = (nf->rroute[dir].outdev->features & NETIF_F_TSO) && \
-	                   iph->protocol == IPPROTO_TCP && \
-	                   !netif_is_bridge_master(nf->rroute[dir].outdev) && \
-	                   nf->rroute[dir].l2_head_len == ETH_HLEN;
-
-	if (skb_is_gso(skb) && !ingress_trim_off) {
-		struct sk_buff *segs;
-		skb->ip_summed = CHECKSUM_UNNECESSARY;
-		segs = skb_gso_segment(skb, 0);
-		if (IS_ERR(segs)) {
-			return NF_DROP;
+	if (skb_is_gso(skb)) {
+		/* XXX: to xmit gso directly
+		 * 1. hw offload features needed
+		 * 2. hw csum features needed
+		 * 3. ether type only
+		 */
+		ingress_trim_off = (iph->protocol == IPPROTO_TCP && (nf->rroute[dir].outdev->features & NETIF_F_TSO)) && \
+		                   (nf->rroute[dir].outdev->features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)) && \
+		                   !netif_is_bridge_master(nf->rroute[dir].outdev) && \
+		                   nf->rroute[dir].l2_head_len == ETH_HLEN;
+		if (!ingress_trim_off) {
+			struct sk_buff *segs;
+			skb->ip_summed = CHECKSUM_PARTIAL;
+			segs = skb_gso_segment(skb, 0);
+			if (IS_ERR(segs)) {
+				return NF_DROP;
+			}
+			consume_skb(skb);
+			skb = segs;
 		}
-		consume_skb(skb);
-		skb = segs;
 	}
 
 	do {
