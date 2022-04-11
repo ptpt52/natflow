@@ -1920,7 +1920,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 			for (i = user->next_bucket; i < hashsz; i++) {
 				hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
 					ct = nf_ct_tuplehash_to_ctrack(h);
-					if (unlikely(!atomic_inc_not_zero(&ct->ct_general.use)))
+					if (unlikely(!REFCOUNT_inc_not_zero(&ct->ct_general.use)))
 						continue;
 
 					/* we only want to print DIR_ORIGINAL */
@@ -2080,7 +2080,7 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 		for (i = user->next_bucket; i < hashsz; i++) {
 			hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
 				ct = nf_ct_tuplehash_to_ctrack(h);
-				if (unlikely(!atomic_inc_not_zero(&ct->ct_general.use)))
+				if (unlikely(!REFCOUNT_inc_not_zero(&ct->ct_general.use)))
 					continue;
 
 				/* we only want to print DIR_ORIGINAL */
