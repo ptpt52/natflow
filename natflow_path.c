@@ -2105,10 +2105,11 @@ void natflow_path_exit(void)
 {
 	disabled = 1;
 	nf_unregister_hooks(path_hooks, ARRAY_SIZE(path_hooks));
-	synchronize_rcu();
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
 #ifdef CONFIG_NETFILTER_INGRESS
 	synchronize_rcu();
 	kfree(natflow_fast_nat_table);
+#else
+	synchronize_rcu();
 #endif
 }
