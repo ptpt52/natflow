@@ -34,3 +34,42 @@ make EXTRA_CFLAGS="-DCONFIG_HWNAT_EXTDEV_USE_VLAN_HASH"
 ```
 make EXTRA_CFLAGS="-DCONFIG_HWNAT_EXTDEV_DISABLED"
 ```
+
+## Warnning
+Since `kernel < 4.10` cannot handle NF_STOLEN in ingress hook correctly, so kernel patch needed:
+```diff
+diff --git a/include/linux/netfilter_ingress.h b/include/linux/netfilter_ingress.h
+index 5fcd375ef175..b407128a35c0 100644
+--- a/include/linux/netfilter_ingress.h
++++ b/include/linux/netfilter_ingress.h
+@@ -17,11 +17,15 @@ static inline bool nf_hook_ingress_active(const struct sk_buff *skb)
+ static inline int nf_hook_ingress(struct sk_buff *skb)
+ {
+        struct nf_hook_state state;
++       int ret;
+ 
+        nf_hook_state_init(&state, &skb->dev->nf_hooks_ingress,
+                           NF_NETDEV_INGRESS, INT_MIN, NFPROTO_NETDEV,
+                           skb->dev, NULL, NULL, dev_net(skb->dev), NULL);
+-       return nf_hook_slow(skb, &state);
++       ret = nf_hook_slow(skb, &state);
++       if (ret == 0)
++               return -1;
++       return ret;
+ }
+ 
+ static inline void nf_hook_ingress_init(struct net_device *dev)
+diff --git a/net/netfilter/core.c b/net/netfilter/core.c
+index f39276d1c2d7..905597547b08 100644
+--- a/net/netfilter/core.c
++++ b/net/netfilter/core.c
+@@ -320,6 +320,8 @@ next_hook:
+                                goto next_hook;
+                        kfree_skb(skb);
+                }
++       } else if (verdict == NF_STOLEN) {
++               ret = 0;
+        }
+        rcu_read_unlock();
+        return ret;
+```
