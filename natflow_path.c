@@ -1823,51 +1823,37 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	natflow_t *nf;
 	unsigned int mtu;
 	int dir = 0;
-	int ret;
+	int ret = NF_ACCEPT;
+	int bridge = 0;
 
 	if (disabled)
 		return NF_ACCEPT;
 
+	/* only bridge come here */
+	if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+	        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
+		skb_pull(skb, PPPOE_SES_HLEN);
+		skb->protocol = __constant_htons(ETH_P_IP);
+		skb->network_header += PPPOE_SES_HLEN;
+		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
+		bridge = 1;
+	} else if (skb->protocol != __constant_htons(ETH_P_IP))
+		return NF_ACCEPT;
+
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
-		return NF_ACCEPT;
+		goto out;
 	}
 
 	nf = natflow_session_get(ct);
 	if (NULL == nf) {
-		return NF_ACCEPT;
-	}
-
-	if (pf == NFPROTO_BRIDGE) {
-		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
-		        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
-			skb_pull(skb, PPPOE_SES_HLEN);
-			skb->protocol = __constant_htons(ETH_P_IP);
-			skb->network_header += PPPOE_SES_HLEN;
-			skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
-
-			iph = ip_hdr(skb);
-			l4 = (void *)iph + iph->ihl * 4;
-
-			/* XXX I just confirm it first  */
-			ret = nf_conntrack_confirm(skb);
-
-			skb->network_header -= PPPOE_SES_HLEN;
-			skb->protocol = __constant_htons(ETH_P_PPP_SES);
-			skb_push(skb, PPPOE_SES_HLEN);
-
-			if (ret != NF_ACCEPT) {
-				return ret;
-			}
-		} else if (!(skb->protocol == __constant_htons(ETH_P_IP))) {
-			return NF_ACCEPT;
-		}
+		goto out;
 	}
 
 	/* XXX I just confirm it first  */
 	ret = nf_conntrack_confirm(skb);
 	if (ret != NF_ACCEPT) {
-		return ret;
+		goto out;
 	}
 	iph = ip_hdr(skb);
 	l4 = (void *)iph + iph->ihl * 4;
@@ -1910,7 +1896,7 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	}
 
 	if (!skb_dst(skb))
-		return NF_ACCEPT;
+		goto out;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
 	mtu = ip_skb_dst_mtu(skb);
@@ -1929,7 +1915,13 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		nf->rroute[dir].mtu = mtu;
 	}
 
-	return NF_ACCEPT;
+out:
+	if (bridge) {
+		skb->network_header -= PPPOE_SES_HLEN;
+		skb->protocol = __constant_htons(ETH_P_PPP_SES);
+		skb_push(skb, PPPOE_SES_HLEN);
+	}
+	return ret;
 }
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
