@@ -1069,17 +1069,23 @@ slow_fastpath:
 
 	if (!simple_test_bit(NF_FF_BRIDGE_BIT, &nf->status)) {
 		if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
-			switch (iph->protocol) {
-			case IPPROTO_TCP:
-				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": pmtu=%u FRAG=%p\n",
-				              DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
-				break;
-			case IPPROTO_UDP:
-				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%p\n",
-				              DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
-				break;
+			if (!skb_is_gso(skb)) {
+				switch (iph->protocol) {
+				case IPPROTO_TCP:
+					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": pmtu=%u FRAG=%p\n",
+					              DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%p\n",
+					              DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+					break;
+				}
+				goto out;
+			} else {
+				if (unlikely(skb_shinfo(skb)->gso_size > nf->rroute[dir].mtu - sizeof(struct iphdr) - sizeof(struct tcphdr))) {
+					skb_shinfo(skb)->gso_size = nf->rroute[dir].mtu - sizeof(struct iphdr) - sizeof(struct tcphdr);
+				}
 			}
-			goto out;
 		}
 
 		if (iph->ttl <= 1) {
