@@ -793,8 +793,12 @@ fast_output:
 					 * 2. hw csum features needed
 					 * 3. ether type only
 					 */
-					ingress_trim_off = (iph->protocol == IPPROTO_TCP && (nfn->outdev->features & NETIF_F_TSO)) && \
-					                   (nfn->outdev->features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)) && \
+					netdev_features_t features = nfn->outdev->features;
+					if (nfn->vlan_present)
+						features = netdev_intersect_features(features,
+						                                     nfn->outdev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
+					ingress_trim_off = (iph->protocol == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
+					                   (features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)) && \
 					                   !netif_is_bridge_master(nfn->outdev) && \
 					                   _I == ETH_HLEN;
 					if (!ingress_trim_off) {
@@ -1715,8 +1719,12 @@ fastnat_check:
 		 * 2. hw csum features needed
 		 * 3. ether type only
 		 */
-		ingress_trim_off = (iph->protocol == IPPROTO_TCP && (nf->rroute[dir].outdev->features & NETIF_F_TSO)) && \
-		                   (nf->rroute[dir].outdev->features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)) && \
+		netdev_features_t features = nf->rroute[dir].outdev->features;
+		if (nf->rroute[dir].vlan_present)
+			features = netdev_intersect_features(features,
+			                                     nf->rroute[dir].outdev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
+		ingress_trim_off = (iph->protocol == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
+		                   (features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)) && \
 		                   !netif_is_bridge_master(nf->rroute[dir].outdev) && \
 		                   nf->rroute[dir].l2_head_len == ETH_HLEN;
 		if (!ingress_trim_off) {
