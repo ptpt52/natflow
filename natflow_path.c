@@ -571,6 +571,11 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 
 			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == natflow_path_magic) {
+				if (!(nfn->flags & FASTNAT_BRIDGE_FWD) && skb_is_gso(skb)) {
+					if (unlikely(skb_shinfo(skb)->gso_size > nfn->mss)) {
+						skb_shinfo(skb)->gso_size = nfn->mss;
+					}
+				}
 				//nfn->jiffies = jiffies; /* we update jiffies in keepalive */
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 				__vlan_hwaccel_clear_tag(skb);
@@ -721,6 +726,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				nfn->speed_packets[_I] += 1;
 				nfn->flow_bytes += skb->len;
 				nfn->flow_packets += 1;
+
+				if (!(nfn->flags & FASTNAT_BRIDGE_FWD) && skb_is_gso(skb)) {
+					if (unlikely(skb_shinfo(skb)->gso_size > nfn->mss)) {
+						skb_shinfo(skb)->gso_size = nfn->mss;
+					}
+				}
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
