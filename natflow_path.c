@@ -694,13 +694,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				}
 #endif
 				nfn->jiffies = jiffies;
-				if ((re_learn = (nfn->flags & FASTNAT_RE_LEARN)) || (u16)skb->dev->ifindex != nfn->ifindex || _I > HZ) {
-					if (re_learn) {
-						nfn->flags &= ~FASTNAT_RE_LEARN;
-						goto slow_fastpath;
-					}
-					goto out;
-				}
+
 				if (unlikely(TCPH(l4)->fin || TCPH(l4)->rst)) {
 					/* just in case bridge to make sure conntrack_in */
 					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
@@ -720,7 +714,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					nfn->count = (nfn->jiffies / HZ) & 0xff;
 					wmb();
 					clear_bit(0, &nfn->status);
-					goto out;
+					goto slow_fastpath;
 				}
 				_I = (nfn->jiffies / HZ) % 4;
 				nfn->speed_bytes[_I] += skb->len;
@@ -885,13 +879,6 @@ fast_output:
 				}
 #endif
 				nfn->jiffies = jiffies;
-				if ((re_learn = (nfn->flags & FASTNAT_RE_LEARN)) || (u16)skb->dev->ifindex != nfn->ifindex || _I > HZ) {
-					if (re_learn) {
-						nfn->flags &= ~FASTNAT_RE_LEARN;
-						goto slow_fastpath;
-					}
-					goto out;
-				}
 
 				/* sample up to slow path every 2s */
 				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
@@ -903,7 +890,7 @@ fast_output:
 					nfn->count = (nfn->jiffies / HZ) & 0xff;
 					wmb();
 					clear_bit(0, &nfn->status);
-					goto out;
+					goto slow_fastpath;
 				}
 				_I = (nfn->jiffies / HZ) % 4;
 				nfn->speed_bytes[_I] += skb->len;
@@ -1240,7 +1227,7 @@ fastnat_check:
 
 							nfn->flags = 0;
 							nfn->outdev = nf->rroute[d].outdev;
-							nfn->ifindex = nf->rroute[!d].outdev->ifindex;
+							nfn->mss = nf->rroute[d].mtu - sizeof(struct iphdr) - sizeof(struct tcphdr);
 							if (nf->rroute[d].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 								struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth + ETH_HLEN);
 								nfn->pppoe_sid = ph->sid;
@@ -1314,22 +1301,6 @@ fastnat_check:
 								if (nfn_i->magic == natflow_path_magic && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
 								        (nfn_i->saddr == saddr && nfn_i->daddr == daddr &&
 								         nfn_i->source == source && nfn_i->dest == dest && nfn_i->protonum == protonum)) {
-									if ((nfn_i->flags & FASTNAT_NO_ARP) ||
-									        netif_is_bridge_master(nfn_i->outdev)) {
-										if (!(nfn->flags & FASTNAT_STOP_LEARN)) {
-											nfn->flags |= FASTNAT_RE_LEARN;
-											nfn->flags |= FASTNAT_STOP_LEARN;
-										}
-									}
-									if ((nfn->flags & FASTNAT_NO_ARP) ||
-									        netif_is_bridge_master(nfn->outdev)) {
-										if (!(nfn_i->flags & FASTNAT_STOP_LEARN)) {
-											nfn_i->flags |= FASTNAT_RE_LEARN;
-											nfn_i->flags |= FASTNAT_STOP_LEARN;
-										}
-									}
-									nfn->ifindex = (u16)nfn_i->outdev->ifindex;
-									nfn_i->ifindex = (u16)nfn->outdev->ifindex;
 									nfn_i->jiffies = jiffies;
 									nfn_i->keepalive_jiffies = jiffies;
 									if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.protonum == IPPROTO_TCP) {

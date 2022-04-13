@@ -202,7 +202,7 @@ struct natflow_fastnat_node_t {
 	__be32 nat_saddr,
 	       nat_daddr;
 	unsigned char h_source[ETH_ALEN];
-	u16 ifindex;
+	u16 mss;
 	unsigned char h_dest[ETH_ALEN];
 	__be16 pppoe_sid;
 	/* XXX: -- 64 bytes above -- */
