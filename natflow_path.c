@@ -583,7 +583,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				if (skb_vlan_tag_present(skb))
 					skb->vlan_tci &= ~HWNAT_QUEUE_MAPPING_MAGIC;
 #endif
-				if (skb_is_gso(skb)) {
+				if (skb_is_gso(skb) || (nfn->flags & FASTNAT_NO_ARP)) {
 					goto fast_output;
 				}
 				skb->dev = nfn->outdev;
@@ -806,7 +806,6 @@ fast_output:
 						                                     nfn->outdev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
 					ingress_trim_off = (iph->protocol == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
 					                   (features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)) && \
-					                   !netif_is_bridge_master(nfn->outdev) && \
 					                   _I == ETH_HLEN;
 					if (!ingress_trim_off) {
 						struct sk_buff *segs;
@@ -1324,8 +1323,6 @@ fastnat_check:
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 									if (hwnat) {
 										/* hwnat enabled */
-										if (!(nfn->flags & FASTNAT_NO_ARP) && !(nfn_i->flags & FASTNAT_NO_ARP) &&
-										        !netif_is_bridge_master(nfn->outdev) && !netif_is_bridge_master(nfn_i->outdev)) {
 											struct net_device *orig_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 											struct net_device *reply_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev);
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
@@ -1666,9 +1663,6 @@ fastnat_check:
 											} else {
 												/* neither orig_dev nor reply_dev has offload api */
 											}
-										} else {
-											/* hwnat is not ready to go */
-										}
 									} else {
 										/* hwnat is not enabled */
 									}
@@ -1716,7 +1710,6 @@ fastnat_check:
 			                                     nf->rroute[dir].outdev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
 		ingress_trim_off = (iph->protocol == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
 		                   (features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)) && \
-		                   !netif_is_bridge_master(nf->rroute[dir].outdev) && \
 		                   nf->rroute[dir].l2_head_len == ETH_HLEN;
 		if (!ingress_trim_off) {
 			struct sk_buff *segs;
