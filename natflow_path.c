@@ -579,12 +579,14 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				//nfn->jiffies = jiffies; /* we update jiffies in keepalive */
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 				__vlan_hwaccel_clear_tag(skb);
-				skb->dev = nfn->outdev;
 #else
 				if (skb_vlan_tag_present(skb))
 					skb->vlan_tci &= ~HWNAT_QUEUE_MAPPING_MAGIC;
-				skb->dev = nfn->outdev;
 #endif
+				if (skb_is_gso(skb)) {
+					goto fast_output;
+				}
+				skb->dev = nfn->outdev;
 				skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
 				skb_reset_mac_header(skb);
 				if ((nfn->flags & FASTNAT_PPPOE_FLAG)) {
@@ -809,6 +811,7 @@ fast_output:
 					if (!ingress_trim_off) {
 						struct sk_buff *segs;
 						skb->ip_summed = CHECKSUM_PARTIAL;
+						skb->dev = nfn->outdev;
 						segs = skb_gso_segment(skb, 0);
 						if (IS_ERR(segs)) {
 							return NF_DROP;
