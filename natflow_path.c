@@ -603,6 +603,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		}
 #endif
 
+		if (unlikely(nf_ct_get(skb, &ctinfo) != NULL))
+			return NF_ACCEPT;
+
 		if (skb->mac_len != ETH_HLEN) {
 			return NF_ACCEPT;
 		}
