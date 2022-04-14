@@ -694,7 +694,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			        nfn->source == TCPH(l4)->source && nfn->dest == TCPH(l4)->dest &&
 			        (nfn->flags & FASTNAT_PROTO_TCP)) {
 				if (_I > NATFLOW_FF_TIMEOUT_LOW) {
-					re_learn = 2;
 					goto slow_fastpath;
 				}
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
@@ -703,16 +702,18 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
 				}
 #endif
-				nfn->jiffies = jiffies;
-
-				if (unlikely(TCPH(l4)->fin || TCPH(l4)->rst)) {
-					/* just in case bridge to make sure conntrack_in */
+				if (unlikely(TCPH(l4)->fin || TCPH(l4)->rst || (u16)skb->dev->ifindex != nfn->ifindex)) {
+					if ((u16)skb->dev->ifindex != nfn->ifindex)
+						re_learn = 1;
 					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
 					nfn = nfn_invert_get(nfn);
 					if (nfn && (u32)ulongmindiff(jiffies, nfn->jiffies) <= NATFLOW_FF_TIMEOUT_LOW)
 						nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
+					/* just in case bridge to make sure conntrack_in */
 					goto slow_fastpath;
 				}
+
+				nfn->jiffies = jiffies;
 
 				/* sample up to slow path every 2s */
 				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
@@ -885,7 +886,6 @@ fast_output:
 			        nfn->source == UDPH(l4)->source && nfn->dest == UDPH(l4)->dest &&
 			        (nfn->flags & FASTNAT_PROTO_UDP)) {
 				if (_I > NATFLOW_FF_TIMEOUT_LOW) {
-					re_learn = 2;
 					goto slow_fastpath;
 				}
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
@@ -894,6 +894,16 @@ fast_output:
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
 				}
 #endif
+				if (unlikely((u16)skb->dev->ifindex != nfn->ifindex)) {
+					re_learn = 1;
+					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
+					nfn = nfn_invert_get(nfn);
+					if (nfn && (u32)ulongmindiff(jiffies, nfn->jiffies) <= NATFLOW_FF_TIMEOUT_LOW)
+						nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
+					/* just in case bridge to make sure conntrack_in */
+					goto slow_fastpath;
+				}
+
 				nfn->jiffies = jiffies;
 
 				/* sample up to slow path every 2s */
@@ -1009,17 +1019,13 @@ slow_fastpath:
 	dir = CTINFO2DIR(ctinfo);
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (re_learn != 0) {
-		if (dir == NF_FF_DIR_ORIGINAL) {
-			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
-			simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
-			simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
-			if (re_learn == 2) simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
-		} else {
-			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
-			simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
-			simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
-			if (re_learn == 2) simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
-		}
+		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
+
+		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
 	}
 #endif
 	natflow_session_learn(skb, ct, nf, dir);
@@ -1245,6 +1251,7 @@ fastnat_check:
 							nfn->nat_dest = ct->tuplehash[!d].tuple.src.u.all;
 
 							nfn->outdev = nf->rroute[d].outdev;
+							nfn->ifindex = (u16)nf->rroute[!d].outdev->ifindex;
 							nfn->mss = nf->rroute[d].mtu - sizeof(struct iphdr) - sizeof(struct tcphdr);
 							if (nf->rroute[d].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 								struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth + ETH_HLEN);
