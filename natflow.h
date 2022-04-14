@@ -188,9 +188,13 @@ struct natflow_fastnat_node_t {
 #define FASTNAT_PPPOE_FLAG 0x02
 #define FASTNAT_NO_ARP     0x04
 #define FASTNAT_BRIDGE_FWD 0x08
+#define FASTNAT_PROTO_TCP  0x10
+#define FASTNAT_PROTO_UDP  0x20
+#define NFN_PROTO_DEC(flags)    (((flags) & FASTNAT_PROTO_TCP) ? IPPROTO_TCP : IPPROTO_UDP)
+#define NFN_PROTO_ENC(protonum) ((protonum) == IPPROTO_TCP ? FASTNAT_PROTO_TCP : FASTNAT_PROTO_UDP)
 	unsigned char flags;
 	unsigned char count;
-	__be16 protonum;
+	unsigned short ifindex;
 	__be32 saddr,
 	       daddr;
 	__be16 source,
