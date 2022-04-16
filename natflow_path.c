@@ -36,6 +36,7 @@
 #include "natflow_user.h"
 
 unsigned int hwnat = 1;
+unsigned int delay_pkts = 0;
 
 static int disabled = 1;
 void natflow_disabled_set(int v)
@@ -1076,6 +1077,9 @@ slow_fastpath:
 	if (acct) {
 		struct nf_conn_counter *counter = acct->counter;
 		int packets = atomic64_read(&counter[0].packets) + atomic64_read(&counter[1].packets);
+		if (delay_pkts && packets <= delay_pkts) {
+			goto out;
+		}
 		/* do FF check every 16384 packets */
 		if (packets % 16384 == 1) {
 			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);

@@ -71,6 +71,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             "#    ...\n"
 #if defined(CONFIG_NATFLOW_PATH)
 		             "#    hwnat=%u\n"
+		             "#    delay_pkts=%u\n"
 #endif
 		             "#\n"
 		             "# Reload cmd:\n"
@@ -82,6 +83,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             "\n",
 #if defined(CONFIG_NATFLOW_PATH)
 		             hwnat,
+		             delay_pkts,
 		             natflow_disabled_get(),
 #endif
 		             debug);
@@ -183,6 +185,13 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 		n = sscanf(data, "hwnat=%u", &d);
 		if (n == 1) {
 			hwnat = d;
+			goto done;
+		}
+	} else if (strncmp(data, "delay_pkts=", 11) == 0) {
+		int d;
+		n = sscanf(data, "delay_pkts=%u", &d);
+		if (n == 1) {
+			delay_pkts = d;
 			goto done;
 		}
 	} else if (strncmp(data, "update_magic", 12) == 0) {
