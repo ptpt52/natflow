@@ -179,8 +179,7 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 			}
 
 			diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
-			if (nfn->magic == natflow_path_magic &&
-			        (u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW &&
+			if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW &&
 			        nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && NFN_PROTO_DEC(nfn->flags) == protonum) {
 				nfn->jiffies = current_jiffies;
 				if (d == 0) {
@@ -202,7 +201,7 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 			do {
 				struct natflow_t *nf;
 				nf = natflow_session_get(ct);
-				if (nf && nf->magic == natflow_path_magic) {
+				if (nf) {
 					struct net_device *dev;
 
 					dev = nf->rroute[!d].outdev;
