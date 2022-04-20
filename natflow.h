@@ -221,7 +221,7 @@ struct natflow_fastnat_node_t {
 #define NATFLOW_FF_TIMEOUT_LOW (25 * HZ)
 #define NATFLOW_FF_SAMPLE_TIME 2
 
-/* MAX 65536 for now we use 2048 */
+/* MAX 65536 for now we use 4096 */
 #if defined(CONFIG_64BIT) || defined(CONFIG_X86) || defined(CONFIG_X86_64) || defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 #define NATFLOW_FASTNAT_TABLE_SIZE 4096
 #else
@@ -230,17 +230,19 @@ struct natflow_fastnat_node_t {
 
 static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __be16 dest, __be16 proto)
 {
-	u32 ports = ntohs(source) << 16 | ntohs(dest);
-	u32 src = ntohl(daddr);
-	u32 dst = ntohl(saddr);
-	u32 hash = (ports & src) | ((~ports) & dst);
-	u32 hash_23_0 = hash & 0xffffff;
-	u32 hash_31_24 = hash & 0xff000000;
+	u32 hv1, hv2, hv3;
+	u32 hash;
 
-	hash = ports ^ src ^ dst ^ ((hash_23_0 << 8) | (hash_31_24 >> 24));
-	hash = ((hash & 0xffff0000) >> 16 ) ^ (hash & 0xfffff);
-	hash &= NATFLOW_FASTNAT_TABLE_SIZE - 1; /* 0 ~ 2047 NATFLOW_FASTNAT_TABLE_SIZE */
-	hash *= 2;
+	hv1 = ntohs(source) << 16 | ntohs(dest);
+	hv2 = ntohl(daddr);
+	hv3 = ntohl(saddr);
+
+	hash = (hv1 & hv2) | ((~hv1) & hv3);
+	hash = (hash >> 24) | ((hash & 0xffffff) << 8);
+	hash ^= hv1 ^ hv2 ^ hv3;
+	hash ^= hash >> 16;
+	hash &= NATFLOW_FASTNAT_TABLE_SIZE - 1;
+	hash <<= 1;
 
 	return hash;
 }
