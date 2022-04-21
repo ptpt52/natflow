@@ -2074,8 +2074,15 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (event == NETDEV_UP) {
 		if (!((dev->flags & (IFF_LOOPBACK | IFF_POINTOPOINT)) || (dev->type == ARPHRD_PPP || dev->type == ARPHRD_NONE))) {
+			netdev_features_t features = dev->features;
+			netdev_features_t vlan_features = netdev_intersect_features(features, dev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
+			NATFLOW_println("catch NETDEV_UP event for dev=%s(tso=%d,%d,hw_csum=%d,%d), add ingress hook",
+			                dev->name,
+			                !!(features & NETIF_F_TSO),
+			                !!(vlan_features & NETIF_F_TSO),
+			                !!(features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)),
+			                !!(vlan_features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)));
 			natflow_check_device(dev);
-			NATFLOW_println("catch NETDEV_UP event for dev=%s, add ingress hook", dev->name);
 		}
 		return NOTIFY_DONE;
 	}
