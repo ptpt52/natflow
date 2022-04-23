@@ -247,6 +247,30 @@ static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __b
 	return hash;
 }
 
+static inline u32 natflow_hash_v6(struct in6_addr *saddr, struct in6_addr *daddr, __be16 source, __be16 dest, __be16 proto)
+{
+	u32 hv1, hv2, hv3;
+	u32 hash;
+
+	hv1 = ntohl(saddr->s6_addr32[3]) ^ ntohl(daddr->s6_addr32[3]);
+	hv1 ^= ntohs(source) << 16 | ntohs(dest);
+
+	hv2 = ntohl(saddr->s6_addr32[2]) ^ ntohl(daddr->s6_addr32[2]);
+	hv2 ^= ntohl(daddr->s6_addr32[0]);
+
+	hv3 = ntohl(saddr->s6_addr32[1]) ^ ntohl(daddr->s6_addr32[1]);
+	hv3 ^= ntohl(saddr->s6_addr32[0]);
+
+	hash = (hv1 & hv2) | ((~hv1) & hv3);
+	hash = (hash >> 24) | ((hash & 0xffffff) << 8);
+	hash ^= hv1 ^ hv2 ^ hv3;
+	hash ^= hash >> 16;
+	hash &= NATFLOW_FASTNAT_TABLE_SIZE - 1;
+	hash <<= 1;
+
+	return hash;
+}
+
 static inline int natflow_hash_skip(u32 hash)
 {
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
