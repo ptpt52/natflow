@@ -809,7 +809,7 @@ fast_output:
 					if (nfn->vlan_present)
 						features = netdev_intersect_features(features,
 						                                     nfn->outdev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
-					ingress_trim_off = (iph->protocol == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
+					ingress_trim_off = (NFN_PROTO_DEC(nfn->flags) == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
 					                   (features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)) && \
 					                   _I == ETH_HLEN;
 					if (!ingress_trim_off) {
