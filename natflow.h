@@ -228,7 +228,7 @@ struct natflow_fastnat_node_t {
 #define NATFLOW_FASTNAT_TABLE_SIZE 4096
 #endif
 
-static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __be16 dest, __be16 proto)
+static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __be16 dest)
 {
 	u32 hv1, hv2, hv3;
 	u32 hash;
@@ -247,7 +247,7 @@ static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __b
 	return hash;
 }
 
-static inline u32 natflow_hash_v6(struct in6_addr *saddr, struct in6_addr *daddr, __be16 source, __be16 dest, __be16 proto)
+static inline u32 natflow_hash_v6(struct in6_addr *saddr, struct in6_addr *daddr, __be16 source, __be16 dest)
 {
 	u32 hv1, hv2, hv3;
 	u32 hash;

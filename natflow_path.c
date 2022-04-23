@@ -105,7 +105,7 @@ static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn
 		__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
 		__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
 
-		hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
+		hash = natflow_hash_v4(saddr, daddr, source, dest);
 		nfn = &natflow_fast_nat_table[hash];
 		if (nfn->saddr != saddr || nfn->daddr != daddr || nfn->source != source || nfn->dest != dest || NFN_PROTO_DEC(nfn->flags) != protonum) {
 			hash += 1;
@@ -171,7 +171,7 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 				natflow_update_ct_timeout(ct, diff_jiffies);
 			}
 
-			hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
+			hash = natflow_hash_v4(saddr, daddr, source, dest);
 			nfn = &natflow_fast_nat_table[hash];
 			if (nfn->saddr != saddr || nfn->daddr != daddr || nfn->source != source || nfn->dest != dest || NFN_PROTO_DEC(nfn->flags) != protonum) {
 				hash += 1;
@@ -368,7 +368,7 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 	ft->src_port = ctt->src.u.tcp.port;
 	ft->dst_port = ctt->dst.u.tcp.port;
 
-	orig_hash = natflow_hash_v4(ft->src_v4.s_addr, ft->dst_v4.s_addr, ft->src_port, ft->dst_port, ft->l4proto);
+	orig_hash = natflow_hash_v4(ft->src_v4.s_addr, ft->dst_v4.s_addr, ft->src_port, ft->dst_port);
 	nfn = &natflow_fast_nat_table[orig_hash];
 	if (nfn->saddr != ft->src_v4.s_addr || nfn->daddr != ft->dst_v4.s_addr || nfn->source != ft->src_port || nfn->dest != ft->dst_port || NFN_PROTO_DEC(nfn->flags) != ft->l4proto)
 	{
@@ -385,7 +385,7 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 	ft->src_port = ctt->src.u.tcp.port;
 	ft->dst_port = ctt->dst.u.tcp.port;
 
-	reply_hash = natflow_hash_v4(ft->src_v4.s_addr, ft->dst_v4.s_addr, ft->src_port, ft->dst_port, ft->l4proto);
+	reply_hash = natflow_hash_v4(ft->src_v4.s_addr, ft->dst_v4.s_addr, ft->src_port, ft->dst_port);
 	nfn = &natflow_fast_nat_table[reply_hash];
 	if (nfn->saddr != ft->src_v4.s_addr || nfn->daddr != ft->dst_v4.s_addr || nfn->source != ft->src_port || nfn->dest != ft->dst_port || NFN_PROTO_DEC(nfn->flags) != ft->l4proto)
 	{
@@ -679,7 +679,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			}
 			iph = ip_hdr(skb);
 			l4 = (void *)iph + iph->ihl * 4;
-			_I = natflow_hash_v4(iph->saddr, iph->daddr, TCPH(l4)->source, TCPH(l4)->dest, IPPROTO_TCP);
+			_I = natflow_hash_v4(iph->saddr, iph->daddr, TCPH(l4)->source, TCPH(l4)->dest);
 			nfn = &natflow_fast_nat_table[_I];
 			if (nfn->saddr != iph->saddr || nfn->daddr != iph->daddr ||
 			        nfn->source != TCPH(l4)->source || nfn->dest != TCPH(l4)->dest ||
@@ -872,7 +872,7 @@ fast_output:
 			}
 			iph = ip_hdr(skb);
 			l4 = (void *)iph + iph->ihl * 4;
-			_I = natflow_hash_v4(iph->saddr, iph->daddr, UDPH(l4)->source, UDPH(l4)->dest, IPPROTO_UDP);
+			_I = natflow_hash_v4(iph->saddr, iph->daddr, UDPH(l4)->source, UDPH(l4)->dest);
 			nfn = &natflow_fast_nat_table[_I];
 			if (nfn->saddr != iph->saddr || nfn->daddr != iph->daddr ||
 			        nfn->source != UDPH(l4)->source || nfn->dest != UDPH(l4)->dest ||
@@ -1234,7 +1234,7 @@ fastnat_check:
 						__be16 source = ct->tuplehash[d].tuple.src.u.all;
 						__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
 						__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
-						u32 hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
+						u32 hash = natflow_hash_v4(saddr, daddr, source, dest);
 						natflow_fastnat_node_t *nfn = &natflow_fast_nat_table[hash];
 						struct ethhdr *eth = (struct ethhdr *)nf->rroute[d].l2_head;
 
@@ -1335,7 +1335,7 @@ fastnat_check:
 								source = ct->tuplehash[!d].tuple.src.u.all;
 								dest = ct->tuplehash[!d].tuple.dst.u.all;
 								protonum = ct->tuplehash[!d].tuple.dst.protonum;
-								hash = natflow_hash_v4(saddr, daddr, source, dest, protonum);
+								hash = natflow_hash_v4(saddr, daddr, source, dest);
 								nfn_i = &natflow_fast_nat_table[hash];
 
 								if (nfn_i->saddr != saddr || nfn_i->daddr != daddr ||
