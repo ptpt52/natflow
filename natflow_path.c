@@ -1868,7 +1868,6 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (NULL == ct) {
 		goto out;
 	}
-
 	nf = natflow_session_get(ct);
 	if (NULL == nf) {
 		goto out;
@@ -1877,6 +1876,15 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	/* XXX I just confirm it first  */
 	ret = nf_conntrack_confirm(skb);
 	if (ret != NF_ACCEPT) {
+		goto out;
+	}
+	/* must reload ct after confirm */
+	ct = nf_ct_get(skb, &ctinfo);
+	if (NULL == ct) {
+		goto out;
+	}
+	nf = natflow_session_get(ct);
+	if (NULL == nf) {
 		goto out;
 	}
 	iph = ip_hdr(skb);
