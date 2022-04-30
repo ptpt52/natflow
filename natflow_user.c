@@ -248,19 +248,9 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 		return NULL;
 	}
 
-	if (ct->master) {
-		if ((IPS_NATFLOW_USER & ct->master->status)) {
-			if (unlikely(nf_ct_is_dying(ct->master))) {
-				return NULL;
-			}
-			user = ct->master;
-		} else if (ct->master->master && (IPS_NATFLOW_USER & ct->master->master->status)) {
-			if (unlikely(nf_ct_is_dying(ct->master->master))) {
-				return NULL;
-			}
-			user = ct->master->master;
-		}
-	}
+	user = natflow_user_get(ct);
+	if (user)
+		return user;
 
 	if (!nf_ct_is_confirmed(ct) && !user && (!ct->master || !ct->master->master)) {
 		struct nf_ct_ext *new = NULL;
@@ -374,14 +364,20 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			return NULL;
 		}
 
-		nf_conntrack_get(&user->ct_general);
-		if (ct->master) {
-			ct->master->master = user;
+		natflow_user_timeout_touch(user);
+
+		if (ct->master && !(IPS_NATFLOW_USER & ct->master->status)) {
+			if (!test_and_set_bit(IPS_NATFLOW_MASTER_BIT, &ct->master->status)) {
+				nf_conntrack_get(&user->ct_general);
+				ct->master->master = user;
+			}
 		} else {
-			ct->master = user;
+			if (!test_and_set_bit(IPS_NATFLOW_MASTER_BIT, &ct->status)) {
+				nf_conntrack_get(&user->ct_general);
+				ct->master = user;
+			}
 		}
 
-		natflow_user_timeout_touch(user);
 		skb_nfct_reset(uskb);
 
 		NATFLOW_INFO("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] user[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u]\n",
@@ -396,7 +392,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 		            );
 	}
 
-	return user;
+	return natflow_user_get(ct);
 }
 
 static inline void natflow_auth_reply_payload_fin(const char *payload, int payload_len, struct sk_buff *oskb, const struct net_device *dev, int pppoe_hdr)

@@ -91,6 +91,11 @@ struct nat_key_t {
 	unsigned short natcap_off;
 	unsigned short natflow_off;
 };
+
+/* indicate ct is connected user */
+#define IPS_NATFLOW_MASTER_BIT 31
+#define IPS_NATFLOW_MASTER (1 << IPS_NATFLOW_MASTER_BIT)
+
 /*XXX refer to drivers/nos/src/nos.h */
 #define IPS_NATFLOW_USER_BIT 16
 #define IPS_NATFLOW_USER (1 << IPS_NATFLOW_USER_BIT)
