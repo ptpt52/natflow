@@ -96,6 +96,9 @@ struct nat_key_t {
 #define IPS_NATFLOW_MASTER_BIT 31
 #define IPS_NATFLOW_MASTER (1 << IPS_NATFLOW_MASTER_BIT)
 
+#define IPS_NATFLOW_SESSION_BIT 29
+#define IPS_NATFLOW_SESSION (1 << IPS_NATFLOW_SESSION_BIT)
+
 /*XXX refer to drivers/nos/src/nos.h */
 #define IPS_NATFLOW_USER_BIT 16
 #define IPS_NATFLOW_USER (1 << IPS_NATFLOW_USER_BIT)
@@ -121,9 +124,6 @@ struct nat_key_t {
 
 #define IPS_NATCAP_BIT 25
 #define IPS_NATCAP (1 << IPS_NATCAP_BIT)
-
-#define IPS_NATCAP_DUAL_BIT 29
-#define IPS_NATCAP_DUAL (1 << IPS_NATCAP_DUAL_BIT)
 
 static inline int simple_test_bit(int nr, const unsigned int *addr)
 {
