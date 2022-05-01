@@ -606,7 +606,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		if (unlikely(nf_ct_get(skb, &ctinfo) != NULL))
 			return NF_ACCEPT;
 
-		if (skb->mac_len != ETH_HLEN) {
+		if (skb->mac_len != ETH_HLEN || skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
 			return NF_ACCEPT;
 		}
 		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
@@ -990,6 +990,8 @@ slow_fastpath:
 		}
 	}
 #endif
+	if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST)
+		goto out;
 
 	if (skb->protocol != __constant_htons(ETH_P_IP))
 		goto out;
