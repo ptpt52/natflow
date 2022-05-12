@@ -324,7 +324,7 @@ static inline unsigned long nf_ct_expires(const struct nf_conn *ct)
 }
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 36)
 #define REFCOUNT_inc_not_zero atomic_inc_not_zero
 #define REFCOUNT_read atomic_read
 #else
