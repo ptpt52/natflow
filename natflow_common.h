@@ -324,12 +324,12 @@ static inline unsigned long nf_ct_expires(const struct nf_conn *ct)
 }
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0)
-#define REFCOUNT_inc_not_zero atomic_inc_not_zero
-#define REFCOUNT_read atomic_read
-#else
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 36) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0)) || LINUX_VERSION_CODE >= KERNEL_VERSION(5, 17, 0)
 #define REFCOUNT_inc_not_zero refcount_inc_not_zero
 #define REFCOUNT_read refcount_read
+#else
+#define REFCOUNT_inc_not_zero atomic_inc_not_zero
+#define REFCOUNT_read atomic_read
 #endif
 
 #endif /* _NATFLOW_COMMON_H_ */
