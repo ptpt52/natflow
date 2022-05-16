@@ -125,12 +125,11 @@ static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn
 	return NULL;
 }
 
-static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, unsigned long packets, unsigned int *speed_bytes, unsigned int *speed_packets, int hw)
+static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, unsigned long packets, unsigned int *speed_bytes, unsigned int *speed_packets, int hw, unsigned long current_jiffies)
 {
 	struct nf_conn_acct *acct;
 	natflow_fastnat_node_t *nfn;
 	unsigned long diff_jiffies = 0;
-	unsigned long current_jiffies = jiffies;
 
 	hash = hash % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
 	nfn = &natflow_fast_nat_table[hash];
@@ -267,7 +266,6 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 					break;
 				}
 				fud = natflow_fakeuser_data(user);
-				current_jiffies = jiffies;
 				if (d == 0) {
 					unsigned int rx_speed_jiffies = atomic_xchg(&fud->rx_speed_jiffies, current_jiffies);
 					int i = (current_jiffies/HZ) % 4;
@@ -722,7 +720,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					unsigned long packets = nfn->flow_packets;
 					nfn->flow_bytes -= bytes;
 					nfn->flow_packets -= packets;
-					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets, 0);
+					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets, 0, jiffies);
 					nfn->count = (nfn->jiffies / HZ) & 0xff;
 					wmb();
 					clear_bit(0, &nfn->status);
@@ -914,7 +912,7 @@ fast_output:
 					unsigned long packets = nfn->flow_packets;
 					nfn->flow_bytes -= bytes;
 					nfn->flow_packets -= packets;
-					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets, 0);
+					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets, 0, jiffies);
 					nfn->count = (nfn->jiffies / HZ) & 0xff;
 					wmb();
 					clear_bit(0, &nfn->status);
