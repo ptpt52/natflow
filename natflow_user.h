@@ -19,8 +19,8 @@ typedef struct fakeuser_data_t {
 	uint8_t auth_status;
 	uint16_t auth_rule_id;
 	uint16_t auth_rule_magic;
-	unsigned long rx_speed_jiffies;
-	unsigned long tx_speed_jiffies;
+	atomic_t rx_speed_jiffies;
+	atomic_t tx_speed_jiffies;
 	atomic_t rx_speed_bytes[4];
 	atomic_t rx_speed_packets[4];
 	atomic_t tx_speed_bytes[4];

@@ -905,8 +905,10 @@ static unsigned int natflow_user_pre_hook(void *priv,
 					user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
 
 					do {
+						unsigned int rx_speed_jiffies = atomic_read(&fud->rx_speed_jiffies);
+						unsigned int tx_speed_jiffies = atomic_read(&fud->tx_speed_jiffies);
 						int x = (jiffies/HZ) % 4;
-						unsigned long diff = ulongmindiff(jiffies, fud->rx_speed_jiffies);
+						unsigned long diff = uintmindiff(jiffies, rx_speed_jiffies);
 						if (diff > HZ * 4) {
 							user_i->rx_speed_packets = 0;
 							user_i->rx_speed_bytes = 0;
@@ -935,7 +937,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 						}
 
 						x = (jiffies/HZ) % 4;
-						diff = ulongmindiff(jiffies, fud->tx_speed_jiffies);
+						diff = uintmindiff(jiffies, tx_speed_jiffies);
 						if (diff > HZ * 4) {
 							user_i->tx_speed_packets = 0;
 							user_i->tx_speed_bytes = 0;
@@ -1355,9 +1357,10 @@ static unsigned int natflow_user_post_hook(void *priv,
 		struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 		if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[CTINFO2DIR(ctinfo)].tuple.src.u3.ip) {
 			/* download */
+			unsigned int rx_speed_jiffies = atomic_xchg(&fud->rx_speed_jiffies, jiffies);
 			int i = (jiffies/HZ) % 4;
-			int j = (fud->rx_speed_jiffies/HZ) % 4;
-			unsigned long diff_jiffies = ulongmindiff(jiffies, fud->rx_speed_jiffies);
+			int j = (rx_speed_jiffies/HZ) % 4;
+			unsigned long diff_jiffies = uintmindiff(jiffies, rx_speed_jiffies);
 			if (diff_jiffies >= HZ * 4) {
 				for(j = 0; j < 4; j++) {
 					atomic_set(&fud->rx_speed_bytes[j], 0);
@@ -1372,14 +1375,14 @@ static unsigned int natflow_user_post_hook(void *priv,
 			}
 			atomic_inc(&fud->rx_speed_packets[j]);
 			atomic_add(skb->len, &fud->rx_speed_bytes[j]);
-			fud->rx_speed_jiffies = jiffies;
 			atomic64_inc(&counter[0].packets);
 			atomic64_add(skb->len, &counter[0].bytes);
 		} else {
 			/* upload */
+			unsigned int tx_speed_jiffies = atomic_xchg(&fud->tx_speed_jiffies, jiffies);
 			int i = (jiffies/HZ) % 4;
-			int j = (fud->tx_speed_jiffies/HZ) % 4;
-			unsigned long diff_jiffies = ulongmindiff(jiffies, fud->tx_speed_jiffies);
+			int j = (tx_speed_jiffies/HZ) % 4;
+			unsigned long diff_jiffies = uintmindiff(jiffies, tx_speed_jiffies);
 			if (diff_jiffies >= HZ * 4) {
 				for(j = 0; j < 4; j++) {
 					atomic_set(&fud->tx_speed_bytes[j], 0);
@@ -1394,7 +1397,6 @@ static unsigned int natflow_user_post_hook(void *priv,
 			}
 			atomic_inc(&fud->tx_speed_packets[j]);
 			atomic_add(skb->len, &fud->tx_speed_bytes[j]);
-			fud->tx_speed_jiffies = jiffies;
 			atomic64_inc(&counter[1].packets);
 			atomic64_add(skb->len, &counter[1].bytes);
 		}
@@ -2111,8 +2113,10 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 					user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
 
 					do {
+						unsigned int rx_speed_jiffies = atomic_read(&fud->rx_speed_jiffies);
+						unsigned int tx_speed_jiffies = atomic_read(&fud->tx_speed_jiffies);
 						int x = (jiffies/HZ) % 4;
-						unsigned long diff = ulongmindiff(jiffies, fud->rx_speed_jiffies);
+						unsigned long diff = uintmindiff(jiffies, rx_speed_jiffies);
 						if (diff > HZ * 4) {
 							user_i->rx_speed_packets = 0;
 							user_i->rx_speed_bytes = 0;
@@ -2141,7 +2145,7 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 						}
 
 						x = (jiffies/HZ) % 4;
-						diff = ulongmindiff(jiffies, fud->tx_speed_jiffies);
+						diff = uintmindiff(jiffies, tx_speed_jiffies);
 						if (diff > HZ * 4) {
 							user_i->tx_speed_packets = 0;
 							user_i->tx_speed_bytes = 0;
