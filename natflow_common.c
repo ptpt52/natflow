@@ -57,7 +57,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		return -1;
 	}
 
-	for (i = NF_CT_EXT_HELPER + 1; i < ARRAY_SIZE((((struct nf_ct_ext *)0)->offset)); i++) {
+	for (i = 0; i < ARRAY_SIZE((((struct nf_ct_ext *)0)->offset)); i++) {
 		if (!nf_ct_ext_exist(ct, i)) compat_nf_ct_ext_add(ct, i, gfp);
 	}
 

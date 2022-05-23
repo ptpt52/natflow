@@ -1180,6 +1180,12 @@ slow_fastpath:
 
 		if (!(orig_match && reply_match)) {
 			/* ifname not matched, skip fastnat for this conn */
+			struct nf_conn_help *help = nfct_help(ct);
+			if (help && !help->helper) {
+				/* this conn do not need helper, clear it for nss */
+				ct->ext->offset[NF_CT_EXT_HELPER] = 0;
+			}
+
 			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
 			switch (iph->protocol) {
 			case IPPROTO_TCP:
