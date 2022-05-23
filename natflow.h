@@ -70,6 +70,9 @@ typedef struct natflow_route_t {
 #define NF_FF_URLLOGGER_USE_BIT 19
 #define NF_FF_URLLOGGER_USE (1 << NF_FF_URLLOGGER_USE_BIT)
 
+#define NF_FF_IFNAME_MATCH_BIT 20
+#define NF_FF_IFNAME_MATCH (1 << NF_FF_IFNAME_MATCH_BIT)
+
 /* XXX: ALL DONE */
 #define NF_FF_BUSY_USE (NF_FF_USER_USE | NF_FF_URLLOGGER_USE)
 

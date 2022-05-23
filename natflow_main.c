@@ -66,6 +66,8 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             "# Usage:\n"
 		             "#    disabled=Number -- set disable/enable\n"
 		             "#    debug=<num> -- set debug\n"
+		             "#    ifname_clear -- clear ifname filter\n"
+		             "#    ifname_add=<ifname> -- add ifname to filter\n"
 		             "#\n"
 		             "# Info:\n"
 		             "#    ...\n"
@@ -90,6 +92,22 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		natflow_ctl_buffer[n] = 0;
 		return natflow_ctl_buffer;
 	}
+#if defined(CONFIG_NATFLOW_PATH)
+	else if ((*pos) > 0) {
+		struct ifname_match *im;
+		struct net_device *dev = NULL;
+
+		im = ifname_match_get((*pos) - 1, &dev);
+		if (im) {
+			n = snprintf(natflow_ctl_buffer,
+			             PAGE_SIZE - 1,
+			             "ifname_add=%s\n",
+			             dev->name);
+			natflow_ctl_buffer[n] = 0;
+			return natflow_ctl_buffer;
+		}
+	}
+#endif
 
 	return NULL;
 }
@@ -194,6 +212,23 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 			delay_pkts = d;
 			goto done;
 		}
+	} else if (strncmp(data, "ifname_clear", 12) == 0) {
+		ifname_match_clear();
+		goto done;
+	} else if (strncmp(data, "ifname_add=", 11) == 0) {
+		char *ifname = NULL;
+		ifname = kmalloc(2048, GFP_KERNEL);
+		if (!ifname)
+			return -ENOMEM;
+		n = sscanf(data, "ifname_add=%s\n", ifname);
+		if (n == 1) {
+			err = ifname_match_add(ifname);
+			if (err == 0) {
+				kfree(ifname);
+				goto done;
+			}
+		}
+		kfree(ifname);
 	} else if (strncmp(data, "update_magic", 12) == 0) {
 		natflow_update_magic(0);
 		goto done;

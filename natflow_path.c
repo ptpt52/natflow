@@ -35,6 +35,86 @@
 #include "natflow_path.h"
 #include "natflow_user.h"
 
+static struct ifname_match ifname_match_fastnat[IFNAME_MATCH_MAX];
+
+static void ifname_match_init(void)
+{
+	ifname_match_fastnat[0].ifindex = -1;
+}
+
+void ifname_match_clear(void)
+{
+	ifname_match_init();
+}
+
+int ifname_match_add(const unsigned char *ifname)
+{
+	int ret = -ENOENT;
+	struct net_device *dev;
+	rcu_read_lock();
+	dev = first_net_device(&init_net);
+	while (dev) {
+		if (strncmp(dev->name, ifname, IFNAMSIZ) == 0) {
+			int i = 0;
+			short ifindex = dev->ifindex;
+			unsigned short vlan_id = 0;
+			if (is_vlan_dev(dev)) {
+				ifindex = vlan_dev_priv(dev)->real_dev->ifindex;
+				vlan_id = vlan_dev_priv(dev)->vlan_id;
+			}
+			for (i = 0; i < IFNAME_MATCH_MAX; i++) {
+				if (ifname_match_fastnat[i].ifindex == -1)
+					break;
+				if (ifname_match_fastnat[i].ifindex == ifindex && ifname_match_fastnat[i].vlan_id == vlan_id) {
+					ret = -EEXIST;
+					goto out;
+				}
+			}
+			if (i == IFNAME_MATCH_MAX) {
+				ret = -ENOSPC;
+				goto out;
+			}
+
+			if (i + 1 < IFNAME_MATCH_MAX) {
+				ifname_match_fastnat[i + 1].ifindex = -1;
+			}
+			ifname_match_fastnat[i].ifindex = ifindex;
+			ifname_match_fastnat[i].vlan_id = vlan_id;
+			ret = 0;
+
+			NATFLOW_println("Success add ifname_match[%d] %s (ifindex=%d vlan_id=%u)\n", i, ifname, ifindex, vlan_id);
+			break;
+		}
+		dev = next_net_device(dev);
+	}
+out:
+	rcu_read_unlock();
+	return ret;
+}
+
+struct ifname_match *ifname_match_get(int idx, struct net_device **out_dev)
+{
+	struct net_device *dev;
+
+	if (idx >= IFNAME_MATCH_MAX || ifname_match_fastnat[idx].ifindex == -1)
+		return NULL;
+
+	dev = dev_get_by_index(&init_net, ifname_match_fastnat[idx].ifindex);
+	if (!dev)
+		return NULL;
+
+	if (ifname_match_fastnat[idx].vlan_id != 0) {
+		dev = vlan_lookup_dev(dev, ifname_match_fastnat[idx].vlan_id);
+		if (dev) {
+			*out_dev = dev;
+			return &ifname_match_fastnat[idx];
+		}
+	}
+
+	*out_dev = dev;
+	return &ifname_match_fastnat[idx];
+}
+
 unsigned int hwnat = 1;
 unsigned int delay_pkts = 0;
 
@@ -1070,6 +1150,57 @@ slow_fastpath:
 			break;
 		}
 		goto out;
+	}
+
+	/* if ifname filter enabled, do fastnat for matched ifname only */
+	if (!(nf->status & NF_FF_IFNAME_MATCH) && ifname_match_fastnat[0].ifindex != -1) {
+		int i;
+		short orig_match = 0, reply_match = 0;
+		struct ifname_match *im;
+		for (i = 0; i < IFNAME_MATCH_MAX; i++) {
+			im = &ifname_match_fastnat[i];
+			if (im->ifindex == -1)
+				break;
+			if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev->ifindex == im->ifindex &&
+			        ((nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present && nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci == im->vlan_id) ||
+			         (!nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present && im->vlan_id == 0))) {
+				orig_match = 1;
+			}
+			if (nf->rroute[NF_FF_DIR_REPLY].outdev->ifindex == im->ifindex &&
+			        ((nf->rroute[NF_FF_DIR_REPLY].vlan_present && nf->rroute[NF_FF_DIR_REPLY].vlan_tci == im->vlan_id) ||
+			         (!nf->rroute[NF_FF_DIR_REPLY].vlan_present && im->vlan_id == 0))) {
+				reply_match = 1;
+			}
+			if (orig_match && reply_match) {
+				break;
+			}
+		}
+
+		simple_set_bit(NF_FF_IFNAME_MATCH_BIT, &nf->status);
+
+		if (!(orig_match && reply_match)) {
+			/* ifname not matched, skip fastnat for this conn */
+			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
+			switch (iph->protocol) {
+			case IPPROTO_TCP:
+				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) not matched\n",
+				             DEBUG_TCP_ARG(iph,l4),
+				             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
+				             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
+				             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
+				             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
+				break;
+			case IPPROTO_UDP:
+				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) not matched\n",
+				             DEBUG_UDP_ARG(iph,l4),
+				             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
+				             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
+				             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
+				             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
+				break;
+			}
+			goto out;
+		}
 	}
 
 	acct = nf_conn_acct_find(ct);
@@ -2130,6 +2261,7 @@ int natflow_path_init(void)
 
 	need_conntrack();
 	natflow_update_magic(1);
+	ifname_match_init();
 
 	register_netdevice_notifier(&natflow_netdev_notifier);
 

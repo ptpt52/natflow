@@ -262,6 +262,16 @@ static inline struct net_device *get_macvlan_real_dev(struct net_device *dev)
 
 void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir);
 
+struct ifname_match {
+	short ifindex;
+	unsigned short vlan_id;
+};
+#define IFNAME_MATCH_MAX 64
+
+extern void ifname_match_clear(void);
+extern int ifname_match_add(const unsigned char *ifname);
+extern struct ifname_match *ifname_match_get(int idx, struct net_device **out_dev);
+
 extern int natflow_path_init(void);
 extern void natflow_path_exit(void);
 
