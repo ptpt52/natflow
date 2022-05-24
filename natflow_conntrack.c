@@ -220,10 +220,11 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
 		ct_hash = init_net.ct.hash;
+		hashsz = init_net.ct.htable_size;
 #else
 		ct_hash = nf_conntrack_hash;
-#endif
 		hashsz = nf_conntrack_htable_size;
+#endif
 		for (i = user->next_bucket; i < hashsz; i++) {
 			hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
 				ct = nf_ct_tuplehash_to_ctrack(h);
