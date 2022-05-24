@@ -781,9 +781,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
 				}
 #endif
-				if (unlikely(TCPH(l4)->fin || TCPH(l4)->rst || (u16)skb->dev->ifindex != nfn->ifindex)) {
-					if ((u16)skb->dev->ifindex != nfn->ifindex)
-						re_learn = 2;
+				if ((u16)skb->dev->ifindex != nfn->ifindex)
+					goto slow_fastpath;
+				if (unlikely(TCPH(l4)->fin || TCPH(l4)->rst)) {
 					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
 					nfn = nfn_invert_get(nfn);
 					if (nfn && (u32)ulongmindiff(jiffies, nfn->jiffies) <= NATFLOW_FF_TIMEOUT_LOW)
@@ -975,12 +975,6 @@ fast_output:
 				}
 #endif
 				if (unlikely((u16)skb->dev->ifindex != nfn->ifindex)) {
-					re_learn = 2;
-					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
-					nfn = nfn_invert_get(nfn);
-					if (nfn && (u32)ulongmindiff(jiffies, nfn->jiffies) <= NATFLOW_FF_TIMEOUT_LOW)
-						nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
-					/* just in case bridge to make sure conntrack_in */
 					goto slow_fastpath;
 				}
 
@@ -1100,8 +1094,7 @@ slow_fastpath:
 
 	dir = CTINFO2DIR(ctinfo);
 #ifdef CONFIG_NETFILTER_INGRESS
-	switch(re_learn) {
-	case 1:
+	if (re_learn) {
 		if (dir == NF_FF_DIR_ORIGINAL) {
 			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
@@ -1113,16 +1106,6 @@ slow_fastpath:
 			simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
 			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 		}
-		break;
-	case 2:
-		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
-
-		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
-		break;
 	}
 #endif
 	natflow_session_learn(skb, ct, nf, dir);
