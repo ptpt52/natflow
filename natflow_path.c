@@ -2019,6 +2019,9 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	l4 = (void *)iph + iph->ihl * 4;
 
 	dir = CTINFO2DIR(ctinfo);
+	if (!((dir == IP_CT_DIR_ORIGINAL && (nf->status & NF_FF_REPLY_OK)) ||
+	        (dir == IP_CT_DIR_REPLY && (nf->status & NF_FF_ORIGINAL_OK))))
+		goto out;
 
 	/* fastnat in learning state */
 	if (!(nf->status & (NF_FF_BRIDGE | NF_FF_ROUTE))) {
