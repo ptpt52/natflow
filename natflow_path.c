@@ -1108,18 +1108,11 @@ slow_fastpath:
 		}
 	}
 #endif
-#ifdef CONFIG_NETFILTER_INGRESS
-	if (ingress_pad_len == PPPOE_SES_HLEN) {
-		if (!nf_ct_is_confirmed(ct)) {
-			goto out;
-		}
-	}
-#endif
-	natflow_session_learn(skb, ct, nf, dir);
-
 	if (!nf_ct_is_confirmed(ct)) {
 		goto out;
 	}
+
+	natflow_session_learn(skb, ct, nf, dir);
 
 	if ((ct->status & IPS_NATFLOW_FF_STOP) || (nf->status & NF_FF_BUSY_USE)) {
 		goto out;
