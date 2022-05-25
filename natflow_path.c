@@ -710,6 +710,10 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			goto out;
 		}
 
+		if (ipv4_is_multicast(iph->daddr) || ipv4_is_lbcast(iph->daddr)) {
+			goto out;
+		}
+
 		_I = ntohs(iph->tot_len);
 		if (skb->len < _I || _I < (iph->ihl * 4)) {
 			goto out;
@@ -1073,6 +1077,9 @@ slow_fastpath:
 		goto out;
 	}
 	l4 = (void *)iph + iph->ihl * 4;
+	if (ipv4_is_multicast(iph->daddr) || ipv4_is_lbcast(iph->daddr)) {
+		goto out;
+	}
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
