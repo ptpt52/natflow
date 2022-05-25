@@ -1154,12 +1154,12 @@ slow_fastpath:
 				break;
 			if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev->ifindex == im->ifindex &&
 			        ((nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present && nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci == im->vlan_id) ||
-			         (!nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present && im->vlan_id == 0))) {
+			         im->vlan_id == 0)) {
 				orig_match = 1;
 			}
 			if (nf->rroute[NF_FF_DIR_REPLY].outdev->ifindex == im->ifindex &&
 			        ((nf->rroute[NF_FF_DIR_REPLY].vlan_present && nf->rroute[NF_FF_DIR_REPLY].vlan_tci == im->vlan_id) ||
-			         (!nf->rroute[NF_FF_DIR_REPLY].vlan_present && im->vlan_id == 0))) {
+			         im->vlan_id == 0)) {
 				reply_match = 1;
 			}
 			if (orig_match && reply_match) {
