@@ -1520,6 +1520,24 @@ fastnat_check:
 												simple_set_bit(NF_FF_REPLY_DSA_BIT, &nf->status);
 										}
 #endif
+										if ((orig_dev->netdev_ops->ndo_flow_offload && is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) ||
+										        (reply_dev->netdev_ops->ndo_flow_offload && is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev))) {
+											NATFLOW_INFO("(PCO) skip hwnat offload for double vlan dev=%s(vlan:%d pppoe:%d)"
+											             " s=%pI4:%u d=%pI4:%u dev=%s(vlan:%d pppoe:%d)"
+											             " s=%pI4:%u d=%pI4:%u\n",
+											             nfn->outdev->name,
+											             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
+											             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
+											             (int)ntohs(nfn->pppoe_sid) : -1,
+											             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
+											             nfn_i->outdev->name,
+											             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
+											             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
+											             (int)ntohs(nfn_i->pppoe_sid) : -1,
+											             &nfn_i->saddr, ntohs(nfn_i->source),
+											             &nfn_i->daddr, ntohs(nfn_i->dest));
+											break;
+										}
 										if (orig_dev->netdev_ops->ndo_flow_offload) {
 											/* xxx: orig_dev has offload api */
 											if (orig_dev == reply_dev || reply_dev->netdev_ops->ndo_flow_offload) {
