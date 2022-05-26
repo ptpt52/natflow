@@ -1520,24 +1520,6 @@ fastnat_check:
 												simple_set_bit(NF_FF_REPLY_DSA_BIT, &nf->status);
 										}
 #endif
-										if ((orig_dev->netdev_ops->ndo_flow_offload && is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) ||
-										        (reply_dev->netdev_ops->ndo_flow_offload && is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev))) {
-											NATFLOW_INFO("(PCO) skip hwnat offload for double vlan dev=%s(vlan:%d pppoe:%d)"
-											             " s=%pI4:%u d=%pI4:%u dev=%s(vlan:%d pppoe:%d)"
-											             " s=%pI4:%u d=%pI4:%u\n",
-											             nfn->outdev->name,
-											             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-											             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
-											             (int)ntohs(nfn->pppoe_sid) : -1,
-											             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
-											             nfn_i->outdev->name,
-											             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
-											             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
-											             (int)ntohs(nfn_i->pppoe_sid) : -1,
-											             &nfn_i->saddr, ntohs(nfn_i->source),
-											             &nfn_i->daddr, ntohs(nfn_i->dest));
-											break;
-										}
 										if (orig_dev->netdev_ops->ndo_flow_offload) {
 											/* xxx: orig_dev has offload api */
 											if (orig_dev == reply_dev || reply_dev->netdev_ops->ndo_flow_offload) {
@@ -1598,6 +1580,12 @@ fastnat_check:
 													reply.pppoe_sid =
 													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
 												}
+												if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
+													orig.flags |= FLOW_OFFLOAD_PATH_EXTDEV;
+												}
+												if (is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
+													reply.flags |= FLOW_OFFLOAD_PATH_EXTDEV;
+												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
 													NATFLOW_INFO("(PCO) set hwnat offload 1 dev=%s(vlan:%d pppoe:%d)"
@@ -1614,6 +1602,20 @@ fastnat_check:
 													             (int)ntohs(nfn_i->pppoe_sid) : -1,
 													             &nfn_i->saddr, ntohs(nfn_i->source),
 													             &nfn_i->daddr, ntohs(nfn_i->dest));
+													if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
+														if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
+															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														} else {
+															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														}
+													}
+													if (is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
+														if (nf->rroute[NF_FF_DIR_REPLY].outdev == nfn->outdev) {
+															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														} else {
+															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														}
+													}
 												} else {
 													/* mark FF_FAIL so never try FF */
 													simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
@@ -1696,6 +1698,9 @@ fastnat_check:
 													reply.pppoe_sid =
 													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
 												}
+												if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
+													orig.flags |= FLOW_OFFLOAD_PATH_EXTDEV;
+												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
 													NATFLOW_INFO("(PCO) set hwnat offload 2 dev=%s(vlan:%d pppoe:%d)"
@@ -1717,6 +1722,13 @@ fastnat_check:
 														nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
 													} else {
 														nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
+													}
+													if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
+														if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
+															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														} else {
+															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														}
 													}
 												} else {
 													/* mark FF_FAIL so never try FF */
@@ -1799,6 +1811,9 @@ fastnat_check:
 												reply.pppoe_sid =
 												    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
 											}
+											if (is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
+												reply.flags |= FLOW_OFFLOAD_PATH_EXTDEV;
+											}
 											if (reply_dev->netdev_ops->ndo_flow_offload(
 											            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
 												NATFLOW_INFO("(PCO) set hwnat offload 3 dev=%s(vlan:%d pppoe:%d)"
@@ -1819,6 +1834,13 @@ fastnat_check:
 													nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
 												} else {
 													nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
+												}
+												if (is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
+													if (nf->rroute[NF_FF_DIR_REPLY].outdev == nfn->outdev) {
+														nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
+													} else {
+														nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
+													}
 												}
 											} else {
 												/* mark FF_FAIL so never try FF */
