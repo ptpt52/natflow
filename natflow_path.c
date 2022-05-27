@@ -13,6 +13,7 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
+#include <linux/in6.h>
 #include <linux/inetdevice.h>
 #include <linux/netfilter.h>
 #include <linux/skbuff.h>
@@ -22,6 +23,7 @@
 #include <linux/version.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter_bridge.h>
+#include <net/ipv6.h>
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_extend.h>
@@ -34,6 +36,8 @@
 #include "natflow_common.h"
 #include "natflow_path.h"
 #include "natflow_user.h"
+
+#define IPV6H ((struct ipv6hdr *)iph)
 
 static struct ifname_match ifname_match_fastnat[IFNAME_MATCH_MAX];
 
@@ -222,6 +226,10 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 		nfn->jiffies = current_jiffies;
 
 		memset(&tuple, 0, sizeof(tuple));
+		if (NFN_L3NUM_DEC(nfn->flags) == AF_INET6) {
+			goto __keepalive_ipv6_main;
+		}
+
 		tuple.src.u3.ip = nfn->saddr;
 		tuple.src.u.tcp.port = nfn->source;
 		tuple.dst.u3.ip = nfn->daddr;
@@ -407,9 +415,83 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 		             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (unsigned int)diff_jiffies);
 		nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
 		return;
+
+__keepalive_ipv6_main:
+
+		memcpy(tuple.src.u3.ip6, nfn->saddr6, 16);
+		tuple.src.u.tcp.port = nfn->source;
+		memcpy(tuple.dst.u3.ip6, nfn->daddr6, 16);
+		tuple.dst.u.tcp.port = nfn->dest;
+		tuple.src.l3num = AF_INET6;
+		tuple.dst.protonum = NFN_PROTO_DEC(nfn->flags);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
+		h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
+#else
+		h = nf_conntrack_find_get(&init_net, &nf_ct_zone_dflt, &tuple);
+#endif
+		if (h) {
+			struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
+			int d = !NF_CT_DIRECTION(h);
+			struct in6_addr saddr = ct->tuplehash[d].tuple.src.u3.in6;
+			struct in6_addr daddr = ct->tuplehash[d].tuple.dst.u3.in6;
+			__be16 source = ct->tuplehash[d].tuple.src.u.all;
+			__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
+			__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
+
+			if (d == 1) {
+				diff_jiffies = ulongmindiff(current_jiffies, nfn->keepalive_jiffies);
+				nfn->keepalive_jiffies = current_jiffies;
+				NATFLOW_INFO("keepalive[%u] nfn[%pI6.%u->%pI6.%u] ct%d diff_jiffies=%u HZ=%u bytes=%lu hw=%d\n",
+				             hash, nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest), !d, (unsigned int)diff_jiffies, HZ, bytes, hw);
+				natflow_update_ct_timeout(ct, diff_jiffies);
+			}
+
+			hash = natflow_hash_v6(saddr.s6_addr32, daddr.s6_addr32, source, dest);
+			nfn = &natflow_fast_nat_table[hash];
+			if (memcmp(nfn->saddr6, saddr.s6_addr32, 16) || memcmp(nfn->daddr6, daddr.s6_addr32, 16) ||
+			        nfn->source != source || nfn->dest != dest ||
+			        NFN_PROTO_DEC(nfn->flags) != protonum) {
+				hash += 1;
+				nfn = &natflow_fast_nat_table[hash];
+			}
+
+			diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
+			if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW &&
+			        memcmp(nfn->saddr6, saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, daddr.s6_addr32, 16) == 0 &&
+			        nfn->source == source && nfn->dest == dest &&
+			        NFN_PROTO_DEC(nfn->flags) == protonum) {
+				nfn->jiffies = current_jiffies;
+				if (d == 0) {
+					diff_jiffies = ulongmindiff(current_jiffies, nfn->keepalive_jiffies);
+					nfn->keepalive_jiffies = current_jiffies;
+					NATFLOW_INFO("keepalive[%u] nfn[%pI6.%u->%pI6.%u] ct%d diff_jiffies=%u HZ=%u bytes=%lu hw=%d\n",
+					             hash, nfn->saddr6, ntohs(nfn->source), &nfn->daddr6, ntohs(nfn->dest), !d, (unsigned int)diff_jiffies, HZ, bytes, hw);
+					natflow_update_ct_timeout(ct, diff_jiffies);
+				}
+			}
+
+			acct = nf_conn_acct_find(ct);
+			if (acct) {
+				struct nf_conn_counter *counter = acct->counter;
+				atomic64_add(packets, &counter[!d].packets);
+				atomic64_add(bytes, &counter[!d].bytes);
+			}
+			/* TODO stats */
+			nf_ct_put(ct);
+			return;
+		}
+		NATFLOW_INFO("keepalive[%u] nfn[%pI6.%u->%pI6.%u] diff_jiffies=%u ct not found\n",
+		             hash, nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest), (unsigned int)diff_jiffies);
+		nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
+		return;
 	}
-	NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] diff_jiffies=%u timeout\n",
-	             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (unsigned int)diff_jiffies);
+	if (NFN_L3NUM_DEC(nfn->flags) == AF_INET6) {
+		NATFLOW_INFO("keepalive[%u] nfn[%pI6.%u->%pI6.%u] diff_jiffies=%u timeout\n",
+		             hash, nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest), (unsigned int)diff_jiffies);
+	} else {
+		NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] diff_jiffies=%u timeout\n",
+		             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (unsigned int)diff_jiffies);
+	}
 }
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
@@ -564,7 +646,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 					else if (skb->vlan_proto == htons(ETH_P_8021AD))
 						nf->rroute[NF_FF_DIR_REPLY].vlan_proto = FF_ETH_P_8021AD;
 				}
-				nf->rroute[NF_FF_DIR_REPLY].ttl_in = ip_hdr(skb)->ttl;
+				nf->rroute[NF_FF_DIR_REPLY].ttl_in = iph->version == 4 ? ip_hdr(skb)->ttl : ipv6_hdr(skb)->hop_limit;
 				simple_set_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 			}
 		}
@@ -592,7 +674,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 					else if (skb->vlan_proto == htons(ETH_P_8021AD))
 						nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto = FF_ETH_P_8021AD;
 				}
-				nf->rroute[NF_FF_DIR_ORIGINAL].ttl_in = ip_hdr(skb)->ttl;
+				nf->rroute[NF_FF_DIR_ORIGINAL].ttl_in = iph->version == 4 ? ip_hdr(skb)->ttl : ipv6_hdr(skb)->hop_limit;
 				simple_set_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 			}
 		}
@@ -729,6 +811,13 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		} else if (skb->protocol == __constant_htons(ETH_P_IP)) {
 			ingress_pad_len = 0;
 		} else {
+			/* XXX: deliver ipv6 pkts to __hook_ipv6_main */
+			if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+			        pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
+				goto __hook_ipv6_main;
+			} else if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
+				goto __hook_ipv6_main;
+			}
 			return NF_ACCEPT;
 		}
 
@@ -1102,6 +1191,10 @@ slow_fastpath:
 		}
 	}
 #endif
+	if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
+		goto __hook_ipv6_main;
+	}
+
 	if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST)
 		goto out;
 
@@ -2004,6 +2097,637 @@ out:
 	}
 #endif
 	return ret;
+
+	/*
+	 * XXX: IPv6 main hook
+	 */
+__hook_ipv6_main:
+
+#ifdef CONFIG_NETFILTER_INGRESS
+	if (pf == NFPROTO_NETDEV) {
+		u32 _I;
+		u32 hash;
+		natflow_fastnat_node_t *nfn;
+		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+		        pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
+			ingress_pad_len = PPPOE_SES_HLEN;
+		} else if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
+			ingress_pad_len = 0;
+		} else {
+			return NF_ACCEPT;
+		}
+
+		if (ingress_pad_len > 0) {
+			skb_pull_rcsum(skb, ingress_pad_len);
+			skb->network_header += ingress_pad_len;
+		}
+
+		if (!pskb_may_pull(skb, sizeof(struct ipv6hdr))) {
+			return NF_DROP;
+		}
+		iph = (void *)ipv6_hdr(skb);
+
+		if (IPV6H->version != 6) {
+			goto out6;
+		}
+
+		if (ipv6_addr_is_multicast(&IPV6H->daddr)) {
+			goto out6;
+		}
+
+		_I = ntohs(IPV6H->payload_len) + sizeof(struct ipv6hdr);
+		if (skb->len < _I) {
+			goto out6;
+		}
+		if (IPV6H->nexthdr != IPPROTO_TCP && IPV6H->nexthdr != IPPROTO_UDP) {
+			goto out6;
+		}
+
+		ingress_trim_off = skb->len - _I;
+		if (pskb_trim_rcsum(skb, _I)) {
+			return NF_DROP;
+		}
+		iph = (void *)ipv6_hdr(skb);
+
+		skb->protocol = __constant_htons(ETH_P_IPV6);
+		skb->transport_header = skb->network_header + sizeof(struct ipv6hdr);
+
+		/* skip for defrag-skb or large packets */
+		if (skb_is_nonlinear(skb) || _I > 1500 - ingress_pad_len) {
+			if (IPV6H->nexthdr == IPPROTO_UDP || !skb_is_gso(skb))
+				goto slow_fastpath6;
+		}
+
+		if (IPV6H->nexthdr == IPPROTO_TCP) {
+			if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct tcphdr)) || skb_try_make_writable(skb, sizeof(struct ipv6hdr) + sizeof(struct tcphdr))) {
+				return NF_DROP;
+			}
+			iph = (void *)ipv6_hdr(skb);
+			l4 = (void *)iph + sizeof(struct ipv6hdr);
+			_I = natflow_hash_v6(IPV6H->saddr.s6_addr32, IPV6H->daddr.s6_addr32, TCPH(l4)->source, TCPH(l4)->dest);
+			nfn = &natflow_fast_nat_table[_I];
+			if (memcmp(nfn->saddr6, IPV6H->saddr.s6_addr32, 16) || memcmp(nfn->daddr6, IPV6H->daddr.s6_addr32, 16) ||
+			        nfn->source != TCPH(l4)->source || nfn->dest != TCPH(l4)->dest ||
+			        !(nfn->flags & FASTNAT_PROTO_TCP)) {
+				_I += 1;
+				nfn = &natflow_fast_nat_table[_I];
+			}
+			hash = _I;
+			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
+			if (nfn->magic == natflow_path_magic &&
+			        memcmp(nfn->saddr6, IPV6H->saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, IPV6H->daddr.s6_addr32, 16) == 0 &&
+			        nfn->source == TCPH(l4)->source && nfn->dest == TCPH(l4)->dest &&
+			        (nfn->flags & FASTNAT_PROTO_TCP)) {
+				if (_I > NATFLOW_FF_TIMEOUT_LOW) {
+					re_learn = 1;
+					goto slow_fastpath6;
+				}
+
+				if ((u16)skb->dev->ifindex != nfn->ifindex)
+					goto slow_fastpath6;
+				if (unlikely(TCPH(l4)->fin || TCPH(l4)->rst)) {
+					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
+					nfn = nfn_invert_get(nfn);
+					if (nfn && (u32)ulongmindiff(jiffies, nfn->jiffies) <= NATFLOW_FF_TIMEOUT_LOW)
+						nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
+					/* just in case bridge to make sure conntrack_in */
+					goto slow_fastpath6;
+				}
+
+				nfn->jiffies = jiffies;
+
+				/* sample up to slow path every 2s */
+				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
+					unsigned long bytes = nfn->flow_bytes;
+					unsigned long packets = nfn->flow_packets;
+					nfn->flow_bytes -= bytes;
+					nfn->flow_packets -= packets;
+					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets, 0, jiffies);
+					nfn->count = (nfn->jiffies / HZ) & 0xff;
+					wmb();
+					clear_bit(0, &nfn->status);
+					goto slow_fastpath6;
+				}
+				_I = (nfn->jiffies / HZ / 2) % 4;
+				nfn->speed_bytes[_I] += skb->len;
+				nfn->speed_packets[_I] += 1;
+				nfn->flow_bytes += skb->len;
+				nfn->flow_packets += 1;
+
+				if (!(nfn->flags & FASTNAT_BRIDGE_FWD) && skb_is_gso(skb)) {
+					if (unlikely(skb_shinfo(skb)->gso_size > nfn->mss)) {
+						skb_shinfo(skb)->gso_size = nfn->mss;
+					}
+				}
+
+				if (!(nfn->flags & FASTNAT_BRIDGE_FWD)) {
+					if (IPV6H->hop_limit <= 1) {
+						return NF_DROP;
+					}
+					IPV6H->hop_limit--;
+				}
+
+fast_output6:
+				_I = ETH_HLEN;
+				if ((nfn->flags & FASTNAT_PPPOE_FLAG)) {
+					_I += PPPOE_SES_HLEN;
+				} else if ((nfn->flags & FASTNAT_NO_ARP)) {
+					_I = 0;
+				}
+
+				if (skb_is_gso(skb)) {
+					/* XXX: to xmit gso directly
+					 * 1. hw offload features needed
+					 * 2. hw csum features needed
+					 * 3. ether type only
+					 */
+					netdev_features_t features = nfn->outdev->features;
+					if (nfn->vlan_present)
+						features = netdev_intersect_features(features,
+						                                     nfn->outdev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
+					ingress_trim_off = (NFN_PROTO_DEC(nfn->flags) == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
+					                   (features & (NETIF_F_HW_CSUM | NETIF_F_IPV6_CSUM)) && \
+					                   _I == ETH_HLEN;
+					if (!ingress_trim_off) {
+						struct sk_buff *segs;
+						skb->ip_summed = CHECKSUM_PARTIAL;
+						skb->dev = nfn->outdev;
+						segs = skb_gso_segment(skb, 0);
+						if (IS_ERR(segs)) {
+							return NF_DROP;
+						}
+						consume_skb(skb);
+						skb = segs;
+					}
+				}
+
+				do {
+					struct sk_buff *next = skb->next;
+					if (_I > skb_headroom(skb) && pskb_expand_head(skb, _I, skb_tailroom(skb), GFP_ATOMIC)) {
+						kfree_skb_list(skb);
+						return NF_STOLEN;
+					}
+					skb_push(skb, _I);
+					skb_reset_mac_header(skb);
+					if (_I >= ETH_HLEN) {
+						memcpy(eth_hdr(skb)->h_source, nfn->h_source, ETH_ALEN);
+						memcpy(eth_hdr(skb)->h_dest, nfn->h_dest, ETH_ALEN);
+					}
+					if (_I == ETH_HLEN + PPPOE_SES_HLEN) {
+						struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
+						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_PPP_SES);
+						skb->protocol = __constant_htons(ETH_P_PPP_SES);
+						ph->ver = 1;
+						ph->type = 1;
+						ph->code = 0;
+						ph->sid = nfn->pppoe_sid;
+						ph->length = htons(ntohs(ip_hdr(skb)->tot_len) + 2);
+						*(__be16 *)((void *)ph + sizeof(struct pppoe_hdr)) = __constant_htons(PPP_IPV6);
+					} else if (_I == ETH_HLEN) {
+						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IPV6);
+					}
+					skb->dev = nfn->outdev;
+					if (nfn->vlan_present) {
+						if (nfn->vlan_proto == FF_ETH_P_8021Q)
+							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
+						else if (nfn->vlan_proto == FF_ETH_P_8021AD)
+							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
+					} else if (skb_vlan_tag_present(skb))
+						__vlan_hwaccel_clear_tag(skb);
+					skb->next = NULL;
+					dev_queue_xmit(skb);
+					skb = next;
+				} while (skb);
+
+				return NF_STOLEN;
+			}
+			/* for TCP */
+		} else {
+			if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr)) || skb_try_make_writable(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr))) {
+				return NF_DROP;
+			}
+			iph = (void *)ipv6_hdr(skb);
+			l4 = (void *)iph + sizeof(struct ipv6hdr);
+			_I = natflow_hash_v6(IPV6H->saddr.s6_addr32, IPV6H->daddr.s6_addr32, UDPH(l4)->source, UDPH(l4)->dest);
+			nfn = &natflow_fast_nat_table[_I];
+			if (memcmp(nfn->saddr6, IPV6H->saddr.s6_addr32, 16) || memcmp(nfn->daddr6, IPV6H->daddr.s6_addr32, 16) ||
+			        nfn->source != UDPH(l4)->source || nfn->dest != UDPH(l4)->dest ||
+			        !(nfn->flags & FASTNAT_PROTO_UDP)) {
+				_I += 1;
+				nfn = &natflow_fast_nat_table[_I];
+			}
+			hash = _I;
+			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
+			if (nfn->magic == natflow_path_magic &&
+			        memcmp(nfn->saddr6, IPV6H->saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, IPV6H->daddr.s6_addr32, 16) == 0 &&
+			        nfn->source == UDPH(l4)->source && nfn->dest == UDPH(l4)->dest &&
+			        (nfn->flags & FASTNAT_PROTO_UDP)) {
+				if (_I > NATFLOW_FF_TIMEOUT_LOW) {
+					re_learn = 1;
+					goto slow_fastpath6;
+				}
+
+				if (unlikely((u16)skb->dev->ifindex != nfn->ifindex)) {
+					goto slow_fastpath6;
+				}
+
+				nfn->jiffies = jiffies;
+
+				/* sample up to slow path every 2s */
+				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
+					unsigned long bytes = nfn->flow_bytes;
+					unsigned long packets = nfn->flow_packets;
+					nfn->flow_bytes -= bytes;
+					nfn->flow_packets -= packets;
+					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets, 0, jiffies);
+					nfn->count = (nfn->jiffies / HZ) & 0xff;
+					wmb();
+					clear_bit(0, &nfn->status);
+					goto slow_fastpath6;
+				}
+				_I = (nfn->jiffies / HZ / 2) % 4;
+				nfn->speed_bytes[_I] += skb->len;
+				nfn->speed_packets[_I] += 1;
+				nfn->flow_bytes += skb->len;
+				nfn->flow_packets += 1;
+
+				if (!(nfn->flags & FASTNAT_BRIDGE_FWD)) {
+					if (IPV6H->hop_limit <= 1) {
+						return NF_DROP;
+					}
+					IPV6H->hop_limit--;
+				}
+
+				goto fast_output6;
+			}
+			/* for UDP */
+		}
+		/* fall to slow fastnat path */
+
+slow_fastpath6:
+		ret = nf_conntrack_in_compat(dev_net(skb->dev), AF_INET6, NF_INET_PRE_ROUTING, skb);
+		if (ret != NF_ACCEPT) {
+			goto out6;
+		}
+	}
+#endif
+	if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST)
+		goto out6;
+
+	iph = (void *)ipv6_hdr(skb);
+	if (IPV6H->nexthdr != IPPROTO_TCP && IPV6H->nexthdr != IPPROTO_UDP) {
+		goto out6;
+	}
+	l4 = (void *)iph + sizeof(struct ipv6hdr);
+	if (ipv6_addr_is_multicast(&IPV6H->daddr)) {
+		goto out6;
+	}
+
+	ct = nf_ct_get(skb, &ctinfo);
+	if (NULL == ct) {
+		goto out6;
+	}
+	if (IPV6H->nexthdr == IPPROTO_TCP && (TCPH(l4)->fin || TCPH(l4)->rst)) {
+		goto out6;
+	}
+
+	nf = natflow_session_in(ct);
+	if (NULL == nf) {
+		goto out6;
+	}
+
+	dir = CTINFO2DIR(ctinfo);
+#ifdef CONFIG_NETFILTER_INGRESS
+	if (re_learn) {
+		if (dir == NF_FF_DIR_ORIGINAL) {
+			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
+			simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
+			simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
+			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
+		} else {
+			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
+			simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
+			simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
+			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
+		}
+	}
+#endif
+	if (!nf_ct_is_confirmed(ct)) {
+		goto out6;
+	}
+
+	natflow_session_learn(skb, ct, nf, dir);
+
+	if ((ct->status & IPS_NATFLOW_FF_STOP) || (nf->status & NF_FF_BUSY_USE)) {
+		goto out6;
+	}
+	if (IPV6H->nexthdr == IPPROTO_TCP && ct->proto.tcp.state != 3 /* ESTABLISHED */) {
+		goto out6;
+	}
+
+	//if (!(nf->status & NF_FF_OFFLOAD)) {
+	if (!(nf->status & NF_FF_REPLY_OK) || !(nf->status & NF_FF_ORIGINAL_OK)) {
+		switch (IPV6H->nexthdr) {
+		case IPPROTO_TCP:
+			NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": dir=%d reply:%d original:%d, dev=%s\n", DEBUG_TCP_ARG6(iph,l4), dir,
+			              !!(nf->status & NF_FF_REPLY_OK), !!(nf->status & NF_FF_ORIGINAL_OK), skb->dev->name);
+			break;
+		case IPPROTO_UDP:
+			NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": dir=%d reply:%d original:%d, dev=%s\n", DEBUG_UDP_ARG6(iph,l4), dir,
+			              !!(nf->status & NF_FF_REPLY_OK), !!(nf->status & NF_FF_ORIGINAL_OK), skb->dev->name);
+			break;
+		}
+		goto out6;
+	}
+
+	acct = nf_conn_acct_find(ct);
+	if (acct) {
+		struct nf_conn_counter *counter = acct->counter;
+		int packets = atomic64_read(&counter[0].packets) + atomic64_read(&counter[1].packets);
+		if (delay_pkts && packets <= delay_pkts) {
+			goto out6;
+		}
+		/* do FF check every 16384 packets */
+		if (packets % 16384 == 1) {
+			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
+			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
+		}
+		/* skip 1/256 packets to slow path */
+		if (packets % 256 == 63) {
+			goto out6;
+		}
+	}
+
+	/* skip for defrag-skb or large packets */
+	if (skb_is_nonlinear(skb) || ntohs(IPV6H->payload_len) + sizeof(struct ipv6hdr) > 1500 - ingress_pad_len) {
+		if (IPV6H->nexthdr == IPPROTO_UDP || !skb_is_gso(skb))
+			goto out6;
+	}
+
+	if (!simple_test_bit(NF_FF_BRIDGE_BIT, &nf->status)) {
+		if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
+			if (!skb_is_gso(skb)) {
+				switch (IPV6H->nexthdr) {
+				case IPPROTO_TCP:
+					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": pmtu=%u FRAG=%p\n",
+					              DEBUG_TCP_ARG6(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": pmtu=%u FRAG=%p\n",
+					              DEBUG_UDP_ARG6(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+					break;
+				}
+				goto out6;
+			} else {
+				if (unlikely(skb_shinfo(skb)->gso_size > nf->rroute[dir].mtu - sizeof(struct ipv6hdr) - sizeof(struct tcphdr))) {
+					skb_shinfo(skb)->gso_size = nf->rroute[dir].mtu - sizeof(struct ipv6hdr) - sizeof(struct tcphdr);
+				}
+			}
+		}
+
+		if (IPV6H->hop_limit <= 1) {
+			return NF_DROP;
+		}
+		IPV6H->hop_limit--;
+	}
+
+	/* XXX I just confirm it first  */
+	ret = nf_conntrack_confirm(skb);
+	if (ret != NF_ACCEPT) {
+		goto out6;
+	}
+
+#ifdef CONFIG_NETFILTER_INGRESS
+	if (!(nf->status & NF_FF_FAIL)) {
+		for (d = 0; d < NF_FF_DIR_MAX; d++) {
+			if (d == NF_FF_DIR_ORIGINAL) {
+				if (!(nf->status & NF_FF_ORIGINAL_CHECK) && !simple_test_and_set_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status)) {
+fastnat_check6:
+					do {
+						struct in6_addr saddr = ct->tuplehash[d].tuple.src.u3.in6;
+						struct in6_addr daddr = ct->tuplehash[d].tuple.dst.u3.in6;
+						__be16 source = ct->tuplehash[d].tuple.src.u.all;
+						__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
+						__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
+						u32 hash = natflow_hash_v6(saddr.s6_addr32, daddr.s6_addr32, source, dest);
+						natflow_fastnat_node_t *nfn = &natflow_fast_nat_table[hash];
+						struct ethhdr *eth = (struct ethhdr *)nf->rroute[d].l2_head;
+
+						if (natflow_hash_skip(hash) ||
+						        (ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_HIGH &&
+						         (memcmp(nfn->saddr6, saddr.s6_addr32, 16) || memcmp(nfn->daddr6, daddr.s6_addr32, 16) ||
+						          nfn->source != source || nfn->dest != dest || NFN_PROTO_DEC(nfn->flags) != protonum))) {
+							hash += 1;
+							nfn = &natflow_fast_nat_table[hash];
+						}
+						if (!natflow_hash_skip(hash) &&
+						        (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH ||
+						         (memcmp(nfn->saddr6, saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, daddr.s6_addr32, 16) == 0 &&
+						          nfn->source == source && nfn->dest == dest && NFN_PROTO_DEC(nfn->flags) == protonum))) {
+
+							if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH) {
+								nfn->status = 0;
+								nfn->flow_bytes = 0;
+								nfn->flow_packets = 0;
+								memset(nfn->speed_bytes, 0, sizeof(*nfn->speed_bytes) * 4);
+								memset(nfn->speed_packets, 0, sizeof(*nfn->speed_packets) * 4);
+							}
+
+							nfn->flags = FASTNAT_L3NUM_IPV6;
+							memcpy(nfn->saddr6, &saddr, 16);
+							memcpy(nfn->daddr6, &daddr, 16);
+							nfn->source = source;
+							nfn->dest = dest;
+							nfn->flags |= NFN_PROTO_ENC(protonum);
+
+							memcpy(nfn->nat_saddr6, &ct->tuplehash[!d].tuple.dst.u3.in6, 16);
+							memcpy(nfn->nat_daddr6, &ct->tuplehash[!d].tuple.src.u3.in6, 16);
+							nfn->nat_source = ct->tuplehash[!d].tuple.dst.u.all;
+							nfn->nat_dest = ct->tuplehash[!d].tuple.src.u.all;
+
+							nfn->outdev = nf->rroute[d].outdev;
+							nfn->ifindex = (u16)nf->rroute[!d].outdev->ifindex;
+							nfn->mss = nf->rroute[d].mtu - sizeof(struct ipv6hdr) - sizeof(struct tcphdr);
+							if (nf->rroute[d].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+								struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth + ETH_HLEN);
+								nfn->pppoe_sid = ph->sid;
+								nfn->flags |= FASTNAT_PPPOE_FLAG;
+								nfn->flags &= ~FASTNAT_NO_ARP;
+								memcpy(nfn->h_source, eth->h_source, ETH_ALEN);
+								memcpy(nfn->h_dest, eth->h_dest, ETH_ALEN);
+							} else if (nf->rroute[d].l2_head_len == ETH_HLEN) {
+								nfn->pppoe_sid = 0;
+								memcpy(nfn->h_source, eth->h_source, ETH_ALEN);
+								memcpy(nfn->h_dest, eth->h_dest, ETH_ALEN);
+								nfn->flags &= ~FASTNAT_NO_ARP;
+							} else {
+								nfn->flags |= FASTNAT_NO_ARP;
+							}
+							if (simple_test_bit(NF_FF_BRIDGE_BIT, &nf->status))
+								nfn->flags |= FASTNAT_BRIDGE_FWD;
+
+							nfn->vlan_present = nf->rroute[d].vlan_present;
+							nfn->vlan_proto = nf->rroute[d].vlan_proto;
+							nfn->vlan_tci = nf->rroute[d].vlan_tci;
+							nfn->magic = natflow_path_magic;
+							nfn->jiffies = jiffies;
+							nfn->keepalive_jiffies = jiffies;
+
+							switch (IPV6H->nexthdr) {
+							case IPPROTO_TCP:
+								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6 ": dir=%d use hash=%d outdev=%s(vlan:%d pppoe=%d)\n",
+								             DEBUG_TCP_ARG6(iph,l4), d, hash, nfn->outdev->name,
+								             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
+								             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1);
+								break;
+							case IPPROTO_UDP:
+								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6 ": dir=%d use hash=%d outdev=%s(vlan:%d pppoe=%d)\n",
+								             DEBUG_UDP_ARG6(iph,l4), d, hash, nfn->outdev->name,
+								             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
+								             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1);
+								break;
+							}
+						} else {
+							/* mark FF_FAIL so never try FF */
+							simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
+							switch (IPV6H->nexthdr) {
+							case IPPROTO_TCP:
+								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6 ": dir=%d skip hash=%d\n", DEBUG_TCP_ARG6(iph,l4), d, hash);
+								break;
+							case IPPROTO_UDP:
+								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6 ": dir=%d skip hash=%d\n", DEBUG_UDP_ARG6(iph,l4), d, hash);
+								break;
+							}
+						}
+
+						if ((nf->status & NF_FF_ORIGINAL_CHECK) && (nf->status & NF_FF_REPLY_CHECK)) {
+							if (nfn->magic == natflow_path_magic && ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+							        (memcmp(nfn->saddr6, saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, daddr.s6_addr32, 16) == 0 &&
+							         nfn->source == source && nfn->dest == dest && NFN_PROTO_DEC(nfn->flags) == protonum)) {
+								natflow_fastnat_node_t *nfn_i;
+								saddr = ct->tuplehash[!d].tuple.src.u3.in6;
+								daddr = ct->tuplehash[!d].tuple.dst.u3.in6;
+								source = ct->tuplehash[!d].tuple.src.u.all;
+								dest = ct->tuplehash[!d].tuple.dst.u.all;
+								protonum = ct->tuplehash[!d].tuple.dst.protonum;
+								hash = natflow_hash_v6(saddr.s6_addr32, daddr.s6_addr32, source, dest);
+								nfn_i = &natflow_fast_nat_table[hash];
+
+								if (memcmp(nfn_i->saddr6, saddr.s6_addr32, 16) || memcmp(nfn_i->daddr6, daddr.s6_addr32, 16) ||
+								        nfn_i->source != source || nfn_i->dest != dest || NFN_PROTO_DEC(nfn_i->flags) != protonum) {
+									hash += 1;
+									nfn_i = &natflow_fast_nat_table[hash];
+								}
+								if (nfn_i->magic == natflow_path_magic && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+								        (memcmp(nfn_i->saddr6, saddr.s6_addr32, 16) == 0 && memcmp(nfn_i->daddr6, daddr.s6_addr32, 16) == 0 &&
+								         nfn_i->source == source && nfn_i->dest == dest && NFN_PROTO_DEC(nfn_i->flags) == protonum)) {
+									nfn_i->jiffies = jiffies;
+									nfn_i->keepalive_jiffies = jiffies;
+									if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.protonum == IPPROTO_TCP) {
+										ct->proto.tcp.seen[0].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
+										ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
+									}
+								} else {
+									/* nfn is ready, but nfn_i is not */
+								}
+							} else {
+								/* nfn is not ready */
+							}
+						} else {
+							/* either NF_FF_ORIGINAL_CHECK or NF_FF_REPLY_CHECK is not ready */
+						}
+					} while (0);
+				}
+			} else {
+				if (!(nf->status & NF_FF_REPLY_CHECK) && !simple_test_and_set_bit(NF_FF_REPLY_CHECK_BIT, &nf->status)) {
+					goto fastnat_check6;
+				}
+			}
+		} /* for (d = 0; d < NF_FF_DIR_MAX; d++) */
+	} else {
+		/* NF_FF_FAIL: loop try FF every 8 seconds */
+		if (!(nf->status & NF_FF_RETRY)) {
+			if ( ((jiffies + (((unsigned long)ct)^NATCAP_MAGIC)) / HZ) % 8 == 0 ) {
+				simple_clear_bit(NF_FF_FAIL_BIT, &nf->status);
+				simple_set_bit(NF_FF_RETRY_BIT, &nf->status);
+			}
+		} else {
+			if ( ((jiffies + (((unsigned long)ct)^NATCAP_MAGIC)) / HZ) % 8 == 3 )
+				simple_clear_bit(NF_FF_RETRY_BIT, &nf->status);
+		}
+	}
+#endif
+
+	if (skb_is_gso(skb)) {
+		/* XXX: to xmit gso directly
+		 * 1. hw offload features needed
+		 * 2. hw csum features needed
+		 * 3. ether type only
+		 */
+		netdev_features_t features = nf->rroute[dir].outdev->features;
+		if (nf->rroute[dir].vlan_present)
+			features = netdev_intersect_features(features,
+			                                     nf->rroute[dir].outdev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
+		ingress_trim_off = (iph->protocol == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
+		                   (features & (NETIF_F_HW_CSUM | NETIF_F_IPV6_CSUM)) && \
+		                   nf->rroute[dir].l2_head_len == ETH_HLEN;
+		if (!ingress_trim_off) {
+			struct sk_buff *segs;
+			skb->ip_summed = CHECKSUM_PARTIAL;
+			segs = skb_gso_segment(skb, 0);
+			if (IS_ERR(segs)) {
+				return NF_DROP;
+			}
+			consume_skb(skb);
+			skb = segs;
+		}
+	}
+
+	do {
+		struct sk_buff *next = skb->next;
+		if (nf->rroute[dir].l2_head_len > skb_headroom(skb) && pskb_expand_head(skb, nf->rroute[dir].l2_head_len, skb_tailroom(skb), GFP_ATOMIC)) {
+			kfree_skb_list(skb);
+			return NF_STOLEN;
+		}
+		skb_push(skb, nf->rroute[dir].l2_head_len);
+		skb_reset_mac_header(skb);
+		memcpy(skb_mac_header(skb), nf->rroute[dir].l2_head, nf->rroute[dir].l2_head_len);
+		skb->dev = nf->rroute[dir].outdev;
+#ifdef CONFIG_NETFILTER_INGRESS
+		if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+			struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
+			ph->length = htons(ntohs(ip_hdr(skb)->tot_len) + 2);
+			skb->protocol = __constant_htons(ETH_P_PPP_SES);
+		}
+		if (nf->rroute[dir].vlan_present) {
+			if (nf->rroute[dir].vlan_proto == FF_ETH_P_8021Q)
+				__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nf->rroute[dir].vlan_tci);
+			else if (nf->rroute[dir].vlan_proto == FF_ETH_P_8021AD)
+				__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nf->rroute[dir].vlan_tci);
+		} else if (skb_vlan_tag_present(skb))
+			__vlan_hwaccel_clear_tag(skb);
+#endif
+		skb->next = NULL;
+		dev_queue_xmit(skb);
+		skb = next;
+	} while (skb);
+
+	return NF_STOLEN;
+
+out6:
+#ifdef CONFIG_NETFILTER_INGRESS
+	if (pf == NFPROTO_NETDEV) {
+		if (ingress_pad_len == PPPOE_SES_HLEN) {
+			skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
+			skb_push_rcsum(skb, PPPOE_SES_HLEN);
+			skb->network_header -= PPPOE_SES_HLEN;
+		}
+		if (ingress_trim_off) {
+			skb->len += ingress_trim_off;
+		}
+	}
+#endif
+	return ret;
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
@@ -2065,8 +2789,17 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		skb->network_header += PPPOE_SES_HLEN;
 		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
 		bridge = 1;
-	} else if (skb->protocol != __constant_htons(ETH_P_IP))
+	} else if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+	           pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
+		skb_pull(skb, PPPOE_SES_HLEN);
+		skb->protocol = __constant_htons(ETH_P_IPV6);
+		skb->network_header += PPPOE_SES_HLEN;
+		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
+		bridge = 1;
+	} else if (skb->protocol != __constant_htons(ETH_P_IP) && skb->protocol != __constant_htons(ETH_P_IPV6)) {
 		return NF_ACCEPT;
+	}
+
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
@@ -2091,8 +2824,8 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (NULL == nf) {
 		goto out;
 	}
-	iph = ip_hdr(skb);
-	l4 = (void *)iph + iph->ihl * 4;
+	iph = iph->version == 4 ? ip_hdr(skb) : (void *)ipv6_hdr(skb);
+	l4 = (void *)iph + (iph->version == 4 ? iph->ihl * 4 : sizeof(struct ipv6hdr));
 
 	dir = CTINFO2DIR(ctinfo);
 	if (!((dir == IP_CT_DIR_ORIGINAL && (nf->status & NF_FF_REPLY_OK)) ||
@@ -2106,30 +2839,59 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 			/* this conn need helper */
 			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
 		}
-		if (nf->rroute[!dir].ttl_in == iph->ttl) {
-			/* ttl no change, so assume bridge forward */
-			simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
-			switch (iph->protocol) {
-			case IPPROTO_TCP:
-				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl %d -> %d no change, pf=%d\n",
-				             DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
-				break;
-			case IPPROTO_UDP:
-				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl %d -> %d no change, pf=%d\n",
-				             DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
-				break;
+		if (iph->version == 4) {
+			if (nf->rroute[!dir].ttl_in == iph->ttl) {
+				/* ttl no change, so assume bridge forward */
+				simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+				switch (iph->protocol) {
+				case IPPROTO_TCP:
+					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl %d -> %d no change, pf=%d\n",
+					             DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl %d -> %d no change, pf=%d\n",
+					             DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+					break;
+				}
+			} else {
+				simple_set_bit(NF_FF_ROUTE_BIT, &nf->status);
+				switch (iph->protocol) {
+				case IPPROTO_TCP:
+					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl %d -> %d, pf=%d\n",
+					             DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl %d -> %d, pf=%d\n",
+					             DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+					break;
+				}
 			}
 		} else {
-			simple_set_bit(NF_FF_ROUTE_BIT, &nf->status);
-			switch (iph->protocol) {
-			case IPPROTO_TCP:
-				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl %d -> %d, pf=%d\n",
-				             DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
-				break;
-			case IPPROTO_UDP:
-				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl %d -> %d, pf=%d\n",
-				             DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
-				break;
+			if (nf->rroute[!dir].ttl_in == IPV6H->hop_limit) {
+				/* ttl no change, so assume bridge forward */
+				simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+				switch (IPV6H->nexthdr) {
+				case IPPROTO_TCP:
+					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6 ": dir=%d ttl %d -> %d no change, pf=%d\n",
+					             DEBUG_TCP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6 ": dir=%d ttl %d -> %d no change, pf=%d\n",
+					             DEBUG_UDP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
+					break;
+				}
+			} else {
+				simple_set_bit(NF_FF_ROUTE_BIT, &nf->status);
+				switch (IPV6H->nexthdr) {
+				case IPPROTO_TCP:
+					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6 ": dir=%d ttl %d -> %d, pf=%d\n",
+					             DEBUG_TCP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6 ": dir=%d ttl %d -> %d, pf=%d\n",
+					             DEBUG_UDP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
+					break;
+				}
 			}
 		}
 	}
@@ -2143,13 +2905,24 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	mtu = ip_skb_dst_mtu(NULL, skb);
 #endif
 	if (nf->rroute[dir].mtu != mtu) {
-		switch (iph->protocol) {
-		case IPPROTO_TCP:
-			NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": update pmtu from %u to %u\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
-			break;
-		case IPPROTO_UDP:
-			NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": update pmtu from %u to %u\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
-			break;
+		if (iph->version == 4) {
+			switch (iph->protocol) {
+			case IPPROTO_TCP:
+				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": update pmtu from %u to %u\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
+				break;
+			case IPPROTO_UDP:
+				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": update pmtu from %u to %u\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
+				break;
+			}
+		} else {
+			switch (IPV6H->nexthdr) {
+			case IPPROTO_TCP:
+				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": update pmtu from %u to %u\n", DEBUG_TCP_ARG6(iph,l4), nf->rroute[dir].mtu, mtu);
+				break;
+			case IPPROTO_UDP:
+				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": update pmtu from %u to %u\n", DEBUG_UDP_ARG6(iph,l4), nf->rroute[dir].mtu, mtu);
+				break;
+			}
 		}
 		nf->rroute[dir].mtu = mtu;
 	}
@@ -2193,6 +2966,15 @@ static struct nf_hook_ops path_hooks[] = {
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_path_post_ct_out_hook,
+		.pf = AF_INET6,
+		.hooknum = NF_INET_POST_ROUTING,
+		.priority = NF_IP_PRI_LAST - 10 + 8,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_path_post_ct_out_hook,
 		.pf = NFPROTO_BRIDGE,
 		.hooknum = NF_INET_POST_ROUTING,
 		.priority = NF_IP_PRI_LAST - 10 + 8,
@@ -2203,6 +2985,15 @@ static struct nf_hook_ops path_hooks[] = {
 #endif
 		.hook = natflow_path_pre_ct_in_hook,
 		.pf = PF_INET,
+		.hooknum = NF_INET_PRE_ROUTING,
+		.priority = NF_IP_PRI_CONNTRACK + 1,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_path_pre_ct_in_hook,
+		.pf = AF_INET6,
 		.hooknum = NF_INET_PRE_ROUTING,
 		.priority = NF_IP_PRI_CONNTRACK + 1,
 	},

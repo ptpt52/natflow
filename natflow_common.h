@@ -167,6 +167,29 @@ extern const char *const hooknames[];
 #define TUPLE_FMT "%pI4:%u-%c"
 #define TUPLE_ARG(t) &((struct tuple *)(t))->ip, ntohs(((struct tuple *)(t))->port), ((struct tuple *)(t))->encryption ? 'e' : 'o'
 
+#define IPV6_TCPUDP_FMT	"%pI6.%u->%pI6.%u"
+#define IPV6_TCPUDP_ARG(i,t)	&((struct ipv6hdr *)i)->saddr, ntohs(((struct tcphdr *)(t))->source), &((struct ipv6hdr *)i)->daddr, ntohs(((struct tcphdr *)(t))->dest)
+
+#define DEBUG_FMT6_TCP "[" IPV6_TCPUDP_FMT "|FL:%08X,HL:%u,PL:%u|" TCP_ST_FMT "]"
+#define DEBUG_ARG6_TCP(i, t) IPV6_TCPUDP_ARG(i,t), \
+	ntohl((__force __be32)(((((struct ipv6hdr *)i)->flow_lbl[0] & 0xF) << 16) | (((struct ipv6hdr *)i)->flow_lbl[1] << 8) | ((struct ipv6hdr *)i)->flow_lbl[2])), \
+	((struct ipv6hdr *)i)->hop_limit, \
+	ntohs(((struct ipv6hdr *)i)->payload_len), \
+	TCP_ST_ARG(t)
+
+#define DEBUG_FMT6_UDP "[" IPV6_TCPUDP_FMT "|FL:%08X,HL:%u,PL:%u|" UDP_ST_FMT "]"
+#define DEBUG_ARG6_UDP(i, u) IPV6_TCPUDP_ARG(i,u), \
+	ntohl((__force __be32)(((((struct ipv6hdr *)i)->flow_lbl[0] & 0xF) << 16) | (((struct ipv6hdr *)i)->flow_lbl[1] << 8) | ((struct ipv6hdr *)i)->flow_lbl[2])), \
+	((struct ipv6hdr *)i)->hop_limit, \
+	ntohs(((struct ipv6hdr *)i)->payload_len), \
+	UDP_ST_ARG(u)
+
+#define DEBUG_TCP_FMT6 "[%s]" DEBUG_FMT_PREFIX DEBUG_FMT6_TCP
+#define DEBUG_TCP_ARG6(i, t) hooknames[hooknum], DEBUG_ARG_PREFIX, DEBUG_ARG6_TCP(i, t)
+
+#define DEBUG_UDP_FMT6 "[%s]" DEBUG_FMT_PREFIX DEBUG_FMT6_UDP
+#define DEBUG_UDP_ARG6(i, u) hooknames[hooknum], DEBUG_ARG_PREFIX, DEBUG_ARG6_UDP(i, u)
+
 #define ETH(e) ((struct ethhdr *)(e))
 #define TCPH(t) ((struct tcphdr *)(t))
 #define UDPH(u) ((struct udphdr *)(u))
