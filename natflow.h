@@ -269,21 +269,19 @@ static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __b
 	return hash;
 }
 
-static inline u32 natflow_hash_v6(__be32 saddr0, __be32 saddr1, __be32 saddr2, __be32 saddr3,
-                                  __be32 daddr0, __be32 daddr1, __be32 daddr2, __be32 daddr3,
-                                  __be16 source, __be16 dest)
+static inline u32 natflow_hash_v6(__be32 saddr6[4], __be32 daddr6[4], __be16 source, __be16 dest)
 {
 	u32 hv1, hv2, hv3;
 	u32 hash;
 
-	hv1 = ntohl(saddr3) ^ ntohl(daddr3);
+	hv1 = ntohl(saddr6[3]) ^ ntohl(daddr6[3]);
 	hv1 ^= ntohs(source) << 16 | ntohs(dest);
 
-	hv2 = ntohl(saddr2) ^ ntohl(daddr2);
-	hv2 ^= ntohl(daddr0);
+	hv2 = ntohl(saddr6[2]) ^ ntohl(daddr6[2]);
+	hv2 ^= ntohl(daddr6[0]);
 
-	hv3 = ntohl(saddr1) ^ ntohl(daddr1);
-	hv3 ^= ntohl(saddr0);
+	hv3 = ntohl(saddr6[1]) ^ ntohl(daddr6[1]);
+	hv3 ^= ntohl(saddr6[0]);
 
 	hash = (hv1 & hv2) | ((~hv1) & hv3);
 	hash = (hash >> 24) | ((hash & 0xffffff) << 8);
