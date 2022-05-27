@@ -216,13 +216,27 @@ struct natflow_fastnat_node_t {
 	unsigned char h_dest[ETH_ALEN];
 	__be16 pppoe_sid;
 	/* XXX: -- 64 bytes above -- */
-	unsigned long keepalive_jiffies;
-	unsigned long status;
+	union {
+		unsigned long keepalive_jiffies;
+		unsigned int _pad2[2];
+	};
+	union {
+		unsigned long status;
+		unsigned int _pad3[2];
+	};
 	unsigned int flow_bytes;
 	unsigned int flow_packets;
 	unsigned int speed_bytes[4];
 	unsigned int speed_packets[4];
-	void *ptr; /* user ptr */
+	union {
+		void *ptr; /* user ptr */
+		unsigned int _pad4[2];
+	};
+	/* XXX: -- 64 bytes above -- */
+	__be32 saddr6[4];
+	__be32 daddr6[4];
+	__be32 nat_saddr6[4];
+	__be32 nat_daddr6[4];
 } __attribute__((__aligned__(SMP_CACHE_BYTES)));
 
 #define NATFLOW_FF_TIMEOUT_HIGH (30 * HZ)
