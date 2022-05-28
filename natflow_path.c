@@ -1481,8 +1481,6 @@ slow_fastpath:
 			}
 		}
 	}
-	iph = ip_hdr(skb);
-	l4 = (void *)iph + iph->ihl * 4;
 
 	if ((ct->status & IPS_SRC_NAT)) {
 		if (dir == NF_FF_DIR_ORIGINAL) {
@@ -1497,8 +1495,6 @@ slow_fastpath:
 			}
 		}
 	}
-	iph = ip_hdr(skb);
-	l4 = (void *)iph + iph->ihl * 4;
 
 	/* XXX I just confirm it first  */
 	ret = nf_conntrack_confirm(skb);
@@ -2254,6 +2250,27 @@ __hook_ipv6_main:
 					IPV6H->hop_limit--;
 				}
 
+				if (TCPH(l4)->source != nfn->nat_source) {
+					natflow_nat_port_tcp(skb, sizeof(struct ipv6hdr), TCPH(l4)->source, nfn->nat_source);
+					TCPH(l4)->source = nfn->nat_source;
+				}
+				if (TCPH(l4)->dest != nfn->nat_dest) {
+					natflow_nat_port_tcp(skb, sizeof(struct ipv6hdr), TCPH(l4)->dest, nfn->nat_dest);
+					TCPH(l4)->dest = nfn->nat_dest;
+				}
+				for (_I = 0; _I < 4; _I++) {
+					if (IPV6H->saddr.s6_addr32[_I] == nfn->nat_saddr6[_I])
+						continue;
+					natflow_nat_ip_tcp(skb, sizeof(struct ipv6hdr), IPV6H->saddr.s6_addr32[_I], nfn->nat_saddr6[_I]);
+					IPV6H->saddr.s6_addr32[_I] = nfn->nat_saddr6[_I];
+				}
+				for (_I = 0; _I < 4; _I++) {
+					if (IPV6H->daddr.s6_addr32[_I] == nfn->nat_daddr6[_I])
+						continue;
+					natflow_nat_ip_tcp(skb, sizeof(struct ipv6hdr), IPV6H->daddr.s6_addr32[_I], nfn->nat_daddr6[_I]);
+					IPV6H->daddr.s6_addr32[_I] = nfn->nat_daddr6[_I];
+				}
+
 fast_output6:
 				_I = ETH_HLEN;
 				if ((nfn->flags & FASTNAT_PPPOE_FLAG)) {
@@ -2383,6 +2400,27 @@ fast_output6:
 						return NF_DROP;
 					}
 					IPV6H->hop_limit--;
+				}
+
+				if (UDPH(l4)->source != nfn->nat_source) {
+					natflow_nat_port_udp(skb, sizeof(struct ipv6hdr), UDPH(l4)->source, nfn->nat_source);
+					UDPH(l4)->source = nfn->nat_source;
+				}
+				if (UDPH(l4)->dest != nfn->nat_dest) {
+					natflow_nat_port_udp(skb, sizeof(struct ipv6hdr), UDPH(l4)->dest, nfn->nat_dest);
+					UDPH(l4)->dest = nfn->nat_dest;
+				}
+				for (_I = 0; _I < 4; _I++) {
+					if (IPV6H->saddr.s6_addr32[_I] == nfn->nat_saddr6[_I])
+						continue;
+					natflow_nat_ip_udp(skb, sizeof(struct ipv6hdr), IPV6H->saddr.s6_addr32[_I], nfn->nat_saddr6[_I]);
+					IPV6H->saddr.s6_addr32[_I] = nfn->nat_saddr6[_I];
+				}
+				for (_I = 0; _I < 4; _I++) {
+					if (IPV6H->daddr.s6_addr32[_I] == nfn->nat_daddr6[_I])
+						continue;
+					natflow_nat_ip_udp(skb, sizeof(struct ipv6hdr), IPV6H->daddr.s6_addr32[_I], nfn->nat_daddr6[_I]);
+					IPV6H->daddr.s6_addr32[_I] = nfn->nat_daddr6[_I];
 				}
 
 				goto fast_output6;
@@ -2599,6 +2637,34 @@ slow_fastpath6:
 			return NF_DROP;
 		}
 		IPV6H->hop_limit--;
+	}
+
+	if ((ct->status & IPS_DST_NAT)) {
+		if (dir == NF_FF_DIR_ORIGINAL) {
+			//do DNAT
+			if (natflow_do_dnat6(skb, ct, dir) != 0) {
+				return NF_DROP;
+			}
+		} else {
+			//do SNAT
+			if (natflow_do_snat6(skb, ct, dir) != 0) {
+				return NF_DROP;
+			}
+		}
+	}
+
+	if ((ct->status & IPS_SRC_NAT)) {
+		if (dir == NF_FF_DIR_ORIGINAL) {
+			//do SNAT
+			if (natflow_do_snat6(skb, ct, dir) != 0) {
+				return NF_DROP;
+			}
+		} else {
+			//do DNAT
+			if (natflow_do_dnat6(skb, ct, dir) != 0) {
+				return NF_DROP;
+			}
+		}
 	}
 
 	/* XXX I just confirm it first  */

@@ -77,6 +77,26 @@ static inline int natflow_nat_ip_l4proto(struct sk_buff *skb, struct iphdr *iph,
 	return -1;
 }
 
+static inline int natflow_nat_ipv6_l4proto(struct sk_buff *skb, struct ipv6hdr *ipv6h,
+        unsigned int thoff, struct in6_addr *addr, struct in6_addr *new_addr)
+{
+	int i;
+	switch (ipv6h->nexthdr) {
+	case IPPROTO_TCP:
+		for (i = 0; i < 4; i++)
+			natflow_nat_ip_tcp(skb, thoff, addr->s6_addr32[i], new_addr->s6_addr32[i]);
+		break;
+	case IPPROTO_UDP:
+		for (i = 0; i < 4; i++)
+			natflow_nat_ip_udp(skb, thoff, addr->s6_addr32[i], new_addr->s6_addr32[i]);
+		break;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
 static inline int natflow_nat_port_tcp(struct sk_buff *skb, unsigned int thoff,
                                        __be16 port, __be16 new_port)
 {
@@ -130,29 +150,22 @@ static inline int natflow_do_snat(struct sk_buff *skb, struct nf_conn *ct, int d
 
 	switch(iph->protocol) {
 	case IPPROTO_TCP:
-		if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct tcphdr)) ||
-		        skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct tcphdr)))
-			return -1;
 		port = TCPH(l4)->source;
 		TCPH(l4)->source = ct->tuplehash[!dir].tuple.dst.u.all;
-		if (natflow_nat_port(skb, iph->ihl * 4, iph->protocol, port, TCPH(l4)->source) != 0) {
+		if (natflow_nat_port(skb, iph->ihl * 4, IPPROTO_TCP, port, TCPH(l4)->source) != 0) {
 			return -1;
 		}
 		break;
 	case IPPROTO_UDP:
-		if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr)) ||
-		        skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct udphdr)))
-			return -1;
 		port = UDPH(l4)->source;
 		UDPH(l4)->source = ct->tuplehash[!dir].tuple.dst.u.all;
-		if (natflow_nat_port(skb, iph->ihl * 4, iph->protocol, port, UDPH(l4)->source) != 0) {
+		if (natflow_nat_port(skb, iph->ihl * 4, IPPROTO_UDP, port, UDPH(l4)->source) != 0) {
 			return -1;
 		}
 		break;
 	default:
 		return -1;
 	}
-	iph = ip_hdr(skb);
 
 	addr = iph->saddr;
 	iph->saddr = ct->tuplehash[!dir].tuple.dst.u3.ip;
@@ -175,26 +188,22 @@ static inline int natflow_do_dnat(struct sk_buff *skb, struct nf_conn *ct, int d
 
 	switch(iph->protocol) {
 	case IPPROTO_TCP:
-		if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct tcphdr)) ||
-		        skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct tcphdr)))
-			return -1;
 		port = TCPH(l4)->dest;
 		TCPH(l4)->dest = ct->tuplehash[!dir].tuple.src.u.all;
-		if (natflow_nat_port(skb, iph->ihl * 4, iph->protocol, port, TCPH(l4)->dest) != 0) {
+		if (natflow_nat_port(skb, iph->ihl * 4, IPPROTO_TCP, port, TCPH(l4)->dest) != 0) {
 			return -1;
 		}
 		break;
 	case IPPROTO_UDP:
 		port = UDPH(l4)->dest;
 		UDPH(l4)->dest = ct->tuplehash[!dir].tuple.src.u.all;
-		if (natflow_nat_port(skb, iph->ihl * 4, iph->protocol, port, UDPH(l4)->dest) != 0) {
+		if (natflow_nat_port(skb, iph->ihl * 4, IPPROTO_UDP, port, UDPH(l4)->dest) != 0) {
 			return -1;
 		}
 		break;
 	default:
 		return -1;
 	}
-	iph = ip_hdr(skb);
 
 	addr = iph->daddr;
 	iph->daddr = ct->tuplehash[!dir].tuple.src.u3.ip;
@@ -202,6 +211,76 @@ static inline int natflow_do_dnat(struct sk_buff *skb, struct nf_conn *ct, int d
 	if (natflow_nat_ip_l4proto(skb, iph, iph->ihl * 4, addr, iph->daddr) != 0) {
 		return -1;
 	}
+
+	return 0;
+}
+
+static inline int natflow_do_snat6(struct sk_buff *skb, struct nf_conn *ct, int dir) {
+	struct ipv6hdr *ipv6h;
+	void *l4;
+	__be16 port = 0;
+
+	ipv6h = ipv6_hdr(skb);
+	l4 = (void *)ipv6h + sizeof(struct ipv6hdr);
+
+	switch(ipv6h->nexthdr) {
+	case IPPROTO_TCP:
+		port = TCPH(l4)->source;
+		TCPH(l4)->source = ct->tuplehash[!dir].tuple.dst.u.all;
+		if (natflow_nat_port(skb, sizeof(struct ipv6hdr), IPPROTO_TCP, port, TCPH(l4)->source) != 0) {
+			return -1;
+		}
+		break;
+	case IPPROTO_UDP:
+		port = UDPH(l4)->source;
+		UDPH(l4)->source = ct->tuplehash[!dir].tuple.dst.u.all;
+		if (natflow_nat_port(skb, sizeof(struct ipv6hdr), IPPROTO_UDP, port, UDPH(l4)->source) != 0) {
+			return -1;
+		}
+		break;
+	default:
+		return -1;
+	}
+
+	if (natflow_nat_ipv6_l4proto(skb, ipv6h, sizeof(struct ipv6hdr), &ipv6h->saddr, &ct->tuplehash[!dir].tuple.dst.u3.in6) != 0) {
+		return -1;
+	}
+	ipv6h->saddr = ct->tuplehash[!dir].tuple.dst.u3.in6;
+
+	return 0;
+}
+
+static inline int natflow_do_dnat6(struct sk_buff *skb, struct nf_conn *ct, int dir) {
+	struct ipv6hdr *ipv6h;
+	void *l4;
+	__be16 port = 0;
+
+	ipv6h = ipv6_hdr(skb);
+	l4 = (void *)ipv6h + sizeof(struct ipv6hdr);
+
+	switch(ipv6h->nexthdr) {
+	case IPPROTO_TCP:
+		port = TCPH(l4)->dest;
+		TCPH(l4)->dest = ct->tuplehash[!dir].tuple.src.u.all;
+		if (natflow_nat_port(skb, sizeof(struct ipv6hdr), IPPROTO_TCP, port, TCPH(l4)->dest) != 0) {
+			return -1;
+		}
+		break;
+	case IPPROTO_UDP:
+		port = UDPH(l4)->dest;
+		UDPH(l4)->dest = ct->tuplehash[!dir].tuple.src.u.all;
+		if (natflow_nat_port(skb, sizeof(struct ipv6hdr), IPPROTO_TCP, port, UDPH(l4)->dest) != 0) {
+			return -1;
+		}
+		break;
+	default:
+		return -1;
+	}
+
+	if (natflow_nat_ipv6_l4proto(skb, ipv6h, sizeof(struct ipv6hdr), &ipv6h->daddr, &ct->tuplehash[!dir].tuple.src.u3.in6) != 0) {
+		return -1;
+	}
+	ipv6h->daddr = ct->tuplehash[!dir].tuple.src.u3.in6;
 
 	return 0;
 }
