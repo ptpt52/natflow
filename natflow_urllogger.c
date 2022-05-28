@@ -371,7 +371,6 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 		skb_pull(skb, PPPOE_SES_HLEN);
 		skb->protocol = __constant_htons(ETH_P_IP);
 		skb->network_header += PPPOE_SES_HLEN;
-		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
 		bridge = 1;
 	} else if (skb->protocol != __constant_htons(ETH_P_IP))
 		return NF_ACCEPT;
