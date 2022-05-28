@@ -269,7 +269,7 @@ static inline int natflow_do_dnat6(struct sk_buff *skb, struct nf_conn *ct, int 
 	case IPPROTO_UDP:
 		port = UDPH(l4)->dest;
 		UDPH(l4)->dest = ct->tuplehash[!dir].tuple.src.u.all;
-		if (natflow_nat_port(skb, sizeof(struct ipv6hdr), IPPROTO_TCP, port, UDPH(l4)->dest) != 0) {
+		if (natflow_nat_port(skb, sizeof(struct ipv6hdr), IPPROTO_UDP, port, UDPH(l4)->dest) != 0) {
 			return -1;
 		}
 		break;
