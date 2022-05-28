@@ -2493,6 +2493,62 @@ slow_fastpath6:
 		}
 	}
 #endif
+	/* if ifname filter enabled, do fastnat for matched ifname only */
+	if (!(nf->status & NF_FF_IFNAME_MATCH) && ifname_match_fastnat[0].ifindex != -1) {
+		int i;
+		short orig_match = 0, reply_match = 0;
+		struct ifname_match *im;
+		for (i = 0; i < IFNAME_MATCH_MAX; i++) {
+			im = &ifname_match_fastnat[i];
+			if (im->ifindex == -1)
+				break;
+			if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev->ifindex == im->ifindex &&
+			        ((nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present && nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci == im->vlan_id) ||
+			         im->vlan_id == 0)) {
+				orig_match = 1;
+			}
+			if (nf->rroute[NF_FF_DIR_REPLY].outdev->ifindex == im->ifindex &&
+			        ((nf->rroute[NF_FF_DIR_REPLY].vlan_present && nf->rroute[NF_FF_DIR_REPLY].vlan_tci == im->vlan_id) ||
+			         im->vlan_id == 0)) {
+				reply_match = 1;
+			}
+			if (orig_match && reply_match) {
+				break;
+			}
+		}
+
+		simple_set_bit(NF_FF_IFNAME_MATCH_BIT, &nf->status);
+
+		if (!(orig_match && reply_match)) {
+			/* ifname not matched, skip fastnat for this conn */
+			struct nf_conn_help *help = nfct_help(ct);
+			if (help && !help->helper) {
+				/* this conn do not need helper, clear it for nss */
+				ct->ext->offset[NF_CT_EXT_HELPER] = 0;
+			}
+
+			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
+			switch (IPV6H->nexthdr) {
+			case IPPROTO_TCP:
+				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6 ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) not matched\n",
+				             DEBUG_TCP_ARG6(iph,l4),
+				             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
+				             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
+				             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
+				             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
+				break;
+			case IPPROTO_UDP:
+				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6 ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) not matched\n",
+				             DEBUG_UDP_ARG6(iph,l4),
+				             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
+				             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
+				             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
+				             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
+				break;
+			}
+			goto out6;
+		}
+	}
 
 	acct = nf_conn_acct_find(ct);
 	if (acct) {
