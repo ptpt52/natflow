@@ -2308,7 +2308,7 @@ fast_output6:
 						ph->type = 1;
 						ph->code = 0;
 						ph->sid = nfn->pppoe_sid;
-						ph->length = htons(ntohs(ip_hdr(skb)->tot_len) + 2);
+						ph->length = htons(ntohs(ipv6_hdr(skb)->payload_len) + sizeof(struct ipv6hdr) + 2);
 						*(__be16 *)((void *)ph + sizeof(struct pppoe_hdr)) = __constant_htons(PPP_IPV6);
 					} else if (_I == ETH_HLEN) {
 						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IPV6);
@@ -2750,7 +2750,7 @@ fastnat_check6:
 #ifdef CONFIG_NETFILTER_INGRESS
 		if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 			struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
-			ph->length = htons(ntohs(ip_hdr(skb)->tot_len) + 2);
+			ph->length = htons(ntohs(ipv6_hdr(skb)->payload_len) + sizeof(struct ipv6hdr) + 2);
 			skb->protocol = __constant_htons(ETH_P_PPP_SES);
 		}
 		if (nf->rroute[dir].vlan_present) {
