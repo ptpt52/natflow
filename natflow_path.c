@@ -2841,14 +2841,12 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		skb_pull(skb, PPPOE_SES_HLEN);
 		skb->protocol = __constant_htons(ETH_P_IP);
 		skb->network_header += PPPOE_SES_HLEN;
-		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
 		bridge = 1;
 	} else if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
 	           pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
 		skb_pull(skb, PPPOE_SES_HLEN);
 		skb->protocol = __constant_htons(ETH_P_IPV6);
 		skb->network_header += PPPOE_SES_HLEN;
-		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
 		bridge = 1;
 	} else if (skb->protocol != __constant_htons(ETH_P_IP) && skb->protocol != __constant_htons(ETH_P_IPV6)) {
 		return NF_ACCEPT;
