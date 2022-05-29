@@ -476,7 +476,55 @@ __keepalive_ipv6_main:
 				atomic64_add(packets, &counter[!d].packets);
 				atomic64_add(bytes, &counter[!d].bytes);
 			}
-			/* TODO stats */
+			/* stats to net_device */
+			do {
+				struct natflow_t *nf;
+				nf = natflow_session_get(ct);
+				if (nf) {
+					struct net_device *dev;
+
+					dev = nf->rroute[!d].outdev;
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+					if (hw && (((nf->status & NF_FF_ORIGINAL_DSA) && d == NF_FF_DIR_REPLY) ||
+					           ((nf->status & NF_FF_REPLY_DSA) && d == NF_FF_DIR_ORIGINAL))) {
+						struct net_device_stats *stats = &dev->stats;
+						stats->tx_bytes += bytes;
+						stats->tx_packets += packets;
+					}
+#endif
+					if (nf->rroute[!d].vlan_present) {
+						dev = vlan_lookup_dev(dev, nf->rroute[!d].vlan_tci);
+						if (dev) {
+							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
+							u64_stats_update_begin(&vpstats->syncp);
+							vpstats->tx_bytes += bytes;
+							vpstats->tx_packets += packets;
+							u64_stats_update_end(&vpstats->syncp);
+						}
+					}
+
+					dev = nf->rroute[d].outdev;
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+					if (hw && (((nf->status & NF_FF_ORIGINAL_DSA) && (!d) == NF_FF_DIR_REPLY) ||
+					           ((nf->status & NF_FF_REPLY_DSA) && (!d) == NF_FF_DIR_ORIGINAL))) {
+						struct net_device_stats *stats = &dev->stats;
+						stats->rx_bytes += bytes;
+						stats->rx_packets += packets;
+					}
+#endif
+					if (nf->rroute[d].vlan_present) {
+						dev = vlan_lookup_dev(dev, nf->rroute[d].vlan_tci);
+						if (dev) {
+							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
+							u64_stats_update_begin(&vpstats->syncp);
+							vpstats->rx_bytes += bytes;
+							vpstats->rx_packets += packets;
+							u64_stats_update_end(&vpstats->syncp);
+						}
+					}
+				}
+			} while(0);
+			/* TODO stats to user */
 			nf_ct_put(ct);
 			return;
 		}
@@ -485,6 +533,7 @@ __keepalive_ipv6_main:
 		nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
 		return;
 	}
+
 	if (NFN_L3NUM_DEC(nfn->flags) == AF_INET6) {
 		NATFLOW_INFO("keepalive[%u] nfn[%pI6.%u->%pI6.%u] diff_jiffies=%u timeout\n",
 		             hash, nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest), (unsigned int)diff_jiffies);
