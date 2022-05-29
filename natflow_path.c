@@ -465,7 +465,7 @@ __keepalive_ipv6_main:
 					diff_jiffies = ulongmindiff(current_jiffies, nfn->keepalive_jiffies);
 					nfn->keepalive_jiffies = current_jiffies;
 					NATFLOW_INFO("keepalive[%u] nfn[%pI6.%u->%pI6.%u] ct%d diff_jiffies=%u HZ=%u bytes=%lu hw=%d\n",
-					             hash, nfn->saddr6, ntohs(nfn->source), &nfn->daddr6, ntohs(nfn->dest), !d, (unsigned int)diff_jiffies, HZ, bytes, hw);
+					             hash, nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest), !d, (unsigned int)diff_jiffies, HZ, bytes, hw);
 					natflow_update_ct_timeout(ct, diff_jiffies);
 				}
 			}
