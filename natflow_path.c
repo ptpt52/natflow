@@ -209,6 +209,57 @@ static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn
 	return NULL;
 }
 
+static inline natflow_fastnat_node_t *nfn_invert_get6(natflow_fastnat_node_t *nfn) {
+	unsigned int hash;
+	unsigned long diff_jiffies;
+	struct nf_conntrack_tuple tuple;
+	struct nf_conntrack_tuple_hash *h;
+
+	memset(&tuple, 0, sizeof(tuple));
+	memcpy(tuple.src.u3.ip6, nfn->saddr6, 16);
+	tuple.src.u.tcp.port = nfn->source;
+	memcpy(tuple.dst.u3.ip6, nfn->daddr6, 16);
+	tuple.dst.u.tcp.port = nfn->dest;
+	tuple.src.l3num = AF_INET6;
+	tuple.dst.protonum = NFN_PROTO_DEC(nfn->flags);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
+	h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
+#else
+	h = nf_conntrack_find_get(&init_net, &nf_ct_zone_dflt, &tuple);
+#endif
+	if (h) {
+		struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
+		int d = !NF_CT_DIRECTION(h);
+		struct in6_addr saddr = ct->tuplehash[d].tuple.src.u3.in6;
+		struct in6_addr daddr = ct->tuplehash[d].tuple.dst.u3.in6;
+		__be16 source = ct->tuplehash[d].tuple.src.u.all;
+		__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
+		__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
+
+		hash = natflow_hash_v6(saddr.s6_addr32, daddr.s6_addr32, source, dest);
+		nfn = &natflow_fast_nat_table[hash];
+		if (memcmp(nfn->saddr6, saddr.s6_addr32, 16) || memcmp(nfn->daddr6, daddr.s6_addr32, 16) ||
+		        nfn->source != source || nfn->dest != dest ||
+		        NFN_PROTO_DEC(nfn->flags) != protonum) {
+			hash += 1;
+			nfn = &natflow_fast_nat_table[hash];
+		}
+
+		diff_jiffies = ulongmindiff(jiffies, nfn->jiffies);
+		if (nfn->magic == natflow_path_magic &&
+		        (u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW &&
+		        memcmp(nfn->saddr6, saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, daddr.s6_addr32, 16) == 0 &&
+		        nfn->source == source && nfn->dest == dest &&
+		        NFN_PROTO_DEC(nfn->flags) == protonum) {
+			nf_ct_put(ct);
+			return nfn;
+		}
+		nf_ct_put(ct);
+	}
+
+	return NULL;
+}
+
 static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, unsigned long packets, unsigned int *speed_bytes, unsigned int *speed_packets, int hw, unsigned long current_jiffies)
 {
 	struct nf_conn_acct *acct;
@@ -2259,7 +2310,7 @@ __hook_ipv6_main:
 					goto slow_fastpath6;
 				if (unlikely(TCPH(l4)->fin || TCPH(l4)->rst)) {
 					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
-					nfn = nfn_invert_get(nfn);
+					nfn = nfn_invert_get6(nfn);
 					if (nfn && (u32)ulongmindiff(jiffies, nfn->jiffies) <= NATFLOW_FF_TIMEOUT_LOW)
 						nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
 					/* just in case bridge to make sure conntrack_in */
