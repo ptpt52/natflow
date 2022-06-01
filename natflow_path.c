@@ -170,9 +170,9 @@ static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn
 
 	memset(&tuple, 0, sizeof(tuple));
 	tuple.src.u3.ip = nfn->saddr;
-	tuple.src.u.tcp.port = nfn->source;
+	tuple.src.u.all = nfn->source;
 	tuple.dst.u3.ip = nfn->daddr;
-	tuple.dst.u.tcp.port = nfn->dest;
+	tuple.dst.u.all = nfn->dest;
 	tuple.src.l3num = PF_INET;
 	tuple.dst.protonum = NFN_PROTO_DEC(nfn->flags);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
@@ -191,7 +191,9 @@ static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn
 
 		hash = natflow_hash_v4(saddr, daddr, source, dest);
 		nfn = &natflow_fast_nat_table[hash];
-		if (nfn->saddr != saddr || nfn->daddr != daddr || nfn->source != source || nfn->dest != dest || NFN_PROTO_DEC(nfn->flags) != protonum) {
+		if (nfn->saddr != saddr || nfn->daddr != daddr ||
+		        nfn->source != source || nfn->dest != dest ||
+		        NFN_PROTO_DEC(nfn->flags) != protonum) {
 			hash += 1;
 			nfn = &natflow_fast_nat_table[hash];
 		}
@@ -199,7 +201,9 @@ static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn
 		diff_jiffies = ulongmindiff(jiffies, nfn->jiffies);
 		if (nfn->magic == natflow_path_magic &&
 		        (u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW &&
-		        nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && NFN_PROTO_DEC(nfn->flags) == protonum) {
+		        nfn->saddr == saddr && nfn->daddr == daddr &&
+		        nfn->source == source && nfn->dest == dest &&
+		        NFN_PROTO_DEC(nfn->flags) == protonum) {
 			nf_ct_put(ct);
 			return nfn;
 		}
@@ -217,9 +221,9 @@ static inline natflow_fastnat_node_t *nfn_invert_get6(natflow_fastnat_node_t *nf
 
 	memset(&tuple, 0, sizeof(tuple));
 	memcpy(tuple.src.u3.ip6, nfn->saddr6, 16);
-	tuple.src.u.tcp.port = nfn->source;
+	tuple.src.u.all = nfn->source;
 	memcpy(tuple.dst.u3.ip6, nfn->daddr6, 16);
-	tuple.dst.u.tcp.port = nfn->dest;
+	tuple.dst.u.all = nfn->dest;
 	tuple.src.l3num = AF_INET6;
 	tuple.dst.protonum = NFN_PROTO_DEC(nfn->flags);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
@@ -282,9 +286,9 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 		}
 
 		tuple.src.u3.ip = nfn->saddr;
-		tuple.src.u.tcp.port = nfn->source;
+		tuple.src.u.all = nfn->source;
 		tuple.dst.u3.ip = nfn->daddr;
-		tuple.dst.u.tcp.port = nfn->dest;
+		tuple.dst.u.all = nfn->dest;
 		tuple.src.l3num = PF_INET;
 		tuple.dst.protonum = NFN_PROTO_DEC(nfn->flags);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
@@ -311,14 +315,18 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 
 			hash = natflow_hash_v4(saddr, daddr, source, dest);
 			nfn = &natflow_fast_nat_table[hash];
-			if (nfn->saddr != saddr || nfn->daddr != daddr || nfn->source != source || nfn->dest != dest || NFN_PROTO_DEC(nfn->flags) != protonum) {
+			if (nfn->saddr != saddr || nfn->daddr != daddr ||
+			        nfn->source != source || nfn->dest != dest ||
+			        NFN_PROTO_DEC(nfn->flags) != protonum) {
 				hash += 1;
 				nfn = &natflow_fast_nat_table[hash];
 			}
 
 			diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
 			if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW &&
-			        nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source && nfn->dest == dest && NFN_PROTO_DEC(nfn->flags) == protonum) {
+			        nfn->saddr == saddr && nfn->daddr == daddr &&
+			        nfn->source == source && nfn->dest == dest &&
+			        NFN_PROTO_DEC(nfn->flags) == protonum) {
 				nfn->jiffies = current_jiffies;
 				if (d == 0) {
 					diff_jiffies = ulongmindiff(current_jiffies, nfn->keepalive_jiffies);
@@ -470,9 +478,9 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 __keepalive_ipv6_main:
 
 		memcpy(tuple.src.u3.ip6, nfn->saddr6, 16);
-		tuple.src.u.tcp.port = nfn->source;
+		tuple.src.u.all = nfn->source;
 		memcpy(tuple.dst.u3.ip6, nfn->daddr6, 16);
-		tuple.dst.u.tcp.port = nfn->dest;
+		tuple.dst.u.all = nfn->dest;
 		tuple.src.l3num = AF_INET6;
 		tuple.dst.protonum = NFN_PROTO_DEC(nfn->flags);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
@@ -630,8 +638,8 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 	}
 	ft->l3proto = ctt->src.l3num;
 	ft->l4proto = ctt->dst.protonum;
-	ft->src_port = ctt->src.u.tcp.port;
-	ft->dst_port = ctt->dst.u.tcp.port;
+	ft->src_port = ctt->src.u.all;
+	ft->dst_port = ctt->dst.u.all;
 
 	if (ctt->src.l3num == AF_INET) {
 		orig_hash = natflow_hash_v4(ft->src_v4.s_addr, ft->dst_v4.s_addr, ft->src_port, ft->dst_port);
@@ -665,8 +673,8 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 	}
 	ft->l3proto = ctt->src.l3num;
 	ft->l4proto = ctt->dst.protonum;
-	ft->src_port = ctt->src.u.tcp.port;
-	ft->dst_port = ctt->dst.u.tcp.port;
+	ft->src_port = ctt->src.u.all;
+	ft->dst_port = ctt->dst.u.all;
 
 	if (ctt->src.l3num == AF_INET) {
 		reply_hash = natflow_hash_v4(ft->src_v4.s_addr, ft->dst_v4.s_addr, ft->src_port, ft->dst_port);
@@ -1620,15 +1628,17 @@ fastnat_check:
 
 						if (natflow_hash_skip(hash) ||
 						        (ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_HIGH &&
-						         (nfn->saddr != saddr || nfn->daddr != daddr || nfn->source != source ||
-						          nfn->dest != dest || NFN_PROTO_DEC(nfn->flags) != protonum))) {
+						         (nfn->saddr != saddr || nfn->daddr != daddr ||
+						          nfn->source != source || nfn->dest != dest ||
+						          NFN_PROTO_DEC(nfn->flags) != protonum))) {
 							hash += 1;
 							nfn = &natflow_fast_nat_table[hash];
 						}
 						if (!natflow_hash_skip(hash) &&
 						        (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH ||
-						         (nfn->saddr == saddr && nfn->daddr == daddr && nfn->source == source &&
-						          nfn->dest == dest && NFN_PROTO_DEC(nfn->flags) == protonum))) {
+						         (nfn->saddr == saddr && nfn->daddr == daddr &&
+						          nfn->source == source && nfn->dest == dest &&
+						          NFN_PROTO_DEC(nfn->flags) == protonum))) {
 
 							if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH) {
 								nfn->status = 0;
@@ -1706,9 +1716,11 @@ fastnat_check:
 						}
 
 						if ((nf->status & NF_FF_ORIGINAL_CHECK) && (nf->status & NF_FF_REPLY_CHECK)) {
-							if (nfn->magic == natflow_path_magic && ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+							if (nfn->magic == natflow_path_magic &&
+							        ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
 							        (nfn->saddr == saddr && nfn->daddr == daddr &&
-							         nfn->source == source && nfn->dest == dest && NFN_PROTO_DEC(nfn->flags) == protonum)) {
+							         nfn->source == source && nfn->dest == dest &&
+							         NFN_PROTO_DEC(nfn->flags) == protonum)) {
 								natflow_fastnat_node_t *nfn_i;
 								saddr = ct->tuplehash[!d].tuple.src.u3.ip;
 								daddr = ct->tuplehash[!d].tuple.dst.u3.ip;
