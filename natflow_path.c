@@ -1041,6 +1041,10 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					nfn->count = (nfn->jiffies / HZ) & 0xff;
 					wmb();
 					clear_bit(0, &nfn->status);
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 128/8*1024*1024)
+						re_learn = 2;
+#endif
 					goto slow_fastpath;
 				}
 				_I = (nfn->jiffies / HZ / 2) % 4;
@@ -1227,6 +1231,10 @@ fast_output:
 					nfn->count = (nfn->jiffies / HZ) & 0xff;
 					wmb();
 					clear_bit(0, &nfn->status);
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 128/8*1024*1024)
+						re_learn = 2;
+#endif
 					goto slow_fastpath;
 				}
 				_I = (nfn->jiffies / HZ / 2) % 4;
@@ -1338,7 +1346,7 @@ slow_fastpath:
 
 	dir = CTINFO2DIR(ctinfo);
 #ifdef CONFIG_NETFILTER_INGRESS
-	if (re_learn) {
+	if (re_learn == 1) {
 		if (dir == NF_FF_DIR_ORIGINAL) {
 			simple_clear_bit(NF_FF_REPLY_RELEARN_BIT, &nf->status);
 
@@ -1355,6 +1363,12 @@ slow_fastpath:
 			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 		}
 	}
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+	else if (re_learn == 2) {
+		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
+	}
+#endif
 #endif
 	natflow_session_learn(skb, ct, nf, dir);
 	if (!nf_ct_is_confirmed(ct)) {
@@ -1745,7 +1759,7 @@ fastnat_check:
 										ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 									}
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
-									if (hwnat) {
+									if (hwnat && re_learn == 2) {
 										/* hwnat enabled */
 										struct net_device *orig_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 										struct net_device *reply_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev);
