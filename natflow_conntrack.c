@@ -478,7 +478,9 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 				if (test_bit(IPS_ASSURED_BIT, &ct->status))
 					ct_i->len += sprintf(ct_i->data + ct_i->len, "[ASSURED] ");
 
+#ifdef CONFIG_NF_CONNTRACK_MARK
 				ct_i->len += sprintf(ct_i->data + ct_i->len, "mark=%u ", ct->mark);
+#endif
 
 				ct_i->len += sprintf(ct_i->data + ct_i->len, "use=%u\n", REFCOUNT_read(&ct->ct_general.use));
 
