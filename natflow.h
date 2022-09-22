@@ -252,9 +252,9 @@ struct natflow_fastnat_node_t {
 
 /* MAX 65536 for now we use 4096 */
 #if defined(CONFIG_64BIT) || defined(CONFIG_X86) || defined(CONFIG_X86_64) || defined(CONFIG_ARM) || defined(CONFIG_ARM64)
-#define NATFLOW_FASTNAT_TABLE_SIZE 4096
+#define NATFLOW_FASTNAT_TABLE_SIZE 8192
 #else
-#define NATFLOW_FASTNAT_TABLE_SIZE 4096
+#define NATFLOW_FASTNAT_TABLE_SIZE 8192
 #endif
 
 static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __be16 dest)
@@ -270,8 +270,8 @@ static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __b
 	hash = (hash >> 24) | ((hash & 0xffffff) << 8);
 	hash ^= hv1 ^ hv2 ^ hv3;
 	hash ^= hash >> 16;
-	hash &= NATFLOW_FASTNAT_TABLE_SIZE - 1;
 	hash <<= 1;
+	hash &= NATFLOW_FASTNAT_TABLE_SIZE - 1;
 
 	return hash;
 }
@@ -294,8 +294,8 @@ static inline u32 natflow_hash_v6(__be32 saddr6[4], __be32 daddr6[4], __be16 sou
 	hash = (hash >> 24) | ((hash & 0xffffff) << 8);
 	hash ^= hv1 ^ hv2 ^ hv3;
 	hash ^= hash >> 16;
-	hash &= NATFLOW_FASTNAT_TABLE_SIZE - 1;
 	hash <<= 1;
+	hash &= NATFLOW_FASTNAT_TABLE_SIZE - 1;
 
 	return hash;
 }

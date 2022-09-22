@@ -270,7 +270,7 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 	natflow_fastnat_node_t *nfn;
 	unsigned long diff_jiffies = 0;
 
-	hash = hash % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
+	hash = hash % NATFLOW_FASTNAT_TABLE_SIZE;
 	nfn = &natflow_fast_nat_table[hash];
 
 	diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
@@ -867,9 +867,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		if (hwnat && skb->dev->netdev_ops->ndo_flow_offload &&
 		        (skb->vlan_tci & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC &&
 		        (skb->hash & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC) {
-			_I = (skb->hash & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
+			_I = (skb->hash & HWNAT_QUEUE_MAPPING_HASH_MASK) % NATFLOW_FASTNAT_TABLE_SIZE;
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
-			if (_I == 0) _I = (skb->vlan_tci & HWNAT_QUEUE_MAPPING_HASH_MASK) % (NATFLOW_FASTNAT_TABLE_SIZE * 2);
+			if (_I == 0) _I = (skb->vlan_tci & HWNAT_QUEUE_MAPPING_HASH_MASK) % NATFLOW_FASTNAT_TABLE_SIZE;
 #endif
 			nfn = &natflow_fast_nat_table[_I];
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
@@ -3423,7 +3423,7 @@ int natflow_path_init(void)
 	int ret = 0;
 
 #ifdef CONFIG_NETFILTER_INGRESS
-	natflow_fast_nat_table = kmalloc(sizeof(natflow_fastnat_node_t) * NATFLOW_FASTNAT_TABLE_SIZE * 2, GFP_KERNEL);
+	natflow_fast_nat_table = kmalloc(sizeof(natflow_fastnat_node_t) * NATFLOW_FASTNAT_TABLE_SIZE, GFP_KERNEL);
 	if (natflow_fast_nat_table == NULL) {
 		return -ENOMEM;
 	}
