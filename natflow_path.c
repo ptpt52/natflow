@@ -393,6 +393,8 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 			} while(0);
 			/* stats to user */
 			do {
+				unsigned int hw_speed_bytes[4] = {0, 0, 0, 0};
+				unsigned int hw_speed_packets[4] = {0, 0, 0, 0};
 				natflow_fakeuser_t *user;
 				struct fakeuser_data_t *fud;
 				user = natflow_user_get(ct);
@@ -408,6 +410,12 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 					struct nf_conn_counter *counter = acct->counter;
 					atomic64_add(packets, &counter[d].packets);
 					atomic64_add(bytes, &counter[d].bytes);
+				}
+				if (hw == 2 && !speed_bytes) {
+					speed_bytes = hw_speed_bytes;
+					speed_packets = hw_speed_packets;
+					speed_bytes[(current_jiffies/HZ/2) % 4] = bytes;
+					speed_packets[(current_jiffies/HZ/2) % 4] = packets;
 				}
 				if (!speed_bytes) {
 					break;
