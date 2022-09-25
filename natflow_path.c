@@ -1042,7 +1042,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					wmb();
 					clear_bit(0, &nfn->status);
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
-					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 128/8*1024*1024)
+					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 4/8*1024*1024)
 						re_learn = 2;
 #endif
 					goto slow_fastpath;
@@ -1232,7 +1232,7 @@ fast_output:
 					wmb();
 					clear_bit(0, &nfn->status);
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
-					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 128/8*1024*1024)
+					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 4/8*1024*1024)
 						re_learn = 2;
 #endif
 					goto slow_fastpath;
