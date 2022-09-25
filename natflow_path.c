@@ -412,10 +412,11 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 					atomic64_add(bytes, &counter[d].bytes);
 				}
 				if (hw == 2 && !speed_bytes) {
+					int i = (current_jiffies/HZ/2 + 3) % 4;
 					speed_bytes = hw_speed_bytes;
 					speed_packets = hw_speed_packets;
-					speed_bytes[(current_jiffies/HZ/2) % 4] = bytes;
-					speed_packets[(current_jiffies/HZ/2) % 4] = packets;
+					speed_bytes[i] = bytes;
+					speed_packets[i] = packets;
 				}
 				if (!speed_bytes) {
 					break;
