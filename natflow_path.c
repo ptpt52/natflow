@@ -893,6 +893,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 				__vlan_hwaccel_clear_tag(skb);
 #else
+				if (!skb_vlan_tag_present(skb) && nfn->vlan_present) /* revert vlan_present if uses_dsa */
+					skb->vlan_present = 1;
 				if (skb_vlan_tag_present(skb))
 					skb->vlan_tci &= ~HWNAT_QUEUE_MAPPING_MAGIC;
 #endif
