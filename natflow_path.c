@@ -987,7 +987,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		 * Route forwarding: all good
 		 * Bridge forwarding: cannot handle vlan tag packets, pppoe tag is good
 		 */
-		if (skb_vlan_tag_present(skb)) {
+		if (skb_vlan_tag_present(skb) && !(skb->dev->netdev_ops->ndo_flow_offload || skb->dev->netdev_ops->ndo_flow_offload_check)) {
 			goto out;
 		}
 #endif
@@ -1830,18 +1830,7 @@ fastnat_check:
 												memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 												memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
 												memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
-#if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
-												if (orig_vid > 0) {
-													orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
-													orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
-													orig.vlan_id = orig_vid;
-												}
-												if (reply_vid > 0) {
-													reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
-													reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
-													reply.vlan_id = reply_vid;
-												}
-#else
+
 												if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
 													orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
 													orig.vlan_proto =
@@ -1856,7 +1845,7 @@ fastnat_check:
 													    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
 													reply.vlan_id = nf->rroute[NF_FF_DIR_REPLY].vlan_tci;
 												}
-#endif
+
 												if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 													orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
 													orig.pppoe_sid =
@@ -1867,12 +1856,7 @@ fastnat_check:
 													reply.pppoe_sid =
 													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
 												}
-												if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
-													orig.flags |= FLOW_OFFLOAD_PATH_EXTDEV;
-												}
-												if (is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
-													reply.flags |= FLOW_OFFLOAD_PATH_EXTDEV;
-												}
+
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
 													NATFLOW_INFO("(PCO) set hwnat offload 1 dev=%s(vlan:%d pppoe:%d)"
@@ -1950,10 +1934,12 @@ fastnat_check:
 												memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
 												memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
-												if (orig_vid > 0) {
+												if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
 													orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
-													orig.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
-													orig.vlan_id = orig_vid;
+													orig.vlan_proto =
+													    nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
+													    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+													orig.vlan_id = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci;
 												}
 												/* must set reply_vid */
 												reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
@@ -1984,9 +1970,6 @@ fastnat_check:
 													reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
 													reply.pppoe_sid =
 													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
-												}
-												if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
-													orig.flags |= FLOW_OFFLOAD_PATH_EXTDEV;
 												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
@@ -2063,10 +2046,12 @@ fastnat_check:
 											memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
 											memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
-											if (reply_vid > 0) {
+											if (nf->rroute[NF_FF_DIR_REPLY].vlan_present) {
 												reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
-												reply.vlan_proto = get_vlan_proto(nf->rroute[NF_FF_DIR_REPLY].outdev);
-												reply.vlan_id = reply_vid;
+												reply.vlan_proto =
+												    nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
+												    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+												reply.vlan_id = nf->rroute[NF_FF_DIR_REPLY].vlan_tci;
 											}
 											/* must set orig_vid */
 											orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
@@ -2097,9 +2082,6 @@ fastnat_check:
 												reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
 												reply.pppoe_sid =
 												    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
-											}
-											if (is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
-												reply.flags |= FLOW_OFFLOAD_PATH_EXTDEV;
 											}
 											if (reply_dev->netdev_ops->ndo_flow_offload(
 											            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
