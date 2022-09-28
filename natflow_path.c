@@ -3138,11 +3138,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 				simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
 				switch (iph->protocol) {
 				case IPPROTO_TCP:
-					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl %d -> %d no change, pf=%d\n",
+					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl %d -> %d no change, pf=%d\n",
 					             DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
 					break;
 				case IPPROTO_UDP:
-					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl %d -> %d no change, pf=%d\n",
+					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl %d -> %d no change, pf=%d\n",
 					             DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
 					break;
 				}
@@ -3150,11 +3150,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 				simple_set_bit(NF_FF_ROUTE_BIT, &nf->status);
 				switch (iph->protocol) {
 				case IPPROTO_TCP:
-					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl %d -> %d, pf=%d\n",
+					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl %d -> %d, pf=%d\n",
 					             DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
 					break;
 				case IPPROTO_UDP:
-					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl %d -> %d, pf=%d\n",
+					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl %d -> %d, pf=%d\n",
 					             DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
 					break;
 				}
@@ -3165,11 +3165,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 				simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
 				switch (IPV6H->nexthdr) {
 				case IPPROTO_TCP:
-					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6 ": dir=%d ttl %d -> %d no change, pf=%d\n",
+					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": dir=%d ttl %d -> %d no change, pf=%d\n",
 					             DEBUG_TCP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				case IPPROTO_UDP:
-					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6 ": dir=%d ttl %d -> %d no change, pf=%d\n",
+					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": dir=%d ttl %d -> %d no change, pf=%d\n",
 					             DEBUG_UDP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				}
@@ -3177,11 +3177,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 				simple_set_bit(NF_FF_ROUTE_BIT, &nf->status);
 				switch (IPV6H->nexthdr) {
 				case IPPROTO_TCP:
-					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6 ": dir=%d ttl %d -> %d, pf=%d\n",
+					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": dir=%d ttl %d -> %d, pf=%d\n",
 					             DEBUG_TCP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				case IPPROTO_UDP:
-					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6 ": dir=%d ttl %d -> %d, pf=%d\n",
+					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": dir=%d ttl %d -> %d, pf=%d\n",
 					             DEBUG_UDP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				}
