@@ -119,7 +119,8 @@ struct ifname_match *ifname_match_get(int idx, struct net_device **out_dev)
 	return &ifname_match_fastnat[idx];
 }
 
-unsigned int hwnat = 1;
+unsigned short hwnat = 1;
+unsigned short hwnat_wed_disabled = 0;
 unsigned int delay_pkts = 0;
 
 static int disabled = 1;
@@ -1785,7 +1786,11 @@ fastnat_check:
 										if (!orig_dev->netdev_ops->ndo_flow_offload && orig_dev->netdev_ops->ndo_flow_offload_check) {
 											flow_offload_hw_path_t orig = {
 												.dev = orig_dev,
-												.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+												.flags = FLOW_OFFLOAD_PATH_ETHERNET
+#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+												| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#endif
+												,
 											};
 											orig_dev->netdev_ops->ndo_flow_offload_check(&orig);
 											if (orig.dev != orig_dev) {
@@ -1798,7 +1803,11 @@ fastnat_check:
 										if (!reply_dev->netdev_ops->ndo_flow_offload && reply_dev->netdev_ops->ndo_flow_offload_check) {
 											flow_offload_hw_path_t reply = {
 												.dev = reply_dev,
-												.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+												.flags = FLOW_OFFLOAD_PATH_ETHERNET
+#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+												| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#endif
+												,
 											};
 											reply_dev->netdev_ops->ndo_flow_offload_check(&reply);
 											if (reply.dev != reply_dev) {
@@ -1816,14 +1825,22 @@ fastnat_check:
 												struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
-													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET
+#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#endif
+													,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 													.dsa_port = orig_dsa_port,
 #endif
 												};
 												flow_offload_hw_path_t reply = {
 													.dev = reply_dev,
-													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET
+#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#endif
+													,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 													.dsa_port = reply_dsa_port,
 #endif
@@ -1914,14 +1931,22 @@ fastnat_check:
 												struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
-													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET
+#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#endif
+													,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 													.dsa_port = orig_dsa_port,
 #endif
 												};
 												flow_offload_hw_path_t reply = {
 													.dev = reply_dev,
-													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET
+#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#endif
+													,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 													.dsa_port = reply_dsa_port,
 #endif
@@ -2026,14 +2051,22 @@ fastnat_check:
 											struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 											flow_offload_hw_path_t orig = {
 												.dev = orig_dev,
-												.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+												.flags = FLOW_OFFLOAD_PATH_ETHERNET
+#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+												| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#endif
+												,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 												.dsa_port = orig_dsa_port,
 #endif
 											};
 											flow_offload_hw_path_t reply = {
 												.dev = reply_dev,
-												.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+												.flags = FLOW_OFFLOAD_PATH_ETHERNET
+#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+												| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#endif
+												,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 												.dsa_port = reply_dsa_port,
 #endif
@@ -3139,11 +3172,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 				switch (iph->protocol) {
 				case IPPROTO_TCP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl %d -> %d no change, pf=%d\n",
-					             DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+					              DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
 					break;
 				case IPPROTO_UDP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl %d -> %d no change, pf=%d\n",
-					             DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+					              DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
 					break;
 				}
 			} else {
@@ -3151,11 +3184,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 				switch (iph->protocol) {
 				case IPPROTO_TCP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl %d -> %d, pf=%d\n",
-					             DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+					              DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
 					break;
 				case IPPROTO_UDP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl %d -> %d, pf=%d\n",
-					             DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+					              DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
 					break;
 				}
 			}
@@ -3166,11 +3199,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 				switch (IPV6H->nexthdr) {
 				case IPPROTO_TCP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": dir=%d ttl %d -> %d no change, pf=%d\n",
-					             DEBUG_TCP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
+					              DEBUG_TCP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				case IPPROTO_UDP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": dir=%d ttl %d -> %d no change, pf=%d\n",
-					             DEBUG_UDP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
+					              DEBUG_UDP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				}
 			} else {
@@ -3178,11 +3211,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 				switch (IPV6H->nexthdr) {
 				case IPPROTO_TCP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": dir=%d ttl %d -> %d, pf=%d\n",
-					             DEBUG_TCP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
+					              DEBUG_TCP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				case IPPROTO_UDP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": dir=%d ttl %d -> %d, pf=%d\n",
-					             DEBUG_UDP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
+					              DEBUG_UDP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				}
 			}

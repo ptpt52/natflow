@@ -25,7 +25,8 @@
 #include "natflow.h"
 #include "natflow_common.h"
 
-extern unsigned int hwnat;
+extern unsigned short hwnat;
+extern unsigned short hwnat_wed_disabled;
 extern unsigned int delay_pkts;
 
 extern void natflow_disabled_set(int v);
