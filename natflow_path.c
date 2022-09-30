@@ -119,9 +119,11 @@ struct ifname_match *ifname_match_get(int idx, struct net_device **out_dev)
 	return &ifname_match_fastnat[idx];
 }
 
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 unsigned short hwnat = 1;
 #if defined(CONFIG_NET_MEDIATEK_SOC_WED)
 unsigned short hwnat_wed_disabled = 0;
+#endif
 #endif
 unsigned int delay_pkts = 0;
 
