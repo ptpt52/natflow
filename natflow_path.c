@@ -120,7 +120,9 @@ struct ifname_match *ifname_match_get(int idx, struct net_device **out_dev)
 }
 
 unsigned short hwnat = 1;
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
 unsigned short hwnat_wed_disabled = 0;
+#endif
 unsigned int delay_pkts = 0;
 
 static int disabled = 1;

@@ -73,7 +73,9 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             "#    ...\n"
 #if defined(CONFIG_NATFLOW_PATH)
 		             "#    hwnat=%u\n"
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
 		             "#    hwnat_wed_disabled=%u\n"
+#endif
 		             "#    delay_pkts=%u\n"
 #endif
 		             "#\n"
@@ -86,7 +88,9 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             "\n",
 #if defined(CONFIG_NATFLOW_PATH)
 		             hwnat,
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
 		             hwnat_wed_disabled,
+#endif
 		             delay_pkts,
 		             natflow_disabled_get(),
 #endif
@@ -207,6 +211,7 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 			hwnat = d;
 			goto done;
 		}
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
 	} else if (strncmp(data, "hwnat_wed_disabled=", 19) == 0) {
 		int d;
 		n = sscanf(data, "hwnat_wed_disabled=%u", &d);
@@ -214,6 +219,7 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 			hwnat_wed_disabled = d;
 			goto done;
 		}
+#endif
 	} else if (strncmp(data, "delay_pkts=", 11) == 0) {
 		int d;
 		n = sscanf(data, "delay_pkts=%u", &d);
