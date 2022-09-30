@@ -1787,8 +1787,10 @@ fastnat_check:
 											flow_offload_hw_path_t orig = {
 												.dev = orig_dev,
 												.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 												| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#else
+												| FLOW_OFFLOAD_PATH_EXTDEV_DIS
 #endif
 												,
 											};
@@ -1804,8 +1806,10 @@ fastnat_check:
 											flow_offload_hw_path_t reply = {
 												.dev = reply_dev,
 												.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 												| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#else
+												| FLOW_OFFLOAD_PATH_EXTDEV_DIS
 #endif
 												,
 											};
@@ -1826,8 +1830,10 @@ fastnat_check:
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#else
+													| FLOW_OFFLOAD_PATH_EXTDEV_DIS
 #endif
 													,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
@@ -1837,8 +1843,10 @@ fastnat_check:
 												flow_offload_hw_path_t reply = {
 													.dev = reply_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#else
+													| FLOW_OFFLOAD_PATH_EXTDEV_DIS
 #endif
 													,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
@@ -1932,8 +1940,10 @@ fastnat_check:
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#else
+													| FLOW_OFFLOAD_PATH_EXTDEV_DIS
 #endif
 													,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
@@ -1943,8 +1953,10 @@ fastnat_check:
 												flow_offload_hw_path_t reply = {
 													.dev = reply_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#else
+													| FLOW_OFFLOAD_PATH_EXTDEV_DIS
 #endif
 													,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
@@ -2052,8 +2064,10 @@ fastnat_check:
 											flow_offload_hw_path_t orig = {
 												.dev = orig_dev,
 												.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 												| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#else
+												| FLOW_OFFLOAD_PATH_EXTDEV_DIS
 #endif
 												,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
@@ -2063,8 +2077,10 @@ fastnat_check:
 											flow_offload_hw_path_t reply = {
 												.dev = reply_dev,
 												.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#ifdef CONFIG_NET_MEDIATEK_SOC_WED
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 												| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_EXTDEV_DIS)
+#else
+												| FLOW_OFFLOAD_PATH_EXTDEV_DIS
 #endif
 												,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
