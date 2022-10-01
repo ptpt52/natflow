@@ -1790,13 +1790,7 @@ fastnat_check:
 										if (!orig_dev->netdev_ops->ndo_flow_offload && orig_dev->netdev_ops->ndo_flow_offload_check) {
 											flow_offload_hw_path_t orig = {
 												.dev = orig_dev,
-												.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
-												| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
-#else
-												| FLOW_OFFLOAD_PATH_WED_DIS
-#endif
-												,
+												.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 											};
 											orig_dev->netdev_ops->ndo_flow_offload_check(&orig);
 											if (orig.dev != orig_dev) {
@@ -1809,13 +1803,7 @@ fastnat_check:
 										if (!reply_dev->netdev_ops->ndo_flow_offload && reply_dev->netdev_ops->ndo_flow_offload_check) {
 											flow_offload_hw_path_t reply = {
 												.dev = reply_dev,
-												.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
-												| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
-#else
-												| FLOW_OFFLOAD_PATH_WED_DIS
-#endif
-												,
+												.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 											};
 											reply_dev->netdev_ops->ndo_flow_offload_check(&reply);
 											if (reply.dev != reply_dev) {
@@ -1857,6 +1845,10 @@ fastnat_check:
 													.dsa_port = reply_dsa_port,
 #endif
 												};
+												if ((nfn->flags & FASTNAT_BRIDGE_FWD)) {
+													orig.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
+													reply.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
+												}
 												memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 												memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 												memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
@@ -1972,6 +1964,10 @@ fastnat_check:
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 												reply_vid = (natflow->flow.timeout) & 0xffff;
 #endif
+												if ((nfn->flags & FASTNAT_BRIDGE_FWD)) {
+													orig.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
+													reply.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
+												}
 												memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 												memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 												memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
@@ -2096,6 +2092,10 @@ fastnat_check:
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 											orig_vid = (natflow->flow.timeout >> 16) & 0xffff;
 #endif
+											if ((nfn->flags & FASTNAT_BRIDGE_FWD)) {
+												orig.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
+												reply.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
+											}
 											memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 											memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 											memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
