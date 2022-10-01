@@ -204,6 +204,7 @@ struct natflow_fastnat_node_t {
 #define FASTNAT_PROTO_TCP  0x10
 #define FASTNAT_PROTO_UDP  0x20
 #define FASTNAT_L3NUM_IPV6 0x40
+#define FASTNAT_HWNAT_USE_DEFAULT_PPE 0x80
 #define NFN_PROTO_DEC(flags)    (((flags) & FASTNAT_PROTO_TCP) ? IPPROTO_TCP : IPPROTO_UDP)
 #define NFN_PROTO_ENC(protonum) ((protonum) == IPPROTO_TCP ? FASTNAT_PROTO_TCP : FASTNAT_PROTO_UDP)
 #define NFN_L3NUM_DEC(flags)    (((flags) & FASTNAT_L3NUM_IPV6) ? AF_INET6 : AF_INET)
