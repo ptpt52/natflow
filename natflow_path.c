@@ -1969,14 +1969,14 @@ fastnat_check:
 												};
 												/* no vlan for ext dev */
 												reply_dev = nf->rroute[NF_FF_DIR_REPLY].outdev;
-#if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
+#if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 												reply_vid = (natflow->flow.timeout) & 0xffff;
 #endif
 												memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 												memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 												memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
 												memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
-#if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
+#if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 												if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
 													orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
 													orig.vlan_proto =
@@ -2093,14 +2093,14 @@ fastnat_check:
 											};
 											/* no vlan for ext dev */
 											orig_dev = nf->rroute[NF_FF_DIR_ORIGINAL].outdev;
-#if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
+#if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 											orig_vid = (natflow->flow.timeout >> 16) & 0xffff;
 #endif
 											memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
 											memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
 											memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
 											memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
-#if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
+#if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 											if (nf->rroute[NF_FF_DIR_REPLY].vlan_present) {
 												reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
 												reply.vlan_proto =
@@ -2183,9 +2183,9 @@ fastnat_check:
 												}
 											}
 											/* end: only reply_dev has offload api */
-#endif /* !defined(CONFIG_HWNAT_EXTDEV_DISABLED) */
 										} else {
 											/* neither orig_dev nor reply_dev has offload api */
+#endif /* !defined(CONFIG_HWNAT_EXTDEV_DISABLED) */
 										}
 									} else {
 										/* hwnat is not enabled */
