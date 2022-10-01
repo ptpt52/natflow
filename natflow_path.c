@@ -1821,26 +1821,14 @@ fastnat_check:
 												struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
-													.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
-													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
-#else
-													| FLOW_OFFLOAD_PATH_WED_DIS
-#endif
-													,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 													.dsa_port = orig_dsa_port,
 #endif
 												};
 												flow_offload_hw_path_t reply = {
 													.dev = reply_dev,
-													.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
-													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
-#else
-													| FLOW_OFFLOAD_PATH_WED_DIS
-#endif
-													,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 													.dsa_port = reply_dsa_port,
 #endif
@@ -1935,13 +1923,7 @@ fastnat_check:
 												struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
-													.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
-													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
-#else
-													| FLOW_OFFLOAD_PATH_WED_DIS
-#endif
-													,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 													.dsa_port = orig_dsa_port,
 #endif
@@ -2076,13 +2058,7 @@ fastnat_check:
 											};
 											flow_offload_hw_path_t reply = {
 												.dev = reply_dev,
-												.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
-												| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
-#else
-												| FLOW_OFFLOAD_PATH_WED_DIS
-#endif
-												,
+												.flags = FLOW_OFFLOAD_PATH_ETHERNET,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 												.dsa_port = reply_dsa_port,
 #endif
