@@ -123,6 +123,8 @@ struct ifname_match *ifname_match_get(int idx, struct net_device **out_dev)
 unsigned short hwnat = 1;
 #if defined(CONFIG_NET_MEDIATEK_SOC_WED)
 unsigned short hwnat_wed_disabled = 0;
+#else
+unsigned short hwnat_wed_disabled = 1;
 #endif
 #endif
 unsigned int delay_pkts = 0;
@@ -883,7 +885,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		        (skb->hash & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC) {
 			_I = (skb->hash & HWNAT_QUEUE_MAPPING_HASH_MASK) % NATFLOW_FASTNAT_TABLE_SIZE;
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
-			if (_I == 0) _I = (skb->vlan_tci & HWNAT_QUEUE_MAPPING_HASH_MASK) % NATFLOW_FASTNAT_TABLE_SIZE;
+			if (hwnat_wed_disabled) {
+				if (_I == 0) _I = (skb->vlan_tci & HWNAT_QUEUE_MAPPING_HASH_MASK) % NATFLOW_FASTNAT_TABLE_SIZE;
+			}
 #endif
 			nfn = &natflow_fast_nat_table[_I];
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
@@ -896,7 +900,14 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				}
 				//nfn->jiffies = jiffies; /* we update jiffies in keepalive */
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
-				__vlan_hwaccel_clear_tag(skb);
+				if (hwnat_wed_disabled) {
+					__vlan_hwaccel_clear_tag(skb);
+				} else {
+					if (!skb_vlan_tag_present(skb) && nfn->vlan_present) /* revert vlan_present if uses_dsa */
+						skb->vlan_present = 1;
+					if (skb_vlan_tag_present(skb))
+						skb->vlan_tci &= ~HWNAT_QUEUE_MAPPING_MAGIC;
+				}
 #else
 				if (!skb_vlan_tag_present(skb) && nfn->vlan_present) /* revert vlan_present if uses_dsa */
 					skb->vlan_present = 1;
@@ -994,8 +1005,10 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		 * Route forwarding: all good
 		 * Bridge forwarding: cannot handle vlan tag packets, pppoe tag is good
 		 */
-		if (skb_vlan_tag_present(skb) && !(skb->dev->netdev_ops->ndo_flow_offload || skb->dev->netdev_ops->ndo_flow_offload_check)) {
-			goto out;
+		if (hwnat_wed_disabled) {
+			if (skb_vlan_tag_present(skb) && !(skb->dev->netdev_ops->ndo_flow_offload || skb->dev->netdev_ops->ndo_flow_offload_check)) {
+				goto out;
+			}
 		}
 #endif
 		/* skip for defrag-skb or large packets */
@@ -1082,7 +1095,17 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
-					__vlan_hwaccel_clear_tag(skb);
+					if (hwnat_wed_disabled) {
+						__vlan_hwaccel_clear_tag(skb);
+					} else {
+						if (nfn->vlan_present) {
+							if (nfn->vlan_proto == FF_ETH_P_8021Q)
+								__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
+							else if (nfn->vlan_proto == FF_ETH_P_8021AD)
+								__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
+						} else if (skb_vlan_tag_present(skb))
+							__vlan_hwaccel_clear_tag(skb);
+					}
 #else
 					if (nfn->vlan_present) {
 						if (nfn->vlan_proto == FF_ETH_P_8021Q)
@@ -1270,7 +1293,17 @@ fast_output:
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
-					__vlan_hwaccel_clear_tag(skb);
+					if (hwnat_wed_disabled) {
+						__vlan_hwaccel_clear_tag(skb);
+					} else {
+						if (nfn->vlan_present) {
+							if (nfn->vlan_proto == FF_ETH_P_8021Q)
+								__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
+							else if (nfn->vlan_proto == FF_ETH_P_8021AD)
+								__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
+						} else if (skb_vlan_tag_present(skb))
+							__vlan_hwaccel_clear_tag(skb);
+					}
 #else
 					if (nfn->vlan_present) {
 						if (nfn->vlan_proto == FF_ETH_P_8021Q)
@@ -1945,7 +1978,7 @@ fastnat_check:
 												flow_offload_hw_path_t reply = {
 													.dev = reply_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
 													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
 #else
 													| FLOW_OFFLOAD_PATH_WED_DIS
@@ -1958,7 +1991,9 @@ fastnat_check:
 												/* no vlan for ext dev */
 												reply_dev = nf->rroute[NF_FF_DIR_REPLY].outdev;
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
-												reply_vid = (natflow->flow.timeout) & 0xffff;
+												if (hwnat_wed_disabled) {
+													reply_vid = (natflow->flow.timeout) & 0xffff;
+												}
 #endif
 												if ((nfn->flags & FASTNAT_BRIDGE_FWD)) {
 													orig.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
@@ -1969,17 +2004,34 @@ fastnat_check:
 												memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
 												memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
-												if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
-													orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
-													orig.vlan_proto =
-													    nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
-													    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
-													orig.vlan_id = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci;
+												if (hwnat_wed_disabled) {
+													if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
+														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+														orig.vlan_proto =
+														    nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
+														    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+														orig.vlan_id = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci;
+													}
+													/* must set reply_vid */
+													reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+													reply.vlan_proto = htons(ETH_P_8021Q);
+													reply.vlan_id = reply_vid;
+												} else {
+													if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
+														orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+														orig.vlan_proto =
+														    nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
+														    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+														orig.vlan_id = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci;
+													}
+													if (nf->rroute[NF_FF_DIR_REPLY].vlan_present) {
+														reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+														reply.vlan_proto =
+														    nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
+														    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+														reply.vlan_id = nf->rroute[NF_FF_DIR_REPLY].vlan_tci;
+													}
 												}
-												/* must set reply_vid */
-												reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
-												reply.vlan_proto = htons(ETH_P_8021Q);
-												reply.vlan_id = reply_vid;
 #else
 												if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
 													orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
@@ -2060,7 +2112,7 @@ fastnat_check:
 											flow_offload_hw_path_t orig = {
 												.dev = orig_dev,
 												.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED) && !defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
 												| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
 #else
 												| FLOW_OFFLOAD_PATH_WED_DIS
@@ -2080,7 +2132,9 @@ fastnat_check:
 											/* no vlan for ext dev */
 											orig_dev = nf->rroute[NF_FF_DIR_ORIGINAL].outdev;
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
-											orig_vid = (natflow->flow.timeout >> 16) & 0xffff;
+											if (hwnat_wed_disabled) {
+												orig_vid = (natflow->flow.timeout >> 16) & 0xffff;
+											}
 #endif
 											if ((nfn->flags & FASTNAT_BRIDGE_FWD)) {
 												orig.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
@@ -2091,17 +2145,34 @@ fastnat_check:
 											memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
 											memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
-											if (nf->rroute[NF_FF_DIR_REPLY].vlan_present) {
-												reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
-												reply.vlan_proto =
-												    nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
-												    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
-												reply.vlan_id = nf->rroute[NF_FF_DIR_REPLY].vlan_tci;
+											if (hwnat_wed_disabled) {
+												if (nf->rroute[NF_FF_DIR_REPLY].vlan_present) {
+													reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+													reply.vlan_proto =
+													    nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
+													    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+													reply.vlan_id = nf->rroute[NF_FF_DIR_REPLY].vlan_tci;
+												}
+												/* must set orig_vid */
+												orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+												orig.vlan_proto = htons(ETH_P_8021Q);
+												orig.vlan_id = orig_vid;
+											} else {
+												if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
+													orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+													orig.vlan_proto =
+													    nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
+													    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+													orig.vlan_id = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci;
+												}
+												if (nf->rroute[NF_FF_DIR_REPLY].vlan_present) {
+													reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+													reply.vlan_proto =
+													    nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
+													    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+													reply.vlan_id = nf->rroute[NF_FF_DIR_REPLY].vlan_tci;
+												}
 											}
-											/* must set orig_vid */
-											orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
-											orig.vlan_proto = htons(ETH_P_8021Q);
-											orig.vlan_id = orig_vid;
 #else
 											if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
 												orig.flags |= FLOW_OFFLOAD_PATH_VLAN;

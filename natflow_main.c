@@ -74,9 +74,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 #if defined(CONFIG_NATFLOW_PATH)
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 		             "#    hwnat=%u\n"
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
 		             "#    hwnat_wed_disabled=%u\n"
-#endif
 #endif
 		             "#    delay_pkts=%u\n"
 #endif
@@ -91,9 +89,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 #if defined(CONFIG_NATFLOW_PATH)
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 		             hwnat,
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
 		             hwnat_wed_disabled,
-#endif
 #endif
 		             delay_pkts,
 		             natflow_disabled_get(),
@@ -216,7 +212,6 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 			hwnat = d;
 			goto done;
 		}
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
 	} else if (strncmp(data, "hwnat_wed_disabled=", 19) == 0) {
 		int d;
 		n = sscanf(data, "hwnat_wed_disabled=%u", &d);
@@ -224,7 +219,6 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 			hwnat_wed_disabled = d;
 			goto done;
 		}
-#endif
 #endif
 	} else if (strncmp(data, "delay_pkts=", 11) == 0) {
 		int d;
