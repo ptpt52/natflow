@@ -29,14 +29,17 @@ typedef struct natflow_route_t {
 	struct net_device *outdev;
 } natflow_route_t;
 
-#define NF_FF_OFFLOAD_BIT 0
-#define NF_FF_OFFLOAD (1 << NF_FF_OFFLOAD_BIT)
-
 #define NF_FF_ORIGINAL_DSA_BIT 1
 #define NF_FF_ORIGINAL_DSA (1 << NF_FF_ORIGINAL_DSA_BIT)
 
 #define NF_FF_REPLY_DSA_BIT 2
 #define NF_FF_REPLY_DSA (1 << NF_FF_REPLY_DSA_BIT)
+
+#define NF_FF_ORIGINAL_OFFLOAD_BIT 3
+#define NF_FF_ORIGINAL_OFFLOAD (1 << NF_FF_ORIGINAL_OFFLOAD_BIT)
+
+#define NF_FF_REPLY_OFFLOAD_BIT 4
+#define NF_FF_REPLY_OFFLOAD (1 << NF_FF_REPLY_OFFLOAD_BIT)
 
 #define NF_FF_ORIGINAL_BIT 8
 #define NF_FF_ORIGINAL (1 << NF_FF_ORIGINAL_BIT)

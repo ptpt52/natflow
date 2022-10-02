@@ -1058,8 +1058,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					wmb();
 					clear_bit(0, &nfn->status);
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
-					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 4*1024*1024/8 && !(nfn->flags & FASTNAT_EXT_HWNAT_FLAG))
-						re_learn = 2;
+					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 4*1024*1024/8) {
+						if (!(nfn->flags & FASTNAT_EXT_HWNAT_FLAG))
+							re_learn = 2;
+					} else if (bytes < NATFLOW_FF_SAMPLE_TIME * 1*1024*1024/8) {
+						re_learn = 3;
+					}
 #endif
 					goto slow_fastpath;
 				}
@@ -1248,8 +1252,12 @@ fast_output:
 					wmb();
 					clear_bit(0, &nfn->status);
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
-					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 4*1024*1024/8 && !(nfn->flags & FASTNAT_EXT_HWNAT_FLAG))
-						re_learn = 2;
+					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 4*1024*1024/8) {
+						if (!(nfn->flags & FASTNAT_EXT_HWNAT_FLAG))
+							re_learn = 2;
+					} else if (bytes < NATFLOW_FF_SAMPLE_TIME * 1*1024*1024/8) {
+						re_learn = 3;
+					}
 #endif
 					goto slow_fastpath;
 				}
@@ -1380,9 +1388,17 @@ slow_fastpath:
 		}
 	}
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
-	else if (re_learn == 2) {
+	else if (re_learn == 2 && !(nf->status & NF_FF_ORIGINAL_OFFLOAD) && !(nf->status & NF_FF_REPLY_OFFLOAD)) {
 		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
+	} else if (re_learn == 3) {
+		if (dir == NF_FF_DIR_ORIGINAL) {
+			if ((nf->status & NF_FF_ORIGINAL_OFFLOAD))
+				simple_clear_bit(NF_FF_ORIGINAL_OFFLOAD_BIT, &nf->status);
+		} else {
+			if ((nf->status & NF_FF_REPLY_OFFLOAD))
+				simple_clear_bit(NF_FF_REPLY_OFFLOAD_BIT, &nf->status);
+		}
 	}
 #endif
 #endif
@@ -1809,6 +1825,9 @@ fastnat_check:
 												simple_set_bit(NF_FF_REPLY_DSA_BIT, &nf->status);
 										}
 #endif
+										simple_set_bit(NF_FF_ORIGINAL_OFFLOAD_BIT, &nf->status);
+										simple_set_bit(NF_FF_REPLY_OFFLOAD_BIT, &nf->status);
+
 										if (orig_dev->netdev_ops->ndo_flow_offload) {
 											/* xxx: orig_dev has offload api */
 											if (orig_dev == reply_dev || reply_dev->netdev_ops->ndo_flow_offload) {
@@ -2636,7 +2655,6 @@ slow_fastpath6:
 		goto out6;
 	}
 
-	//if (!(nf->status & NF_FF_OFFLOAD)) {
 	if (!(nf->status & NF_FF_REPLY_OK) || !(nf->status & NF_FF_ORIGINAL_OK)) {
 		switch (IPV6H->nexthdr) {
 		case IPPROTO_TCP:
