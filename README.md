@@ -5,18 +5,21 @@ A fast forwarding stanalone kernel module with zero-patch to kernel. It could be
 ## Notes
 Only work for x-wrt(https://github.com/x-wrt/x-wrt)
 
-hwnat support for mt7621/mt7622
+hwnat support for mt7621/mt7622/MT7981/MT7986
+
+hwnat with wed support for mt7622/MT7981/MT7986
 ```
 port--port hwnat supported:
-port---ppe---port
+port-->ppe-->port
+port<--ppe<--port
 
 wifi--port hwnat supported:
-wifi--cpu--ppe---port
-```
+wifi-->cpu-->ppe-->port
+wifi<--cpu<--ppe<--port
 
-the wifi pure hardware nat for mt7622 is not supported yet. for now it just works as mt7621
-```
-wifi--cpu--ppe--port
+wifi-port hwnat with wed supported:
+wifi-->cpu-->ppe-->port
+wifi<--ppe<--port
 ```
 
 ## build
