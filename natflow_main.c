@@ -69,7 +69,11 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             "#    ifname_clear -- clear ifname filter\n"
 		             "#    ifname_add=<ifname> -- add ifname to filter\n"
 		             "#\n"
+#if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
+		             "# Info: CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH\n"
+#else
 		             "# Info:\n"
+#endif
 		             "#    ...\n"
 #if defined(CONFIG_NATFLOW_PATH)
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
