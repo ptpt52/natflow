@@ -1501,11 +1501,6 @@ slow_fastpath:
 		if (delay_pkts && packets <= delay_pkts) {
 			goto out;
 		}
-		/* do FF check every 16384 packets */
-		if (packets % 16384 == 1) {
-			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
-			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
-		}
 		/* skip 1/256 packets to slow path */
 		if (packets % 256 == 63) {
 			goto out;
@@ -2742,11 +2737,6 @@ slow_fastpath6:
 		int packets = atomic64_read(&counter[0].packets) + atomic64_read(&counter[1].packets);
 		if (delay_pkts && packets <= delay_pkts) {
 			goto out6;
-		}
-		/* do FF check every 16384 packets */
-		if (packets % 16384 == 1) {
-			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
-			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 		}
 		/* skip 1/256 packets to slow path */
 		if (packets % 256 == 63) {
