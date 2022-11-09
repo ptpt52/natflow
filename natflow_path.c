@@ -371,8 +371,8 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 						if (dev) {
 							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
 							u64_stats_update_begin(&vpstats->syncp);
-							vpstats->tx_bytes += bytes;
-							vpstats->tx_packets += packets;
+							compat_u64_stats_add(&vpstats->tx_bytes, bytes);
+							compat_u64_stats_add(&vpstats->tx_packets, packets);
 							u64_stats_update_end(&vpstats->syncp);
 						}
 					}
@@ -391,8 +391,8 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 						if (dev) {
 							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
 							u64_stats_update_begin(&vpstats->syncp);
-							vpstats->rx_bytes += bytes;
-							vpstats->rx_packets += packets;
+							compat_u64_stats_add(&vpstats->rx_bytes, bytes);
+							compat_u64_stats_add(&vpstats->rx_packets, packets);
 							u64_stats_update_end(&vpstats->syncp);
 						}
 					}
@@ -572,8 +572,8 @@ __keepalive_ipv6_main:
 						if (dev) {
 							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
 							u64_stats_update_begin(&vpstats->syncp);
-							vpstats->tx_bytes += bytes;
-							vpstats->tx_packets += packets;
+							compat_u64_stats_add(&vpstats->tx_bytes, bytes);
+							compat_u64_stats_add(&vpstats->tx_packets, packets);
 							u64_stats_update_end(&vpstats->syncp);
 						}
 					}
@@ -592,8 +592,8 @@ __keepalive_ipv6_main:
 						if (dev) {
 							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
 							u64_stats_update_begin(&vpstats->syncp);
-							vpstats->rx_bytes += bytes;
-							vpstats->rx_packets += packets;
+							compat_u64_stats_add(&vpstats->rx_bytes, bytes);
+							compat_u64_stats_add(&vpstats->rx_packets, packets);
 							u64_stats_update_end(&vpstats->syncp);
 						}
 					}

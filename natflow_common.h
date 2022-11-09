@@ -355,4 +355,13 @@ static inline unsigned long nf_ct_expires(const struct nf_conn *ct)
 #define REFCOUNT_read atomic_read
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+#define compat_u64_stats_add u64_stats_add
+#else
+static inline void compat_u64_stats_add(u64 *r, unsigned long v)
+{
+	*r += v;
+}
+#endif
+
 #endif /* _NATFLOW_COMMON_H_ */
