@@ -273,7 +273,7 @@ static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __b
 	hash = (hash >> 24) | ((hash & 0xffffff) << 8);
 	hash ^= hv1 ^ hv2 ^ hv3;
 	hash ^= hash >> 16;
-#if defined(CONFIG_PINCTRL_MT7986)
+#if defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)
 	hash <<= 2;
 #else
 	hash <<= 1;
