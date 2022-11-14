@@ -419,20 +419,24 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 					atomic64_add(bytes, &counter[d].bytes);
 				}
 				if (hw == 2 && !speed_bytes) {
-					int i = (current_jiffies/HZ/2 + 3) % 4;
+					unsigned int i = ((unsigned int)current_jiffies/HZ/2) % 4;
+					unsigned int per_i = (unsigned int)current_jiffies % (HZ * 2);
 					speed_bytes = hw_speed_bytes;
 					speed_packets = hw_speed_packets;
-					speed_bytes[i] = bytes;
-					speed_packets[i] = packets;
+					speed_bytes[i] = bytes * per_i / (HZ * 2);
+					speed_packets[i] = packets * per_i / (HZ * 2);
+					i = (i + 3) % 4;
+					speed_bytes[i] = bytes * (HZ * 2 - per_i + 1) / (HZ * 2);
+					speed_packets[i] = packets * (HZ * 2 - per_i + 1) / (HZ * 2);
 				}
 				if (!speed_bytes) {
 					break;
 				}
 				fud = natflow_fakeuser_data(user);
 				if (d == 0) {
-					unsigned int rx_speed_jiffies = atomic_xchg(&fud->rx_speed_jiffies, current_jiffies);
-					int i = (current_jiffies/HZ/2) % 4;
-					int j = (rx_speed_jiffies/HZ/2) % 4;
+					unsigned int rx_speed_jiffies = atomic_xchg(&fud->rx_speed_jiffies, (unsigned int)current_jiffies);
+					unsigned int i = ((unsigned int)current_jiffies/HZ/2) % 4;
+					unsigned int j = (rx_speed_jiffies/HZ/2) % 4;
 					int diff = 0;
 					diff_jiffies = uintmindiff(current_jiffies, rx_speed_jiffies);
 					if (diff_jiffies >= HZ * 2 * 4) {
@@ -456,9 +460,9 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 						speed_bytes[j] = speed_packets[j] = 0;
 					}
 				} else {
-					unsigned int tx_speed_jiffies = atomic_xchg(&fud->tx_speed_jiffies, current_jiffies);
-					int i = (current_jiffies/HZ/2) % 4;
-					int j = (tx_speed_jiffies/HZ/2) % 4;
+					unsigned int tx_speed_jiffies = atomic_xchg(&fud->tx_speed_jiffies, (unsigned int)current_jiffies);
+					unsigned int i = ((unsigned int)current_jiffies/HZ/2) % 4;
+					unsigned int j = (tx_speed_jiffies/HZ/2) % 4;
 					int diff = 0;
 					diff_jiffies = uintmindiff(current_jiffies, tx_speed_jiffies);
 					if (diff_jiffies >= HZ * 2 * 4) {
@@ -1611,9 +1615,9 @@ slow_fastpath:
 		fud = natflow_fakeuser_data(user);
 		if (d == 0) {
 			unsigned int rx_speed_jiffies = atomic_xchg(&fud->rx_speed_jiffies, jiffies);
-			int i = (jiffies/HZ/2) % 4;
-			int j = (rx_speed_jiffies/HZ/2) % 4;
-			unsigned long diff_jiffies = uintmindiff(jiffies, rx_speed_jiffies);
+			unsigned int i = ((unsigned int)jiffies/HZ/2) % 4;
+			unsigned int j = (rx_speed_jiffies/HZ/2) % 4;
+			unsigned int diff_jiffies = uintmindiff(jiffies, rx_speed_jiffies);
 			if (diff_jiffies >= HZ * 2 * 4) {
 				for(j = 0; j < 4; j++) {
 					atomic_set(&fud->rx_speed_bytes[j], 0);
@@ -1630,9 +1634,9 @@ slow_fastpath:
 			atomic_add(skb->len, &fud->rx_speed_bytes[j]);
 		} else {
 			unsigned int tx_speed_jiffies = atomic_xchg(&fud->tx_speed_jiffies, jiffies);
-			int i = (jiffies/HZ/2) % 4;
-			int j = (tx_speed_jiffies/HZ/2) % 4;
-			unsigned long diff_jiffies = uintmindiff(jiffies, tx_speed_jiffies);
+			unsigned int i = ((unsigned int)jiffies/HZ/2) % 4;
+			unsigned int j = (tx_speed_jiffies/HZ/2) % 4;
+			unsigned int diff_jiffies = uintmindiff(jiffies, tx_speed_jiffies);
 			if (diff_jiffies >= HZ * 2 * 4) {
 				for(j = 0; j < 4; j++) {
 					atomic_set(&fud->tx_speed_bytes[j], 0);
