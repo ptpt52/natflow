@@ -6,6 +6,10 @@ natflow-y += natflow_main.o natflow_common.o natflow_path.o natflow_user.o natfl
 
 EXTRA_CFLAGS += -Wall -Werror
 
+ifdef NO_DEBUG
+EXTRA_CFLAGS += -Wno-unused -Os -DNO_DEBUG
+endif
+
 PWD ?= $(shell pwd)
 
 ifndef KERNELRELEASE

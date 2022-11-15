@@ -84,6 +84,18 @@ extern unsigned int debug;
 		} \
 	} while (0)
 
+#ifdef NO_DEBUG
+#undef NATFLOW_FIXME
+#undef NATFLOW_DEBUG
+#undef NATFLOW_INFO
+#undef NATFLOW_WARN
+#undef NATFLOW_ERROR
+#define NATFLOW_FIXME(fmt, ...)
+#define NATFLOW_DEBUG(fmt, ...)
+#define NATFLOW_INFO(fmt, ...)
+#define NATFLOW_WARN(fmt, ...)
+#define NATFLOW_ERROR(fmt, ...)
+#endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 static inline int nf_register_hooks(struct nf_hook_ops *reg, unsigned int n)
