@@ -863,11 +863,11 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	void *l4;
 	natflow_t *nf;
 	int ret = NF_ACCEPT;
-#ifdef CONFIG_NETFILTER_INGRESS
 	int d;
+#ifdef CONFIG_NETFILTER_INGRESS
 	unsigned int re_learn = 0;
-	unsigned int ingress_pad_len = 0;
 #endif
+	unsigned int ingress_pad_len = 0;
 	unsigned int ingress_trim_off = 0;
 
 	if (disabled)
