@@ -12,6 +12,13 @@
 #include <net/netfilter/nf_conntrack.h>
 #include <linux/netfilter/ipset/ip_set.h>
 
+struct token_ctrl {
+	spinlock_t lock;
+	int tokens;
+	int tokens_per_jiffy;
+	uint32_t jiffies;
+};
+
 typedef struct fakeuser_data_t {
 	uint32_t timestamp;
 	uint8_t macaddr[ETH_ALEN];
@@ -25,11 +32,16 @@ typedef struct fakeuser_data_t {
 	atomic_t rx_speed_packets[4];
 	atomic_t tx_speed_bytes[4];
 	atomic_t tx_speed_packets[4];
-	uint32_t rx_bytes_per_hz;
-	uint32_t tx_bytes_per_hz;
+	struct {
+		struct token_ctrl rx;
+		struct token_ctrl tx;
+	} tc;
 } fakeuser_data_t;
 
 typedef struct nf_conn natflow_fakeuser_t;
+
+extern int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud);
+extern int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud);
 
 extern natflow_fakeuser_t *natflow_user_get(struct nf_conn *ct);
 

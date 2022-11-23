@@ -131,6 +131,86 @@ int natflow_user_disabled_get(void)
 	return disabled;
 }
 
+static int natflow_token_ctrl(struct sk_buff *skb, struct token_ctrl *tc)
+{
+	int feed_jiffies = 0;
+	unsigned int current_jiffies = (unsigned int)jiffies;
+	int ret = 0;
+	int len = skb->len;
+	struct iphdr *iph = ip_hdr(skb);
+	void *l4 = (void *)iph + iph->ihl * 4;
+
+	switch (iph->protocol) {
+	case IPPROTO_TCP:
+		len -= iph->ihl * 4 + TCPH(l4)->doff * 4;
+		break;
+	case IPPROTO_UDP:
+		len -= iph->ihl * 4 + sizeof(struct udphdr);
+		break;
+	}
+
+	if (len <= 0) return 0;
+
+	if (tc->tokens_per_jiffy == 0) return 0;
+
+	spin_lock_bh(&tc->lock);
+	if (tc->tokens > 0) {
+		tc->tokens -= len;
+		ret = 0;
+		goto out;
+	}
+
+	current_jiffies = jiffies;
+	if (current_jiffies > tc->jiffies) {
+		feed_jiffies = current_jiffies - tc->jiffies;
+	} else {
+		feed_jiffies = tc->jiffies - current_jiffies;
+	}
+	if (feed_jiffies > HZ) {
+		feed_jiffies = HZ;
+	}
+
+	ret = tc->tokens + (int)(tc->tokens_per_jiffy * feed_jiffies);
+
+	if (feed_jiffies <= HZ) {
+		tc->tokens = ret;
+	} else {
+		if (ret <= 0) {
+			tc->tokens = ret;
+		} else {
+			tc->tokens = 0;
+		}
+	}
+
+	if (tc->tokens >= 0) {
+		tc->tokens -= len;
+		ret = 0;
+	}
+	tc->jiffies = current_jiffies;
+
+out:
+	spin_unlock_bh(&tc->lock);
+	return ret;
+}
+
+int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud)
+{
+	if (fud->tc.rx.tokens_per_jiffy == 0) {
+		return 0;
+	}
+
+	return natflow_token_ctrl(skb, &fud->tc.rx);
+}
+
+int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud)
+{
+	if (fud->tc.tx.tokens_per_jiffy == 0) {
+		return 0;
+	}
+
+	return natflow_token_ctrl(skb, &fud->tc.tx);
+}
+
 static unsigned int auth_open_weixin_reply = 0;
 
 static unsigned short https_redirect_port = __constant_htons(443);
@@ -320,6 +400,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			return NULL;
 		}
 		if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status) && !test_and_set_bit(IPS_NATFLOW_USER_BIT, &user->status)) {
+			struct fakeuser_data_t *fud;
 			newoff = ALIGN(user->ext->len, __ALIGN_64BITS);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
 			new = __krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
@@ -348,6 +429,9 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			}
 			new->len = newoff;
 			memset((void *)new + newoff, 0, sizeof(struct fakeuser_data_t));
+			fud = (struct fakeuser_data_t *)((void *)new + newoff);
+			spin_lock_init(&fud->tc.rx.lock);
+			spin_lock_init(&fud->tc.tx.lock);
 		}
 
 		ret = nf_conntrack_confirm(uskb);
@@ -1322,49 +1406,57 @@ static unsigned int natflow_user_post_hook(void *priv,
 		struct nf_conn_counter *counter = acct->counter;
 		struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 		if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[CTINFO2DIR(ctinfo)].tuple.src.u3.ip) {
-			/* download */
-			unsigned int rx_speed_jiffies = atomic_xchg(&fud->rx_speed_jiffies, jiffies);
-			unsigned int i = ((unsigned int)jiffies/HZ/2) % 4;
-			unsigned int j = (rx_speed_jiffies/HZ/2) % 4;
-			unsigned int diff_jiffies = uintmindiff(jiffies, rx_speed_jiffies);
-			if (diff_jiffies >= HZ * 2 * 4) {
-				for(j = 0; j < 4; j++) {
+			if (rx_token_ctrl(skb, fud) < 0) {
+				return NF_DROP;
+			} else {
+				/* download */
+				unsigned int rx_speed_jiffies = atomic_xchg(&fud->rx_speed_jiffies, jiffies);
+				unsigned int i = ((unsigned int)jiffies/HZ/2) % 4;
+				unsigned int j = (rx_speed_jiffies/HZ/2) % 4;
+				unsigned int diff_jiffies = uintmindiff(jiffies, rx_speed_jiffies);
+				if (diff_jiffies >= HZ * 2 * 4) {
+					for(j = 0; j < 4; j++) {
+						atomic_set(&fud->rx_speed_bytes[j], 0);
+						atomic_set(&fud->rx_speed_packets[j], 0);
+					}
+					j = i;
+				}
+				for (; j != i; ) {
+					j = (j + 1) % 4;
 					atomic_set(&fud->rx_speed_bytes[j], 0);
 					atomic_set(&fud->rx_speed_packets[j], 0);
 				}
-				j = i;
+				atomic_inc(&fud->rx_speed_packets[j]);
+				atomic_add(skb->len, &fud->rx_speed_bytes[j]);
+				atomic64_inc(&counter[0].packets);
+				atomic64_add(skb->len, &counter[0].bytes);
 			}
-			for (; j != i; ) {
-				j = (j + 1) % 4;
-				atomic_set(&fud->rx_speed_bytes[j], 0);
-				atomic_set(&fud->rx_speed_packets[j], 0);
-			}
-			atomic_inc(&fud->rx_speed_packets[j]);
-			atomic_add(skb->len, &fud->rx_speed_bytes[j]);
-			atomic64_inc(&counter[0].packets);
-			atomic64_add(skb->len, &counter[0].bytes);
 		} else {
-			/* upload */
-			unsigned int tx_speed_jiffies = atomic_xchg(&fud->tx_speed_jiffies, jiffies);
-			unsigned int i = ((unsigned int)jiffies/HZ/2) % 4;
-			unsigned int j = (tx_speed_jiffies/HZ/2) % 4;
-			unsigned int diff_jiffies = uintmindiff(jiffies, tx_speed_jiffies);
-			if (diff_jiffies >= HZ * 2 * 4) {
-				for(j = 0; j < 4; j++) {
+			if (tx_token_ctrl(skb, fud) < 0) {
+				return NF_DROP;
+			} else {
+				/* upload */
+				unsigned int tx_speed_jiffies = atomic_xchg(&fud->tx_speed_jiffies, jiffies);
+				unsigned int i = ((unsigned int)jiffies/HZ/2) % 4;
+				unsigned int j = (tx_speed_jiffies/HZ/2) % 4;
+				unsigned int diff_jiffies = uintmindiff(jiffies, tx_speed_jiffies);
+				if (diff_jiffies >= HZ * 2 * 4) {
+					for(j = 0; j < 4; j++) {
+						atomic_set(&fud->tx_speed_bytes[j], 0);
+						atomic_set(&fud->tx_speed_packets[j], 0);
+					}
+					j = i;
+				}
+				for (; j != i; ) {
+					j = (j + 1) % 4;
 					atomic_set(&fud->tx_speed_bytes[j], 0);
 					atomic_set(&fud->tx_speed_packets[j], 0);
 				}
-				j = i;
+				atomic_inc(&fud->tx_speed_packets[j]);
+				atomic_add(skb->len, &fud->tx_speed_bytes[j]);
+				atomic64_inc(&counter[1].packets);
+				atomic64_add(skb->len, &counter[1].bytes);
 			}
-			for (; j != i; ) {
-				j = (j + 1) % 4;
-				atomic_set(&fud->tx_speed_bytes[j], 0);
-				atomic_set(&fud->tx_speed_packets[j], 0);
-			}
-			atomic_inc(&fud->tx_speed_packets[j]);
-			atomic_add(skb->len, &fud->tx_speed_bytes[j]);
-			atomic64_inc(&counter[1].packets);
-			atomic64_add(skb->len, &counter[1].bytes);
 		}
 	}
 out:
@@ -1904,8 +1996,6 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 						continue;
 					}
 					fud = natflow_fakeuser_data(ct);
-					fud->rx_bytes_per_hz = 0;
-					fud->tx_bytes_per_hz = 0;
 					fud->timestamp = 0;
 					fud->auth_type = AUTH_TYPE_UNKNOWN;
 					fud->auth_status = AUTH_NONE;
@@ -1954,8 +2044,6 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 			return -EINVAL;
 
 		fud = natflow_fakeuser_data(user);
-		fud->rx_bytes_per_hz = 0;
-		fud->tx_bytes_per_hz = 0;
 		fud->timestamp = 0;
 		fud->auth_type = AUTH_TYPE_UNKNOWN;
 		fud->auth_status = AUTH_NONE;
@@ -1991,6 +2079,36 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 
 		fud = natflow_fakeuser_data(user);
 		fud->auth_status = e;
+
+		natflow_user_put(user);
+		goto done;
+	} else if (strncmp(data, "set-token-ctrl ", 15) == 0) {
+		struct fakeuser_data_t *fud;
+		natflow_fakeuser_t *user = NULL;
+		__be32 ip;
+		unsigned int a, b, c, d, rx, tx;
+		n = sscanf(data, "set-token-ctrl %u.%u.%u.%u %u %u", &a, &b, &c, &d, &rx, &tx);
+		if ( !(n == 6 &&
+		        (((a & 0xff) == a) &&
+		         ((b & 0xff) == b) &&
+		         ((c & 0xff) == c) &&
+		         ((d & 0xff) == d)) )) {
+			return -EINVAL;
+		}
+		ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
+
+		user = natflow_user_find_get(ip);
+		if (!user)
+			return -EINVAL;
+
+		fud = natflow_fakeuser_data(user);
+		fud->tc.rx.tokens_per_jiffy = rx / HZ;
+		fud->tc.tx.tokens_per_jiffy = tx / HZ;
+		if (tx || rx) {
+			set_bit(IPS_NATFLOW_USER_TOKEN_CTRL_BIT, &user->status);
+		} else {
+			clear_bit(IPS_NATFLOW_USER_TOKEN_CTRL_BIT, &user->status);
+		}
 
 		natflow_user_put(user);
 		goto done;
