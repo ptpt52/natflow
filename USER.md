@@ -40,3 +40,12 @@ example: `echo kick 1.2.3.4 >/dev/userinfo_ctl`
 API: `echo set-status ip status >/dev/userinfo_ctl`
 
 example: `echo set-status 1.2.3.4 5 >/dev/userinfo_ctl`
+
+## token ctrl
+
+API: `echo set-token-ctrl ip rxbytes txbytes >/dev/userinfo_ctl`
+
+e.g. rx rate 10Mbps tx rate 5Mbps for 192.168.15.100:
+```
+echo set-token-ctrl 192.168.15.100 1310720 655360 >/dev/userinfo_ctl
+```
