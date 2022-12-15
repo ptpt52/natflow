@@ -11,6 +11,7 @@
 #include <linux/if_ether.h>
 #include <net/netfilter/nf_conntrack.h>
 #include <linux/netfilter/ipset/ip_set.h>
+#include "natflow.h"
 
 struct token_ctrl {
 	spinlock_t lock;
@@ -40,8 +41,8 @@ typedef struct fakeuser_data_t {
 
 typedef struct nf_conn natflow_fakeuser_t;
 
-extern int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud);
-extern int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud);
+extern int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf);
+extern int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf);
 
 extern natflow_fakeuser_t *natflow_user_get(struct nf_conn *ct);
 

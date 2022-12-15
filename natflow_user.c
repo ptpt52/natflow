@@ -131,6 +131,24 @@ int natflow_user_disabled_get(void)
 	return disabled;
 }
 
+#define QOS_TOKEN_CTRL_GROUP_MAX 64
+static struct {
+	struct token_ctrl rx;
+	struct token_ctrl tx;
+} qos_token_ctrl[QOS_TOKEN_CTRL_GROUP_MAX];
+
+static void qos_token_ctrl_init(void)
+{
+	int i;
+
+	memset(&qos_token_ctrl, 0, sizeof(*qos_token_ctrl) * QOS_TOKEN_CTRL_GROUP_MAX);
+
+	for (i = 0; i < QOS_TOKEN_CTRL_GROUP_MAX; i++) {
+		spin_lock_init(&qos_token_ctrl[i].rx.lock);
+		spin_lock_init(&qos_token_ctrl[i].tx.lock);
+	}
+}
+
 static int natflow_token_ctrl(struct sk_buff *skb, struct token_ctrl *tc)
 {
 	int feed_jiffies = 0;
@@ -193,19 +211,29 @@ out:
 	return ret;
 }
 
-int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud)
+int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf)
 {
-	if (fud->tc.rx.tokens_per_jiffy == 0) {
-		return 0;
+	int ret = 0;
+	if (nf && nf->qos_id) {
+		ret = natflow_token_ctrl(skb, &qos_token_ctrl[nf->qos_id - 1].rx);
+	}
+
+	if (fud->tc.rx.tokens_per_jiffy == 0 || ret < 0) {
+		return ret;
 	}
 
 	return natflow_token_ctrl(skb, &fud->tc.rx);
 }
 
-int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud)
+int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf)
 {
-	if (fud->tc.tx.tokens_per_jiffy == 0) {
-		return 0;
+	int ret = 0;
+	if (nf && nf->qos_id) {
+		ret = natflow_token_ctrl(skb, &qos_token_ctrl[nf->qos_id - 1].tx);
+	}
+
+	if (fud->tc.tx.tokens_per_jiffy == 0 || ret < 0) {
+		return ret;
 	}
 
 	return natflow_token_ctrl(skb, &fud->tc.tx);
@@ -1188,6 +1216,11 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		goto out;
 	}
 	fud = natflow_fakeuser_data(user);
+	nf = natflow_session_get(ct);
+	if (nf && !(nf->status & NF_FF_TOKEN_CTRL) && (IPS_NATFLOW_USER_TOKEN_CTRL & user->status)) {
+		/* tell FF this conn need token ctrl */
+		simple_set_bit(NF_FF_TOKEN_CTRL_BIT, &nf->status);
+	}
 
 	switch(fud->auth_status) {
 	case AUTH_REQ:
@@ -1198,7 +1231,6 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			void *l4 = (void *)iph + iph->ihl * 4;
 
 			/* tell FF do not emit pkts */
-			nf = natflow_session_get(ct);
 			if (nf && !(nf->status & NF_FF_USER_USE)) {
 				/* tell FF -user- need to use this conn */
 				simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
@@ -1302,7 +1334,6 @@ out:
 	}
 
 	if (ct && (ct->status & IPS_NATFLOW_USER_BYPASS)) {
-		nf = natflow_session_get(ct);
 		if (nf && (nf->status & NF_FF_USER_USE)) {
 			/* tell FF -user- has finished it's job */
 			simple_clear_bit(NF_FF_USER_USE_BIT, &nf->status);
@@ -1414,8 +1445,9 @@ static unsigned int natflow_user_post_hook(void *priv,
 	if (acct) {
 		struct nf_conn_counter *counter = acct->counter;
 		struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
+		natflow_t *nf = natflow_session_get(ct);
 		if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[CTINFO2DIR(ctinfo)].tuple.src.u3.ip) {
-			if (rx_token_ctrl(skb, fud) < 0) {
+			if (rx_token_ctrl(skb, fud, nf) < 0) {
 				return NF_DROP;
 			} else {
 				/* download */
@@ -1441,7 +1473,7 @@ static unsigned int natflow_user_post_hook(void *priv,
 				atomic64_add(skb->len, &counter[0].bytes);
 			}
 		} else {
-			if (tx_token_ctrl(skb, fud) < 0) {
+			if (tx_token_ctrl(skb, fud, nf) < 0) {
 				return NF_DROP;
 			} else {
 				/* upload */
@@ -2605,6 +2637,8 @@ int natflow_user_init(void)
 	int i;
 	int retval = 0;
 	dev_t devno;
+
+	qos_token_ctrl_init();
 
 	for (i = 0; i < NR_CPUS; i++) {
 		natflow_user_uskbs[i] = NULL;

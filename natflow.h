@@ -41,6 +41,9 @@ typedef struct natflow_route_t {
 #define NF_FF_REPLY_OFFLOAD_BIT 4
 #define NF_FF_REPLY_OFFLOAD (1 << NF_FF_REPLY_OFFLOAD_BIT)
 
+#define NF_FF_TOKEN_CTRL_BIT 5
+#define NF_FF_TOKEN_CTRL (1 << NF_FF_TOKEN_CTRL_BIT)
+
 #define NF_FF_ORIGINAL_BIT 8
 #define NF_FF_ORIGINAL (1 << NF_FF_ORIGINAL_BIT)
 #define NF_FF_REPLY_BIT 9
@@ -86,6 +89,7 @@ typedef struct natflow_route_t {
 
 typedef struct natflow_t {
 	unsigned short magic;
+	unsigned short qos_id;
 	unsigned int status;
 #define NF_FF_DIR_ORIGINAL 0
 #define NF_FF_DIR_REPLY 1

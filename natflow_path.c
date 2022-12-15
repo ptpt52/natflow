@@ -1608,7 +1608,7 @@ slow_fastpath:
 
 		fud = natflow_fakeuser_data(user);
 		if (d == 0) {
-			if (rx_token_ctrl(skb, fud) < 0) {
+			if (rx_token_ctrl(skb, fud, nf) < 0) {
 				return NF_DROP;
 			} else {
 				/* download */
@@ -1632,7 +1632,7 @@ slow_fastpath:
 				atomic_add(skb->len, &fud->rx_speed_bytes[j]);
 			}
 		} else {
-			if (tx_token_ctrl(skb, fud) < 0) {
+			if (tx_token_ctrl(skb, fud, nf) < 0) {
 				return NF_DROP;
 			} else {
 				/* upload */
@@ -1700,7 +1700,7 @@ slow_fastpath:
 	}
 
 #ifdef CONFIG_NETFILTER_INGRESS
-	if (!(nf->status & NF_FF_FAIL) && (!natflow_user_get(ct) || !(IPS_NATFLOW_USER_TOKEN_CTRL & natflow_user_get(ct)->status))) {
+	if (!(nf->status & NF_FF_FAIL) && !(nf->status & NF_FF_TOKEN_CTRL)) {
 		for (d = 0; d < NF_FF_DIR_MAX; d++) {
 			if (d == NF_FF_DIR_ORIGINAL) {
 				if (!(nf->status & NF_FF_ORIGINAL_CHECK) && !simple_test_and_set_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status)) {
