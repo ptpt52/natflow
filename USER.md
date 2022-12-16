@@ -61,7 +61,3 @@ echo clear >/dev/qos_ctl
 ```
 echo add user=<ipset/ip/ipcidr>,user_port=<portset/port>,remote=<ipset/ip/ipcidr>,remote_port=<portset/port>,proto=<tcp/udp>,rxbytes=0,txbytes=0 >/dev/qos_ctl
 ```
-3. change one rule:
-```
-echo id=<id> user=<ipset/ip/ipcidr>,user_port=<portset/port>,remote=<ipset/ip/ipcidr>,remote_port=<portset/port>,proto=<tcp/udp>,rxbytes=0,txbytes=0 >/dev/qos_ctl
-```

@@ -131,17 +131,82 @@ int natflow_user_disabled_get(void)
 	return disabled;
 }
 
+static int qos_major = 0;
+static int qos_minor = 0;
+static struct cdev qos_cdev;
+const char *qos_dev_name = "qos_ctl";
+static struct class *qos_class;
+static struct device *qos_dev;
+
 #define QOS_TOKEN_CTRL_GROUP_MAX 64
 static struct {
 	struct token_ctrl rx;
 	struct token_ctrl tx;
 } qos_token_ctrl[QOS_TOKEN_CTRL_GROUP_MAX];
 
+static struct qos_rule {
+	union {
+		unsigned char name[16];
+		__be32 ip;
+		struct {
+			__be32 ip;
+			__be32 mask;
+		} ipcidr;
+	} user;
+
+	union {
+		unsigned char name[16];
+		__be16 port;
+	} user_port;
+
+	union {
+		unsigned char name[16];
+		__be32 ip;
+		struct {
+			__be32 ip;
+			__be32 mask;
+		} ipcidr;
+	} remote;
+
+	union {
+		unsigned char name[16];
+		__be16 port;
+	} remote_port;
+
+	unsigned short proto;
+
+#define USER_TYPE_IP     BIT(0)
+#define USER_TYPE_IPCIDR BIT(1)
+#define USER_TYPE_SET    BIT(2)
+#define USER_TYPE_MASK   (USER_TYPE_IP|USER_TYPE_IPCIDR|USER_TYPE_SET)
+
+#define USER_PORT_TYPE_PORT BIT(3)
+#define USER_PORT_TYPE_SET  BIT(4)
+#define USER_PORT_TYPE_MASK (USER_PORT_TYPE_PORT|USER_PORT_TYPE_SET)
+
+#define REMOTE_TYPE_IP     BIT(5)
+#define REMOTE_TYPE_IPCIDR BIT(6)
+#define REMOTE_TYPE_SET    BIT(7)
+#define REMOTE_TYPE_MASK   (REMOTE_TYPE_IP|REMOTE_TYPE_IPCIDR|REMOTE_TYPE_SET)
+
+#define REMOTE_PORT_TYPE_PORT BIT(8)
+#define REMOTE_PORT_TYPE_SET  BIT(9)
+#define REMOTE_PORT_TYPE_MASK (REMOTE_PORT_TYPE_PORT|REMOTE_PORT_TYPE_SET)
+	unsigned short flag;
+
+	unsigned int rxbytes;
+	unsigned int txbytes;
+} qos_token_ctrl_rule[QOS_TOKEN_CTRL_GROUP_MAX];
+
+static int qos_token_ctrl_num = 0;
+
 static void qos_token_ctrl_init(void)
 {
 	int i;
 
 	memset(&qos_token_ctrl, 0, sizeof(*qos_token_ctrl) * QOS_TOKEN_CTRL_GROUP_MAX);
+
+	memset(&qos_token_ctrl_rule, 0, sizeof(*qos_token_ctrl_rule) * QOS_TOKEN_CTRL_GROUP_MAX);
 
 	for (i = 0; i < QOS_TOKEN_CTRL_GROUP_MAX; i++) {
 		spin_lock_init(&qos_token_ctrl[i].rx.lock);
@@ -214,7 +279,7 @@ out:
 int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf)
 {
 	int ret = 0;
-	if (nf && nf->qos_id) {
+	if (nf && nf->qos_id && nf->qos_id <= qos_token_ctrl_num) {
 		ret = natflow_token_ctrl(skb, &qos_token_ctrl[nf->qos_id - 1].rx);
 	}
 
@@ -228,7 +293,7 @@ int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *n
 int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf)
 {
 	int ret = 0;
-	if (nf && nf->qos_id) {
+	if (nf && nf->qos_id && nf->qos_id <= qos_token_ctrl_num) {
 		ret = natflow_token_ctrl(skb, &qos_token_ctrl[nf->qos_id - 1].tx);
 	}
 
@@ -2625,10 +2690,518 @@ static void userinfo_event_exit(void)
 {
 	dev_t devno;
 
+	userinfo_event_store_exit();
+
 	devno = MKDEV(userinfo_event_major, userinfo_event_minor);
 	device_destroy(userinfo_event_class, devno);
 	class_destroy(userinfo_event_class);
 	cdev_del(&userinfo_event_cdev);
+	unregister_chrdev_region(devno, 1);
+}
+
+//must lock by caller
+static inline struct qos_rule *qos_rule_get(int idx)
+{
+	if (idx < qos_token_ctrl_num) {
+		return &(qos_token_ctrl_rule[idx]);
+	}
+
+	return NULL;
+}
+
+static int qos_ctl_buffer_use = 0;
+static char *qos_ctl_buffer = NULL;
+static void *qos_start(struct seq_file *m, loff_t *pos)
+{
+	int n = 0;
+
+	if ((*pos) == 0) {
+		n = snprintf(qos_ctl_buffer,
+		             PAGE_SIZE - 1,
+		             "# Usage:\n"
+		             "#    clear -- clear all existing auth rule(s)\n"
+		             "#    add user=<ipset/ip/ipcidr>,user_port=<portset/port>,remote=<ipset/ip/ipcidr>,remote_port=<portset/port>,proto=<tcp/udp>,rxbytes=Bytes,txbytes=Bytes --add one rule\n"
+		             "#\n"
+		             "# Reload cmd:\n"
+		             "\n"
+		             "clear\n"
+		             "\n"
+		            );
+		qos_ctl_buffer[n] = 0;
+		return qos_ctl_buffer;
+	} else if ((*pos) > 0) {
+		struct qos_rule *qr = qos_rule_get((*pos) - 1);
+
+		if (qr) {
+			qos_ctl_buffer[0] = 0;
+			if ((qr->flag & USER_TYPE_IP))
+				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI4,", &qr->user.ip);
+			else if ((qr->flag & USER_TYPE_IPCIDR))
+				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI4/%u,", &qr->user.ipcidr.ip, hweight32(ntohl(qr->user.ipcidr.mask)));
+			else
+				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%s,", qr->user.name);
+
+			if ((qr->flag & USER_PORT_TYPE_PORT))
+				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "user_port=%u,", ntohs(qr->user_port.port));
+			else
+				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "user_port=%s,", qr->user_port.name);
+
+			if ((qr->flag & REMOTE_TYPE_IP))
+				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI4,", &qr->remote.ip);
+			else if ((qr->flag & REMOTE_TYPE_IPCIDR))
+				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI4/%u,", &qr->remote.ipcidr.ip, hweight32(ntohl(qr->remote.ipcidr.mask)));
+			else
+				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%s,", qr->remote.name);
+
+			if ((qr->flag & REMOTE_PORT_TYPE_PORT))
+				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote_port=%u,", ntohs(qr->remote_port.port));
+			else
+				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote_port=%s,", qr->remote_port.name);
+
+			if (qr->proto == IPPROTO_TCP)
+				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "proto=tcp,");
+			else if (qr->proto == IPPROTO_UDP)
+				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "proto=udp,");
+			else
+				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "proto=,");
+
+			n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "rxbytes=%u,txbytes=%u\n", qr->rxbytes, qr->txbytes);
+
+			qos_ctl_buffer[n] = 0;
+			return qos_ctl_buffer;
+		}
+	}
+
+	return NULL;
+}
+
+static void *qos_next(struct seq_file *m, void *v, loff_t *pos)
+{
+	(*pos)++;
+	if ((*pos) > 0) {
+		return qos_start(m, pos);
+	}
+	return NULL;
+}
+
+static void qos_stop(struct seq_file *m, void *v)
+{
+}
+
+static int qos_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%s", (char *)v);
+	return 0;
+}
+
+const struct seq_operations qos_seq_ops = {
+	.start = qos_start,
+	.next = qos_next,
+	.stop = qos_stop,
+	.show = qos_show,
+};
+
+static ssize_t qos_read(struct file *file, char __user *buf, size_t buf_len, loff_t *offset)
+{
+	return seq_read(file, buf, buf_len, offset);
+}
+
+static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+{
+	int err = 0;
+	int n, l;
+	int cnt = MAX_IOCTL_LEN;
+	static char data[MAX_IOCTL_LEN];
+	static int data_left = 0;
+
+	cnt -= data_left;
+	if (buf_len < cnt)
+		cnt = buf_len;
+
+	if (copy_from_user(data + data_left, buf, cnt) != 0)
+		return -EACCES;
+
+	n = 0;
+	while(n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
+	if (n) {
+		*offset += n;
+		data_left = 0;
+		return n;
+	}
+
+	//make sure line ended with '\n' and line len <= MAX_IOCTL_LEN
+	l = 0;
+	while (l < cnt && data[l + data_left] != '\n') l++;
+	if (l >= cnt) {
+		data_left += l;
+		if (data_left >= MAX_IOCTL_LEN) {
+			NATFLOW_println("err: too long a line");
+			data_left = 0;
+			return -EINVAL;
+		}
+		goto done;
+	} else {
+		data[l + data_left] = '\0';
+		data_left = 0;
+		l++;
+	}
+
+	if (strncmp(data, "clear", 5) == 0) {
+		qos_token_ctrl_num = 0;
+		goto done;
+	} else if (strncmp(data, "add user=", 9) == 0) {
+		struct qos_rule *qr = kmalloc(sizeof(struct qos_rule), GFP_KERNEL);
+		if (qr) {
+			qr->flag = 0;
+			qr->rxbytes = 0;
+			qr->txbytes = 0;
+			qr->proto = 0;
+			do {
+				char *p;
+				p = strstr(data, "add user=");
+				if (p) {
+					int a, b, c, d, e;
+					p = p + 9;
+					n = sscanf(p, "%d.%d.%d.%d/%d,", &a, &b, &c, &d, &e);
+					if (n == 5) {
+						if ((a&0xff) == a &&
+						        (b&0xff) == b &&
+						        (c&0xff) == c &&
+						        (d&0xff) == d &&
+						        e >= 0 && e <= 32) {
+							qr->user.ipcidr.ip = htonl((a << 24) | (b << 16) | (c << 8) | d);
+							if (e == 0) {
+								qr->user.ipcidr.ip = 0;
+								qr->user.ipcidr.mask = 0;
+								qr->flag |= USER_TYPE_IPCIDR;
+							} else {
+								qr->user.ipcidr.mask = htonl(GENMASK(e-1, 0));
+								qr->flag |= USER_TYPE_IPCIDR;
+							}
+						} else {
+							err = -EINVAL;
+							NATFLOW_println("user=<ip> error ipcidr format");
+							break;
+						}
+
+					} else {
+						n = sscanf(p, "%d.%d.%d.%d,", &a, &b, &c, &d);
+						if (n == 4) {
+							if ((a&0xff) == a &&
+							        (b&0xff) == b &&
+							        (c&0xff) == c &&
+							        (d&0xff) == d) {
+								qr->user.ip = htonl((a << 24) | (b << 16) | (c << 8) | d);
+								qr->flag |= USER_TYPE_IP;
+							} else {
+								err = -EINVAL;
+								NATFLOW_println("user=<ip> error ip format");
+								break;
+							}
+
+						} else {
+							int k = 0;
+							while (p[k] && p[k] != ',' && k < sizeof(qr->user.name) - 1) {
+								qr->user.name[k] = p[k];
+								k++;
+							}
+							if (k >= sizeof(qr->user.name) - 1) {
+								err = -EINVAL;
+								NATFLOW_println("user=<name> too long");
+								break;
+							}
+							qr->user.name[k] = 0;
+							if (k != 0) {
+								qr->flag |= USER_TYPE_SET;
+							}
+							//else empty user
+						}
+					}
+				}
+
+				p = strstr(data, ",user_port=");
+				if (p) {
+					int a;
+					p = p + 11;
+					n = sscanf(p, "%d,", &a);
+					if (n == 1) {
+						if ((a&0xffff) == a) {
+							qr->user_port.port = htons(a);
+							qr->flag |= USER_PORT_TYPE_PORT;
+						} else {
+							err = -EINVAL;
+							NATFLOW_println("user_port=<port> error port format");
+							break;
+						}
+					} else {
+						int k = 0;
+						while (p[k] && p[k] != ',' && k < sizeof(qr->user_port.name) - 1) {
+							qr->user_port.name[k] = p[k];
+							k++;
+						}
+						if (k >= sizeof(qr->user_port.name) - 1) {
+							err = -EINVAL;
+							NATFLOW_println("user_port=<name> too long");
+							break;
+						}
+						qr->user_port.name[k] = 0;
+						if (k != 0) {
+							qr->flag |= USER_PORT_TYPE_SET;
+						}
+					}
+				}
+
+				p = strstr(data, ",remote=");
+				if (p) {
+					int a, b, c, d, e;
+					p = p + 8;
+					n = sscanf(p, "%d.%d.%d.%d/%d,", &a, &b, &c, &d, &e);
+					if (n == 5) {
+						if ((a&0xff) == a &&
+						        (b&0xff) == b &&
+						        (c&0xff) == c &&
+						        (d&0xff) == d &&
+						        e >= 0 && e <= 32) {
+							qr->remote.ipcidr.ip = htonl((a << 24) | (b << 16) | (c << 8) | d);
+							if (e == 0) {
+								qr->remote.ipcidr.ip = 0;
+								qr->remote.ipcidr.mask = 0;
+								qr->flag |= REMOTE_TYPE_IPCIDR;
+							} else {
+								qr->remote.ipcidr.mask = htonl(GENMASK(e-1, 0));
+								qr->flag |= REMOTE_TYPE_IPCIDR;
+							}
+						} else {
+							err = -EINVAL;
+							NATFLOW_println("remote=<ip> error ipcidr format");
+							break;
+						}
+					} else {
+						n = sscanf(p, "%d.%d.%d.%d,", &a, &b, &c, &d);
+						if (n == 4) {
+							if ((a&0xff) == a &&
+							        (b&0xff) == b &&
+							        (c&0xff) == c &&
+							        (d&0xff) == d) {
+								qr->remote.ip = htonl((a << 24) | (b << 16) | (c << 8) | d);
+								qr->flag |= REMOTE_TYPE_IP;
+							} else {
+								err = -EINVAL;
+								NATFLOW_println("remote=<ip> error ip format");
+								break;
+							}
+
+						} else {
+							int k = 0;
+							while (p[k] && p[k] != ',' && k < sizeof(qr->remote.name) - 1) {
+								qr->remote.name[k] = p[k];
+								k++;
+							}
+							if (k >= sizeof(qr->remote.name) - 1) {
+								err = -EINVAL;
+								NATFLOW_println("remote=<name> too long");
+								break;
+							}
+							qr->remote.name[k] = 0;
+							if (k != 0) {
+								qr->flag |= REMOTE_TYPE_SET;
+							}
+							//else empty remote
+						}
+					}
+				}
+
+				p = strstr(data, ",remote_port=");
+				if (p) {
+					int a;
+					p = p + 13;
+					n = sscanf(p, "%d,", &a);
+					if (n == 1) {
+						if ((a&0xffff) == a) {
+							qr->remote_port.port = htons(a);
+							qr->flag |= REMOTE_PORT_TYPE_PORT;
+						} else {
+							err = -EINVAL;
+							NATFLOW_println("remote_port=<port> error port format");
+							break;
+						}
+					} else {
+						int k = 0;
+						while (p[k] && p[k] != ',' && k < sizeof(qr->remote_port.name) - 1) {
+							qr->remote_port.name[k] = p[k];
+							k++;
+						}
+						if (k >= sizeof(qr->remote_port.name) - 1) {
+							err = -EINVAL;
+							NATFLOW_println("remote_port=<name> too long");
+							break;
+						}
+						qr->remote_port.name[k] = 0;
+						if (k != 0) {
+							qr->flag |= REMOTE_PORT_TYPE_SET;
+						}
+					}
+				}
+
+				p = strstr(data, ",proto=");
+				if (p) {
+					p = p + 7;
+					if (strncmp(p, "tcp,", 4) == 0) {
+						qr->proto = IPPROTO_TCP;
+					} else if (strncmp(p, "udp,", 4) == 0) {
+						qr->proto = IPPROTO_UDP;
+					} else if (strncmp(p, ",", 1) == 0) {
+						qr->proto = 0;
+					} else {
+						err = -EINVAL;
+						NATFLOW_println("invalid proto=");
+						break;
+					}
+				}
+
+				p = strstr(data, ",rxbytes=");
+				if (p) {
+					unsigned int rxbytes, txbytes;
+					p = p + 9;
+					n = sscanf(p, "%u,txbytes=%u", &rxbytes, &txbytes);
+					if (n == 2) {
+						qr->rxbytes = rxbytes;
+						qr->txbytes = txbytes;
+					} else {
+						err = -EINVAL;
+						NATFLOW_println("invalid rxbytes txbytes");
+						break;
+					}
+				}
+			} while (0);
+			if (err == 0) {
+				if (qos_token_ctrl_num < QOS_TOKEN_CTRL_GROUP_MAX) {
+					memcpy(&qos_token_ctrl_rule[qos_token_ctrl_num], qr, sizeof(struct qos_rule));
+					qos_token_ctrl_num++;
+				}
+				kfree(qr);
+				goto done;
+			}
+			NATFLOW_println("qos add rule fail err=%d", err);
+			kfree(qr);
+		}
+	}
+
+	NATFLOW_println("ignoring line[%s]", data);
+	if (err != 0) {
+		return err;
+	}
+
+done:
+	*offset += l;
+	return l;
+}
+
+static int qos_open(struct inode *inode, struct file *file)
+{
+	int ret;
+	//set nonseekable
+	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
+
+	if (qos_ctl_buffer_use++ == 0) {
+		qos_ctl_buffer = kmalloc(PAGE_SIZE, GFP_KERNEL);
+		if (qos_ctl_buffer == NULL) {
+			qos_ctl_buffer_use--;
+			return -ENOMEM;
+		}
+	}
+
+	ret = seq_open(file, &qos_seq_ops);
+	if (ret)
+		return ret;
+	return 0;
+}
+
+static int qos_release(struct inode *inode, struct file *file)
+{
+	int ret = seq_release(inode, file);
+
+	if (--qos_ctl_buffer_use == 0) {
+		kfree(qos_ctl_buffer);
+		qos_ctl_buffer = NULL;
+	}
+
+	return ret;
+}
+
+static struct file_operations qos_fops = {
+	.owner = THIS_MODULE,
+	.open = qos_open,
+	.release = qos_release,
+	.read = qos_read,
+	.write = qos_write,
+	.llseek  = seq_lseek,
+};
+
+static int qos_init(void)
+{
+	int retval = 0;
+	dev_t devno;
+
+	qos_token_ctrl_init();
+
+	if (qos_major > 0) {
+		devno = MKDEV(qos_major, qos_minor);
+		retval = register_chrdev_region(devno, 1, qos_dev_name);
+	} else {
+		retval = alloc_chrdev_region(&devno, qos_minor, 1, qos_dev_name);
+	}
+	if (retval < 0) {
+		NATFLOW_println("alloc_chrdev_region failed!");
+		goto chrdev_region_failed;
+	}
+	qos_major = MAJOR(devno);
+	qos_minor = MINOR(devno);
+	NATFLOW_println("qos_major=%d, qos_minor=%d", qos_major, qos_minor);
+
+	cdev_init(&qos_cdev, &qos_fops);
+	qos_cdev.owner = THIS_MODULE;
+	qos_cdev.ops = &qos_fops;
+
+	retval = cdev_add(&qos_cdev, devno, 1);
+	if (retval) {
+		NATFLOW_println("adding chardev, error=%d", retval);
+		goto cdev_add_failed;
+	}
+
+	qos_class = class_create(THIS_MODULE,"qos_class");
+	if (IS_ERR(qos_class)) {
+		NATFLOW_println("failed in creating class");
+		retval = -EINVAL;
+		goto class_create_failed;
+	}
+
+	qos_dev = device_create(qos_class, NULL, devno, NULL, qos_dev_name);
+	if (!qos_dev) {
+		retval = -EINVAL;
+		goto device_create_failed;
+	}
+
+	return 0;
+
+device_create_failed:
+	class_destroy(qos_class);
+class_create_failed:
+	cdev_del(&qos_cdev);
+cdev_add_failed:
+	unregister_chrdev_region(devno, 1);
+chrdev_region_failed:
+	return retval;
+}
+
+static void qos_exit(void)
+{
+	dev_t devno;
+
+	devno = MKDEV(qos_major, qos_minor);
+	device_destroy(qos_class, devno);
+	class_destroy(qos_class);
+	cdev_del(&qos_cdev);
 	unregister_chrdev_region(devno, 1);
 }
 
@@ -2637,8 +3210,6 @@ int natflow_user_init(void)
 	int i;
 	int retval = 0;
 	dev_t devno;
-
-	qos_token_ctrl_init();
 
 	for (i = 0; i < NR_CPUS; i++) {
 		natflow_user_uskbs[i] = NULL;
@@ -2703,9 +3274,16 @@ int natflow_user_init(void)
 
 	userinfo_event_store_init();
 
+	retval = qos_init();
+	if (retval) {
+		goto qos_init_failed;
+	}
+
 	return 0;
 
-	//userinfo_event_exit();
+	//qos_exit();
+qos_init_failed:
+	userinfo_event_exit();
 userinfo_event_init_failed:
 	userinfo_exit();
 userinfo_init_failed:
@@ -2729,10 +3307,9 @@ void natflow_user_exit(void)
 	int i;
 	dev_t devno;
 
+	qos_exit();
 	userinfo_event_exit();
 	userinfo_exit();
-
-	userinfo_event_store_exit();
 
 	devno = MKDEV(natflow_user_major, natflow_user_minor);
 	device_destroy(natflow_user_class, devno);
