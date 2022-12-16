@@ -49,3 +49,19 @@ e.g. rx rate 10Mbps tx rate 5Mbps for 192.168.15.100:
 ```
 echo set-token-ctrl 192.168.15.100 1310720 655360 >/dev/userinfo_ctl
 ```
+
+## qos rules
+
+API:
+1. clear all rules:
+```
+echo clear >/dev/qos_ctl
+```
+2. add one rule:
+```
+echo add user=<ipset/ip/ipcidr>,user_port=<portset/port>,remote=<ipset/ip/ipcidr>,remote_port=<portset/port>,proto=<tcp/udp>,rxbytes=0,txbytes=0 >/dev/qos_ctl
+```
+3. change one rule:
+```
+echo id=<id> user=<ipset/ip/ipcidr>,user_port=<portset/port>,remote=<ipset/ip/ipcidr>,remote_port=<portset/port>,proto=<tcp/udp>,rxbytes=0,txbytes=0 >/dev/qos_ctl
+```
