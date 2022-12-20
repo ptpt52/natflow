@@ -266,6 +266,9 @@ extern int ip_set_test_src_mac(const struct net_device *in, const struct net_dev
 #define IP_SET_test_src_mac(state, in, out, skb, name) ip_set_test_src_mac(in, out, skb, name)
 #endif
 
+#define IP_SET_test_src_port IP_SET_test_src_ip
+#define IP_SET_test_dst_port IP_SET_test_dst_ip
+
 unsigned int natflow_dnat_setup(struct nf_conn *ct, __be32 addr, __be16 man_proto);
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0)

@@ -1286,6 +1286,168 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		/* tell FF this conn need token ctrl */
 		simple_set_bit(NF_FF_TOKEN_CTRL_BIT, &nf->status);
 	}
+	if (nf && !(nf->status & NF_FF_QOS_TESTED)) {
+		int i;
+		struct iphdr *iph = ip_hdr(skb);
+		void *l4 = (void *)iph + iph->ihl * 4;
+
+		simple_set_bit(NF_FF_QOS_TESTED_BIT, &nf->status);
+
+		for (i = 0; i < qos_token_ctrl_num; i++) {
+			struct qos_rule *qr = &qos_token_ctrl_rule[i];
+			if (qr->proto) {
+				if (qr->proto != iph->protocol) {
+					continue;
+				}
+			}
+
+			if ((qr->flag & USER_TYPE_MASK)) {
+				if ((qr->flag & USER_TYPE_IP)) {
+					if (qr->user.ip != user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+						continue;
+					}
+				} else if ((qr->flag & USER_TYPE_IPCIDR)) {
+					if (qr->user.ipcidr.ip != (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip & qr->user.ipcidr.mask)) {
+						continue;
+					}
+				} else {
+					if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+						if (IP_SET_test_src_ip(state, in, out, skb, qr->user.name) <= 0) {
+							continue;
+						}
+					} else {
+						if (IP_SET_test_dst_ip(state, in, out, skb, qr->user.name) <= 0) {
+							continue;
+						}
+					}
+				}
+			}
+
+			if ((qr->flag & USER_PORT_TYPE_MASK)) {
+				if ((qr->flag & USER_PORT_TYPE_PORT)) {
+					if (iph->protocol == IPPROTO_TCP) {
+						if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+							if (qr->user_port.port != TCPH(l4)->source) {
+								continue;
+							}
+						} else {
+							if (qr->user_port.port != TCPH(l4)->dest) {
+								continue;
+							}
+						}
+					} else if (iph->protocol == IPPROTO_UDP) {
+						if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+							if (qr->user_port.port != UDPH(l4)->source) {
+								continue;
+							}
+						} else {
+							if (qr->user_port.port != UDPH(l4)->dest) {
+								continue;
+							}
+						}
+					}
+				} else {
+					if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+						if (IP_SET_test_src_port(state, in, out, skb, qr->user_port.name) <= 0) {
+							continue;
+						}
+					} else {
+						if (IP_SET_test_dst_port(state, in, out, skb, qr->user_port.name) <= 0) {
+							continue;
+						}
+					}
+				}
+			}
+
+			if ((qr->flag & REMOTE_TYPE_MASK)) {
+				if ((qr->flag & REMOTE_TYPE_IP)) {
+					if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+						if (qr->remote.ip != iph->daddr) {
+							continue;
+						}
+					} else {
+						if (qr->remote.ip != iph->saddr) {
+							continue;
+						}
+					}
+				} else if ((qr->flag & REMOTE_TYPE_IPCIDR)) {
+					if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+						if (qr->remote.ipcidr.ip != (iph->daddr & qr->remote.ipcidr.mask)) {
+							continue;
+						}
+					} else {
+						if (qr->remote.ipcidr.ip != (iph->saddr & qr->remote.ipcidr.mask)) {
+							continue;
+						}
+					}
+				} else {
+					if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+						if (IP_SET_test_dst_ip(state, in, out, skb, qr->remote.name) <= 0) {
+							continue;
+						}
+					} else {
+						if (IP_SET_test_src_ip(state, in, out, skb, qr->remote.name) <= 0) {
+							continue;
+						}
+					}
+				}
+			}
+
+			if ((qr->flag & REMOTE_PORT_TYPE_MASK)) {
+				if ((qr->flag & REMOTE_PORT_TYPE_PORT)) {
+					if (iph->protocol == IPPROTO_TCP) {
+						if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+							if (qr->remote_port.port != TCPH(l4)->dest) {
+								continue;
+							}
+						} else {
+							if (qr->remote_port.port != TCPH(l4)->source) {
+								continue;
+							}
+						}
+					} else if (iph->protocol == IPPROTO_UDP) {
+						if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+							if (qr->remote_port.port != UDPH(l4)->dest) {
+								continue;
+							}
+						} else {
+							if (qr->remote_port.port != UDPH(l4)->source) {
+								continue;
+							}
+						}
+					}
+				} else {
+					if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+						if (IP_SET_test_dst_port(state, in, out, skb, qr->remote_port.name) <= 0) {
+							continue;
+						}
+					} else {
+						if (IP_SET_test_src_port(state, in, out, skb, qr->remote_port.name) <= 0) {
+							continue;
+						}
+					}
+				}
+			}
+
+			nf->qos_id = i + 1;
+
+			if (nf->qos_id) {
+				switch (iph->protocol) {
+				case IPPROTO_TCP:
+					NATFLOW_INFO("(NUF)" DEBUG_TCP_FMT ": matched qos id=%d\n",
+					             DEBUG_TCP_ARG(iph,l4), nf->qos_id);
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_INFO("(NUF)" DEBUG_UDP_FMT ": matched qos id=%d\n",
+					             DEBUG_UDP_ARG(iph,l4), nf->qos_id);
+					break;
+				}
+
+				simple_set_bit(NF_FF_TOKEN_CTRL_BIT, &nf->status);
+				break;
+			}
+		}
+	}
 
 	switch(fud->auth_status) {
 	case AUTH_REQ:
