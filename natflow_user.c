@@ -1219,7 +1219,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
 	const struct net_device *br_in = NULL;
 #endif
-	natflow_t *nf;
+	natflow_t *nf = NULL;
 	struct fakeuser_data_t *fud;
 	natflow_fakeuser_t *user;
 	struct nf_conn *ct;
@@ -1249,6 +1249,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	if (NULL == ct) {
 		goto out;
 	}
+	nf = natflow_session_get(ct);
 
 	if ((ct->status & IPS_NATFLOW_USER_DROP)) {
 		struct iphdr *iph = ip_hdr(skb);
@@ -1281,7 +1282,6 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		goto out;
 	}
 	fud = natflow_fakeuser_data(user);
-	nf = natflow_session_get(ct);
 	if (nf && !(nf->status & NF_FF_TOKEN_CTRL) && (IPS_NATFLOW_USER_TOKEN_CTRL & user->status)) {
 		/* tell FF this conn need token ctrl */
 		simple_set_bit(NF_FF_TOKEN_CTRL_BIT, &nf->status);
