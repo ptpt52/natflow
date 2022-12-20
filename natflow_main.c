@@ -81,6 +81,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             "#    hwnat_wed_disabled=%u\n"
 #endif
 		             "#    delay_pkts=%u\n"
+		             "#    skip_qos_to_slow_path=%u\n"
 #endif
 		             "#\n"
 		             "# Reload cmd:\n"
@@ -96,6 +97,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             hwnat_wed_disabled,
 #endif
 		             delay_pkts,
+			     skip_qos_to_slow_path,
 		             natflow_disabled_get(),
 #endif
 		             debug);
@@ -229,6 +231,13 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 		n = sscanf(data, "delay_pkts=%u", &d);
 		if (n == 1) {
 			delay_pkts = d;
+			goto done;
+		}
+	} else if (strncmp(data, "skip_qos_to_slow_path=", 22) == 0) {
+		int d;
+		n = sscanf(data, "skip_qos_to_slow_path=%u", &d);
+		if (n == 1) {
+			skip_qos_to_slow_path = d;
 			goto done;
 		}
 	} else if (strncmp(data, "ifname_clear", 12) == 0) {
