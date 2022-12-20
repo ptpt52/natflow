@@ -3253,6 +3253,8 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 			if (err == 0) {
 				if (qos_token_ctrl_num < QOS_TOKEN_CTRL_GROUP_MAX) {
 					memcpy(&qos_token_ctrl_rule[qos_token_ctrl_num], qr, sizeof(struct qos_rule));
+					qos_token_ctrl[qos_token_ctrl_num].rx.tokens_per_jiffy = qr->rxbytes / HZ;
+					qos_token_ctrl[qos_token_ctrl_num].tx.tokens_per_jiffy = qr->txbytes / HZ;
 					qos_token_ctrl_num++;
 				}
 				kfree(qr);
