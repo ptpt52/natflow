@@ -2857,6 +2857,7 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 			qr->txbytes = 0;
 			qr->proto = 0;
 			do {
+				int i;
 				char *p;
 				p = strstr(data, "add user=");
 				if (p) {
@@ -2864,7 +2865,11 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 					p = p + 9;
 					n = sscanf(p, "%d.%d.%d.%d/%d,", &a, &b, &c, &d, &e);
 					if (n == 5) {
-						if ((a&0xff) == a &&
+						for (i = 7; i < 19 && p[i] != ','; i++)
+							if (!((p[i] >= '0' && p[i] <= '9') || p[i] == '.' || p[i] == '/'))
+								break;
+						if (p[i] == ',' &&
+						        (a&0xff) == a &&
 						        (b&0xff) == b &&
 						        (c&0xff) == c &&
 						        (d&0xff) == d &&
@@ -2883,11 +2888,14 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 							NATFLOW_println("user=<ip> error ipcidr format");
 							break;
 						}
-
 					} else {
 						n = sscanf(p, "%d.%d.%d.%d,", &a, &b, &c, &d);
 						if (n == 4) {
-							if ((a&0xff) == a &&
+							for (i = 7; i < 16 && p[i] != ','; i++)
+								if (!((p[i] >= '0' && p[i] <= '9') || p[i] == '.'))
+									break;
+							if (p[i] == ',' &&
+							        (a&0xff) == a &&
 							        (b&0xff) == b &&
 							        (c&0xff) == c &&
 							        (d&0xff) == d) {
@@ -2898,7 +2906,6 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 								NATFLOW_println("user=<ip> error ip format");
 								break;
 							}
-
 						} else {
 							int k = 0;
 							while (p[k] && p[k] != ',' && k < sizeof(qr->user.name) - 1) {
@@ -2957,7 +2964,11 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 					p = p + 8;
 					n = sscanf(p, "%d.%d.%d.%d/%d,", &a, &b, &c, &d, &e);
 					if (n == 5) {
-						if ((a&0xff) == a &&
+						for (i = 7; i < 19 && p[i] != ','; i++)
+							if (!((p[i] >= '0' && p[i] <= '9') || p[i] == '.' || p[i] == '/'))
+								break;
+						if (p[i] == ',' &&
+						        (a&0xff) == a &&
 						        (b&0xff) == b &&
 						        (c&0xff) == c &&
 						        (d&0xff) == d &&
@@ -2979,7 +2990,11 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 					} else {
 						n = sscanf(p, "%d.%d.%d.%d,", &a, &b, &c, &d);
 						if (n == 4) {
-							if ((a&0xff) == a &&
+							for (i = 7; i < 16 && p[i] != ','; i++)
+								if (!((p[i] >= '0' && p[i] <= '9') || p[i] == '.'))
+									break;
+							if (p[i] == ',' &&
+							        (a&0xff) == a &&
 							        (b&0xff) == b &&
 							        (c&0xff) == c &&
 							        (d&0xff) == d) {
@@ -2990,7 +3005,6 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 								NATFLOW_println("remote=<ip> error ip format");
 								break;
 							}
-
 						} else {
 							int k = 0;
 							while (p[k] && p[k] != ',' && k < sizeof(qr->remote.name) - 1) {
