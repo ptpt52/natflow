@@ -3042,8 +3042,13 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 								qr->user.ipcidr.mask = 0;
 								qr->flag |= USER_TYPE_IPCIDR;
 							} else {
-								qr->user.ipcidr.mask = htonl(GENMASK(e-1, 0));
+								qr->user.ipcidr.mask = htonl(GENMASK(31, 32-e));
 								qr->flag |= USER_TYPE_IPCIDR;
+								if (qr->user.ipcidr.ip != (qr->user.ipcidr.ip & qr->user.ipcidr.mask)) {
+									err = -EINVAL;
+									NATFLOW_println("user=<ip> error ipcidr format");
+									break;
+								}
 							}
 						} else {
 							err = -EINVAL;
@@ -3141,8 +3146,13 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 								qr->remote.ipcidr.mask = 0;
 								qr->flag |= REMOTE_TYPE_IPCIDR;
 							} else {
-								qr->remote.ipcidr.mask = htonl(GENMASK(e-1, 0));
+								qr->remote.ipcidr.mask = htonl(GENMASK(31, 32-e));
 								qr->flag |= REMOTE_TYPE_IPCIDR;
+								if (qr->remote.ipcidr.ip != (qr->remote.ipcidr.ip & qr->remote.ipcidr.mask)) {
+									err = -EINVAL;
+									NATFLOW_println("remote=<ip> error ipcidr format");
+									break;
+								}
 							}
 						} else {
 							err = -EINVAL;
