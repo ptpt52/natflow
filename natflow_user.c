@@ -1670,7 +1670,7 @@ static unsigned int natflow_user_post_hook(void *priv,
 		struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 		natflow_t *nf = natflow_session_get(ct);
 		if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[CTINFO2DIR(ctinfo)].tuple.src.u3.ip) {
-			if ((nf->status & NF_FF_TOKEN_CTRL) && rx_token_ctrl(skb, fud, nf) < 0) {
+			if (nf && (nf->status & NF_FF_TOKEN_CTRL) && rx_token_ctrl(skb, fud, nf) < 0) {
 				return NF_DROP;
 			} else {
 				/* download */
@@ -1696,7 +1696,7 @@ static unsigned int natflow_user_post_hook(void *priv,
 				atomic64_add(skb->len, &counter[0].bytes);
 			}
 		} else {
-			if ((nf->status & NF_FF_TOKEN_CTRL) && tx_token_ctrl(skb, fud, nf) < 0) {
+			if (nf && (nf->status & NF_FF_TOKEN_CTRL) && tx_token_ctrl(skb, fud, nf) < 0) {
 				return NF_DROP;
 			} else {
 				/* upload */
