@@ -144,7 +144,7 @@ static unsigned short natflow_path_magic = 0;
 void natflow_update_magic(int init)
 {
 	if (init) {
-		natflow_path_magic = jiffies + prandom_u32();
+		natflow_path_magic = jiffies + get_random_u32();
 	} else {
 		natflow_path_magic++;
 	}

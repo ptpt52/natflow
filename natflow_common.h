@@ -379,4 +379,8 @@ static inline void compat_u64_stats_add(u64 *r, unsigned long v)
 }
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 0)
+#define get_random_u32 prandom_u32
+#endif
+
 #endif /* _NATFLOW_COMMON_H_ */
