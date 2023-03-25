@@ -412,14 +412,14 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 {
 	natflow_fakeuser_t *user = NULL;
 
+	user = natflow_user_get(ct);
+	if (user)
+		return user;
+
 	/* FIXME: cannot use ct->master for user since destroy_gre_conntrack() may double free gre helper in master */
 	if (unlikely(nf_ct_protonum(ct) == IPPROTO_GRE)) {
 		return NULL;
 	}
-
-	user = natflow_user_get(ct);
-	if (user)
-		return user;
 
 	if (!nf_ct_is_confirmed(ct) && !user && (!ct->master || !ct->master->master)) {
 		struct nf_ct_ext *new = NULL;
