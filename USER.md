@@ -61,3 +61,26 @@ echo clear >/dev/qos_ctl
 ```
 echo add user=<ipset/ip/ipcidr>,user_port=<portset/port>,remote=<ipset/ip/ipcidr>,remote_port=<portset/port>,proto=<tcp/udp>,rxbytes=0,txbytes=0 >/dev/qos_ctl
 ```
+3. natflow QoS rules work in conjunction with tc
+```
+# Filter the flow/packets using natflow and set the skb->mark to a specified QoS identifier
+echo tc_classid_mode=1 >/dev/qos_ctl
+
+# Set the tc QoS for qos_id=1 on LAN for a download speed of 10Mbps
+for lan in lan1 lan2 lan3 lan4 lan5 lan6 lan7 lan8 wan2; do
+	tc qdisc del dev $lan root
+	tc qdisc add dev $lan root handle 1: htb
+	tc class add dev $lan parent 1: classid 1:1 htb rate 1310720Bps
+	tc filter add dev $lan parent 1: protocol ip prio 1 handle 1 fw classid 1:1
+	tc filter add dev $lan parent 1: protocol 0x8864 prio 2 handle 1 fw classid 1:1
+done
+
+# Set the tc QoS for qos_id=1 on WAN for an upload speed of 5Mbps
+for wan in wan1; do
+	tc qdisc del dev $wan root
+	tc qdisc add dev $wan root handle 1: htb
+	tc class add dev $wan parent 1: classid 1:1 htb rate 655360Bps
+	tc filter add dev $wan parent 1: protocol ip prio 1 handle 1 fw classid 1:1
+	tc filter add dev $wan parent 1: protocol 0x8864 prio 2 handle 1 fw classid 1:1
+done
+```
