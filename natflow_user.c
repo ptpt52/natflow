@@ -198,6 +198,7 @@ static struct qos_rule {
 	unsigned int txbytes;
 } qos_token_ctrl_rule[QOS_TOKEN_CTRL_GROUP_MAX];
 
+static unsigned int tc_classid_mode = 0;
 static int qos_token_ctrl_num = 0;
 
 static void qos_token_ctrl_init(void)
@@ -275,6 +276,12 @@ out:
 int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf)
 {
 	int ret = 0;
+
+	if (tc_classid_mode && nf && nf->qos_id) {
+		skb->mark = nf->qos_id;
+		return 0;
+	}
+
 	if (nf && nf->qos_id && nf->qos_id <= qos_token_ctrl_num) {
 		ret = natflow_token_ctrl(skb, &qos_token_ctrl[nf->qos_id - 1].rx);
 	}
@@ -289,6 +296,12 @@ int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *n
 int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf)
 {
 	int ret = 0;
+
+	if (tc_classid_mode && nf && nf->qos_id) {
+		skb->mark = nf->qos_id;
+		return 0;
+	}
+
 	if (nf && nf->qos_id && nf->qos_id <= qos_token_ctrl_num) {
 		ret = natflow_token_ctrl(skb, &qos_token_ctrl[nf->qos_id - 1].tx);
 	}
@@ -2880,10 +2893,12 @@ static void *qos_start(struct seq_file *m, loff_t *pos)
 		             "#    clear -- clear all existing auth rule(s)\n"
 		             "#    add user=<ipset/ip/ipcidr>,user_port=<portset/port>,remote=<ipset/ip/ipcidr>,remote_port=<portset/port>,proto=<tcp/udp>,rxbytes=Bytes,txbytes=Bytes --add one rule\n"
 		             "#\n"
+		             "# tc_classid_mode=%u\n"
+		             "#\n"
 		             "# Reload cmd:\n"
 		             "\n"
 		             "clear\n"
-		             "\n"
+		             "\n", tc_classid_mode
 		            );
 		qos_ctl_buffer[n] = 0;
 		return qos_ctl_buffer;
@@ -3007,6 +3022,13 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 	if (strncmp(data, "clear", 5) == 0) {
 		qos_token_ctrl_num = 0;
 		goto done;
+	} else if (strncmp(data, "tc_classid_mode=", 16) == 0) {
+		unsigned int a;
+		n = sscanf(data, "tc_classid_mode=%u", &a);
+		if (n == 1) {
+			tc_classid_mode = !!a;
+			goto done;
+		}
 	} else if (strncmp(data, "add user=", 9) == 0) {
 		struct qos_rule *qr = kmalloc(sizeof(struct qos_rule), GFP_KERNEL);
 		if (qr) {
