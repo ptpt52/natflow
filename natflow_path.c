@@ -2343,6 +2343,11 @@ fastnat_check:
 		skb_reset_mac_header(skb);
 		memcpy(skb_mac_header(skb), nf->rroute[dir].l2_head, nf->rroute[dir].l2_head_len);
 		skb->dev = nf->rroute[dir].outdev;
+		if ((nf->status & NF_FF_TOKEN_CTRL)) { /* for tc working on bridge interface */
+			skb->dev = netdev_master_upper_dev_get_rcu(nf->rroute[dir].outdev);
+			if (!skb->dev)
+				skb->dev = nf->rroute[dir].outdev;
+		}
 #ifdef CONFIG_NETFILTER_INGRESS
 		if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 			struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
