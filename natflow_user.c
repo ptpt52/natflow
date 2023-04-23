@@ -247,7 +247,7 @@ static int natflow_token_ctrl(struct sk_buff *skb, struct token_ctrl *tc)
 	current_jiffies = jiffies;
 	feed_jiffies = uintmindiff(current_jiffies, tc->jiffies);
 	if (feed_jiffies > HZ) {
-		feed_jiffies = HZ;
+		feed_jiffies = HZ/8 + 1;
 	}
 
 	ret = tc->tokens + (int)(tc->tokens_per_jiffy * feed_jiffies);
