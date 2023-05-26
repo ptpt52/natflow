@@ -83,6 +83,8 @@ static inline int natflow_if_name_match(const char *p, const char *n)
 		else
 			return -1;
 	}
+	if (n_len > p_len)
+		return -1;
 
 	return 0;
 }

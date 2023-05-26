@@ -97,7 +97,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             hwnat_wed_disabled,
 #endif
 		             delay_pkts,
-			     skip_qos_to_slow_path,
+		             skip_qos_to_slow_path,
 		             natflow_disabled_get(),
 #endif
 		             debug);
