@@ -1547,15 +1547,6 @@ slow_fastpath:
 			goto out;
 		}
 	}
-	if (!(nf->status & NF_FF_TOKEN_CTRL) && skip_qos_to_slow_path) {
-		struct nf_conn_help *help = nfct_help(ct);
-		if (help && !help->helper) {
-			/* this conn do not need helper, clear it for nss */
-			ct->ext->offset[NF_CT_EXT_HELPER] = 0;
-		}
-		set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
-		goto out;
-	}
 
 	acct = nf_conn_acct_find(ct);
 	if (acct) {
@@ -1568,6 +1559,16 @@ slow_fastpath:
 		if (packets % 256 == 63) {
 			goto out;
 		}
+	}
+
+	if (!(nf->status & NF_FF_TOKEN_CTRL) && skip_qos_to_slow_path) {
+		struct nf_conn_help *help = nfct_help(ct);
+		if (help && !help->helper) {
+			/* this conn do not need helper, clear it for nss */
+			ct->ext->offset[NF_CT_EXT_HELPER] = 0;
+		}
+		set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
+		goto out;
 	}
 
 	/* skip for defrag-skb or large packets */
