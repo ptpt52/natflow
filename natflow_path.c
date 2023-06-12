@@ -1530,7 +1530,7 @@ slow_fastpath:
 
 		simple_set_bit(NF_FF_IFNAME_MATCH_BIT, &nf->status);
 
-		if (!(orig_match && reply_match)) {
+		if (!(orig_match && reply_match) && !(nf->status & NF_FF_TOKEN_CTRL)) {
 			/* ifname not matched, skip fastnat for this conn */
 			struct nf_conn_help *help = nfct_help(ct);
 			if (help && !help->helper) {
@@ -2834,7 +2834,7 @@ slow_fastpath6:
 
 		simple_set_bit(NF_FF_IFNAME_MATCH_BIT, &nf->status);
 
-		if (!(orig_match && reply_match)) {
+		if (!(orig_match && reply_match) && !(nf->status & NF_FF_TOKEN_CTRL)) {
 			/* ifname not matched, skip fastnat for this conn */
 			struct nf_conn_help *help = nfct_help(ct);
 			if (help && !help->helper) {
