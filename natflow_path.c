@@ -1491,6 +1491,19 @@ slow_fastpath:
 	}
 #endif
 
+	acct = nf_conn_acct_find(ct);
+	if (acct) {
+		struct nf_conn_counter *counter = acct->counter;
+		int packets = atomic64_read(&counter[0].packets) + atomic64_read(&counter[1].packets);
+		if (delay_pkts && packets <= delay_pkts) {
+			goto out;
+		}
+		/* skip 1/256 packets to slow path */
+		if (packets % 256 == 63) {
+			goto out;
+		}
+	}
+
 	/* if ifname filter enabled, do fastnat for matched ifname only */
 	if (!(nf->status & NF_FF_IFNAME_MATCH) && ifname_match_fastnat[0].ifindex != -1) {
 		int i;
@@ -1544,19 +1557,6 @@ slow_fastpath:
 				             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
 				break;
 			}
-			goto out;
-		}
-	}
-
-	acct = nf_conn_acct_find(ct);
-	if (acct) {
-		struct nf_conn_counter *counter = acct->counter;
-		int packets = atomic64_read(&counter[0].packets) + atomic64_read(&counter[1].packets);
-		if (delay_pkts && packets <= delay_pkts) {
-			goto out;
-		}
-		/* skip 1/256 packets to slow path */
-		if (packets % 256 == 63) {
 			goto out;
 		}
 	}
@@ -2794,6 +2794,20 @@ slow_fastpath6:
 		}
 	}
 #endif
+
+	acct = nf_conn_acct_find(ct);
+	if (acct) {
+		struct nf_conn_counter *counter = acct->counter;
+		int packets = atomic64_read(&counter[0].packets) + atomic64_read(&counter[1].packets);
+		if (delay_pkts && packets <= delay_pkts) {
+			goto out6;
+		}
+		/* skip 1/256 packets to slow path */
+		if (packets % 256 == 63) {
+			goto out6;
+		}
+	}
+
 	/* if ifname filter enabled, do fastnat for matched ifname only */
 	if (!(nf->status & NF_FF_IFNAME_MATCH) && ifname_match_fastnat[0].ifindex != -1) {
 		int i;
@@ -2847,19 +2861,6 @@ slow_fastpath6:
 				             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
 				break;
 			}
-			goto out6;
-		}
-	}
-
-	acct = nf_conn_acct_find(ct);
-	if (acct) {
-		struct nf_conn_counter *counter = acct->counter;
-		int packets = atomic64_read(&counter[0].packets) + atomic64_read(&counter[1].packets);
-		if (delay_pkts && packets <= delay_pkts) {
-			goto out6;
-		}
-		/* skip 1/256 packets to slow path */
-		if (packets % 256 == 63) {
 			goto out6;
 		}
 	}
