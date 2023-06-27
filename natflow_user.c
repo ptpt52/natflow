@@ -538,8 +538,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			do {
 				struct nf_conntrack_ecache *e = nf_ct_ecache_find(ct);
 				if (e) {
-					e->ctmask = 0;
-					e->expmask = 0;
+					ct->ext->offset[NF_CT_EXT_ECACHE] = 0;
 				}
 			} while (0);
 #endif
