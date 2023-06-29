@@ -267,6 +267,8 @@ struct natflow_fastnat_node_t {
 /* MAX 65536 for now we use 4096 */
 #if defined(CONFIG_64BIT) || defined(CONFIG_X86) || defined(CONFIG_X86_64) || defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 #define NATFLOW_FASTNAT_TABLE_SIZE 8192
+#elif defined(CONFIG_ATH79)
+#define NATFLOW_FASTNAT_TABLE_SIZE 4096
 #else
 #define NATFLOW_FASTNAT_TABLE_SIZE 8192
 #endif
