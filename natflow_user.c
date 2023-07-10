@@ -536,7 +536,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			spin_lock_init(&fud->tc.tx.lock);
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 			do {
-				struct nf_conntrack_ecache *e = nf_ct_ecache_find(ct);
+				struct nf_conntrack_ecache *e = nf_ct_ecache_find(user);
 				if (e) {
 					ct->ext->offset[NF_CT_EXT_ECACHE] = 0;
 				}
