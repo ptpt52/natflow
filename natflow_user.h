@@ -41,6 +41,8 @@ typedef struct fakeuser_data_t {
 
 typedef struct nf_conn natflow_fakeuser_t;
 
+extern unsigned int tc_classid_mode;
+
 extern int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf);
 extern int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf);
 

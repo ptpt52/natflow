@@ -198,7 +198,7 @@ static struct qos_rule {
 	unsigned int txbytes;
 } qos_token_ctrl_rule[QOS_TOKEN_CTRL_GROUP_MAX];
 
-static unsigned int tc_classid_mode = 0;
+unsigned int tc_classid_mode = 0;
 static int qos_token_ctrl_num = 0;
 
 static void qos_token_ctrl_init(void)
