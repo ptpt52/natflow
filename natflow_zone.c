@@ -383,7 +383,11 @@ int natflow_zone_init(void)
 		goto cdev_add_failed;
 	}
 
-	natflow_zone_class = class_create(THIS_MODULE,"natflow_zone_class");
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
+	natflow_zone_class = class_create(THIS_MODULE, "natflow_zone_class");
+#else
+	natflow_zone_class = class_create("natflow_zone_class");
+#endif
 	if (IS_ERR(natflow_zone_class)) {
 		NATFLOW_println("failed in creating class");
 		retval = -EINVAL;

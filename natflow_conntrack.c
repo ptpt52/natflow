@@ -613,7 +613,11 @@ int conntrackinfo_init(void)
 		goto cdev_add_failed;
 	}
 
-	conntrackinfo_class = class_create(THIS_MODULE,"conntrackinfo_class");
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
+	conntrackinfo_class = class_create(THIS_MODULE, "conntrackinfo_class");
+#else
+	conntrackinfo_class = class_create("conntrackinfo_class");
+#endif
 	if (IS_ERR(conntrackinfo_class)) {
 		NATFLOW_println("failed in creating class");
 		retval = -EINVAL;

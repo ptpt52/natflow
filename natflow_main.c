@@ -344,7 +344,11 @@ static int __init natflow_init(void) {
 		goto cdev_add_failed;
 	}
 
-	natflow_class = class_create(THIS_MODULE,"natflow_class");
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
+	natflow_class = class_create(THIS_MODULE, "natflow_class");
+#else
+	natflow_class = class_create("natflow_class");
+#endif
 	if (IS_ERR(natflow_class)) {
 		NATFLOW_println("failed in creating class");
 		retval = -EINVAL;

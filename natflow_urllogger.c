@@ -825,7 +825,11 @@ int natflow_urllogger_init(void)
 		goto cdev_add_failed;
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
 	urllogger_class = class_create(THIS_MODULE, "urllogger_class");
+#else
+	urllogger_class = class_create("urllogger_class");
+#endif
 	if (IS_ERR(urllogger_class)) {
 		NATFLOW_println("failed in creating class");
 		ret = -EINVAL;

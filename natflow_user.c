@@ -2637,7 +2637,11 @@ static int userinfo_init(void)
 		goto cdev_add_failed;
 	}
 
-	userinfo_class = class_create(THIS_MODULE,"userinfo_class");
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
+	userinfo_class = class_create(THIS_MODULE, "userinfo_class");
+#else
+	userinfo_class = class_create("userinfo_class");
+#endif
 	if (IS_ERR(userinfo_class)) {
 		NATFLOW_println("failed in creating class");
 		retval = -EINVAL;
@@ -2830,7 +2834,11 @@ static int userinfo_event_init(void)
 		goto cdev_add_failed;
 	}
 
-	userinfo_event_class = class_create(THIS_MODULE,"userinfo_event_class");
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
+	userinfo_event_class = class_create(THIS_MODULE, "userinfo_event_class");
+#else
+	userinfo_event_class = class_create("userinfo_event_class");
+#endif
 	if (IS_ERR(userinfo_event_class)) {
 		NATFLOW_println("failed in creating class");
 		retval = -EINVAL;
@@ -3374,7 +3382,11 @@ static int qos_init(void)
 		goto cdev_add_failed;
 	}
 
-	qos_class = class_create(THIS_MODULE,"qos_class");
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
+	qos_class = class_create(THIS_MODULE, "qos_class");
+#else
+	qos_class = class_create("qos_class");
+#endif
 	if (IS_ERR(qos_class)) {
 		NATFLOW_println("failed in creating class");
 		retval = -EINVAL;
@@ -3454,7 +3466,11 @@ int natflow_user_init(void)
 		goto cdev_add_failed;
 	}
 
-	natflow_user_class = class_create(THIS_MODULE,"natflow_user_class");
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
+	natflow_user_class = class_create(THIS_MODULE, "natflow_user_class");
+#else
+	natflow_user_class = class_create("natflow_user_class");
+#endif
 	if (IS_ERR(natflow_user_class)) {
 		NATFLOW_println("failed in creating class");
 		retval = -EINVAL;
