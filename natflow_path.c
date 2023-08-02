@@ -3458,41 +3458,30 @@ static struct natflow_hook_t *natflow_lookup_hook(struct net_device *dev)
 	return NULL;
 }
 
-static int natflow_create_hook(struct net_device *dev)
-{
-	struct natflow_hook_t *hook;
-	struct nf_hook_ops *ops;
-
-	hook = kzalloc(sizeof(*hook), GFP_ATOMIC);
-	if (!hook)
-		return -ENOMEM;
-
-	ops = &hook->ops;
-	ops->pf = NFPROTO_NETDEV;
-	ops->hooknum = NF_NETDEV_INGRESS;
-	ops->priority = 9;
-	ops->hook = natflow_path_pre_ct_in_hook;
-	ops->dev = dev;
-
-	if (nf_register_net_hook(dev_net(dev), ops) != 0) {
-		kfree(hook);
-		return -EINVAL;
-	}
-
-	hlist_add_head(&hook->list, &natflow_hooks);
-
-	return 0;
-}
-
 static void natflow_check_device(struct net_device *dev)
 {
+	struct nf_hook_ops *ops = NULL;
 	struct natflow_hook_t *hook;
 
 	spin_lock_bh(&natflow_hooks_lock);
 	hook = natflow_lookup_hook(dev);
-	if (!hook)
-		natflow_create_hook(dev);
+	if (!hook) {
+		hook = kzalloc(sizeof(*hook), GFP_ATOMIC);
+		if (hook) {
+			ops = &hook->ops;
+			ops->pf = NFPROTO_NETDEV;
+			ops->hooknum = NF_NETDEV_INGRESS;
+			ops->priority = 9;
+			ops->hook = natflow_path_pre_ct_in_hook;
+			ops->dev = dev;
+
+			hlist_add_head(&hook->list, &natflow_hooks);
+		}
+	}
 	spin_unlock_bh(&natflow_hooks_lock);
+
+	if (ops)
+		nf_register_net_hook(dev_net(dev), ops);
 }
 
 static void natflow_unhook_device(struct net_device *dev)
