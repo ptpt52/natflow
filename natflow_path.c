@@ -1538,7 +1538,6 @@ slow_fastpath:
 				ct->ext->offset[NF_CT_EXT_HELPER] = 0;
 			}
 
-			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
 			switch (iph->protocol) {
 			case IPPROTO_TCP:
 				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) not matched\n",
@@ -1557,11 +1556,14 @@ slow_fastpath:
 				             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
 				break;
 			}
+			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
 			goto out;
 		}
+
+		simple_set_bit(NF_FF_IFNAME_FILTER_BIT, &nf->status);
 	}
 
-	if (!(nf->status & NF_FF_TOKEN_CTRL) && skip_qos_to_slow_path) {
+	if (skip_qos_to_slow_path && !(nf->status & NF_FF_TOKEN_CTRL) && !(nf->status & NF_FF_IFNAME_FILTER)) {
 		struct nf_conn_help *help = nfct_help(ct);
 		if (help && !help->helper) {
 			/* this conn do not need helper, clear it for nss */
@@ -2868,6 +2870,8 @@ slow_fastpath6:
 			}
 			goto out6;
 		}
+
+		simple_set_bit(NF_FF_IFNAME_FILTER_BIT, &nf->status);
 	}
 
 	/* skip for defrag-skb or large packets */

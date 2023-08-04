@@ -47,6 +47,9 @@ typedef struct natflow_route_t {
 #define NF_FF_QOS_TESTED_BIT 6
 #define NF_FF_QOS_TESTED (1 << NF_FF_QOS_TESTED_BIT)
 
+#define NF_FF_IFNAME_FILTER_BIT 7
+#define NF_FF_IFNAME_FILTER (1 << NF_FF_IFNAME_FILTER_BIT)
+
 #define NF_FF_ORIGINAL_BIT 8
 #define NF_FF_ORIGINAL (1 << NF_FF_ORIGINAL_BIT)
 #define NF_FF_REPLY_BIT 9
