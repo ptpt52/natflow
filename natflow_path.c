@@ -914,10 +914,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 						skb->vlan_tci &= ~HWNAT_QUEUE_MAPPING_MAGIC;
 				}
 #else
-				if (!skb_vlan_tag_present(skb) && nfn->vlan_present) /* revert vlan_present if uses_dsa */
-					skb->vlan_present = 1;
-				if (skb_vlan_tag_present(skb))
-					skb->vlan_tci &= ~HWNAT_QUEUE_MAPPING_MAGIC;
+				if (eth_hdr(skb)->h_proto != htons(ETH_P_8021Q)) {
+					if (!skb_vlan_tag_present(skb) && nfn->vlan_present) /* revert vlan_present if uses_dsa */
+						skb->vlan_present = 1;
+					if (skb_vlan_tag_present(skb))
+						skb->vlan_tci &= ~HWNAT_QUEUE_MAPPING_MAGIC;
+				} /* else hardware rx vlan offload disabled */
 #endif
 				if (skb_is_gso(skb) || (nfn->flags & FASTNAT_NO_ARP)) {
 					goto fast_output;
