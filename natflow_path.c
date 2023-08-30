@@ -1079,7 +1079,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					clear_bit(0, &nfn->status);
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 4*1024*1024/8) {
-						if (!(nfn->flags & FASTNAT_EXT_HWNAT_FLAG))
+						if (hwnat && !(nfn->flags & FASTNAT_EXT_HWNAT_FLAG))
 							re_learn = 2;
 					} else if (bytes < NATFLOW_FF_SAMPLE_TIME * 1*1024*1024/8) {
 						re_learn = 3;
@@ -1290,7 +1290,7 @@ fast_output:
 					clear_bit(0, &nfn->status);
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 4*1024*1024/8) {
-						if (!(nfn->flags & FASTNAT_EXT_HWNAT_FLAG))
+						if (hwnat && !(nfn->flags & FASTNAT_EXT_HWNAT_FLAG))
 							re_learn = 2;
 					} else if (bytes < NATFLOW_FF_SAMPLE_TIME * 1*1024*1024/8) {
 						re_learn = 3;
