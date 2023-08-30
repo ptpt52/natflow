@@ -944,7 +944,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		if (unlikely(nf_ct_get(skb, &ctinfo) != NULL))
 			return NF_ACCEPT;
 
-		if (skb->mac_len != ETH_HLEN || skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
+		if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
 			return NF_ACCEPT;
 		}
 		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
@@ -1122,11 +1122,18 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					} else if (skb_vlan_tag_present(skb))
 						__vlan_hwaccel_clear_tag(skb);
 #endif
-					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
+					if (skb->mac_len != ETH_HLEN && skb->mac_len != ETH_HLEN + PPPOE_SES_HLEN) { /* fake ether header for tun */
+						skb->mac_len = ETH_HLEN;
+						skb_push(skb, ETH_HLEN);
+						skb_reset_mac_header(skb);
+						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
+					} else {
+						skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
+						skb_reset_mac_header(skb);
+					}
 					if (unlikely(ingress_pad_len == PPPOE_SES_HLEN)) {
 						skb->protocol = __constant_htons(ETH_P_PPP_SES);
 					}
-					skb_reset_mac_header(skb);
 					skb->dev = nfn->outdev;
 					skb->mark = HWNAT_QUEUE_MAPPING_MAGIC;
 					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
@@ -1320,11 +1327,18 @@ fast_output:
 					} else if (skb_vlan_tag_present(skb))
 						__vlan_hwaccel_clear_tag(skb);
 #endif
-					skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
+					if (skb->mac_len != ETH_HLEN && skb->mac_len != ETH_HLEN + PPPOE_SES_HLEN) { /* fake ether header for tun */
+						skb->mac_len = ETH_HLEN;
+						skb_push(skb, ETH_HLEN);
+						skb_reset_mac_header(skb);
+						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
+					} else {
+						skb_push(skb, (void *)ip_hdr(skb) - (void *)eth_hdr(skb));
+						skb_reset_mac_header(skb);
+					}
 					if (unlikely(ingress_pad_len == PPPOE_SES_HLEN)) {
 						skb->protocol = __constant_htons(ETH_P_PPP_SES);
 					}
-					skb_reset_mac_header(skb);
 					skb->dev = nfn->outdev;
 					skb->mark = HWNAT_QUEUE_MAPPING_MAGIC;
 					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
@@ -3512,8 +3526,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (event == NETDEV_UP) {
-		if (!((dev->flags & (IFF_LOOPBACK | IFF_POINTOPOINT)) ||
-		        (dev->type == ARPHRD_PPP || dev->type == ARPHRD_NONE) ||
+		if (!((dev->flags & IFF_LOOPBACK) ||
 		        netif_is_bridge_master(dev) ||
 		        netif_is_macvlan(dev)) ||
 		        dev->type == ARPHRD_RAWIP) {
