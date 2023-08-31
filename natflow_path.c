@@ -3528,6 +3528,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 	if (event == NETDEV_UP) {
 		if (!((dev->flags & IFF_LOOPBACK) ||
 		        netif_is_bridge_master(dev) ||
+			netif_is_ovs_master(dev) ||
 		        netif_is_bond_master(dev) ||
 		        netif_is_macvlan(dev)) ||
 		        dev->type == ARPHRD_RAWIP) {
