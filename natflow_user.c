@@ -278,7 +278,7 @@ int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *n
 	int ret = 0;
 
 	if (tc_classid_mode && nf && nf->qos_id) {
-		skb->mark = nf->qos_id;
+		skb->mark = nf->qos_id * 2 - 1;
 		return 0;
 	}
 
@@ -298,7 +298,7 @@ int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *n
 	int ret = 0;
 
 	if (tc_classid_mode && nf && nf->qos_id) {
-		skb->mark = nf->qos_id;
+		skb->mark = nf->qos_id * 2;
 		return 0;
 	}
 
