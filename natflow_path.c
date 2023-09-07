@@ -272,7 +272,7 @@ static inline natflow_fastnat_node_t *nfn_invert_get6(natflow_fastnat_node_t *nf
 	return NULL;
 }
 
-static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, unsigned long packets, unsigned int *speed_bytes, unsigned int *speed_packets, int hw, unsigned long current_jiffies)
+static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, unsigned long packets, unsigned int *speed_bytes, unsigned int *speed_packets, int hw, unsigned long current_jiffies)
 {
 	struct nf_conn_acct *acct;
 	natflow_fastnat_node_t *nfn;
@@ -489,12 +489,12 @@ static void natflow_offload_keepalive(unsigned int hash, unsigned long bytes, un
 				}
 			} while (0);
 			nf_ct_put(ct);
-			return;
+			return 0;
 		}
 		NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] diff_jiffies=%u ct not found\n",
 		             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (unsigned int)diff_jiffies);
 		nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
-		return;
+		return -1;
 
 __keepalive_ipv6_main:
 
@@ -606,12 +606,12 @@ __keepalive_ipv6_main:
 			} while(0);
 			/* TODO stats to user */
 			nf_ct_put(ct);
-			return;
+			return 0;
 		}
 		NATFLOW_INFO("keepalive[%u] nfn[%pI6.%u->%pI6.%u] diff_jiffies=%u ct not found\n",
 		             hash, nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest), (unsigned int)diff_jiffies);
 		nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
-		return;
+		return -1;
 	}
 
 	if (NFN_L3NUM_DEC(nfn->flags) == AF_INET6) {
@@ -621,6 +621,8 @@ __keepalive_ipv6_main:
 		NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] diff_jiffies=%u timeout\n",
 		             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (unsigned int)diff_jiffies);
 	}
+
+	return -2;
 }
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
@@ -935,8 +937,20 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			}
 			/* Strict conditions can determine that it is a specially marked skb
 			 * so it is safe to drop
-			 * TODO: del foe
 			 */
+			if (skb->dev->netdev_ops->ndo_flow_offload_check) {
+				flow_offload_hw_path_t del = {
+					.dev = skb->dev,
+					.flags = FLOW_OFFLOAD_PATH_ETHERNET | FLOW_OFFLOAD_PATH_DEL,
+				};
+
+				del.vlan_proto = (unsigned short)(nfn - natflow_fast_nat_table);
+				nfn = nfn_invert_get(nfn);
+				if (nfn) {
+					del.vlan_id = (unsigned short)(nfn - natflow_fast_nat_table);
+					skb->dev->netdev_ops->ndo_flow_offload_check(&del);
+				}
+			}
 			return NF_DROP;
 		}
 #endif
@@ -3528,7 +3542,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 	if (event == NETDEV_UP) {
 		if (!((dev->flags & IFF_LOOPBACK) ||
 		        netif_is_bridge_master(dev) ||
-			netif_is_ovs_master(dev) ||
+		        netif_is_ovs_master(dev) ||
 		        netif_is_bond_master(dev) ||
 		        netif_is_macvlan(dev)) ||
 		        dev->type == ARPHRD_RAWIP) {
