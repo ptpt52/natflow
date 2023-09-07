@@ -1603,11 +1603,6 @@ slow_fastpath:
 		goto out;
 	}
 
-	if ((nf->status & NF_FF_TOKEN_CTRL) && nf->rroute[dir].vlan_present && tc_classid_mode) {
-		set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
-		goto out;
-	}
-
 	/* skip for defrag-skb or large packets */
 	if (skb_is_nonlinear(skb) || ntohs(iph->tot_len) > 1500 - ingress_pad_len) {
 		if (iph->protocol == IPPROTO_UDP || !skb_is_gso(skb))
