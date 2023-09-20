@@ -205,7 +205,20 @@ static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn
 			hash += 1;
 			nfn = &natflow_fast_nat_table[hash];
 		}
-
+#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+		if (nfn->saddr != saddr || nfn->daddr != daddr ||
+		        nfn->source != source || nfn->dest != dest ||
+		        NFN_PROTO_DEC(nfn->flags) != protonum) {
+			hash += 1;
+			nfn = &natflow_fast_nat_table[hash];
+		}
+		if (nfn->saddr != saddr || nfn->daddr != daddr ||
+		        nfn->source != source || nfn->dest != dest ||
+		        NFN_PROTO_DEC(nfn->flags) != protonum) {
+			hash += 1;
+			nfn = &natflow_fast_nat_table[hash];
+		}
+#endif
 		diff_jiffies = ulongmindiff(jiffies, nfn->jiffies);
 		if (nfn->magic == natflow_path_magic &&
 		        (u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW &&
@@ -329,7 +342,20 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 				hash += 1;
 				nfn = &natflow_fast_nat_table[hash];
 			}
-
+#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+			if (nfn->saddr != saddr || nfn->daddr != daddr ||
+			        nfn->source != source || nfn->dest != dest ||
+			        NFN_PROTO_DEC(nfn->flags) != protonum) {
+				hash += 1;
+				nfn = &natflow_fast_nat_table[hash];
+			}
+			if (nfn->saddr != saddr || nfn->daddr != daddr ||
+			        nfn->source != source || nfn->dest != dest ||
+			        NFN_PROTO_DEC(nfn->flags) != protonum) {
+				hash += 1;
+				nfn = &natflow_fast_nat_table[hash];
+			}
+#endif
 			diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
 			if ((u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW &&
 			        nfn->saddr == saddr && nfn->daddr == daddr &&
@@ -672,7 +698,24 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 		        NFN_PROTO_DEC(nfn->flags) != ft->l4proto)
 		{
 			orig_hash += 1;
+			nfn = &natflow_fast_nat_table[orig_hash];
 		}
+#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+		if (nfn->saddr != ft->src_v4.s_addr || nfn->daddr != ft->dst_v4.s_addr ||
+		        nfn->source != ft->src_port || nfn->dest != ft->dst_port ||
+		        NFN_PROTO_DEC(nfn->flags) != ft->l4proto)
+		{
+			orig_hash += 1;
+			nfn = &natflow_fast_nat_table[orig_hash];
+		}
+		if (nfn->saddr != ft->src_v4.s_addr || nfn->daddr != ft->dst_v4.s_addr ||
+		        nfn->source != ft->src_port || nfn->dest != ft->dst_port ||
+		        NFN_PROTO_DEC(nfn->flags) != ft->l4proto)
+		{
+			orig_hash += 1;
+			nfn = &natflow_fast_nat_table[orig_hash];
+		}
+#endif
 	} else {
 		orig_hash = natflow_hash_v6(ft->src_v6.s6_addr32, ft->dst_v6.s6_addr32, ft->src_port, ft->dst_port);
 		nfn = &natflow_fast_nat_table[orig_hash];
@@ -681,6 +724,7 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 		        NFN_PROTO_DEC(nfn->flags) != ft->l4proto)
 		{
 			orig_hash += 1;
+			nfn = &natflow_fast_nat_table[orig_hash];
 		}
 	}
 
@@ -707,7 +751,24 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 		        NFN_PROTO_DEC(nfn->flags) != ft->l4proto)
 		{
 			reply_hash += 1;
+			nfn = &natflow_fast_nat_table[reply_hash];
 		}
+#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+		if (nfn->saddr != ft->src_v4.s_addr || nfn->daddr != ft->dst_v4.s_addr ||
+		        nfn->source != ft->src_port || nfn->dest != ft->dst_port ||
+		        NFN_PROTO_DEC(nfn->flags) != ft->l4proto)
+		{
+			reply_hash += 1;
+			nfn = &natflow_fast_nat_table[reply_hash];
+		}
+		if (nfn->saddr != ft->src_v4.s_addr || nfn->daddr != ft->dst_v4.s_addr ||
+		        nfn->source != ft->src_port || nfn->dest != ft->dst_port ||
+		        NFN_PROTO_DEC(nfn->flags) != ft->l4proto)
+		{
+			reply_hash += 1;
+			nfn = &natflow_fast_nat_table[reply_hash];
+		}
+#endif
 	} else {
 		reply_hash = natflow_hash_v6(ft->src_v6.s6_addr32, ft->dst_v6.s6_addr32, ft->src_port, ft->dst_port);
 		nfn = &natflow_fast_nat_table[reply_hash];
@@ -716,6 +777,7 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 		        NFN_PROTO_DEC(nfn->flags) != ft->l4proto)
 		{
 			reply_hash += 1;
+			nfn = &natflow_fast_nat_table[reply_hash];
 		}
 	}
 
@@ -1052,6 +1114,20 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				_I += 1;
 				nfn = &natflow_fast_nat_table[_I];
 			}
+#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+			if (nfn->saddr != iph->saddr || nfn->daddr != iph->daddr ||
+			        nfn->source != TCPH(l4)->source || nfn->dest != TCPH(l4)->dest ||
+			        !(nfn->flags & FASTNAT_PROTO_TCP)) {
+				_I += 1;
+				nfn = &natflow_fast_nat_table[_I];
+			}
+			if (nfn->saddr != iph->saddr || nfn->daddr != iph->daddr ||
+			        nfn->source != TCPH(l4)->source || nfn->dest != TCPH(l4)->dest ||
+			        !(nfn->flags & FASTNAT_PROTO_TCP)) {
+				_I += 1;
+				nfn = &natflow_fast_nat_table[_I];
+			}
+#endif
 			hash = _I;
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 			if (nfn->magic == natflow_path_magic &&
@@ -1270,6 +1346,20 @@ fast_output:
 				_I += 1;
 				nfn = &natflow_fast_nat_table[_I];
 			}
+#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+			if (nfn->saddr != iph->saddr || nfn->daddr != iph->daddr ||
+			        nfn->source != UDPH(l4)->source || nfn->dest != UDPH(l4)->dest ||
+			        !(nfn->flags & FASTNAT_PROTO_UDP)) {
+				_I += 1;
+				nfn = &natflow_fast_nat_table[_I];
+			}
+			if (nfn->saddr != iph->saddr || nfn->daddr != iph->daddr ||
+			        nfn->source != UDPH(l4)->source || nfn->dest != UDPH(l4)->dest ||
+			        !(nfn->flags & FASTNAT_PROTO_UDP)) {
+				_I += 1;
+				nfn = &natflow_fast_nat_table[_I];
+			}
+#endif
 			hash = _I;
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 			if (nfn->magic == natflow_path_magic &&
@@ -1766,6 +1856,24 @@ fastnat_check:
 							hash += 1;
 							nfn = &natflow_fast_nat_table[hash];
 						}
+#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+						if (natflow_hash_skip(hash) ||
+						        (ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_HIGH &&
+						         (nfn->saddr != saddr || nfn->daddr != daddr ||
+						          nfn->source != source || nfn->dest != dest ||
+						          NFN_PROTO_DEC(nfn->flags) != protonum))) {
+							hash += 1;
+							nfn = &natflow_fast_nat_table[hash];
+						}
+						if (natflow_hash_skip(hash) ||
+						        (ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_HIGH &&
+						         (nfn->saddr != saddr || nfn->daddr != daddr ||
+						          nfn->source != source || nfn->dest != dest ||
+						          NFN_PROTO_DEC(nfn->flags) != protonum))) {
+							hash += 1;
+							nfn = &natflow_fast_nat_table[hash];
+						}
+#endif
 						if (!natflow_hash_skip(hash) &&
 						        (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH ||
 						         (nfn->saddr == saddr && nfn->daddr == daddr &&
@@ -1867,6 +1975,18 @@ fastnat_check:
 									hash += 1;
 									nfn_i = &natflow_fast_nat_table[hash];
 								}
+#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+								if (nfn_i->saddr != saddr || nfn_i->daddr != daddr ||
+								        nfn_i->source != source || nfn_i->dest != dest || NFN_PROTO_DEC(nfn_i->flags) != protonum) {
+									hash += 1;
+									nfn_i = &natflow_fast_nat_table[hash];
+								}
+								if (nfn_i->saddr != saddr || nfn_i->daddr != daddr ||
+								        nfn_i->source != source || nfn_i->dest != dest || NFN_PROTO_DEC(nfn_i->flags) != protonum) {
+									hash += 1;
+									nfn_i = &natflow_fast_nat_table[hash];
+								}
+#endif
 								if (nfn_i->magic == natflow_path_magic && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
 								        (nfn_i->saddr == saddr && nfn_i->daddr == daddr &&
 								         nfn_i->source == source && nfn_i->dest == dest && NFN_PROTO_DEC(nfn_i->flags) == protonum)) {
