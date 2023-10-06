@@ -534,15 +534,15 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			fud = (struct fakeuser_data_t *)((void *)new + newoff);
 			spin_lock_init(&fud->tc.rx.lock);
 			spin_lock_init(&fud->tc.tx.lock);
-#ifdef CONFIG_NF_CONNTRACK_EVENTS
-			do {
-				struct nf_conntrack_ecache *e = nf_ct_ecache_find(user);
-				if (e) {
-					user->ext->offset[NF_CT_EXT_ECACHE] = 0;
-				}
-			} while (0);
-#endif
 		}
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
+		do {
+			struct nf_conntrack_ecache *e = nf_ct_ecache_find(user);
+			if (e) {
+				user->ext->offset[NF_CT_EXT_ECACHE] = 0;
+			}
+		} while (0);
+#endif
 
 		ret = nf_conntrack_confirm(uskb);
 		if (ret != NF_ACCEPT) {
