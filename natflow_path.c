@@ -1213,8 +1213,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 						__vlan_hwaccel_clear_tag(skb);
 #endif
 					if (skb->mac_len != ETH_HLEN && skb->mac_len != ETH_HLEN + PPPOE_SES_HLEN) { /* fake ether header for tun */
-						skb->mac_len = ETH_HLEN;
 						skb_push(skb, ETH_HLEN);
+						skb->mac_len = ETH_HLEN;
 						skb_reset_mac_header(skb);
 						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
 					} else {
@@ -1317,6 +1317,12 @@ fast_output:
 						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
 					}
 					skb->dev = nfn->outdev;
+					if (_I == 0 && skb->dev->type == ARPHRD_ETHER) {
+						skb_push(skb, ETH_HLEN);
+						skb->mac_len = ETH_HLEN;
+						skb_reset_mac_header(skb);
+						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
+					}
 					if (nfn->vlan_present) {
 						if (nfn->vlan_proto == FF_ETH_P_8021Q)
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
@@ -1432,8 +1438,8 @@ fast_output:
 						__vlan_hwaccel_clear_tag(skb);
 #endif
 					if (skb->mac_len != ETH_HLEN && skb->mac_len != ETH_HLEN + PPPOE_SES_HLEN) { /* fake ether header for tun */
-						skb->mac_len = ETH_HLEN;
 						skb_push(skb, ETH_HLEN);
+						skb->mac_len = ETH_HLEN;
 						skb_reset_mac_header(skb);
 						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
 					} else {
@@ -1930,16 +1936,16 @@ fastnat_check:
 
 							switch (iph->protocol) {
 							case IPPROTO_TCP:
-								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d use hash=%d outdev=%s(vlan:%d pppoe=%d)\n",
+								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d use hash=%d outdev=%s(vlan:%d pppoe=%d) l2_len=%d\n",
 								             DEBUG_TCP_ARG(iph,l4), d, hash, nfn->outdev->name,
 								             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-								             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1);
+								             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1, nf->rroute[d].l2_head_len);
 								break;
 							case IPPROTO_UDP:
-								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d use hash=%d outdev=%s(vlan:%d pppoe=%d)\n",
+								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d use hash=%d outdev=%s(vlan:%d pppoe=%d) l2_len=%d\n",
 								             DEBUG_UDP_ARG(iph,l4), d, hash, nfn->outdev->name,
 								             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-								             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1);
+								             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1, nf->rroute[d].l2_head_len);
 								break;
 							}
 						} else {
@@ -2496,6 +2502,12 @@ fastnat_check:
 		skb_reset_mac_header(skb);
 		memcpy(skb_mac_header(skb), nf->rroute[dir].l2_head, nf->rroute[dir].l2_head_len);
 		skb->dev = nf->rroute[dir].outdev;
+		if (nf->rroute[dir].l2_head_len == 0 && skb->dev->type == ARPHRD_ETHER) {
+			skb_push(skb, ETH_HLEN);
+			skb->mac_len = ETH_HLEN;
+			skb_reset_mac_header(skb);
+			eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
+		}
 		if ((nf->status & NF_FF_TOKEN_CTRL)) { /* for tc working on bridge interface */
 			skb->dev = netdev_master_upper_dev_get_rcu(nf->rroute[dir].outdev);
 			if (!skb->dev)
@@ -2747,6 +2759,12 @@ fast_output6:
 						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IPV6);
 					}
 					skb->dev = nfn->outdev;
+					if (_I == 0 && skb->dev->type == ARPHRD_ETHER) {
+						skb_push(skb, ETH_HLEN);
+						skb->mac_len = ETH_HLEN;
+						skb_reset_mac_header(skb);
+						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IPV6);
+					}
 					if (nfn->vlan_present) {
 						if (nfn->vlan_proto == FF_ETH_P_8021Q)
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
@@ -3282,6 +3300,12 @@ fastnat_check6:
 		skb_reset_mac_header(skb);
 		memcpy(skb_mac_header(skb), nf->rroute[dir].l2_head, nf->rroute[dir].l2_head_len);
 		skb->dev = nf->rroute[dir].outdev;
+		if (nf->rroute[dir].l2_head_len == 0 && skb->dev->type == ARPHRD_ETHER) {
+			skb_push(skb, ETH_HLEN);
+			skb->mac_len = ETH_HLEN;
+			skb_reset_mac_header(skb);
+			eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IPV6);
+		}
 #ifdef CONFIG_NETFILTER_INGRESS
 		if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 			struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
