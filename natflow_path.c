@@ -1106,6 +1106,17 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			}
 			iph = ip_hdr(skb);
 			l4 = (void *)iph + iph->ihl * 4;
+			if (TCPH(l4)->syn) {
+				static int syn_pps[4] = {0,0,0,0};
+				int ii = (jiffies / HZ) % 4;
+				int jj = (ii + 2) % 4;
+				syn_pps[ii]++;
+				if (syn_pps[jj])
+					syn_pps[jj] = 0;
+				if (syn_pps[ii] > 30) {
+					return NF_DROP;
+				}
+			}
 			_I = natflow_hash_v4(iph->saddr, iph->daddr, TCPH(l4)->source, TCPH(l4)->dest);
 			nfn = &natflow_fast_nat_table[_I];
 			if (nfn->saddr != iph->saddr || nfn->daddr != iph->daddr ||
