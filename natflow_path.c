@@ -1062,6 +1062,17 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			goto out;
 		}
 		if (iph->protocol != IPPROTO_TCP && iph->protocol != IPPROTO_UDP) {
+			if (iph->protocol == IPPROTO_ICMP) {
+				static int syn_pps[4] = {0,0,0,0};
+				int ii = (jiffies / HZ) % 4;
+				int jj = (ii + 2) % 4;
+				syn_pps[ii]++;
+				if (syn_pps[jj])
+					syn_pps[jj] = 0;
+				if (syn_pps[ii] > 1024) {
+					return NF_DROP;
+				}
+			}
 			goto out;
 		}
 
@@ -1113,7 +1124,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				syn_pps[ii]++;
 				if (syn_pps[jj])
 					syn_pps[jj] = 0;
-				if (syn_pps[ii] > 30) {
+				if (syn_pps[ii] > 1024) {
 					return NF_DROP;
 				}
 			}
