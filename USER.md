@@ -1,4 +1,3 @@
-
 ## read all userinfo
 
 API: `cat /dev/userinfo_ctl`
