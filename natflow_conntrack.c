@@ -248,7 +248,7 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 				}
 
 				if (!ct_i || ct_i->len + 448 > CONNTRACKINFO_DATALEN) {
-					ct_i = kmalloc(CONNTRACKINFO_MEMSIZE, GFP_KERNEL);
+					ct_i = kmalloc(CONNTRACKINFO_MEMSIZE, GFP_ATOMIC);
 					INIT_LIST_HEAD(&ct_i->list);
 					ct_i->len = 0;
 					list_add_tail(&ct_i->list, &user->head);
