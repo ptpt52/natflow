@@ -2462,6 +2462,11 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 				acct = nf_conn_acct_find(ct);
 				if (acct) {
 					user_i = kmalloc(sizeof(struct userinfo), GFP_ATOMIC);
+					if (!user_i) {
+						nf_ct_put(ct);
+						ret = -ENOMEM;
+						goto out;
+					}
 					INIT_LIST_HEAD(&user_i->list);
 					user_i->timeout = nf_ct_expires(ct)  / HZ;
 					user_i->ip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
