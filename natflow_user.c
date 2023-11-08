@@ -2461,7 +2461,7 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 				fud = natflow_fakeuser_data(ct);
 				acct = nf_conn_acct_find(ct);
 				if (acct) {
-					user_i = kmalloc(sizeof(struct userinfo), GFP_KERNEL);
+					user_i = kmalloc(sizeof(struct userinfo), GFP_ATOMIC);
 					INIT_LIST_HEAD(&user_i->list);
 					user_i->timeout = nf_ct_expires(ct)  / HZ;
 					user_i->ip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
