@@ -652,6 +652,7 @@ __keepalive_ipv6_main:
 }
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+static struct net_device *ppe_dev = NULL;
 #if defined(NATFLOW_OFFLOAD_HWNAT_FAKE)
 #else
 typedef struct flow_offload flow_offload_t;
@@ -2110,7 +2111,9 @@ fastnat_check:
 													reply.pppoe_sid =
 													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
 												}
-
+												if (unlikely(!ppe_dev)) {
+													ppe_dev = orig_dev;
+												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
 													NATFLOW_INFO("(PCO) set hwnat offload 1 dev=%s(vlan:%d pppoe:%d)"
@@ -2254,6 +2257,9 @@ fastnat_check:
 													reply.pppoe_sid =
 													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
 												}
+												if (unlikely(!ppe_dev)) {
+													ppe_dev = orig_dev;
+												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
 													NATFLOW_INFO("(PCO) set hwnat offload 2 dev=%s(vlan:%d pppoe:%d)"
@@ -2394,6 +2400,9 @@ fastnat_check:
 												reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
 												reply.pppoe_sid =
 												    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
+											}
+											if (unlikely(!ppe_dev)) {
+												ppe_dev = reply_dev;
 											}
 											if (reply_dev->netdev_ops->ndo_flow_offload(
 											            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
@@ -3769,6 +3778,22 @@ void natflow_path_exit(void)
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
 #ifdef CONFIG_NETFILTER_INGRESS
 	synchronize_rcu();
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+	if (ppe_dev) {
+		int i;
+		flow_offload_hw_path_t del = {
+			.dev = ppe_dev,
+			.flags = FLOW_OFFLOAD_PATH_ETHERNET | FLOW_OFFLOAD_PATH_DEL,
+		};
+		natflow_hwnat_stop(ppe_dev);
+		for (i = 0; i < NATFLOW_FASTNAT_TABLE_SIZE / 2; i++) {
+			del.vlan_id = (unsigned short)i;
+			del.vlan_proto = NATFLOW_FASTNAT_TABLE_SIZE - 1 - i;
+			ppe_dev->netdev_ops->ndo_flow_offload_check(&del);
+		}
+		synchronize_rcu();
+	}
+#endif
 	kfree(natflow_fast_nat_table);
 #else
 	synchronize_rcu();
