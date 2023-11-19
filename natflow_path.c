@@ -819,6 +819,11 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 		if (!(nf->status & NF_FF_REPLY) && !simple_test_and_set_bit(NF_FF_REPLY_BIT, &nf->status)) {
 			void *l2 = (void *)skb_mac_header(skb);
 			int l2_len = (void *)iph - l2;
+#ifdef CONFIG_NETFILTER_INGRESS
+			if (dev->type == ARPHRD_PPP && l2_len == ETH_HLEN + PPPOE_SES_HLEN) {
+				return;
+			}
+#endif
 			if (dev->type == ARPHRD_PPP || dev->type == ARPHRD_NONE) {
 				l2_len = 0;
 			}
@@ -847,6 +852,11 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 		if (!(nf->status & NF_FF_ORIGINAL) && !simple_test_and_set_bit(NF_FF_ORIGINAL_BIT, &nf->status)) {
 			void *l2 = (void *)skb_mac_header(skb);
 			int l2_len = (void *)iph - l2;
+#ifdef CONFIG_NETFILTER_INGRESS
+			if (dev->type == ARPHRD_PPP && l2_len == ETH_HLEN + PPPOE_SES_HLEN) {
+				return;
+			}
+#endif
 			if (dev->type == ARPHRD_PPP || dev->type == ARPHRD_NONE) {
 				l2_len = 0;
 			}
