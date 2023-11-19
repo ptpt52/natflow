@@ -749,7 +749,15 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 	if (!skb->dev) {
 		return;
 	}
-	dev = get_macvlan_real_dev(skb->dev);
+	dev = skb->dev;
+#ifdef CONFIG_NETFILTER_INGRESS
+	if (netif_is_bridge_master(dev) ||
+	        netif_is_ovs_master(dev) ||
+	        netif_is_bond_master(dev) ||
+	        netif_is_macvlan(dev)) {
+		return;
+	}
+#endif
 
 	if (dir == IP_CT_DIR_ORIGINAL) {
 		if (!(nf->status & NF_FF_REPLY) && !simple_test_and_set_bit(NF_FF_REPLY_BIT, &nf->status)) {
