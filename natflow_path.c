@@ -736,16 +736,6 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 	struct iphdr *iph = ip_hdr(skb);
 	struct net_device *dev;
 
-	if (nf->magic != magic) {
-		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
-
-		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
-		nf->magic = magic;
-	}
 	if (!skb->dev) {
 		return;
 	}
@@ -757,7 +747,21 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 	        netif_is_macvlan(dev)) {
 		return;
 	}
+	if (dev->type == ARPHRD_PPP &&
+	        (dev->name[0] == 'p' && dev->name[1] == 'p' && dev->name[2] == 'p' && dev->name[3] == 'o' && dev->name[4] == 'e')) {
+		return;
+	}
 #endif
+	if (nf->magic != magic) {
+		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
+
+		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
+		nf->magic = magic;
+	}
 
 	if (dir == IP_CT_DIR_ORIGINAL) {
 		if (!(nf->status & NF_FF_REPLY) && !simple_test_and_set_bit(NF_FF_REPLY_BIT, &nf->status)) {
