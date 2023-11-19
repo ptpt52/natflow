@@ -341,7 +341,7 @@ static inline struct net_device *get_macvlan_real_dev(struct net_device *dev)
 	return dev;
 }
 
-void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir);
+void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir, int re_learn);
 
 struct ifname_match {
 	short ifindex;

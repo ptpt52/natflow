@@ -794,7 +794,7 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 #endif
 #endif
 
-void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir)
+void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir, int re_learn)
 {
 	int magic = natflow_path_magic;
 	struct iphdr *iph = ip_hdr(skb);
@@ -828,7 +828,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 			void *l2 = (void *)skb_mac_header(skb);
 			int l2_len = (void *)iph - l2;
 #ifdef CONFIG_NETFILTER_INGRESS
-			if (dev->type == ARPHRD_PPP && l2_len == ETH_HLEN + PPPOE_SES_HLEN) {
+			if (dev->type == ARPHRD_PPP && re_learn && nf->rroute[NF_FF_DIR_REPLY].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 				return;
 			}
 #endif
@@ -861,7 +861,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 			void *l2 = (void *)skb_mac_header(skb);
 			int l2_len = (void *)iph - l2;
 #ifdef CONFIG_NETFILTER_INGRESS
-			if (dev->type == ARPHRD_PPP && l2_len == ETH_HLEN + PPPOE_SES_HLEN) {
+			if (dev->type == ARPHRD_PPP && re_learn && nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 				return;
 			}
 #endif
@@ -1584,7 +1584,7 @@ slow_fastpath:
 	}
 #endif
 #endif
-	natflow_session_learn(skb, ct, nf, dir);
+	natflow_session_learn(skb, ct, nf, dir, re_learn);
 	if (!nf_ct_is_confirmed(ct)) {
 		goto out;
 	}
@@ -2933,7 +2933,7 @@ slow_fastpath6:
 		}
 	}
 #endif
-	natflow_session_learn(skb, ct, nf, dir);
+	natflow_session_learn(skb, ct, nf, dir, re_learn);
 	if (!nf_ct_is_confirmed(ct)) {
 		goto out6;
 	}
