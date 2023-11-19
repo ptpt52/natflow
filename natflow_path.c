@@ -794,22 +794,12 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 #endif
 #endif
 
-void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir, int re_learn)
+void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir)
 {
 	int magic = natflow_path_magic;
 	struct iphdr *iph = ip_hdr(skb);
 	struct net_device *dev;
 
-	if (nf->magic != magic) {
-		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
-
-		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
-		simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
-		nf->magic = magic;
-	}
 	if (!skb->dev) {
 		return;
 	}
@@ -821,17 +811,26 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 	        netif_is_macvlan(dev)) {
 		return;
 	}
+	if (dev->type == ARPHRD_PPP &&
+	        (dev->name[0] == 'p' && dev->name[1] == 'p' && dev->name[2] == 'p' && dev->name[3] == 'o' && dev->name[4] == 'e')) {
+		return;
+	}
 #endif
+	if (nf->magic != magic) {
+		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
+
+		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
+		nf->magic = magic;
+	}
 
 	if (dir == IP_CT_DIR_ORIGINAL) {
 		if (!(nf->status & NF_FF_REPLY) && !simple_test_and_set_bit(NF_FF_REPLY_BIT, &nf->status)) {
 			void *l2 = (void *)skb_mac_header(skb);
 			int l2_len = (void *)iph - l2;
-#ifdef CONFIG_NETFILTER_INGRESS
-			if (dev->type == ARPHRD_PPP && re_learn && nf->rroute[NF_FF_DIR_REPLY].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
-				return;
-			}
-#endif
 			if (dev->type == ARPHRD_PPP || dev->type == ARPHRD_NONE) {
 				l2_len = 0;
 			}
@@ -860,11 +859,6 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 		if (!(nf->status & NF_FF_ORIGINAL) && !simple_test_and_set_bit(NF_FF_ORIGINAL_BIT, &nf->status)) {
 			void *l2 = (void *)skb_mac_header(skb);
 			int l2_len = (void *)iph - l2;
-#ifdef CONFIG_NETFILTER_INGRESS
-			if (dev->type == ARPHRD_PPP && re_learn && nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
-				return;
-			}
-#endif
 			if (dev->type == ARPHRD_PPP || dev->type == ARPHRD_NONE) {
 				l2_len = 0;
 			}
@@ -1584,7 +1578,7 @@ slow_fastpath:
 	}
 #endif
 #endif
-	natflow_session_learn(skb, ct, nf, dir, re_learn);
+	natflow_session_learn(skb, ct, nf, dir);
 	if (!nf_ct_is_confirmed(ct)) {
 		goto out;
 	}
@@ -2933,7 +2927,7 @@ slow_fastpath6:
 		}
 	}
 #endif
-	natflow_session_learn(skb, ct, nf, dir, re_learn);
+	natflow_session_learn(skb, ct, nf, dir);
 	if (!nf_ct_is_confirmed(ct)) {
 		goto out6;
 	}
