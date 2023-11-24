@@ -747,9 +747,11 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 	        netif_is_macvlan(dev)) {
 		return;
 	}
-	if (dev->type == ARPHRD_PPP &&
-	        (dev->name[0] == 'p' && dev->name[1] == 'p' && dev->name[2] == 'p' && dev->name[3] == 'o' && dev->name[4] == 'e')) {
-		return;
+	if (dev->type == ARPHRD_PPP) {
+		if ((dev->flags & IFF_PPPOE))
+			return;
+		if (*(__be16 *)((void *)ip_hdr(skb) - 2) == __constant_htons(PPP_IP) || *(__be16 *)((void *)ip_hdr(skb) - 2) == __constant_htons(PPP_IPV6))
+			return;
 	}
 #endif
 	if (nf->magic != magic) {
@@ -3469,6 +3471,28 @@ static void natflow_unhook_device(struct net_device *dev)
 static int natflow_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
+
+	if (event == NETDEV_UP) {
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+		if (dev->type == ARPHRD_PPP && dev->netdev_ops->ndo_flow_offload_check) {
+			flow_offload_hw_path_t path = {
+				.dev = dev,
+				.flags = FLOW_OFFLOAD_PATH_ETHERNET,
+			};
+			dev->netdev_ops->ndo_flow_offload_check(&path);
+			if ((path.flags & FLOW_OFFLOAD_PATH_PPPOE)) {
+				dev->flags |= IFF_PPPOE;
+				NATFLOW_println("catch NETDEV_UP event for dev=%s : set flags IFF_PPPOE", dev->name);
+			}
+		}
+#else
+		if (dev->type == ARPHRD_PPP &&
+		        (dev->name[0] == 'p' && dev->name[1] == 'p' && dev->name[2] == 'p' && dev->name[3] == 'o' && dev->name[4] == 'e')) {
+			dev->flags |= IFF_PPPOE;
+			NATFLOW_println("catch NETDEV_UP event for dev=%s : set flags IFF_PPPOE", dev->name);
+		}
+#endif
+	}
 
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (event == NETDEV_UP) {

@@ -349,6 +349,9 @@ struct ifname_match {
 };
 #define IFNAME_MATCH_MAX 64
 
+/* define IFF_PPPOE indicate pppoe dev */
+#define IFF_PPPOE (1<<25)
+
 extern void ifname_match_clear(void);
 extern int ifname_match_add(const unsigned char *ifname);
 extern struct ifname_match *ifname_match_get(int idx, struct net_device **out_dev);
