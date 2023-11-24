@@ -1439,11 +1439,10 @@ slow_fastpath:
 	}
 #endif
 #endif
+	natflow_session_learn(skb, ct, nf, dir);
 	if (!nf_ct_is_confirmed(ct)) {
 		goto out;
 	}
-
-	natflow_session_learn(skb, ct, nf, dir);
 
 	if ((ct->status & IPS_NATFLOW_FF_STOP) || (nf->status & NF_FF_BUSY_USE)) {
 		goto out;
@@ -2727,11 +2726,10 @@ slow_fastpath6:
 		}
 	}
 #endif
+	natflow_session_learn(skb, ct, nf, dir);
 	if (!nf_ct_is_confirmed(ct)) {
 		goto out6;
 	}
-
-	natflow_session_learn(skb, ct, nf, dir);
 
 	if ((ct->status & IPS_NATFLOW_FF_STOP) || (nf->status & NF_FF_BUSY_USE)) {
 		goto out6;
