@@ -312,7 +312,11 @@ static inline u32 natflow_hash_v6(__be32 saddr6[4], __be32 daddr6[4], __be16 sou
 	hash = (hash >> 24) | ((hash & 0xffffff) << 8);
 	hash ^= hv1 ^ hv2 ^ hv3;
 	hash ^= hash >> 16;
+#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+	hash <<= 2;
+#else
 	hash <<= 1;
+#endif
 	hash &= NATFLOW_FASTNAT_TABLE_SIZE - 1;
 
 	return hash;
