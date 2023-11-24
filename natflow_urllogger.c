@@ -784,6 +784,7 @@ static struct ctl_table urllogger_table[] = {
 	{ }
 };
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 static struct ctl_table urllogger_root_table[] = {
 	{
 		.procname       = "urllogger_store",
@@ -793,6 +794,7 @@ static struct ctl_table urllogger_root_table[] = {
 	},
 	{ }
 };
+#endif
 
 static struct ctl_table_header *urllogger_table_header;
 
@@ -846,7 +848,11 @@ int natflow_urllogger_init(void)
 	if (ret != 0)
 		goto nf_register_hooks_failed;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 	urllogger_table_header = register_sysctl_table(urllogger_root_table);
+#else
+	urllogger_table_header = register_sysctl("urllogger_store", urllogger_table);
+#endif
 
 	return 0;
 
