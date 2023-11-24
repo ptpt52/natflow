@@ -1549,15 +1549,11 @@ slow_fastpath:
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (re_learn == 1) {
 		if (dir == NF_FF_DIR_ORIGINAL) {
-			simple_clear_bit(NF_FF_REPLY_RELEARN_BIT, &nf->status);
-
 			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
 			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 		} else {
-			simple_clear_bit(NF_FF_ORIGINAL_RELEARN_BIT, &nf->status);
-
 			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
@@ -1579,10 +1575,11 @@ slow_fastpath:
 	}
 #endif
 #endif
-	natflow_session_learn(skb, ct, nf, dir);
 	if (!nf_ct_is_confirmed(ct)) {
 		goto out;
 	}
+
+	natflow_session_learn(skb, ct, nf, dir);
 
 	if ((ct->status & IPS_NATFLOW_FF_STOP) || (nf->status & NF_FF_BUSY_USE)) {
 		goto out;
@@ -1605,30 +1602,6 @@ slow_fastpath:
 		}
 		goto out;
 	}
-#ifdef CONFIG_NETFILTER_INGRESS
-	/* allow one more chance to natflow_session_learn for pppoe dev */
-	if (dir == NF_FF_DIR_ORIGINAL) {
-		if (!(nf->status & NF_FF_REPLY_RELEARN) && !simple_test_and_set_bit(NF_FF_REPLY_RELEARN_BIT, &nf->status)) {
-			if (nf->rroute[NF_FF_DIR_REPLY].outdev->type == ARPHRD_PPP) {
-				simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
-				simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
-				simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
-				simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
-				goto out;
-			}
-		}
-	} else {
-		if (!(nf->status & NF_FF_ORIGINAL_RELEARN) && !simple_test_and_set_bit(NF_FF_ORIGINAL_RELEARN_BIT, &nf->status)) {
-			if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev->type == ARPHRD_PPP) {
-				simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
-				simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
-				simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
-				simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
-				goto out;
-			}
-		}
-	}
-#endif
 
 	acct = nf_conn_acct_find(ct);
 	if (acct) {
@@ -2920,15 +2893,11 @@ slow_fastpath6:
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (re_learn) {
 		if (dir == NF_FF_DIR_ORIGINAL) {
-			simple_clear_bit(NF_FF_REPLY_RELEARN_BIT, &nf->status);
-
 			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
 			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 		} else {
-			simple_clear_bit(NF_FF_ORIGINAL_RELEARN_BIT, &nf->status);
-
 			simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
@@ -2936,10 +2905,11 @@ slow_fastpath6:
 		}
 	}
 #endif
-	natflow_session_learn(skb, ct, nf, dir);
 	if (!nf_ct_is_confirmed(ct)) {
 		goto out6;
 	}
+
+	natflow_session_learn(skb, ct, nf, dir);
 
 	if ((ct->status & IPS_NATFLOW_FF_STOP) || (nf->status & NF_FF_BUSY_USE)) {
 		goto out6;
@@ -2961,30 +2931,6 @@ slow_fastpath6:
 		}
 		goto out6;
 	}
-#ifdef CONFIG_NETFILTER_INGRESS
-	/* allow one more chance to natflow_session_learn for pppoe dev */
-	if (dir == NF_FF_DIR_ORIGINAL) {
-		if (!(nf->status & NF_FF_REPLY_RELEARN) && !simple_test_and_set_bit(NF_FF_REPLY_RELEARN_BIT, &nf->status)) {
-			if (nf->rroute[NF_FF_DIR_REPLY].outdev->type == ARPHRD_PPP) {
-				simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
-				simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
-				simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
-				simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
-				goto out6;
-			}
-		}
-	} else {
-		if (!(nf->status & NF_FF_ORIGINAL_RELEARN) && !simple_test_and_set_bit(NF_FF_ORIGINAL_RELEARN_BIT, &nf->status)) {
-			if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev->type == ARPHRD_PPP) {
-				simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
-				simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
-				simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
-				simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
-				goto out6;
-			}
-		}
-	}
-#endif
 
 	acct = nf_conn_acct_find(ct);
 	if (acct) {
