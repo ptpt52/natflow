@@ -2050,6 +2050,11 @@ fastnat_check:
 										ct->proto.tcp.seen[0].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 										ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 									}
+									if (d != NF_FF_DIR_ORIGINAL) {
+										nfn = (void *)(((unsigned long)nfn) ^ ((unsigned long)nfn_i));
+										nfn_i = (void *)(((unsigned long)nfn) ^ ((unsigned long)nfn_i));
+										nfn = (void *)(((unsigned long)nfn) ^ ((unsigned long)nfn_i));
+									}
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 									if (hwnat && (re_learn == 2 || iph->protocol == IPPROTO_UDP)) {
 										/* hwnat enabled */
@@ -2151,18 +2156,18 @@ fastnat_check:
 												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-													NATFLOW_INFO("(PCO) set hwnat offload 1 dir=%d dev=%s(vlan:%d pppoe:%d)"
-													             " s=%pI4:%u d=%pI4:%u dev=%s(vlan:%d pppoe:%d)"
-													             " s=%pI4:%u d=%pI4:%u\n",
-													             dir, nfn->outdev->name,
-													             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-													             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
-													             (int)ntohs(nfn->pppoe_sid) : -1,
-													             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
-													             nfn_i->outdev->name,
+													NATFLOW_INFO("(PCO) dir%d set hwnat offload1 orig=[%s(vlan:%d pppoe:%d)"
+													             " %pI4:%u->%pI4:%u] reply=[%s(vlan:%d pppoe:%d)"
+													             " %pI4:%u->%pI4:%u]\n",
+													             dir, nfn_i->outdev->name,
 													             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
 													             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
 													             (int)ntohs(nfn_i->pppoe_sid) : -1,
+													             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
+													             nfn->outdev->name,
+													             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
+													             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
+													             (int)ntohs(nfn->pppoe_sid) : -1,
 													             &nfn_i->saddr, ntohs(nfn_i->source),
 													             &nfn_i->daddr, ntohs(nfn_i->dest));
 													if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
@@ -2185,12 +2190,12 @@ fastnat_check:
 													switch (iph->protocol) {
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT
-														             ": dir=%d set hwnat offload fail1\n",
+														             ": dir%d set hwnat offload1 failed\n",
 														             DEBUG_TCP_ARG(iph,l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT
-														             ": dir=%d set hwnat offload fail1\n",
+														             ": dir%d set hwnat offload1 failed\n",
 														             DEBUG_UDP_ARG(iph,l4), dir);
 														break;
 													}
@@ -2297,18 +2302,18 @@ fastnat_check:
 												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-													NATFLOW_INFO("(PCO) set hwnat offload 2 dir=%d dev=%s(vlan:%d pppoe:%d)"
-													             " s=%pI4:%u d=%pI4:%u dev=%s(vlan:%d pppoe:%d)"
-													             " s=%pI4:%u d=%pI4:%u\n",
-													             dir, nfn->outdev->name,
-													             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-													             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
-													             (int)ntohs(nfn->pppoe_sid) : -1,
-													             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
-													             nfn_i->outdev->name,
+													NATFLOW_INFO("(PCO) dir%d set hwnat offload2 orig=[%s(vlan:%d pppoe:%d)"
+													             " %pI4:%u->%pI4:%u] reply=[%s(vlan:%d pppoe:%d)"
+													             " %pI4:%u->%pI4:%u]\n",
+													             dir, nfn_i->outdev->name,
 													             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
 													             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
 													             (int)ntohs(nfn_i->pppoe_sid) : -1,
+													             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
+													             nfn->outdev->name,
+													             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
+													             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
+													             (int)ntohs(nfn->pppoe_sid) : -1,
 													             &nfn_i->saddr, ntohs(nfn_i->source),
 													             &nfn_i->daddr, ntohs(nfn_i->dest));
 
@@ -2330,12 +2335,12 @@ fastnat_check:
 													switch (iph->protocol) {
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT
-														             ": dir=%d set hwnat offload fail2\n",
+														             ": dir%d set hwnat offload2 failed\n",
 														             DEBUG_TCP_ARG(iph,l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT
-														             ": dir=%d set hwnat offload fail2\n",
+														             ": dir%d set hwnat offload2 failed\n",
 														             DEBUG_UDP_ARG(iph,l4), dir);
 														break;
 													}
@@ -2441,18 +2446,18 @@ fastnat_check:
 											}
 											if (reply_dev->netdev_ops->ndo_flow_offload(
 											            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-												NATFLOW_INFO("(PCO) set hwnat offload 3 dir=%d dev=%s(vlan:%d pppoe:%d)"
-												             " s=%pI4:%u d=%pI4:%u dev=%s(vlan:%d pppoe:%d)"
-												             " s=%pI4:%u d=%pI4:%u\n",
-												             dir, nfn->outdev->name,
-												             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-												             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
-												             (int)ntohs(nfn->pppoe_sid) : -1,
-												             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
-												             nfn_i->outdev->name,
+												NATFLOW_INFO("(PCO) dir%d set hwnat offload3 orig=[%s(vlan:%d pppoe:%d)"
+												             " %pI4:%u->%pI4:%u] reply=[%s(vlan:%d pppoe:%d)"
+												             " %pI4:%u->%pI4:%u]\n",
+												             dir, nfn_i->outdev->name,
 												             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
 												             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
 												             (int)ntohs(nfn_i->pppoe_sid) : -1,
+												             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
+												             nfn->outdev->name,
+												             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
+												             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
+												             (int)ntohs(nfn->pppoe_sid) : -1,
 												             &nfn_i->saddr, ntohs(nfn_i->source),
 												             &nfn_i->daddr, ntohs(nfn_i->dest));
 												if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
@@ -2473,12 +2478,12 @@ fastnat_check:
 												switch (iph->protocol) {
 												case IPPROTO_TCP:
 													NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT
-													             ": dir=%d set hwnat offload fail3\n",
+													             ": dir%d set hwnat offload3 failed\n",
 													             DEBUG_TCP_ARG(iph,l4), dir);
 													break;
 												case IPPROTO_UDP:
 													NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT
-													             ": dir=%d set hwnat offload fail3\n",
+													             ": dir%d set hwnat offload3 failed\n",
 													             DEBUG_UDP_ARG(iph,l4), dir);
 													break;
 												}
@@ -3501,6 +3506,11 @@ fastnat_check6:
 										ct->proto.tcp.seen[0].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 										ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 									}
+									if (d != NF_FF_DIR_ORIGINAL) {
+										nfn = (void *)(((unsigned long)nfn) ^ ((unsigned long)nfn_i));
+										nfn_i = (void *)(((unsigned long)nfn) ^ ((unsigned long)nfn_i));
+										nfn = (void *)(((unsigned long)nfn) ^ ((unsigned long)nfn_i));
+									}
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 									if (hwnat && (re_learn == 2 || iph->protocol == IPPROTO_UDP) && !(ct->status & (IPS_DST_NAT | IPS_SRC_NAT))) {
 										/* hwnat enabled */
@@ -3602,18 +3612,18 @@ fastnat_check6:
 												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-													NATFLOW_INFO("(PCO) set hwnat offload 1 dir=%d dev=%s(vlan:%d pppoe:%d)"
-													             " s=%pI6:%u d=%pI6:%u dev=%s(vlan:%d pppoe:%d)"
-													             " s=%pI6:%u d=%pI6:%u\n",
-													             dir, nfn->outdev->name,
-													             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-													             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
-													             (int)ntohs(nfn->pppoe_sid) : -1,
-													             nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest),
-													             nfn_i->outdev->name,
+													NATFLOW_INFO("(PCO) dir%d set hwnat offload1 orig=[%s(vlan:%d pppoe:%d)"
+													             " %pI6:%u->%pI6:%u] reply=[%s(vlan:%d pppoe:%d)"
+													             " %pI6:%u->%pI6:%u]\n",
+													             dir, nfn_i->outdev->name,
 													             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
 													             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
 													             (int)ntohs(nfn_i->pppoe_sid) : -1,
+													             nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest),
+													             nfn->outdev->name,
+													             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
+													             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
+													             (int)ntohs(nfn->pppoe_sid) : -1,
 													             nfn_i->saddr6, ntohs(nfn_i->source),
 													             nfn_i->daddr6, ntohs(nfn_i->dest));
 													if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
@@ -3636,12 +3646,12 @@ fastnat_check6:
 													switch (iph->protocol) {
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
-														             ": dir=%d set hwnat offload fail1\n",
+														             ": dir%d set hwnat offload1 failed\n",
 														             DEBUG_TCP_ARG6(iph,l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6
-														             ": dir=%d set hwnat offload fail1\n",
+														             ": dir%d set hwnat offload1 failed\n",
 														             DEBUG_UDP_ARG6(iph,l4), dir);
 														break;
 													}
@@ -3748,18 +3758,18 @@ fastnat_check6:
 												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-													NATFLOW_INFO("(PCO) set hwnat offload 2 dir=%d dev=%s(vlan:%d pppoe:%d)"
-													             " s=%pI6:%u d=%pI6:%u dev=%s(vlan:%d pppoe:%d)"
-													             " s=%pI6:%u d=%pI6:%u\n",
-													             dir, nfn->outdev->name,
-													             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-													             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
-													             (int)ntohs(nfn->pppoe_sid) : -1,
-													             nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest),
-													             nfn_i->outdev->name,
+													NATFLOW_INFO("(PCO) dir%d set hwnat offload2 orig=[%s(vlan:%d pppoe:%d)"
+													             " %pI6:%u->%pI6:%u] reply=[%s(vlan:%d pppoe:%d)"
+													             " %pI6:%u->%pI6:%u]\n",
+													             dir, nfn_i->outdev->name,
 													             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
 													             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
 													             (int)ntohs(nfn_i->pppoe_sid) : -1,
+													             nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest),
+													             nfn->outdev->name,
+													             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
+													             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
+													             (int)ntohs(nfn->pppoe_sid) : -1,
 													             nfn_i->saddr6, ntohs(nfn_i->source),
 													             nfn_i->daddr6, ntohs(nfn_i->dest));
 
@@ -3781,12 +3791,12 @@ fastnat_check6:
 													switch (iph->protocol) {
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
-														             ": dir=%d set hwnat offload fail2\n",
+														             ": dir%d set hwnat offload2 failed\n",
 														             DEBUG_TCP_ARG6(iph,l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6
-														             ": dir=%d set hwnat offload fail2\n",
+														             ": dir%d set hwnat offload2 failed\n",
 														             DEBUG_UDP_ARG6(iph,l4), dir);
 														break;
 													}
@@ -3892,18 +3902,18 @@ fastnat_check6:
 											}
 											if (reply_dev->netdev_ops->ndo_flow_offload(
 											            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-												NATFLOW_INFO("(PCO) set hwnat offload 3 dir=%d dev=%s(vlan:%d pppoe:%d)"
-												             " s=%pI6:%u d=%pI6:%u dev=%s(vlan:%d pppoe:%d)"
-												             " s=%pI6:%u d=%pI6:%u\n",
-												             dir, nfn->outdev->name,
-												             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
-												             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
-												             (int)ntohs(nfn->pppoe_sid) : -1,
-												             nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest),
-												             nfn_i->outdev->name,
+												NATFLOW_INFO("(PCO) dir%d set hwnat offload3 orig=[%s(vlan:%d pppoe:%d)"
+												             " %pI6:%u->%pI6:%u] reply=[%s(vlan:%d pppoe:%d)"
+												             " %pI6:%u->%pI6:%u]\n",
+												             dir, nfn_i->outdev->name,
 												             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
 												             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
 												             (int)ntohs(nfn_i->pppoe_sid) : -1,
+												             nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest),
+												             nfn->outdev->name,
+												             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
+												             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
+												             (int)ntohs(nfn->pppoe_sid) : -1,
 												             nfn_i->saddr6, ntohs(nfn_i->source),
 												             nfn_i->daddr6, ntohs(nfn_i->dest));
 												if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
@@ -3924,12 +3934,12 @@ fastnat_check6:
 												switch (iph->protocol) {
 												case IPPROTO_TCP:
 													NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
-													             ": dir=%d set hwnat offload fail3\n",
+													             ": dir%d set hwnat offload3 failed\n",
 													             DEBUG_TCP_ARG6(iph,l4), dir);
 													break;
 												case IPPROTO_UDP:
 													NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6
-													             ": dir=%d set hwnat offload fail3\n",
+													             ": dir%d set hwnat offload3 failed\n",
 													             DEBUG_UDP_ARG6(iph,l4), dir);
 													break;
 												}
