@@ -421,6 +421,53 @@ void natflow_user_release_put(natflow_fakeuser_t *user)
 	nf_ct_put(user);
 }
 
+natflow_fakeuser_t *natflow_user_lookup_in(struct nf_conn *ct, int dir)
+{
+	natflow_fakeuser_t *user = NULL;
+
+	user = natflow_user_get(ct);
+	if (user)
+		return user;
+
+	/* FIXME: cannot use ct->master for user since destroy_gre_conntrack() may double free gre helper in master */
+	if (unlikely(nf_ct_protonum(ct) == IPPROTO_GRE)) {
+		return NULL;
+	}
+
+	if (!nf_ct_is_confirmed(ct) && !user && (!ct->master || !ct->master->master)) {
+		user = natflow_user_find_get(ct->tuplehash[dir].tuple.src.u3.ip);
+		if (user) {
+			natflow_user_timeout_touch(user);
+
+			if (ct->master && !(IPS_NATFLOW_USER & ct->master->status)) {
+				if (!test_and_set_bit(IPS_NATFLOW_MASTER_BIT, &ct->master->status)) {
+					nf_conntrack_get(&user->ct_general);
+					ct->master->master = user;
+				}
+			} else {
+				if (!test_and_set_bit(IPS_NATFLOW_MASTER_BIT, &ct->status)) {
+					nf_conntrack_get(&user->ct_general);
+					ct->master = user;
+				}
+			}
+
+			NATFLOW_DEBUG("fakeuser get for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] user[%pI4]\n",
+			              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
+			              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
+			              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
+			              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all),
+			              &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip
+			             );
+
+			natflow_user_release_put(user);
+		} else {
+			return NULL;
+		}
+	}
+
+	return natflow_user_get(ct);
+}
+
 natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 {
 	natflow_fakeuser_t *user = NULL;
@@ -1284,11 +1331,15 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		        && (br_in == NULL || !natflow_is_lan_zone(br_in))
 #endif
 		   ) {
-			//TODO check flow from wan to user
+			user = natflow_user_lookup_in(ct, IP_CT_DIR_REPLY);
+			if (NULL == user) {
+				goto out;
+			}
+		} else {
 			goto out;
 		}
-		goto out;
 	}
+
 	fud = natflow_fakeuser_data(user);
 	if (nf && !(nf->status & NF_FF_TOKEN_CTRL) && (IPS_NATFLOW_USER_TOKEN_CTRL & user->status)) {
 		/* tell FF this conn need token ctrl */
