@@ -416,7 +416,7 @@ natflow_fakeuser_t *natflow_user_find_get(__be32 ip)
 	return user;
 }
 
-void natflow_user_put(natflow_fakeuser_t *user)
+void natflow_user_release_put(natflow_fakeuser_t *user)
 {
 	nf_ct_put(user);
 }
@@ -2332,7 +2332,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 			atomic64_set(&acct->counter[1].bytes, 0);
 		}
 
-		natflow_user_put(user);
+		natflow_user_release_put(user);
 		goto done;
 	} else if (strncmp(data, "set-status ", 11) == 0) {
 		struct fakeuser_data_t *fud;
@@ -2356,7 +2356,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 		fud = natflow_fakeuser_data(user);
 		fud->auth_status = e;
 
-		natflow_user_put(user);
+		natflow_user_release_put(user);
 		goto done;
 	} else if (strncmp(data, "set-token-ctrl ", 15) == 0) {
 		struct fakeuser_data_t *fud;
@@ -2386,7 +2386,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 			clear_bit(IPS_NATFLOW_USER_TOKEN_CTRL_BIT, &user->status);
 		}
 
-		natflow_user_put(user);
+		natflow_user_release_put(user);
 		goto done;
 	}
 
