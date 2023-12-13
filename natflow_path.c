@@ -962,6 +962,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		}
 
 		if (ingress_pad_len > 0) {
+			if (ingress_pad_len > skb->len) {
+				return NF_ACCEPT;
+			}
 			skb_pull_rcsum(skb, ingress_pad_len);
 			skb->network_header += ingress_pad_len;
 		}
@@ -2412,6 +2415,9 @@ __hook_ipv6_main:
 		}
 
 		if (ingress_pad_len > 0) {
+			if (ingress_pad_len > skb->len) {
+				return NF_ACCEPT;
+			}
 			skb_pull_rcsum(skb, ingress_pad_len);
 			skb->network_header += ingress_pad_len;
 		}
