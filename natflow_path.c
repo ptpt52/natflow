@@ -2494,7 +2494,9 @@ fastnat_check:
 										} else {
 #endif /* !defined(CONFIG_HWNAT_EXTDEV_DISABLED) */
 											/* xxx: neither orig_dev nor reply_dev has offload api */
-											if (flow_offload_add_extdev) {
+											if (flow_offload_add_extdev &&
+											        (orig_dev->netdev_ops->ndo_fill_forward_path ||
+											         reply_dev->netdev_ops->ndo_fill_forward_path)) {
 												struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
@@ -4062,7 +4064,9 @@ fastnat_check6:
 										} else {
 #endif /* !defined(CONFIG_HWNAT_EXTDEV_DISABLED) */
 											/* xxx: neither orig_dev nor reply_dev has offload api */
-											if (flow_offload_add_extdev) {
+											if (flow_offload_add_extdev &&
+											        (orig_dev->netdev_ops->ndo_fill_forward_path ||
+											         reply_dev->netdev_ops->ndo_fill_forward_path)) {
 												struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
@@ -4126,7 +4130,7 @@ fastnat_check6:
 												}
 												if (flow_offload_add_extdev && flow_offload_add_extdev(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-													NATFLOW_INFO("(PCO) dir%d set hwnat offload1 orig=[%s(vlan:%d pppoe:%d)"
+													NATFLOW_INFO("(PCO) dir%d set hwnat offload4 orig=[%s(vlan:%d pppoe:%d)"
 													             " %pI6:%u->%pI6:%u] reply=[%s(vlan:%d pppoe:%d)"
 													             " %pI6:%u->%pI6:%u]\n",
 													             dir, nfn_i->outdev->name,
@@ -4160,12 +4164,12 @@ fastnat_check6:
 													switch (iph->protocol) {
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
-														             ": dir%d set hwnat offload1 failed\n",
+														             ": dir%d set hwnat offload4 failed\n",
 														             DEBUG_TCP_ARG6(iph,l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6
-														             ": dir%d set hwnat offload1 failed\n",
+														             ": dir%d set hwnat offload4 failed\n",
 														             DEBUG_UDP_ARG6(iph,l4), dir);
 														break;
 													}
