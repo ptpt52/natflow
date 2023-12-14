@@ -2319,7 +2319,6 @@ fastnat_check:
 													             (int)ntohs(nfn->pppoe_sid) : -1,
 													             &nfn_i->saddr, ntohs(nfn_i->source),
 													             &nfn_i->daddr, ntohs(nfn_i->dest));
-
 													if (nf->rroute[NF_FF_DIR_REPLY].outdev == nfn->outdev) {
 														nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
 													} else {
@@ -2493,8 +2492,118 @@ fastnat_check:
 											}
 											/* end: only reply_dev has offload api */
 										} else {
-											/* neither orig_dev nor reply_dev has offload api */
 #endif /* !defined(CONFIG_HWNAT_EXTDEV_DISABLED) */
+											/* xxx: neither orig_dev nor reply_dev has offload api */
+											if (flow_offload_add_extdev) {
+												struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
+												flow_offload_hw_path_t orig = {
+													.dev = orig_dev,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
+#else
+													| FLOW_OFFLOAD_PATH_WED_DIS
+#endif
+													,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+													.dsa_port = orig_dsa_port,
+#endif
+												};
+												flow_offload_hw_path_t reply = {
+													.dev = reply_dev,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
+#else
+													| FLOW_OFFLOAD_PATH_WED_DIS
+#endif
+													,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+													.dsa_port = reply_dsa_port,
+#endif
+												};
+												if ((nfn->flags & FASTNAT_BRIDGE_FWD)) {
+													orig.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
+													reply.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
+												}
+												memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
+												memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
+												memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
+												memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
+
+												if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
+													orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+													orig.vlan_proto =
+													    nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
+													    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+													orig.vlan_id = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci;
+												}
+												if (nf->rroute[NF_FF_DIR_REPLY].vlan_present) {
+													reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+													reply.vlan_proto =
+													    nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
+													    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+													reply.vlan_id = nf->rroute[NF_FF_DIR_REPLY].vlan_tci;
+												}
+
+												if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+													orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+													orig.pppoe_sid =
+													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
+												}
+												if (nf->rroute[NF_FF_DIR_REPLY].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+													reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+													reply.pppoe_sid =
+													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
+												}
+												if (flow_offload_add_extdev && flow_offload_add_extdev(
+												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
+													NATFLOW_INFO("(PCO) dir%d set hwnat offload4 orig=[%s(vlan:%d pppoe:%d)"
+													             " %pI4:%u->%pI4:%u] reply=[%s(vlan:%d pppoe:%d)"
+													             " %pI4:%u->%pI4:%u]\n",
+													             dir, nfn_i->outdev->name,
+													             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
+													             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
+													             (int)ntohs(nfn_i->pppoe_sid) : -1,
+													             &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest),
+													             nfn->outdev->name,
+													             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
+													             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
+													             (int)ntohs(nfn->pppoe_sid) : -1,
+													             &nfn_i->saddr, ntohs(nfn_i->source),
+													             &nfn_i->daddr, ntohs(nfn_i->dest));
+													if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
+														if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
+															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														} else {
+															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														}
+													}
+													if (is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
+														if (nf->rroute[NF_FF_DIR_REPLY].outdev == nfn->outdev) {
+															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														} else {
+															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														}
+													}
+												} else {
+													/* mark FF_FAIL so never try FF */
+													simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
+													switch (iph->protocol) {
+													case IPPROTO_TCP:
+														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT
+														             ": dir%d set hwnat offload4 failed\n",
+														             DEBUG_TCP_ARG(iph,l4), dir);
+														break;
+													case IPPROTO_UDP:
+														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT
+														             ": dir%d set hwnat offload4 failed\n",
+														             DEBUG_UDP_ARG(iph,l4), dir);
+														break;
+													}
+												}
+											}
+											/* end: neither orig_dev nor reply_dev has offload api */
 										}
 									} else {
 										/* hwnat is not enabled */
@@ -3778,7 +3887,6 @@ fastnat_check6:
 													             (int)ntohs(nfn->pppoe_sid) : -1,
 													             nfn_i->saddr6, ntohs(nfn_i->source),
 													             nfn_i->daddr6, ntohs(nfn_i->dest));
-
 													if (nf->rroute[NF_FF_DIR_REPLY].outdev == nfn->outdev) {
 														nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
 													} else {
@@ -3952,8 +4060,118 @@ fastnat_check6:
 											}
 											/* end: only reply_dev has offload api */
 										} else {
-											/* neither orig_dev nor reply_dev has offload api */
 #endif /* !defined(CONFIG_HWNAT_EXTDEV_DISABLED) */
+											/* xxx: neither orig_dev nor reply_dev has offload api */
+											if (flow_offload_add_extdev) {
+												struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
+												flow_offload_hw_path_t orig = {
+													.dev = orig_dev,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
+#else
+													| FLOW_OFFLOAD_PATH_WED_DIS
+#endif
+													,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+													.dsa_port = orig_dsa_port,
+#endif
+												};
+												flow_offload_hw_path_t reply = {
+													.dev = reply_dev,
+													.flags = FLOW_OFFLOAD_PATH_ETHERNET
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
+#else
+													| FLOW_OFFLOAD_PATH_WED_DIS
+#endif
+													,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+													.dsa_port = reply_dsa_port,
+#endif
+												};
+												if ((nfn->flags & FASTNAT_BRIDGE_FWD)) {
+													orig.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
+													reply.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
+												}
+												memcpy(orig.eth_src, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_source, ETH_ALEN);
+												memcpy(orig.eth_dest, ETH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head)->h_dest, ETH_ALEN);
+												memcpy(reply.eth_src, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_source, ETH_ALEN);
+												memcpy(reply.eth_dest, ETH(nf->rroute[NF_FF_DIR_REPLY].l2_head)->h_dest, ETH_ALEN);
+
+												if (nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present) {
+													orig.flags |= FLOW_OFFLOAD_PATH_VLAN;
+													orig.vlan_proto =
+													    nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto == FF_ETH_P_8021Q ?
+													    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+													orig.vlan_id = nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci;
+												}
+												if (nf->rroute[NF_FF_DIR_REPLY].vlan_present) {
+													reply.flags |= FLOW_OFFLOAD_PATH_VLAN;
+													reply.vlan_proto =
+													    nf->rroute[NF_FF_DIR_REPLY].vlan_proto == FF_ETH_P_8021Q ?
+													    htons(ETH_P_8021Q) : htons(ETH_P_8021AD);
+													reply.vlan_id = nf->rroute[NF_FF_DIR_REPLY].vlan_tci;
+												}
+
+												if (nf->rroute[NF_FF_DIR_ORIGINAL].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+													orig.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+													orig.pppoe_sid =
+													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN)->sid);
+												}
+												if (nf->rroute[NF_FF_DIR_REPLY].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+													reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
+													reply.pppoe_sid =
+													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
+												}
+												if (flow_offload_add_extdev && flow_offload_add_extdev(
+												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
+													NATFLOW_INFO("(PCO) dir%d set hwnat offload1 orig=[%s(vlan:%d pppoe:%d)"
+													             " %pI6:%u->%pI6:%u] reply=[%s(vlan:%d pppoe:%d)"
+													             " %pI6:%u->%pI6:%u]\n",
+													             dir, nfn_i->outdev->name,
+													             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
+													             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
+													             (int)ntohs(nfn_i->pppoe_sid) : -1,
+													             nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest),
+													             nfn->outdev->name,
+													             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
+													             (nfn->flags & FASTNAT_PPPOE_FLAG) ?
+													             (int)ntohs(nfn->pppoe_sid) : -1,
+													             nfn_i->saddr6, ntohs(nfn_i->source),
+													             nfn_i->daddr6, ntohs(nfn_i->dest));
+													if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
+														if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
+															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														} else {
+															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														}
+													}
+													if (is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
+														if (nf->rroute[NF_FF_DIR_REPLY].outdev == nfn->outdev) {
+															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														} else {
+															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
+														}
+													}
+												} else {
+													/* mark FF_FAIL so never try FF */
+													simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
+													switch (iph->protocol) {
+													case IPPROTO_TCP:
+														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
+														             ": dir%d set hwnat offload1 failed\n",
+														             DEBUG_TCP_ARG6(iph,l4), dir);
+														break;
+													case IPPROTO_UDP:
+														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6
+														             ": dir%d set hwnat offload1 failed\n",
+														             DEBUG_UDP_ARG6(iph,l4), dir);
+														break;
+													}
+												}
+											}
+											/* end: neither orig_dev nor reply_dev has offload api */
 										}
 									} else {
 										/* hwnat is not enabled */
