@@ -2230,7 +2230,6 @@ fastnat_check:
 													.dsa_port = reply_dsa_port,
 #endif
 												};
-												if (strstr(reply_dev->name, ".sta") && num_possible_cpus() > 2) reply.flags |= FLOW_OFFLOAD_PATH_WED_DIS;
 												/* no vlan for ext dev */
 												reply_dev = nf->rroute[NF_FF_DIR_REPLY].outdev;
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
@@ -2374,7 +2373,6 @@ fastnat_check:
 												.dsa_port = reply_dsa_port,
 #endif
 											};
-											if (strstr(orig_dev->name, ".sta") && num_possible_cpus() > 2) orig.flags |= FLOW_OFFLOAD_PATH_WED_DIS;
 											/* no vlan for ext dev */
 											orig_dev = nf->rroute[NF_FF_DIR_ORIGINAL].outdev;
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
@@ -2526,8 +2524,6 @@ fastnat_check:
 													.dsa_port = reply_dsa_port,
 #endif
 												};
-												if (strstr(orig_dev->name, ".sta") && num_possible_cpus() > 2) orig.flags |= FLOW_OFFLOAD_PATH_WED_DIS;
-												if (strstr(reply_dev->name, ".sta") && num_possible_cpus() > 2) reply.flags |= FLOW_OFFLOAD_PATH_WED_DIS;
 												if ((nfn->flags & FASTNAT_BRIDGE_FWD)) {
 													orig.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
 													reply.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
@@ -3804,7 +3800,6 @@ fastnat_check6:
 													.dsa_port = reply_dsa_port,
 #endif
 												};
-												if (strstr(reply_dev->name, ".sta") && num_possible_cpus() > 2) reply.flags |= FLOW_OFFLOAD_PATH_WED_DIS;
 												/* no vlan for ext dev */
 												reply_dev = nf->rroute[NF_FF_DIR_REPLY].outdev;
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
@@ -3948,7 +3943,6 @@ fastnat_check6:
 												.dsa_port = reply_dsa_port,
 #endif
 											};
-											if (strstr(orig_dev->name, ".sta") && num_possible_cpus() > 2) orig.flags |= FLOW_OFFLOAD_PATH_WED_DIS;
 											/* no vlan for ext dev */
 											orig_dev = nf->rroute[NF_FF_DIR_ORIGINAL].outdev;
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
@@ -4100,8 +4094,6 @@ fastnat_check6:
 													.dsa_port = reply_dsa_port,
 #endif
 												};
-												if (strstr(orig_dev->name, ".sta") && num_possible_cpus() > 2) orig.flags |= FLOW_OFFLOAD_PATH_WED_DIS;
-												if (strstr(reply_dev->name, ".sta") && num_possible_cpus() > 2) reply.flags |= FLOW_OFFLOAD_PATH_WED_DIS;
 												if ((nfn->flags & FASTNAT_BRIDGE_FWD)) {
 													orig.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
 													reply.flags |= FLOW_OFFLOAD_PATH_BRIDGE;
