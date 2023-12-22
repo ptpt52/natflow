@@ -1051,15 +1051,23 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				if (hwnat_wed_disabled) {
 					__vlan_hwaccel_clear_tag(skb);
 				} else {
-					if (!skb_vlan_tag_present(skb) && nfn->vlan_present) /* revert vlan_present if uses_dsa */
-						skb->vlan_present = 1;
+					if (!skb_vlan_tag_present(skb) && nfn->vlan_present) { /* revert vlan_present if uses_dsa */
+						if (nfn->vlan_proto == FF_ETH_P_8021Q)
+							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
+						else if (nfn->vlan_proto == FF_ETH_P_8021AD)
+							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
+					}
 					if (skb_vlan_tag_present(skb))
 						skb->vlan_tci &= ~HWNAT_QUEUE_MAPPING_MAGIC;
 				}
 #else
 				if (eth_hdr(skb)->h_proto != htons(ETH_P_8021Q)) {
-					if (!skb_vlan_tag_present(skb) && nfn->vlan_present) /* revert vlan_present if uses_dsa */
-						skb->vlan_present = 1;
+					if (!skb_vlan_tag_present(skb) && nfn->vlan_present) { /* revert vlan_present if uses_dsa */
+						if (nfn->vlan_proto == FF_ETH_P_8021Q)
+							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
+						else if (nfn->vlan_proto == FF_ETH_P_8021AD)
+							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
+					}
 					if (skb_vlan_tag_present(skb))
 						skb->vlan_tci &= ~HWNAT_QUEUE_MAPPING_MAGIC;
 				} /* else hardware rx vlan offload disabled */
@@ -2763,15 +2771,23 @@ __hook_ipv6_main:
 				if (hwnat_wed_disabled) {
 					__vlan_hwaccel_clear_tag(skb);
 				} else {
-					if (!skb_vlan_tag_present(skb) && nfn->vlan_present) /* revert vlan_present if uses_dsa */
-						skb->vlan_present = 1;
+					if (!skb_vlan_tag_present(skb) && nfn->vlan_present) { /* revert vlan_present if uses_dsa */
+						if (nfn->vlan_proto == FF_ETH_P_8021Q)
+							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
+						else if (nfn->vlan_proto == FF_ETH_P_8021AD)
+							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
+					}
 					if (skb_vlan_tag_present(skb))
 						skb->vlan_tci &= ~HWNAT_QUEUE_MAPPING_MAGIC;
 				}
 #else
 				if (eth_hdr(skb)->h_proto != htons(ETH_P_8021Q)) {
-					if (!skb_vlan_tag_present(skb) && nfn->vlan_present) /* revert vlan_present if uses_dsa */
-						skb->vlan_present = 1;
+					if (!skb_vlan_tag_present(skb) && nfn->vlan_present) { /* revert vlan_present if uses_dsa */
+						if (nfn->vlan_proto == FF_ETH_P_8021Q)
+							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
+						else if (nfn->vlan_proto == FF_ETH_P_8021AD)
+							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
+					}
 					if (skb_vlan_tag_present(skb))
 						skb->vlan_tci &= ~HWNAT_QUEUE_MAPPING_MAGIC;
 				} /* else hardware rx vlan offload disabled */
