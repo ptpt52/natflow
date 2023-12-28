@@ -2582,20 +2582,6 @@ fastnat_check:
 													             (int)ntohs(nfn->pppoe_sid) : -1,
 													             &nfn_i->saddr, ntohs(nfn_i->source),
 													             &nfn_i->daddr, ntohs(nfn_i->dest));
-													if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
-														if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
-															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														} else {
-															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														}
-													}
-													if (is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
-														if (nf->rroute[NF_FF_DIR_REPLY].outdev == nfn->outdev) {
-															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														} else {
-															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														}
-													}
 												} else {
 													/* mark FF_FAIL so never try FF */
 													simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
@@ -4160,20 +4146,6 @@ fastnat_check6:
 													             (int)ntohs(nfn->pppoe_sid) : -1,
 													             nfn_i->saddr6, ntohs(nfn_i->source),
 													             nfn_i->daddr6, ntohs(nfn_i->dest));
-													if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
-														if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
-															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														} else {
-															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														}
-													}
-													if (is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
-														if (nf->rroute[NF_FF_DIR_REPLY].outdev == nfn->outdev) {
-															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														} else {
-															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														}
-													}
 												} else {
 													/* mark FF_FAIL so never try FF */
 													simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
@@ -4651,6 +4623,11 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 			if ((path.flags & FLOW_OFFLOAD_PATH_PPPOE)) {
 				dev->flags |= IFF_PPPOE;
 				NATFLOW_println("catch NETDEV_UP event for dev=%s : set flags IFF_PPPOE", dev->name);
+			}
+		}
+		if (!ppe_dev) {
+			if (dev->netdev_ops->ndo_flow_offload) {
+				ppe_dev = dev;
 			}
 		}
 #else
