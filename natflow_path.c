@@ -2181,20 +2181,6 @@ fastnat_check:
 													             (int)ntohs(nfn->pppoe_sid) : -1,
 													             &nfn_i->saddr, ntohs(nfn_i->source),
 													             &nfn_i->daddr, ntohs(nfn_i->dest));
-													if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
-														if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
-															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														} else {
-															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														}
-													}
-													if (is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
-														if (nf->rroute[NF_FF_DIR_REPLY].outdev == nfn->outdev) {
-															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														} else {
-															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														}
-													}
 												} else {
 													/* mark FF_FAIL so never try FF */
 													simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
@@ -2332,13 +2318,6 @@ fastnat_check:
 													} else {
 														nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
 													}
-													if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
-														if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
-															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														} else {
-															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														}
-													}
 												} else {
 													/* mark FF_FAIL so never try FF */
 													simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
@@ -2474,13 +2453,6 @@ fastnat_check:
 													nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
 												} else {
 													nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-												}
-												if (is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
-													if (nf->rroute[NF_FF_DIR_REPLY].outdev == nfn->outdev) {
-														nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
-													} else {
-														nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-													}
 												}
 											} else {
 												/* mark FF_FAIL so never try FF */
@@ -3745,20 +3717,6 @@ fastnat_check6:
 													             (int)ntohs(nfn->pppoe_sid) : -1,
 													             nfn_i->saddr6, ntohs(nfn_i->source),
 													             nfn_i->daddr6, ntohs(nfn_i->dest));
-													if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
-														if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
-															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														} else {
-															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														}
-													}
-													if (is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
-														if (nf->rroute[NF_FF_DIR_REPLY].outdev == nfn->outdev) {
-															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														} else {
-															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														}
-													}
 												} else {
 													/* mark FF_FAIL so never try FF */
 													simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
@@ -3896,13 +3854,6 @@ fastnat_check6:
 													} else {
 														nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
 													}
-													if (is_vlan_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev)) {
-														if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev == nfn->outdev) {
-															nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														} else {
-															nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-														}
-													}
 												} else {
 													/* mark FF_FAIL so never try FF */
 													simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
@@ -4038,13 +3989,6 @@ fastnat_check6:
 													nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
 												} else {
 													nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-												}
-												if (is_vlan_dev(nf->rroute[NF_FF_DIR_REPLY].outdev)) {
-													if (nf->rroute[NF_FF_DIR_REPLY].outdev == nfn->outdev) {
-														nfn_i->flags |= FASTNAT_EXT_HWNAT_FLAG;
-													} else {
-														nfn->flags |= FASTNAT_EXT_HWNAT_FLAG;
-													}
 												}
 											} else {
 												/* mark FF_FAIL so never try FF */
