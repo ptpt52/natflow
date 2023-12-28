@@ -4698,6 +4698,8 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 
 	NATFLOW_println("catch NETDEV_UNREGISTER event for dev=%s", dev->name);
 
+	synchronize_net();
+
 	return NOTIFY_DONE;
 }
 
