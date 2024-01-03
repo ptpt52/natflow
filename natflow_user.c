@@ -1537,7 +1537,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			}
 
 			if (iph->protocol == IPPROTO_UDP) {
-				if (UDPH(l4)->dest == __constant_htons(53) || UDPH(l4)->dest == __constant_htons(67)) {
+				if (UDPH(l4)->dest == __constant_htons(53) || UDPH(l4)->dest == __constant_htons(67) || UDPH(l4)->source == __constant_htons(67)) {
 					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 					goto out;
 				}
