@@ -37,6 +37,10 @@
 #include "natflow_path.h"
 #include "natflow_user.h"
 
+#ifndef ARPHRD_RAWIP
+#define ARPHRD_RAWIP 519
+#endif
+
 #define IPV6H ((struct ipv6hdr *)iph)
 
 static struct ifname_match ifname_match_fastnat[IFNAME_MATCH_MAX];
