@@ -1235,7 +1235,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
 				}
 #endif
-				if ((u16)skb->dev->ifindex != nfn->ifindex)
+				if (unlikely((u16)skb->dev->ifindex != nfn->ifindex))
 					goto slow_fastpath;
 				if (unlikely(TCPH(l4)->fin || TCPH(l4)->rst)) {
 					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
@@ -2854,7 +2854,7 @@ __hook_ipv6_main:
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
 				}
 #endif
-				if ((u16)skb->dev->ifindex != nfn->ifindex)
+				if (unlikely((u16)skb->dev->ifindex != nfn->ifindex))
 					goto slow_fastpath6;
 				if (unlikely(TCPH(l4)->fin || TCPH(l4)->rst)) {
 					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
