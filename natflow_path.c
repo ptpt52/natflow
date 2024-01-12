@@ -3238,7 +3238,7 @@ slow_fastpath6:
 
 	dir = CTINFO2DIR(ctinfo);
 #ifdef CONFIG_NETFILTER_INGRESS
-	if (re_learn) {
+	if (re_learn == 1) {
 		if (dir == NF_FF_DIR_ORIGINAL) {
 			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 			simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
@@ -3251,6 +3251,20 @@ slow_fastpath6:
 			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 		}
 	}
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+	else if (re_learn == 2 && !(nf->status & NF_FF_ORIGINAL_OFFLOAD) && !(nf->status & NF_FF_REPLY_OFFLOAD)) {
+		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
+		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
+	} else if (re_learn == 3) {
+		if (dir == NF_FF_DIR_ORIGINAL) {
+			if ((nf->status & NF_FF_ORIGINAL_OFFLOAD))
+				simple_clear_bit(NF_FF_ORIGINAL_OFFLOAD_BIT, &nf->status);
+		} else {
+			if ((nf->status & NF_FF_REPLY_OFFLOAD))
+				simple_clear_bit(NF_FF_REPLY_OFFLOAD_BIT, &nf->status);
+		}
+	}
+#endif
 #endif
 	natflow_session_learn(skb, ct, nf, dir);
 	if (!nf_ct_is_confirmed(ct)) {
