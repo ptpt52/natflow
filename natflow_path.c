@@ -1294,6 +1294,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 						} else if (skb_vlan_tag_present(skb))
 							__vlan_hwaccel_clear_tag(skb);
 					}
+					skb->dev = nfn->outdev;
 #else
 					if (nfn->vlan_present) {
 						if (nfn->vlan_proto == FF_ETH_P_8021Q)
@@ -1307,6 +1308,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					} else if (ppe_dev) {
 						__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), 1);
 					}
+					skb->dev = ppe_dev ? : nfn->outdev;
 #endif
 					if (skb->mac_len != ETH_HLEN && skb->mac_len != ETH_HLEN + PPPOE_SES_HLEN) { /* fake ether header for tun */
 						skb_push(skb, ETH_HLEN);
@@ -1320,7 +1322,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					if (unlikely(ingress_pad_len == PPPOE_SES_HLEN)) {
 						skb->protocol = __constant_htons(ETH_P_PPP_SES);
 					}
-					skb->dev = ppe_dev ? : nfn->outdev;
 					skb->mark = HWNAT_QUEUE_MAPPING_MAGIC;
 					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
 					dev_queue_xmit(skb);
@@ -1524,6 +1525,7 @@ fast_output:
 						} else if (skb_vlan_tag_present(skb))
 							__vlan_hwaccel_clear_tag(skb);
 					}
+					skb->dev = nfn->outdev;
 #else
 					if (nfn->vlan_present) {
 						if (nfn->vlan_proto == FF_ETH_P_8021Q)
@@ -1537,6 +1539,7 @@ fast_output:
 					} else if (ppe_dev) {
 						__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), 1);
 					}
+					skb->dev = ppe_dev ? : nfn->outdev;
 #endif
 					if (skb->mac_len != ETH_HLEN && skb->mac_len != ETH_HLEN + PPPOE_SES_HLEN) { /* fake ether header for tun */
 						skb_push(skb, ETH_HLEN);
@@ -1550,7 +1553,6 @@ fast_output:
 					if (unlikely(ingress_pad_len == PPPOE_SES_HLEN)) {
 						skb->protocol = __constant_htons(ETH_P_PPP_SES);
 					}
-					skb->dev = ppe_dev ? : nfn->outdev;
 					skb->mark = HWNAT_QUEUE_MAPPING_MAGIC;
 					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
 					dev_queue_xmit(skb);
@@ -2925,6 +2927,7 @@ __hook_ipv6_main:
 						} else if (skb_vlan_tag_present(skb))
 							__vlan_hwaccel_clear_tag(skb);
 					}
+					skb->dev = nfn->outdev;
 #else
 					if (nfn->vlan_present) {
 						if (nfn->vlan_proto == FF_ETH_P_8021Q)
@@ -2938,6 +2941,7 @@ __hook_ipv6_main:
 					} else if (ppe_dev) {
 						__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), 1);
 					}
+					skb->dev = ppe_dev ? : nfn->outdev;
 #endif
 					if (skb->mac_len != ETH_HLEN && skb->mac_len != ETH_HLEN + PPPOE_SES_HLEN) { /* fake ether header for tun */
 						skb_push(skb, ETH_HLEN);
@@ -2951,7 +2955,6 @@ __hook_ipv6_main:
 					if (unlikely(ingress_pad_len == PPPOE_SES_HLEN)) {
 						skb->protocol = __constant_htons(ETH_P_PPP_SES);
 					}
-					skb->dev = ppe_dev ? : nfn->outdev;
 					skb->mark = HWNAT_QUEUE_MAPPING_MAGIC;
 					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
 					dev_queue_xmit(skb);
@@ -3158,6 +3161,7 @@ fast_output6:
 						} else if (skb_vlan_tag_present(skb))
 							__vlan_hwaccel_clear_tag(skb);
 					}
+					skb->dev = nfn->outdev;
 #else
 					if (nfn->vlan_present) {
 						if (nfn->vlan_proto == FF_ETH_P_8021Q)
@@ -3171,6 +3175,7 @@ fast_output6:
 					} else if (ppe_dev) {
 						__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), 1);
 					}
+					skb->dev = ppe_dev ? : nfn->outdev;
 #endif
 					if (skb->mac_len != ETH_HLEN && skb->mac_len != ETH_HLEN + PPPOE_SES_HLEN) { /* fake ether header for tun */
 						skb_push(skb, ETH_HLEN);
@@ -3184,7 +3189,6 @@ fast_output6:
 					if (unlikely(ingress_pad_len == PPPOE_SES_HLEN)) {
 						skb->protocol = __constant_htons(ETH_P_PPP_SES);
 					}
-					skb->dev = ppe_dev ? : nfn->outdev;
 					skb->mark = HWNAT_QUEUE_MAPPING_MAGIC;
 					skb->hash = HWNAT_QUEUE_MAPPING_MAGIC;
 					dev_queue_xmit(skb);
