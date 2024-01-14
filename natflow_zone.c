@@ -89,25 +89,39 @@ static inline int natflow_if_name_match(const char *p, const char *n)
 	return 0;
 }
 
-static inline void natflow_zone_match_update(struct net_device *dev)
+static inline int natflow_zone_match_update(struct net_device *dev)
 {
 	struct zone_match_t *zm;
 
 	read_lock_bh(&zone_match_lock);
-
 	list_for_each_entry(zm, &zone_match_list, list) {
 		if (natflow_if_name_match(zm->if_name, dev->name) == 0) {
-			if (natflow_zone_id_set(dev, zm->id) == 0 && natflow_zone_type_set(dev, zm->type) == 0) {
-				read_unlock_bh(&zone_match_lock);
-				return;
+			if (natflow_zone_id_get(dev) != zm->id || natflow_zone_type_get(dev) != zm->type) {
+				if (natflow_zone_id_set(dev, zm->id) == 0 && natflow_zone_type_set(dev, zm->type) == 0) {
+					read_unlock_bh(&zone_match_lock);
+					return 1;
+				} else {
+					read_unlock_bh(&zone_match_lock);
+					NATFLOW_ERROR(DEBUG_FMT_PREFIX "natflow_zone_id_set fail dev=%s id=%u type=%u\n", DEBUG_ARG_PREFIX, dev->name, zm->id, zm->type);
+					return -1;
+				}
 			}
+			read_unlock_bh(&zone_match_lock);
+			return 0;
 		}
 	}
-	if (natflow_zone_id_set(dev, INVALID_ZONE_ID) != 0) {
-		NATFLOW_ERROR(DEBUG_FMT_PREFIX "natflow_zone_id_set fail\n", DEBUG_ARG_PREFIX);
+	if (natflow_zone_id_get(dev) != INVALID_ZONE_ID) {
+		if (natflow_zone_id_set(dev, INVALID_ZONE_ID) == 0) {
+			read_unlock_bh(&zone_match_lock);
+			return 1;
+		} else {
+			read_unlock_bh(&zone_match_lock);
+			NATFLOW_ERROR(DEBUG_FMT_PREFIX "natflow_zone_id_set fail dev=%s id=%u type=%u\n", DEBUG_ARG_PREFIX, dev->name, INVALID_ZONE_ID, 0);
+			return -1;
+		}
 	}
-
 	read_unlock_bh(&zone_match_lock);
+	return 0;
 }
 
 static inline void natflow_zone_match_refresh(void)
@@ -116,12 +130,26 @@ static inline void natflow_zone_match_refresh(void)
 
 	dev = first_net_device(&init_net);
 	while (dev) {
-		natflow_zone_match_update(dev);
-		NATFLOW_INFO(DEBUG_FMT_PREFIX "dev=%s set zone=%u type=%u\n", DEBUG_ARG_PREFIX,
+		if (natflow_zone_match_update(dev) == 1) {
+			NATFLOW_INFO(DEBUG_FMT_PREFIX "dev=%s set zone=%u type=%u\n", DEBUG_ARG_PREFIX,
+			             dev->name, natflow_zone_id_get(dev), natflow_zone_type_get(dev));
+		}
+		dev = next_net_device(dev);
+	}
+}
+
+static inline void natflow_zone_print(void)
+{
+	struct net_device *dev;
+
+	dev = first_net_device(&init_net);
+	while (dev) {
+		NATFLOW_WARN(DEBUG_FMT_PREFIX "dev=%s set zone=%u type=%u\n", DEBUG_ARG_PREFIX,
 		             dev->name, natflow_zone_id_get(dev), natflow_zone_type_get(dev));
 		dev = next_net_device(dev);
 	}
 }
+
 
 //must lock by caller
 static inline struct zone_match_t *natflow_zone_match_get(int idx)
@@ -153,6 +181,7 @@ static void *natflow_zone_start(struct seq_file *m, loff_t *pos)
 		             "#    wan_zone <id>=<if_name> -- set interface wan_zone\n"
 		             "#    clean -- clear all existing zone(s)\n"
 		             "#    update_match -- refresh netdev zone match settings\n"
+		             "#    print_zone -- display all netdev zone settings\n"
 		             "#\n"
 		             "# Info:"
 		             "#  VALID ZONE ID RANGE: 0~%u\n"
@@ -281,6 +310,9 @@ static ssize_t natflow_zone_write(struct file *file, const char __user *buf, siz
 	} else if (strncmp(data, "update_match", 12) == 0) {
 		natflow_zone_match_refresh();
 		goto done;
+	} else if (strncmp(data, "print_zone", 10) == 0) {
+		natflow_zone_print();
+		goto done;
 	}
 
 	NATFLOW_println("ignoring line[%s]", data);
@@ -343,9 +375,10 @@ static int zone_netdev_event(struct notifier_block *this, unsigned long event, v
 
 	NATFLOW_DEBUG("catch (NETDEV_UP) event for dev=%s\n", dev ? dev->name : "(null)");
 
-	natflow_zone_match_update(dev);
-	NATFLOW_WARN(DEBUG_FMT_PREFIX "dev=%s set zone=%u type=%u\n", DEBUG_ARG_PREFIX,
-	             dev->name, natflow_zone_id_get(dev), natflow_zone_type_get(dev));
+	if (natflow_zone_match_update(dev) == 1) {
+		NATFLOW_WARN(DEBUG_FMT_PREFIX "dev=%s set zone=%u type=%u\n", DEBUG_ARG_PREFIX,
+		             dev->name, natflow_zone_id_get(dev), natflow_zone_type_get(dev));
+	}
 
 	return NOTIFY_DONE;
 }
