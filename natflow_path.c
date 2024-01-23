@@ -209,7 +209,7 @@ static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn
 			hash += 1;
 			nfn = &natflow_fast_nat_table[hash];
 		}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 		if (nfn->saddr != saddr || nfn->daddr != daddr ||
 		        nfn->source != source || nfn->dest != dest ||
 		        NFN_PROTO_DEC(nfn->flags) != protonum) {
@@ -273,7 +273,7 @@ static inline natflow_fastnat_node_t *nfn_invert_get6(natflow_fastnat_node_t *nf
 			hash += 1;
 			nfn = &natflow_fast_nat_table[hash];
 		}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 		if (memcmp(nfn->saddr6, saddr.s6_addr32, 16) || memcmp(nfn->daddr6, daddr.s6_addr32, 16) ||
 		        nfn->source != source || nfn->dest != dest ||
 		        NFN_PROTO_DEC(nfn->flags) != protonum) {
@@ -359,7 +359,7 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 				hash += 1;
 				nfn = &natflow_fast_nat_table[hash];
 			}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 			if (nfn->saddr != saddr || nfn->daddr != daddr ||
 			        nfn->source != source || nfn->dest != dest ||
 			        NFN_PROTO_DEC(nfn->flags) != protonum) {
@@ -577,7 +577,7 @@ __keepalive_ipv6_main:
 				hash += 1;
 				nfn = &natflow_fast_nat_table[hash];
 			}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 			if (memcmp(nfn->saddr6, saddr.s6_addr32, 16) || memcmp(nfn->daddr6, daddr.s6_addr32, 16) ||
 			        nfn->source != source || nfn->dest != dest ||
 			        NFN_PROTO_DEC(nfn->flags) != protonum) {
@@ -731,7 +731,7 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 			orig_hash += 1;
 			nfn = &natflow_fast_nat_table[orig_hash];
 		}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 		if (nfn->saddr != ft->src_v4.s_addr || nfn->daddr != ft->dst_v4.s_addr ||
 		        nfn->source != ft->src_port || nfn->dest != ft->dst_port ||
 		        NFN_PROTO_DEC(nfn->flags) != ft->l4proto)
@@ -757,7 +757,7 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 			orig_hash += 1;
 			nfn = &natflow_fast_nat_table[orig_hash];
 		}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 		if (memcmp(nfn->saddr6, ft->src_v6.s6_addr32, 16) || memcmp(nfn->daddr6, ft->dst_v6.s6_addr32, 16) ||
 		        nfn->source != ft->src_port || nfn->dest != ft->dst_port ||
 		        NFN_PROTO_DEC(nfn->flags) != ft->l4proto)
@@ -800,7 +800,7 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 			reply_hash += 1;
 			nfn = &natflow_fast_nat_table[reply_hash];
 		}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 		if (nfn->saddr != ft->src_v4.s_addr || nfn->daddr != ft->dst_v4.s_addr ||
 		        nfn->source != ft->src_port || nfn->dest != ft->dst_port ||
 		        NFN_PROTO_DEC(nfn->flags) != ft->l4proto)
@@ -826,7 +826,7 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 			reply_hash += 1;
 			nfn = &natflow_fast_nat_table[reply_hash];
 		}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 		if (memcmp(nfn->saddr6, ft->src_v6.s6_addr32, 16) || memcmp(nfn->daddr6, ft->dst_v6.s6_addr32, 16) ||
 		        nfn->source != ft->src_port || nfn->dest != ft->dst_port ||
 		        NFN_PROTO_DEC(nfn->flags) != ft->l4proto)
@@ -1205,7 +1205,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				_I += 1;
 				nfn = &natflow_fast_nat_table[_I];
 			}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 			if (nfn->saddr != iph->saddr || nfn->daddr != iph->daddr ||
 			        nfn->source != TCPH(l4)->source || nfn->dest != TCPH(l4)->dest ||
 			        !(nfn->flags & FASTNAT_PROTO_TCP)) {
@@ -1449,7 +1449,7 @@ fast_output:
 				_I += 1;
 				nfn = &natflow_fast_nat_table[_I];
 			}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 			if (nfn->saddr != iph->saddr || nfn->daddr != iph->daddr ||
 			        nfn->source != UDPH(l4)->source || nfn->dest != UDPH(l4)->dest ||
 			        !(nfn->flags & FASTNAT_PROTO_UDP)) {
@@ -1937,7 +1937,7 @@ fastnat_check:
 							hash += 1;
 							nfn = &natflow_fast_nat_table[hash];
 						}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 						if (natflow_hash_skip(hash) ||
 						        (ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_HIGH &&
 						         (nfn->saddr != saddr || nfn->daddr != daddr ||
@@ -2056,7 +2056,7 @@ fastnat_check:
 									hash += 1;
 									nfn_i = &natflow_fast_nat_table[hash];
 								}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 								if (nfn_i->saddr != saddr || nfn_i->daddr != daddr ||
 								        nfn_i->source != source || nfn_i->dest != dest || NFN_PROTO_DEC(nfn_i->flags) != protonum) {
 									hash += 1;
@@ -2838,7 +2838,7 @@ __hook_ipv6_main:
 				_I += 1;
 				nfn = &natflow_fast_nat_table[_I];
 			}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 			if (memcmp(nfn->saddr6, IPV6H->saddr.s6_addr32, 16) || memcmp(nfn->daddr6, IPV6H->daddr.s6_addr32, 16) ||
 			        nfn->source != TCPH(l4)->source || nfn->dest != TCPH(l4)->dest ||
 			        !(nfn->flags & FASTNAT_PROTO_TCP)) {
@@ -3085,7 +3085,7 @@ fast_output6:
 				_I += 1;
 				nfn = &natflow_fast_nat_table[_I];
 			}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 			if (memcmp(nfn->saddr6, IPV6H->saddr.s6_addr32, 16) || memcmp(nfn->daddr6, IPV6H->daddr.s6_addr32, 16) ||
 			        nfn->source != UDPH(l4)->source || nfn->dest != UDPH(l4)->dest ||
 			        !(nfn->flags & FASTNAT_PROTO_UDP)) {
@@ -3490,7 +3490,7 @@ fastnat_check6:
 							hash += 1;
 							nfn = &natflow_fast_nat_table[hash];
 						}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 						if (natflow_hash_skip(hash) ||
 						        (ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_HIGH &&
 						         (memcmp(nfn->saddr6, saddr.s6_addr32, 16) || memcmp(nfn->daddr6, daddr.s6_addr32, 16) ||
@@ -3604,7 +3604,7 @@ fastnat_check6:
 									hash += 1;
 									nfn_i = &natflow_fast_nat_table[hash];
 								}
-#if (defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 								if (memcmp(nfn_i->saddr6, saddr.s6_addr32, 16) || memcmp(nfn_i->daddr6, daddr.s6_addr32, 16) ||
 								        nfn_i->source != source || nfn_i->dest != dest || NFN_PROTO_DEC(nfn_i->flags) != protonum) {
 									hash += 1;
