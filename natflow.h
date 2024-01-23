@@ -263,7 +263,9 @@ struct natflow_fastnat_node_t {
 #define NATFLOW_FF_SAMPLE_TIME 2
 
 /* MAX 65536 for now we use 4096 */
-#if defined(CONFIG_64BIT) || defined(CONFIG_X86) || defined(CONFIG_X86_64) || defined(CONFIG_ARM) || defined(CONFIG_ARM64)
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#define NATFLOW_FASTNAT_TABLE_SIZE 16384
+#elif defined(CONFIG_64BIT) || defined(CONFIG_X86) || defined(CONFIG_X86_64) || defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 #define NATFLOW_FASTNAT_TABLE_SIZE 8192
 #elif defined(CONFIG_ATH79)
 #define NATFLOW_FASTNAT_TABLE_SIZE 4096
@@ -343,9 +345,15 @@ static inline int natflow_hash_skip(u32 hash)
 }
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981))
+#define HWNAT_QUEUE_MAPPING_MAGIC      0x8000
+#define HWNAT_QUEUE_MAPPING_MAGIC_MASK 0xc000
+#define HWNAT_QUEUE_MAPPING_HASH_MASK  0x3fff
+#else
 #define HWNAT_QUEUE_MAPPING_MAGIC      0x8000
 #define HWNAT_QUEUE_MAPPING_MAGIC_MASK 0xe000
 #define HWNAT_QUEUE_MAPPING_HASH_MASK  0x1fff
+#endif
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)
