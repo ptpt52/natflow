@@ -267,7 +267,7 @@ struct natflow_fastnat_node_t {
 #define NATFLOW_FASTNAT_TABLE_SIZE 16384
 #elif defined(CONFIG_64BIT) || defined(CONFIG_X86) || defined(CONFIG_X86_64) || defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 #define NATFLOW_FASTNAT_TABLE_SIZE 8192
-#elif defined(CONFIG_ATH79)
+#elif defined(CONFIG_ATH79) || defined(CONFIG_SOC_MT7620)
 #define NATFLOW_FASTNAT_TABLE_SIZE 4096
 #else
 #define NATFLOW_FASTNAT_TABLE_SIZE 8192
