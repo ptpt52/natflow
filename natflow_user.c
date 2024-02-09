@@ -1041,7 +1041,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	if (in == NULL)
 		in = skb->dev;
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
-	br_in = nf_bridge_get_physindev(skb);
+	br_in = nf_bridge_get_physindev_compat(skb);
 #endif
 	if (!natflow_is_lan_zone(in)
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
@@ -1297,7 +1297,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	if (in == NULL)
 		in = skb->dev;
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
-	br_in = nf_bridge_get_physindev(skb);
+	br_in = nf_bridge_get_physindev_compat(skb);
 #endif
 
 	ct = nf_ct_get(skb, &ctinfo);
