@@ -384,7 +384,9 @@ static inline void compat_u64_stats_add(u64 *r, unsigned long v)
 #define get_random_u32 prandom_u32
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 75)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 75) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0) || \
+     LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 14) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0) || \
+     LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 2))
 static inline struct net_device *nf_bridge_get_physindev_compat(const struct sk_buff *skb)
 {
 	return nf_bridge_get_physindev(skb, &init_net);
