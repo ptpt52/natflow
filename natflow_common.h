@@ -395,4 +395,6 @@ static inline struct net_device *nf_bridge_get_physindev_compat(const struct sk_
 #define nf_bridge_get_physindev_compat nf_bridge_get_physindev
 #endif
 
+#define IPV6H ((struct ipv6hdr *)iph)
+
 #endif /* _NATFLOW_COMMON_H_ */

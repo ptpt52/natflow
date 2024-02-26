@@ -41,8 +41,6 @@
 #define ARPHRD_RAWIP 519
 #endif
 
-#define IPV6H ((struct ipv6hdr *)iph)
-
 static struct ifname_match ifname_match_fastnat[IFNAME_MATCH_MAX];
 
 static void ifname_match_init(void)
@@ -660,7 +658,95 @@ __keepalive_ipv6_main:
 					}
 				}
 			} while(0);
-			/* TODO stats to user */
+			/* stats to user */
+			do {
+				unsigned int hw_speed_bytes[4] = {0, 0, 0, 0};
+				unsigned int hw_speed_packets[4] = {0, 0, 0, 0};
+				natflow_fakeuser_t *user;
+				struct fakeuser_data_t *fud;
+				user = natflow_user_get(ct);
+				if (NULL == user) {
+					break;
+				}
+				if (memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3, &ct->tuplehash[!d].tuple.src.u3, sizeof(union nf_inet_addr)) != 0)
+					d = 0; /* download */
+				else
+					d = 1; /* upload */
+				acct = nf_conn_acct_find(user);
+				if (acct) {
+					struct nf_conn_counter *counter = acct->counter;
+					atomic64_add(packets, &counter[d].packets);
+					atomic64_add(bytes, &counter[d].bytes);
+				}
+				if (hw == 2 && !speed_bytes) {
+					unsigned int i = ((unsigned int)current_jiffies/HZ/2) % 4;
+					unsigned int per_i = (unsigned int)current_jiffies % (HZ * 2);
+					speed_bytes = hw_speed_bytes;
+					speed_packets = hw_speed_packets;
+					speed_bytes[i] = bytes * per_i / (HZ * 2);
+					speed_packets[i] = packets * per_i / (HZ * 2);
+					i = (i + 3) % 4;
+					speed_bytes[i] = bytes * (HZ * 2 - per_i + 1) / (HZ * 2);
+					speed_packets[i] = packets * (HZ * 2 - per_i + 1) / (HZ * 2);
+				}
+				if (!speed_bytes) {
+					break;
+				}
+				fud = natflow_fakeuser_data(user);
+				if (d == 0) {
+					unsigned int rx_speed_jiffies = atomic_xchg(&fud->rx_speed_jiffies, (unsigned int)current_jiffies);
+					unsigned int i = ((unsigned int)current_jiffies/HZ/2) % 4;
+					unsigned int j = (rx_speed_jiffies/HZ/2) % 4;
+					int diff = 0;
+					diff_jiffies = uintmindiff(current_jiffies, rx_speed_jiffies);
+					if (diff_jiffies >= HZ * 2 * 4) {
+						for(j = 0; j < 4; j++) {
+							atomic_set(&fud->rx_speed_bytes[j], 0);
+							atomic_set(&fud->rx_speed_packets[j], 0);
+						}
+						j = i;
+					}
+					for (; j != i; ) {
+						diff++;
+						j = (j + 1) % 4;
+						atomic_set(&fud->rx_speed_bytes[j], speed_bytes[j]);
+						atomic_set(&fud->rx_speed_packets[j], speed_packets[j]);
+						speed_bytes[j] = speed_packets[j] = 0;
+					}
+					for (; diff < 4; diff++) {
+						j = (j + 1) % 4;
+						atomic_add(speed_bytes[j], &fud->rx_speed_bytes[j]);
+						atomic_add(speed_packets[j], &fud->rx_speed_packets[j]);
+						speed_bytes[j] = speed_packets[j] = 0;
+					}
+				} else {
+					unsigned int tx_speed_jiffies = atomic_xchg(&fud->tx_speed_jiffies, (unsigned int)current_jiffies);
+					unsigned int i = ((unsigned int)current_jiffies/HZ/2) % 4;
+					unsigned int j = (tx_speed_jiffies/HZ/2) % 4;
+					int diff = 0;
+					diff_jiffies = uintmindiff(current_jiffies, tx_speed_jiffies);
+					if (diff_jiffies >= HZ * 2 * 4) {
+						for(j = 0; j < 4; j++) {
+							atomic_set(&fud->tx_speed_bytes[j], 0);
+							atomic_set(&fud->tx_speed_packets[j], 0);
+						}
+						j = i;
+					}
+					for (; j != i; ) {
+						diff++;
+						j = (j + 1) % 4;
+						atomic_set(&fud->tx_speed_bytes[j], speed_bytes[j]);
+						atomic_set(&fud->tx_speed_packets[j], speed_packets[j]);
+						speed_bytes[j] = speed_packets[j] = 0;
+					}
+					for (; diff < 4; diff++) {
+						j = (j + 1) % 4;
+						atomic_add(speed_bytes[j], &fud->tx_speed_bytes[j]);
+						atomic_add(speed_packets[j], &fud->tx_speed_packets[j]);
+						speed_bytes[j] = speed_packets[j] = 0;
+					}
+				}
+			} while (0);
 			nf_ct_put(ct);
 			return 0;
 		}
@@ -3432,6 +3518,78 @@ slow_fastpath6:
 		}
 		IPV6H->hop_limit--;
 	}
+
+	do {
+		natflow_fakeuser_t *user;
+		struct fakeuser_data_t *fud;
+		user = natflow_user_get(ct);
+		if (NULL == user) {
+			break;
+		}
+		if (memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3, &ct->tuplehash[!d].tuple.src.u3, sizeof(union nf_inet_addr)) != 0) {
+			d = 0;
+		} else {
+			d = 1;
+		}
+
+		fud = natflow_fakeuser_data(user);
+		if (d == 0) {
+			if (0 && rx_token_ctrl(skb, fud, nf) < 0) {
+				return NF_DROP;
+			} else {
+				/* download */
+				unsigned int rx_speed_jiffies = atomic_xchg(&fud->rx_speed_jiffies, jiffies);
+				unsigned int i = ((unsigned int)jiffies/HZ/2) % 4;
+				unsigned int j = (rx_speed_jiffies/HZ/2) % 4;
+				unsigned int diff_jiffies = uintmindiff(jiffies, rx_speed_jiffies);
+				if (diff_jiffies >= HZ * 2 * 4) {
+					for(j = 0; j < 4; j++) {
+						atomic_set(&fud->rx_speed_bytes[j], 0);
+						atomic_set(&fud->rx_speed_packets[j], 0);
+					}
+					j = i;
+				}
+				for (; j != i; ) {
+					j = (j + 1) % 4;
+					atomic_set(&fud->rx_speed_bytes[j], 0);
+					atomic_set(&fud->rx_speed_packets[j], 0);
+				}
+				atomic_inc(&fud->rx_speed_packets[j]);
+				atomic_add(skb->len, &fud->rx_speed_bytes[j]);
+			}
+		} else {
+			if (0 && tx_token_ctrl(skb, fud, nf) < 0) {
+				return NF_DROP;
+			} else {
+				/* upload */
+				unsigned int tx_speed_jiffies = atomic_xchg(&fud->tx_speed_jiffies, jiffies);
+				unsigned int i = ((unsigned int)jiffies/HZ/2) % 4;
+				unsigned int j = (tx_speed_jiffies/HZ/2) % 4;
+				unsigned int diff_jiffies = uintmindiff(jiffies, tx_speed_jiffies);
+				if (diff_jiffies >= HZ * 2 * 4) {
+					for(j = 0; j < 4; j++) {
+						atomic_set(&fud->tx_speed_bytes[j], 0);
+						atomic_set(&fud->tx_speed_packets[j], 0);
+					}
+					j = i;
+				}
+				for (; j != i; ) {
+					j = (j + 1) % 4;
+					atomic_set(&fud->tx_speed_bytes[j], 0);
+					atomic_set(&fud->tx_speed_packets[j], 0);
+				}
+				atomic_inc(&fud->tx_speed_packets[j]);
+				atomic_add(skb->len, &fud->tx_speed_bytes[j]);
+			}
+		}
+
+		acct = nf_conn_acct_find(user);
+		if (acct) {
+			struct nf_conn_counter *counter = acct->counter;
+			atomic64_inc(&counter[d].packets);
+			atomic64_add(skb->len, &counter[d].bytes);
+		}
+	} while (0);
 
 	if ((ct->status & IPS_DST_NAT)) {
 		if (dir == NF_FF_DIR_ORIGINAL) {

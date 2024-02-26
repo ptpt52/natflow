@@ -184,7 +184,7 @@ int ip_set_test_src_ip(const struct net_device *in, const struct net_device *out
 #endif
 
 	memset(&opt, 0, sizeof(opt));
-	opt.family = NFPROTO_IPV4;
+	opt.family = skb->protocol == __constant_htons(ETH_P_IP) ? NFPROTO_IPV4 : NFPROTO_IPV6;
 	opt.dim = IPSET_DIM_ONE;
 	opt.flags = IPSET_DIM_ONE_SRC;
 	opt.cmdflags = 0;
@@ -244,7 +244,7 @@ int ip_set_test_dst_ip(const struct net_device *in, const struct net_device *out
 #endif
 
 	memset(&opt, 0, sizeof(opt));
-	opt.family = NFPROTO_IPV4;
+	opt.family = skb->protocol == __constant_htons(ETH_P_IP) ? NFPROTO_IPV4 : NFPROTO_IPV6;
 	opt.dim = IPSET_DIM_ONE;
 	opt.flags = 0;
 	opt.cmdflags = 0;
@@ -304,7 +304,7 @@ int ip_set_add_src_ip(const struct net_device *in, const struct net_device *out,
 #endif
 
 	memset(&opt, 0, sizeof(opt));
-	opt.family = NFPROTO_IPV4;
+	opt.family = skb->protocol == __constant_htons(ETH_P_IP) ? NFPROTO_IPV4 : NFPROTO_IPV6;
 	opt.dim = IPSET_DIM_ONE;
 	opt.flags = IPSET_DIM_ONE_SRC;
 	opt.cmdflags = 0;
@@ -364,7 +364,7 @@ int ip_set_add_dst_ip(const struct net_device *in, const struct net_device *out,
 #endif
 
 	memset(&opt, 0, sizeof(opt));
-	opt.family = NFPROTO_IPV4;
+	opt.family = skb->protocol == __constant_htons(ETH_P_IP) ? NFPROTO_IPV4 : NFPROTO_IPV6;
 	opt.dim = IPSET_DIM_ONE;
 	opt.flags = 0;
 	opt.cmdflags = 0;
@@ -424,7 +424,7 @@ int ip_set_del_src_ip(const struct net_device *in, const struct net_device *out,
 #endif
 
 	memset(&opt, 0, sizeof(opt));
-	opt.family = NFPROTO_IPV4;
+	opt.family = skb->protocol == __constant_htons(ETH_P_IP) ? NFPROTO_IPV4 : NFPROTO_IPV6;
 	opt.dim = IPSET_DIM_ONE;
 	opt.flags = IPSET_DIM_ONE_SRC;
 	opt.cmdflags = 0;
@@ -484,7 +484,7 @@ int ip_set_del_dst_ip(const struct net_device *in, const struct net_device *out,
 #endif
 
 	memset(&opt, 0, sizeof(opt));
-	opt.family = NFPROTO_IPV4;
+	opt.family = skb->protocol == __constant_htons(ETH_P_IP) ? NFPROTO_IPV4 : NFPROTO_IPV6;
 	opt.dim = IPSET_DIM_ONE;
 	opt.flags = 0;
 	opt.cmdflags = 0;

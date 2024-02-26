@@ -47,9 +47,13 @@
 struct userinfo {
 	struct list_head list;
 	unsigned int timeout;
-	__be32 ip;
+	union {
+		__be32 ip;
+		union nf_inet_addr ipv6;
+	};
 	uint8_t macaddr[ETH_ALEN];
-	uint8_t auth_type;
+	uint8_t l2num:1; /* 0: ipv4, 1: ipv6 */
+	uint8_t auth_type:7;
 	uint8_t auth_status;
 	uint16_t auth_rule_id;
 	unsigned long long rx_packets;
@@ -326,7 +330,7 @@ static unsigned int natflow_user_timeout = 1800;
 #define NATFLOW_USER_TIMEOUT 300
 
 static struct sk_buff *natflow_user_uskbs[NR_CPUS];
-#define NATFLOW_USKB_SIZE (sizeof(struct iphdr) + sizeof(struct udphdr))
+#define NATFLOW_USKB_SIZE (sizeof(struct iphdr) + sizeof(struct ipv6hdr) + sizeof(struct udphdr))
 #define NATFLOW_FAKEUSER_DADDR __constant_htonl(0x7fffffff)
 
 static inline struct sk_buff *uskb_of_this_cpu(int id)
@@ -416,6 +420,37 @@ natflow_fakeuser_t *natflow_user_find_get(__be32 ip)
 	return user;
 }
 
+natflow_fakeuser_t *natflow_user_find_get6(union nf_inet_addr *u3)
+{
+	natflow_fakeuser_t *user = NULL;
+
+	struct nf_conntrack_tuple tuple;
+	struct nf_conntrack_tuple_hash *h;
+
+	memset(&tuple, 0, sizeof(tuple));
+	tuple.src.u3 = *u3;
+	tuple.src.u.udp.port = __constant_htons(0);
+	memset(&tuple.dst.u3, 0, sizeof(tuple.dst.u3));
+	tuple.dst.u.udp.port = __constant_htons(65535);
+	tuple.src.l3num = AF_INET6;
+	tuple.dst.protonum = IPPROTO_UDP;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
+	h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
+#else
+	h = nf_conntrack_find_get(&init_net, &nf_ct_zone_dflt, &tuple);
+#endif
+	if (h) {
+		struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
+		if (!(IPS_NATFLOW_USER & ct->status) || NF_CT_DIRECTION(h) != IP_CT_DIR_ORIGINAL) {
+			nf_ct_put(ct);
+		} else {
+			user = ct;
+		}
+	}
+
+	return user;
+}
+
 void natflow_user_release_put(natflow_fakeuser_t *user)
 {
 	nf_ct_put(user);
@@ -435,7 +470,11 @@ natflow_fakeuser_t *natflow_user_lookup_in(struct nf_conn *ct, int dir)
 	}
 
 	if (!nf_ct_is_confirmed(ct) && !user && (!ct->master || !ct->master->master)) {
-		user = natflow_user_find_get(ct->tuplehash[dir].tuple.src.u3.ip);
+		if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
+			user = natflow_user_find_get(ct->tuplehash[dir].tuple.src.u3.ip);
+		} else {
+			user = natflow_user_find_get6(&ct->tuplehash[dir].tuple.src.u3);
+		}
 		if (user) {
 			natflow_user_timeout_touch(user);
 
@@ -450,14 +489,6 @@ natflow_fakeuser_t *natflow_user_lookup_in(struct nf_conn *ct, int dir)
 					ct->master = user;
 				}
 			}
-
-			NATFLOW_DEBUG("fakeuser get for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] user[%pI4]\n",
-			              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
-			              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
-			              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
-			              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all),
-			              &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip
-			             );
 
 			natflow_user_release_put(user);
 		} else {
@@ -498,66 +529,50 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 		skb_reset_network_header(uskb);
 		skb_reset_mac_len(uskb);
 
-		uskb->protocol = __constant_htons(ETH_P_IP);
-		skb_set_tail_pointer(uskb, NATFLOW_USKB_SIZE);
-		uskb->len = NATFLOW_USKB_SIZE;
-		uskb->pkt_type = PACKET_HOST;
-		uskb->transport_header = uskb->network_header + sizeof(struct iphdr);
+		if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
+			uskb->protocol = __constant_htons(ETH_P_IP);
+			uskb->len = (sizeof(struct iphdr) + sizeof(struct udphdr));
+			skb_set_tail_pointer(uskb, uskb->len);
+			uskb->pkt_type = PACKET_HOST;
+			uskb->transport_header = uskb->network_header + sizeof(struct iphdr);
 
-		iph = ip_hdr(uskb);
-		iph->version = 4;
-		iph->ihl = 5;
-		iph->saddr = ct->tuplehash[dir].tuple.src.u3.ip;
-		iph->daddr = NATFLOW_FAKEUSER_DADDR;
-		iph->tos = 0;
-		iph->tot_len = htons(NATFLOW_USKB_SIZE);
-		iph->ttl=255;
-		iph->protocol = IPPROTO_UDP;
-		iph->id = __constant_htons(0xDEAD);
-		iph->frag_off = 0;
-		iph->check = 0;
-		iph->check = ip_fast_csum(iph, iph->ihl);
+			iph = ip_hdr(uskb);
+			iph->version = 4;
+			iph->ihl = 5;
+			iph->saddr = ct->tuplehash[dir].tuple.src.u3.ip;
+			iph->daddr = NATFLOW_FAKEUSER_DADDR;
+			iph->tos = 0;
+			iph->tot_len = htons(uskb->len);
+			iph->ttl=255;
+			iph->protocol = IPPROTO_UDP;
+			iph->id = __constant_htons(0xDEAD);
+			iph->frag_off = 0;
+			iph->check = 0;
+			iph->check = ip_fast_csum(iph, iph->ihl);
 
-		udph = (struct udphdr *)((char *)iph + sizeof(struct iphdr));
-		udph->source = __constant_htons(0);
-		udph->dest = __constant_htons(65535);
-		udph->len = __constant_htons(sizeof(struct udphdr));
-		udph->check = 0;
+			udph = (struct udphdr *)((char *)iph + sizeof(struct iphdr));
+			udph->source = __constant_htons(0);
+			udph->dest = __constant_htons(65535);
+			udph->len = __constant_htons(sizeof(struct udphdr));
+			udph->check = 0;
 
-		ret = nf_conntrack_in_compat(&init_net, PF_INET, NF_INET_PRE_ROUTING, uskb);
-		if (ret != NF_ACCEPT) {
-			return NULL;
-		}
-		user = nf_ct_get(uskb, &ctinfo);
+			ret = nf_conntrack_in_compat(&init_net, PF_INET, NF_INET_PRE_ROUTING, uskb);
+			if (ret != NF_ACCEPT) {
+				return NULL;
+			}
+			user = nf_ct_get(uskb, &ctinfo);
 
-		if (!user) {
-			NATFLOW_ERROR("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] failed, ctinfo=%x\n",
-			              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
-			              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
-			              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
-			              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all), (unsigned int)ctinfo);
-			return NULL;
-		}
+			if (!user) {
+				NATFLOW_ERROR("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] failed, ctinfo=%x\n",
+				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
+				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
+				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
+				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all), (unsigned int)ctinfo);
+				return NULL;
+			}
 
-		if (!user->ext) {
-			NATFLOW_ERROR("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] failed, user->ext is NULL\n",
-			              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
-			              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
-			              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
-			              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all));
-			skb_nfct_reset(uskb);
-			return NULL;
-		}
-		if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status) && !test_and_set_bit(IPS_NATFLOW_USER_BIT, &user->status)) {
-			struct fakeuser_data_t *fud;
-			newoff = ALIGN(user->ext->len, __ALIGN_64BITS);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-			new = __krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
-#else
-			new = krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
-#endif
-			if (!new) {
-				NATFLOW_ERROR("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] failed, realloc user->ext failed\n",
+			if (!user->ext) {
+				NATFLOW_ERROR("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] failed, user->ext is NULL\n",
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
 				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
@@ -565,22 +580,122 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 				skb_nfct_reset(uskb);
 				return NULL;
 			}
-			if (user->ext != new) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
-				kfree_rcu(user->ext, rcu);
-				user->ext = new;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-				kfree_rcu(user->ext, rcu);
-				rcu_assign_pointer(user->ext, new);
+			if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status) && !test_and_set_bit(IPS_NATFLOW_USER_BIT, &user->status)) {
+				struct fakeuser_data_t *fud;
+				newoff = ALIGN(user->ext->len, __ALIGN_64BITS);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
+				new = __krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
 #else
-				user->ext = new;
+				new = krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
 #endif
+				if (!new) {
+					NATFLOW_ERROR("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] failed, realloc user->ext failed\n",
+					              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
+					              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
+					              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
+					              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all));
+					skb_nfct_reset(uskb);
+					return NULL;
+				}
+				if (user->ext != new) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
+					kfree_rcu(user->ext, rcu);
+					user->ext = new;
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
+					kfree_rcu(user->ext, rcu);
+					rcu_assign_pointer(user->ext, new);
+#else
+					user->ext = new;
+#endif
+				}
+				new->len = newoff;
+				memset((void *)new + newoff, 0, sizeof(struct fakeuser_data_t));
+				fud = (struct fakeuser_data_t *)((void *)new + newoff);
+				spin_lock_init(&fud->tc.rx.lock);
+				spin_lock_init(&fud->tc.tx.lock);
 			}
-			new->len = newoff;
-			memset((void *)new + newoff, 0, sizeof(struct fakeuser_data_t));
-			fud = (struct fakeuser_data_t *)((void *)new + newoff);
-			spin_lock_init(&fud->tc.rx.lock);
-			spin_lock_init(&fud->tc.tx.lock);
+		} else {
+			//FIXME ipv6
+			uskb->protocol = __constant_htons(ETH_P_IPV6);
+			uskb->len = (sizeof(struct ipv6hdr) + sizeof(struct udphdr));
+			skb_set_tail_pointer(uskb, uskb->len);
+			uskb->pkt_type = PACKET_HOST;
+			uskb->transport_header = uskb->network_header + sizeof(struct ipv6hdr);
+
+			iph = ip_hdr(uskb);
+			IPV6H->version = 6;
+			IPV6H->priority = 0;
+			IPV6H->flow_lbl[2] = IPV6H->flow_lbl[1] = IPV6H->flow_lbl[0] = 0;
+			IPV6H->payload_len = sizeof(struct udphdr);
+			IPV6H->nexthdr = IPPROTO_UDP;
+			IPV6H->hop_limit = 255;
+			IPV6H->saddr = ct->tuplehash[dir].tuple.src.u3.in6;
+			memset(&IPV6H->daddr, 0, sizeof(IPV6H->daddr));
+
+			udph = (struct udphdr *)((char *)iph + sizeof(struct ipv6hdr));
+			udph->source = __constant_htons(0);
+			udph->dest = __constant_htons(65535);
+			udph->len = __constant_htons(sizeof(struct udphdr));
+			udph->check = 0;
+
+			ret = nf_conntrack_in_compat(&init_net, AF_INET6, NF_INET_PRE_ROUTING, uskb);
+			if (ret != NF_ACCEPT) {
+				return NULL;
+			}
+			user = nf_ct_get(uskb, &ctinfo);
+
+			if (!user) {
+				NATFLOW_ERROR("fakeuser create for ct[%pI6:%u->%pI6:%u %pI6:%u<-%pI6:%u] failed, ctinfo=%x\n",
+				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
+				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
+				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
+				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all), (unsigned int)ctinfo);
+				return NULL;
+			}
+
+			if (!user->ext) {
+				NATFLOW_ERROR("fakeuser create for ct[%pI6:%u->%pI6:%u %pI6:%u<-%pI6:%u] failed, user->ext is NULL\n",
+				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
+				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
+				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
+				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all));
+				skb_nfct_reset(uskb);
+				return NULL;
+			}
+			if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status) && !test_and_set_bit(IPS_NATFLOW_USER_BIT, &user->status)) {
+				struct fakeuser_data_t *fud;
+				newoff = ALIGN(user->ext->len, __ALIGN_64BITS);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
+				new = __krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
+#else
+				new = krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
+#endif
+				if (!new) {
+					NATFLOW_ERROR("fakeuser create for ct[%pI6:%u->%pI6:%u %pI6:%u<-%pI6:%u] failed, realloc user->ext failed\n",
+					              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
+					              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
+					              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
+					              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all));
+					skb_nfct_reset(uskb);
+					return NULL;
+				}
+				if (user->ext != new) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
+					kfree_rcu(user->ext, rcu);
+					user->ext = new;
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
+					kfree_rcu(user->ext, rcu);
+					rcu_assign_pointer(user->ext, new);
+#else
+					user->ext = new;
+#endif
+				}
+				new->len = newoff;
+				memset((void *)new + newoff, 0, sizeof(struct fakeuser_data_t));
+				fud = (struct fakeuser_data_t *)((void *)new + newoff);
+				spin_lock_init(&fud->tc.rx.lock);
+				spin_lock_init(&fud->tc.tx.lock);
+			}
 		}
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 		do {
@@ -620,14 +735,6 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 		}
 
 		skb_nfct_reset(uskb);
-
-		NATFLOW_DEBUG("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] user[%pI4]\n",
-		              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
-		              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
-		              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
-		              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all),
-		              &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip
-		             );
 	}
 
 	return natflow_user_get(ct);
@@ -1019,8 +1126,15 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		skb->protocol = __constant_htons(ETH_P_IP);
 		skb->network_header += PPPOE_SES_HLEN;
 		bridge = 1;
-	} else if (skb->protocol != __constant_htons(ETH_P_IP))
+	} else if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+	           pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
+		skb_pull(skb, PPPOE_SES_HLEN);
+		skb->protocol = __constant_htons(ETH_P_IPV6);
+		skb->network_header += PPPOE_SES_HLEN;
+		bridge = 1;
+	} else if (skb->protocol != __constant_htons(ETH_P_IP) && skb->protocol != __constant_htons(ETH_P_IPV6)) {
 		return NF_ACCEPT;
+	}
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
@@ -1030,11 +1144,14 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	if ((ct->status & IPS_NATFLOW_USER_BYPASS)) {
 		goto out;
 	}
-	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL ||
-	        ipv4_is_zeronet(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
-	        ipv4_is_loopback(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
-	        ipv4_is_multicast(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
-	        ipv4_is_lbcast(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip)) {
+	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL) {
+		goto out;
+	}
+	if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET &&
+	        (ipv4_is_zeronet(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
+	         ipv4_is_loopback(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
+	         ipv4_is_multicast(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
+	         ipv4_is_lbcast(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip))) {
 		goto out;
 	}
 
@@ -1084,15 +1201,18 @@ static unsigned int natflow_user_pre_hook(void *priv,
 #endif
 			   ) {
 				//zone match ok
-				if (IP_SET_test_src_ip(state, in, out, skb, auth_conf->auth[i].src_ipgrp_name) > 0) {
-					//ipgrp match ok
+				if ((ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET &&
+				        IP_SET_test_src_ip(state, in, out, skb, auth_conf->auth[i].src_ipgrp_name) > 0) ||
+				        ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6) {
+					//ipgrp match ok, IPV6 ignore ipgrp, FIXME
 					fud->auth_rule_id = auth_conf->auth[i].id;
 
-					if (auth_conf->auth[i].auth_type == AUTH_TYPE_AUTO) {
+					if (auth_conf->auth[i].auth_type == AUTH_TYPE_AUTO ||
+					        ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6) {
 						fud->auth_type = AUTH_TYPE_AUTO;
 						fud->auth_status = AUTH_OK;
 						//TODO notify user
-					} else {
+					} else if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
 						fud->auth_type = AUTH_TYPE_WEB;
 						fud->auth_status = AUTH_REQ;
 
@@ -1107,7 +1227,6 @@ static unsigned int natflow_user_pre_hook(void *priv,
 							//TODO notify user
 						}
 					}
-
 #if defined(CONFIG_NF_CONNTRACK_MARK)
 					user->mark = fud->auth_type;
 #endif
@@ -1131,7 +1250,13 @@ static unsigned int natflow_user_pre_hook(void *priv,
 				if (user_i) {
 					INIT_LIST_HEAD(&user_i->list);
 					user_i->timeout = nf_ct_expires(user)  / HZ;
-					user_i->ip = user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+					if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
+						user_i->l2num = 0;
+						user_i->ip = user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+					} else {
+						user_i->l2num = 1;
+						user_i->ipv6 = user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
+					}
 					memcpy(user_i->macaddr, fud->macaddr, ETH_ALEN);
 					user_i->auth_type = fud->auth_type;
 					user_i->auth_status = fud->auth_status;
@@ -1184,43 +1309,47 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		}
 	}
 
-	if (fud->auth_status == AUTH_REQ && fud->auth_type == AUTH_TYPE_WEB && https_redirect_en != 0) {
-		struct iphdr *iph = ip_hdr(skb);
-		void *l4 = (void *)iph + iph->ihl * 4;
+	if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
+		if (fud->auth_status == AUTH_REQ && fud->auth_type == AUTH_TYPE_WEB && https_redirect_en != 0) {
+			struct iphdr *iph = ip_hdr(skb);
+			void *l4 = (void *)iph + iph->ihl * 4;
 
-		if (iph->protocol == IPPROTO_TCP) {
-			if (TCPH(l4)->dest == __constant_htons(443)) {
-				if (auth_conf->dst_bypasslist_name[0] != 0 &&
-				        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
-					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
-					goto out;
-				} else if (auth_conf->src_bypasslist_name[0] != 0 &&
-				           IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
-					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
-					goto out;
-				}
-
-				do {
-					__be32 newdst = 0;
-					struct in_device *indev;
-					struct in_ifaddr *ifa;
-
-					rcu_read_lock();
-					indev = __in_dev_get_rcu(in);
-					if (indev && indev->ifa_list) {
-						ifa = indev->ifa_list;
-						newdst = ifa->ifa_local;
-					}
-					rcu_read_unlock();
-
-					if (newdst) {
-						NATFLOW_DEBUG(DEBUG_TCP_FMT ": new connection https redirect to %pI4:%u\n", DEBUG_TCP_ARG(iph,l4), &newdst, ntohs(https_redirect_port));
-						natflow_dnat_setup(ct, newdst, https_redirect_port);
+			if (iph->protocol == IPPROTO_TCP) {
+				if (TCPH(l4)->dest == __constant_htons(443)) {
+					if (auth_conf->dst_bypasslist_name[0] != 0 &&
+					        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
 						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						goto out;
+					} else if (auth_conf->src_bypasslist_name[0] != 0 &&
+					           IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
+						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						goto out;
 					}
-				} while (0);
+
+					do {
+						__be32 newdst = 0;
+						struct in_device *indev;
+						struct in_ifaddr *ifa;
+
+						rcu_read_lock();
+						indev = __in_dev_get_rcu(in);
+						if (indev && indev->ifa_list) {
+							ifa = indev->ifa_list;
+							newdst = ifa->ifa_local;
+						}
+						rcu_read_unlock();
+
+						if (newdst) {
+							NATFLOW_DEBUG(DEBUG_TCP_FMT ": new connection https redirect to %pI4:%u\n", DEBUG_TCP_ARG(iph,l4), &newdst, ntohs(https_redirect_port));
+							natflow_dnat_setup(ct, newdst, https_redirect_port);
+							set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						}
+					} while (0);
+				}
 			}
 		}
+	} else {
+		//FIXME ipv6 AUTH_TYPE_WEB
 	}
 out:
 	if (bridge) {
@@ -1291,8 +1420,15 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		skb->protocol = __constant_htons(ETH_P_IP);
 		skb->network_header += PPPOE_SES_HLEN;
 		bridge = 1;
-	} else if (skb->protocol != __constant_htons(ETH_P_IP))
+	} else if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+	           pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
+		skb_pull(skb, PPPOE_SES_HLEN);
+		skb->protocol = __constant_htons(ETH_P_IPV6);
+		skb->network_header += PPPOE_SES_HLEN;
+		bridge = 1;
+	} else if (skb->protocol != __constant_htons(ETH_P_IP) && skb->protocol != __constant_htons(ETH_P_IPV6)) {
 		return NF_ACCEPT;
+	}
 
 	if (in == NULL)
 		in = skb->dev;
@@ -1307,11 +1443,15 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	nf = natflow_session_get(ct);
 
 	if ((ct->status & IPS_NATFLOW_USER_DROP)) {
-		struct iphdr *iph = ip_hdr(skb);
-		void *l4 = (void *)iph + iph->ihl * 4;
+		if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
+			struct iphdr *iph = ip_hdr(skb);
+			void *l4 = (void *)iph + iph->ihl * 4;
 
-		if (iph->protocol == IPPROTO_TCP && TCPH(l4)->fin && TCPH(l4)->ack) {
-			natflow_auth_tcp_reply_finack(in, skb, bridge);
+			if (iph->protocol == IPPROTO_TCP && TCPH(l4)->fin && TCPH(l4)->ack) {
+				natflow_auth_tcp_reply_finack(in, skb, bridge);
+			}
+		} else {
+			//FIXME ipv6
 		}
 		ret = NF_DROP;
 		goto out;
@@ -1345,167 +1485,171 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		/* tell FF this conn need token ctrl */
 		simple_set_bit(NF_FF_TOKEN_CTRL_BIT, &nf->status);
 	}
-	if (nf && !(nf->status & NF_FF_QOS_TESTED)) {
-		int i;
-		struct iphdr *iph = ip_hdr(skb);
-		void *l4 = (void *)iph + iph->ihl * 4;
+	if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
+		if (nf && !(nf->status & NF_FF_QOS_TESTED)) {
+			int i;
+			struct iphdr *iph = ip_hdr(skb);
+			void *l4 = (void *)iph + iph->ihl * 4;
 
-		simple_set_bit(NF_FF_QOS_TESTED_BIT, &nf->status);
+			simple_set_bit(NF_FF_QOS_TESTED_BIT, &nf->status);
 
-		for (i = 0; i < qos_token_ctrl_num; i++) {
-			struct qos_rule *qr = &qos_token_ctrl_rule[i];
-			if (qr->proto) {
-				if (qr->proto != iph->protocol) {
-					continue;
-				}
-			}
-
-			if ((qr->flag & USER_TYPE_MASK)) {
-				if ((qr->flag & USER_TYPE_IP)) {
-					if (qr->user.ip != user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+			for (i = 0; i < qos_token_ctrl_num; i++) {
+				struct qos_rule *qr = &qos_token_ctrl_rule[i];
+				if (qr->proto) {
+					if (qr->proto != iph->protocol) {
 						continue;
 					}
-				} else if ((qr->flag & USER_TYPE_IPCIDR)) {
-					if (qr->user.ipcidr.ip != (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip & qr->user.ipcidr.mask)) {
-						continue;
-					}
-				} else {
-					if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
-						if (IP_SET_test_src_ip(state, in, out, skb, qr->user.name) <= 0) {
+				}
+
+				if ((qr->flag & USER_TYPE_MASK)) {
+					if ((qr->flag & USER_TYPE_IP)) {
+						if (qr->user.ip != user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+							continue;
+						}
+					} else if ((qr->flag & USER_TYPE_IPCIDR)) {
+						if (qr->user.ipcidr.ip != (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip & qr->user.ipcidr.mask)) {
 							continue;
 						}
 					} else {
-						if (IP_SET_test_dst_ip(state, in, out, skb, qr->user.name) <= 0) {
-							continue;
-						}
-					}
-				}
-			}
-
-			if ((qr->flag & USER_PORT_TYPE_MASK)) {
-				if ((qr->flag & USER_PORT_TYPE_PORT)) {
-					if (iph->protocol == IPPROTO_TCP) {
 						if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
-							if (qr->user_port.port != TCPH(l4)->source) {
+							if (IP_SET_test_src_ip(state, in, out, skb, qr->user.name) <= 0) {
 								continue;
 							}
 						} else {
-							if (qr->user_port.port != TCPH(l4)->dest) {
+							if (IP_SET_test_dst_ip(state, in, out, skb, qr->user.name) <= 0) {
 								continue;
 							}
-						}
-					} else if (iph->protocol == IPPROTO_UDP) {
-						if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
-							if (qr->user_port.port != UDPH(l4)->source) {
-								continue;
-							}
-						} else {
-							if (qr->user_port.port != UDPH(l4)->dest) {
-								continue;
-							}
-						}
-					}
-				} else {
-					if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
-						if (IP_SET_test_src_port(state, in, out, skb, qr->user_port.name) <= 0) {
-							continue;
-						}
-					} else {
-						if (IP_SET_test_dst_port(state, in, out, skb, qr->user_port.name) <= 0) {
-							continue;
 						}
 					}
 				}
-			}
 
-			if ((qr->flag & REMOTE_TYPE_MASK)) {
-				if ((qr->flag & REMOTE_TYPE_IP)) {
-					if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
-						if (qr->remote.ip != iph->daddr) {
-							continue;
+				if ((qr->flag & USER_PORT_TYPE_MASK)) {
+					if ((qr->flag & USER_PORT_TYPE_PORT)) {
+						if (iph->protocol == IPPROTO_TCP) {
+							if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+								if (qr->user_port.port != TCPH(l4)->source) {
+									continue;
+								}
+							} else {
+								if (qr->user_port.port != TCPH(l4)->dest) {
+									continue;
+								}
+							}
+						} else if (iph->protocol == IPPROTO_UDP) {
+							if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+								if (qr->user_port.port != UDPH(l4)->source) {
+									continue;
+								}
+							} else {
+								if (qr->user_port.port != UDPH(l4)->dest) {
+									continue;
+								}
+							}
 						}
 					} else {
-						if (qr->remote.ip != iph->saddr) {
-							continue;
-						}
-					}
-				} else if ((qr->flag & REMOTE_TYPE_IPCIDR)) {
-					if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
-						if (qr->remote.ipcidr.ip != (iph->daddr & qr->remote.ipcidr.mask)) {
-							continue;
-						}
-					} else {
-						if (qr->remote.ipcidr.ip != (iph->saddr & qr->remote.ipcidr.mask)) {
-							continue;
-						}
-					}
-				} else {
-					if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
-						if (IP_SET_test_dst_ip(state, in, out, skb, qr->remote.name) <= 0) {
-							continue;
-						}
-					} else {
-						if (IP_SET_test_src_ip(state, in, out, skb, qr->remote.name) <= 0) {
-							continue;
-						}
-					}
-				}
-			}
-
-			if ((qr->flag & REMOTE_PORT_TYPE_MASK)) {
-				if ((qr->flag & REMOTE_PORT_TYPE_PORT)) {
-					if (iph->protocol == IPPROTO_TCP) {
 						if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
-							if (qr->remote_port.port != TCPH(l4)->dest) {
+							if (IP_SET_test_src_port(state, in, out, skb, qr->user_port.name) <= 0) {
 								continue;
 							}
 						} else {
-							if (qr->remote_port.port != TCPH(l4)->source) {
+							if (IP_SET_test_dst_port(state, in, out, skb, qr->user_port.name) <= 0) {
 								continue;
 							}
-						}
-					} else if (iph->protocol == IPPROTO_UDP) {
-						if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
-							if (qr->remote_port.port != UDPH(l4)->dest) {
-								continue;
-							}
-						} else {
-							if (qr->remote_port.port != UDPH(l4)->source) {
-								continue;
-							}
-						}
-					}
-				} else {
-					if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
-						if (IP_SET_test_dst_port(state, in, out, skb, qr->remote_port.name) <= 0) {
-							continue;
-						}
-					} else {
-						if (IP_SET_test_src_port(state, in, out, skb, qr->remote_port.name) <= 0) {
-							continue;
 						}
 					}
 				}
-			}
 
-			nf->qos_id = i + 1;
+				if ((qr->flag & REMOTE_TYPE_MASK)) {
+					if ((qr->flag & REMOTE_TYPE_IP)) {
+						if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+							if (qr->remote.ip != iph->daddr) {
+								continue;
+							}
+						} else {
+							if (qr->remote.ip != iph->saddr) {
+								continue;
+							}
+						}
+					} else if ((qr->flag & REMOTE_TYPE_IPCIDR)) {
+						if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+							if (qr->remote.ipcidr.ip != (iph->daddr & qr->remote.ipcidr.mask)) {
+								continue;
+							}
+						} else {
+							if (qr->remote.ipcidr.ip != (iph->saddr & qr->remote.ipcidr.mask)) {
+								continue;
+							}
+						}
+					} else {
+						if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+							if (IP_SET_test_dst_ip(state, in, out, skb, qr->remote.name) <= 0) {
+								continue;
+							}
+						} else {
+							if (IP_SET_test_src_ip(state, in, out, skb, qr->remote.name) <= 0) {
+								continue;
+							}
+						}
+					}
+				}
 
-			if (nf->qos_id) {
-				switch (iph->protocol) {
-				case IPPROTO_TCP:
-					NATFLOW_INFO("(NUF)" DEBUG_TCP_FMT ": matched qos id=%d\n",
-					             DEBUG_TCP_ARG(iph,l4), nf->qos_id);
+				if ((qr->flag & REMOTE_PORT_TYPE_MASK)) {
+					if ((qr->flag & REMOTE_PORT_TYPE_PORT)) {
+						if (iph->protocol == IPPROTO_TCP) {
+							if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+								if (qr->remote_port.port != TCPH(l4)->dest) {
+									continue;
+								}
+							} else {
+								if (qr->remote_port.port != TCPH(l4)->source) {
+									continue;
+								}
+							}
+						} else if (iph->protocol == IPPROTO_UDP) {
+							if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+								if (qr->remote_port.port != UDPH(l4)->dest) {
+									continue;
+								}
+							} else {
+								if (qr->remote_port.port != UDPH(l4)->source) {
+									continue;
+								}
+							}
+						}
+					} else {
+						if (iph->saddr == user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) {
+							if (IP_SET_test_dst_port(state, in, out, skb, qr->remote_port.name) <= 0) {
+								continue;
+							}
+						} else {
+							if (IP_SET_test_src_port(state, in, out, skb, qr->remote_port.name) <= 0) {
+								continue;
+							}
+						}
+					}
+				}
+
+				nf->qos_id = i + 1;
+
+				if (nf->qos_id) {
+					switch (iph->protocol) {
+					case IPPROTO_TCP:
+						NATFLOW_INFO("(NUF)" DEBUG_TCP_FMT ": matched qos id=%d\n",
+						             DEBUG_TCP_ARG(iph,l4), nf->qos_id);
+						break;
+					case IPPROTO_UDP:
+						NATFLOW_INFO("(NUF)" DEBUG_UDP_FMT ": matched qos id=%d\n",
+						             DEBUG_UDP_ARG(iph,l4), nf->qos_id);
+						break;
+					}
+
+					simple_set_bit(NF_FF_TOKEN_CTRL_BIT, &nf->status);
 					break;
-				case IPPROTO_UDP:
-					NATFLOW_INFO("(NUF)" DEBUG_UDP_FMT ": matched qos id=%d\n",
-					             DEBUG_UDP_ARG(iph,l4), nf->qos_id);
-					break;
 				}
-
-				simple_set_bit(NF_FF_TOKEN_CTRL_BIT, &nf->status);
-				break;
 			}
 		}
+	} else {
+		//FIXME ipv6
 	}
 
 	switch(fud->auth_status) {
@@ -1683,8 +1827,15 @@ static unsigned int natflow_user_post_hook(void *priv,
 		skb->protocol = __constant_htons(ETH_P_IP);
 		skb->network_header += PPPOE_SES_HLEN;
 		bridge = 1;
-	} else if (skb->protocol != __constant_htons(ETH_P_IP))
+	} else if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+	           pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
+		skb_pull(skb, PPPOE_SES_HLEN);
+		skb->protocol = __constant_htons(ETH_P_IPV6);
+		skb->network_header += PPPOE_SES_HLEN;
+		bridge = 1;
+	} else if (skb->protocol != __constant_htons(ETH_P_IP) && skb->protocol != __constant_htons(ETH_P_IPV6)) {
 		return NF_ACCEPT;
+	}
 
 	if (out == NULL)
 		out = skb->dev;
@@ -1700,11 +1851,13 @@ static unsigned int natflow_user_post_hook(void *priv,
 	user = natflow_user_get(ct);
 	if (NULL == user) {
 		/* XXX: no user found, maybe connection from wan to lan */
-		if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL ||
-		        ipv4_is_zeronet(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip) ||
-		        ipv4_is_loopback(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip) ||
-		        ipv4_is_multicast(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip) ||
-		        ipv4_is_lbcast(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip)) {
+		if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
+			goto out;
+		if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET &&
+		        (ipv4_is_zeronet(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip) ||
+		         ipv4_is_loopback(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip) ||
+		         ipv4_is_multicast(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip) ||
+		         ipv4_is_lbcast(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip))) {
 			goto out;
 		}
 		if (!natflow_is_lan_zone(out)
@@ -1732,7 +1885,10 @@ static unsigned int natflow_user_post_hook(void *priv,
 		struct nf_conn_counter *counter = acct->counter;
 		struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 		natflow_t *nf = natflow_session_get(ct);
-		if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[CTINFO2DIR(ctinfo)].tuple.src.u3.ip) {
+		if ((ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET &&
+		        user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[CTINFO2DIR(ctinfo)].tuple.src.u3.ip) ||
+		        (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6 &&
+		         memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3, &ct->tuplehash[CTINFO2DIR(ctinfo)].tuple.src.u3, sizeof(union nf_inet_addr)) != 0)) {
 			if (nf && (nf->status & NF_FF_TOKEN_CTRL) && rx_token_ctrl(skb, fud, nf) < 0) {
 				return NF_DROP;
 			} else {
@@ -1822,6 +1978,33 @@ static struct nf_hook_ops user_hooks[] = {
 #endif
 		.hook = natflow_user_post_hook,
 		.pf = PF_INET,
+		.hooknum = NF_INET_POST_ROUTING,
+		.priority = NF_IP_PRI_NAT_SRC + 10,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_user_pre_hook,
+		.pf = AF_INET6,
+		.hooknum = NF_INET_PRE_ROUTING,
+		.priority = NF_IP_PRI_NAT_DST - 10 + 1,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_user_forward_hook,
+		.pf = AF_INET6,
+		.hooknum = NF_INET_FORWARD,
+		.priority = NF_IP_PRI_FILTER,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_user_post_hook,
+		.pf = AF_INET6,
 		.hooknum = NF_INET_POST_ROUTING,
 		.priority = NF_IP_PRI_NAT_SRC + 10,
 	},
@@ -2458,7 +2641,7 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
                              size_t count, loff_t *ppos)
 {
 	unsigned long end_time = jiffies + msecs_to_jiffies(100);
-	size_t len;
+	size_t len = 0;
 	ssize_t ret;
 	struct userinfo *user_i;
 	struct userinfo_user *user = file->private_data;
@@ -2520,7 +2703,13 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 					}
 					INIT_LIST_HEAD(&user_i->list);
 					user_i->timeout = nf_ct_expires(ct)  / HZ;
-					user_i->ip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+					if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
+						user_i->l2num = 0;
+						user_i->ip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+					} else {
+						user_i->l2num = 1;
+						user_i->ipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
+					}
 					memcpy(user_i->macaddr, fud->macaddr, ETH_ALEN);
 					user_i->auth_type = fud->auth_type;
 					user_i->auth_status = fud->auth_status;
@@ -2582,11 +2771,19 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 
 	user_i = list_first_entry_or_null(&user->head, struct userinfo, list);
 	if (user_i) {
-		len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
-		              &user_i->ip, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
-		              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
-		              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
-		              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
+		if (user_i->l2num == 0) {
+			len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
+			              &user_i->ip, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
+			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
+			              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
+			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
+		} else {
+			len = sprintf(user->data, "%pI6,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
+			              &user_i->ipv6, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
+			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
+			              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
+			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
+		}
 		if (len > count) {
 			ret = -EINVAL;
 			goto out;
@@ -2742,7 +2939,7 @@ static ssize_t userinfo_event_write(struct file *file, const char __user *buf, s
 static ssize_t userinfo_event_read(struct file *file, char __user *buf,
                                    size_t count, loff_t *ppos)
 {
-	size_t len;
+	size_t len = 0;
 	ssize_t ret = 0;
 	struct userinfo *user_i;
 	struct userinfo_user *user = file->private_data;
@@ -2776,11 +2973,19 @@ static ssize_t userinfo_event_read(struct file *file, char __user *buf,
 
 	user_i = list_first_entry_or_null(&user->head, struct userinfo, list);
 	if (user_i) {
-		len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
-		              &user_i->ip, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
-		              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
-		              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
-		              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
+		if (user_i->l2num == 0) {
+			len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
+			              &user_i->ip, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
+			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
+			              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
+			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
+		} else {
+			len = sprintf(user->data, "%pI6,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
+			              &user_i->ipv6, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
+			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
+			              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
+			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
+		}
 		if (len > count) {
 			ret = -EINVAL;
 			goto out;
