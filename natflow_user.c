@@ -2537,19 +2537,40 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 		struct nf_conn_acct *acct;
 		struct fakeuser_data_t *fud;
 		natflow_fakeuser_t *user = NULL;
-		__be32 ip;
-		unsigned int a, b, c, d;
+		union nf_inet_addr u3;
+		unsigned int a, b, c, d, e, f, g, h;
 		n = sscanf(data, "kick %u.%u.%u.%u", &a, &b, &c, &d);
 		if ( !(n == 4 &&
 		        (((a & 0xff) == a) &&
 		         ((b & 0xff) == b) &&
 		         ((c & 0xff) == c) &&
 		         ((d & 0xff) == d)) )) {
-			return -EINVAL;
+			n = sscanf(data, "kick %x:%x:%x:%x:%x:%x:%x:%x", &a, &b, &c, &d, &e, &f, &g, &h);
+			if ( !(n == 8 &&
+			        (((a & 0xffff) == a) &&
+			         ((b & 0xffff) == b) &&
+			         ((c & 0xffff) == c) &&
+			         ((d & 0xffff) == d) &&
+			         ((e & 0xffff) == e) &&
+			         ((f & 0xffff) == f) &&
+			         ((g & 0xffff) == g) &&
+			         ((h & 0xffff) == h)) )) {
+				return -EINVAL;
+			}
+			u3.in6.s6_addr16[0] = htons(a);
+			u3.in6.s6_addr16[1] = htons(b);
+			u3.in6.s6_addr16[2] = htons(c);
+			u3.in6.s6_addr16[3] = htons(d);
+			u3.in6.s6_addr16[4] = htons(e);
+			u3.in6.s6_addr16[5] = htons(f);
+			u3.in6.s6_addr16[6] = htons(g);
+			u3.in6.s6_addr16[7] = htons(h);
+			user = natflow_user_find_get6(&u3);
+		} else {
+			u3.ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
+			user = natflow_user_find_get(u3.ip);
 		}
-		ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
 
-		user = natflow_user_find_get(ip);
 		if (!user)
 			return -EINVAL;
 
@@ -2571,43 +2592,85 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 	} else if (strncmp(data, "set-status ", 11) == 0) {
 		struct fakeuser_data_t *fud;
 		natflow_fakeuser_t *user = NULL;
-		__be32 ip;
-		unsigned int a, b, c, d, e;
-		n = sscanf(data, "set-status %u.%u.%u.%u %u", &a, &b, &c, &d, &e);
+		union nf_inet_addr u3;
+		unsigned int a, b, c, d, e, f, g, h, s;
+		n = sscanf(data, "set-status %u.%u.%u.%u %u", &a, &b, &c, &d, &s);
 		if ( !(n == 5 &&
 		        (((a & 0xff) == a) &&
 		         ((b & 0xff) == b) &&
 		         ((c & 0xff) == c) &&
 		         ((d & 0xff) == d)) )) {
-			return -EINVAL;
+			n = sscanf(data, "set-status %x:%x:%x:%x:%x:%x:%x:%x %u", &a, &b, &c, &d, &e, &f, &g, &h, &s);
+			if ( !(n == 9 &&
+			        (((a & 0xffff) == a) &&
+			         ((b & 0xffff) == b) &&
+			         ((c & 0xffff) == c) &&
+			         ((d & 0xffff) == d) &&
+			         ((e & 0xffff) == e) &&
+			         ((f & 0xffff) == f) &&
+			         ((g & 0xffff) == g) &&
+			         ((h & 0xffff) == h)) )) {
+				return -EINVAL;
+			}
+			u3.in6.s6_addr16[0] = htons(a);
+			u3.in6.s6_addr16[1] = htons(b);
+			u3.in6.s6_addr16[2] = htons(c);
+			u3.in6.s6_addr16[3] = htons(d);
+			u3.in6.s6_addr16[4] = htons(e);
+			u3.in6.s6_addr16[5] = htons(f);
+			u3.in6.s6_addr16[6] = htons(g);
+			u3.in6.s6_addr16[7] = htons(h);
+			user = natflow_user_find_get6(&u3);
+		} else {
+			u3.ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
+			user = natflow_user_find_get(u3.ip);
 		}
-		ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
 
-		user = natflow_user_find_get(ip);
 		if (!user)
 			return -EINVAL;
 
 		fud = natflow_fakeuser_data(user);
-		fud->auth_status = e;
+		fud->auth_status = s;
 
 		natflow_user_release_put(user);
 		goto done;
 	} else if (strncmp(data, "set-token-ctrl ", 15) == 0) {
 		struct fakeuser_data_t *fud;
 		natflow_fakeuser_t *user = NULL;
-		__be32 ip;
-		unsigned int a, b, c, d, rx, tx;
+		union nf_inet_addr u3;
+		unsigned int a, b, c, d, e, f, g, h, rx, tx;
 		n = sscanf(data, "set-token-ctrl %u.%u.%u.%u %u %u", &a, &b, &c, &d, &rx, &tx);
 		if ( !(n == 6 &&
 		        (((a & 0xff) == a) &&
 		         ((b & 0xff) == b) &&
 		         ((c & 0xff) == c) &&
 		         ((d & 0xff) == d)) )) {
-			return -EINVAL;
+			n = sscanf(data, "set-token-ctrl %x:%x:%x:%x:%x:%x:%x:%x %u %u", &a, &b, &c, &d, &e, &f, &g, &h, &rx, &tx);
+			if ( !(n == 10 &&
+			        (((a & 0xffff) == a) &&
+			         ((b & 0xffff) == b) &&
+			         ((c & 0xffff) == c) &&
+			         ((d & 0xffff) == d) &&
+			         ((e & 0xffff) == e) &&
+			         ((f & 0xffff) == f) &&
+			         ((g & 0xffff) == g) &&
+			         ((h & 0xffff) == h)) )) {
+				return -EINVAL;
+			}
+			u3.in6.s6_addr16[0] = htons(a);
+			u3.in6.s6_addr16[1] = htons(b);
+			u3.in6.s6_addr16[2] = htons(c);
+			u3.in6.s6_addr16[3] = htons(d);
+			u3.in6.s6_addr16[4] = htons(e);
+			u3.in6.s6_addr16[5] = htons(f);
+			u3.in6.s6_addr16[6] = htons(g);
+			u3.in6.s6_addr16[7] = htons(h);
+			user = natflow_user_find_get6(&u3);
+		} else {
+			u3.ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
+			user = natflow_user_find_get(u3.ip);
 		}
-		ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
 
-		user = natflow_user_find_get(ip);
 		if (!user)
 			return -EINVAL;
 
