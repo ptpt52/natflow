@@ -1868,6 +1868,10 @@ static unsigned int natflow_user_post_hook(void *priv,
 			goto out;
 		}
 
+		/* check nf to ensure skb orig comes from PRE_ROUTING */
+		if (natflow_session_get(ct) == NULL) {
+			goto out;
+		}
 		user = natflow_user_in(ct, IP_CT_DIR_REPLY);
 		if (NULL == user) {
 			goto out;
