@@ -630,7 +630,8 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			IPV6H->nexthdr = IPPROTO_UDP;
 			IPV6H->hop_limit = 255;
 			IPV6H->saddr = ct->tuplehash[dir].tuple.src.u3.in6;
-			memset(&IPV6H->daddr, 0, sizeof(IPV6H->daddr));
+			memset(&IPV6H->daddr, 0x0, sizeof(IPV6H->daddr));
+			IPV6H->daddr.s6_addr16[7] = 0xffff; //NATFLOW_FAKEUSER_DADDR=ffff::
 
 			udph = (struct udphdr *)((char *)iph + sizeof(struct ipv6hdr));
 			udph->source = __constant_htons(0);
