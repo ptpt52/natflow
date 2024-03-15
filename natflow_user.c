@@ -389,7 +389,7 @@ natflow_fakeuser_t *natflow_user_get(struct nf_conn *ct)
 	return user;
 }
 
-natflow_fakeuser_t *natflow_user_find_get(__be32 ip)
+static natflow_fakeuser_t *natflow_user_find_get(__be32 ip)
 {
 	natflow_fakeuser_t *user = NULL;
 
@@ -420,7 +420,7 @@ natflow_fakeuser_t *natflow_user_find_get(__be32 ip)
 	return user;
 }
 
-natflow_fakeuser_t *natflow_user_find_get6(union nf_inet_addr *u3)
+static natflow_fakeuser_t *natflow_user_find_get6(union nf_inet_addr *u3)
 {
 	natflow_fakeuser_t *user = NULL;
 
@@ -451,12 +451,12 @@ natflow_fakeuser_t *natflow_user_find_get6(union nf_inet_addr *u3)
 	return user;
 }
 
-void natflow_user_release_put(natflow_fakeuser_t *user)
+static void natflow_user_release_put(natflow_fakeuser_t *user)
 {
 	nf_ct_put(user);
 }
 
-natflow_fakeuser_t *natflow_user_lookup_in(struct nf_conn *ct, int dir)
+static natflow_fakeuser_t *natflow_user_lookup_in(struct nf_conn *ct, int dir)
 {
 	natflow_fakeuser_t *user = NULL;
 
@@ -499,7 +499,7 @@ natflow_fakeuser_t *natflow_user_lookup_in(struct nf_conn *ct, int dir)
 	return natflow_user_get(ct);
 }
 
-natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
+static natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 {
 	natflow_fakeuser_t *user = NULL;
 
