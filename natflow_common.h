@@ -31,7 +31,9 @@
 #endif
 
 #define MODULE_NAME "natflow"
-#define NATFLOW_VERSION "1.0.0"
+#ifndef NATFLOW_VERSION
+#define NATFLOW_VERSION "1.0.1"
+#endif
 
 #if !(defined(CONFIG_NF_NAT) || defined(CONFIG_NF_NAT_MODULE))
 #error "CONFIG_NF_NAT and CONFIG_NF_NAT_MODULE not defined"

@@ -63,6 +63,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 	if ((*pos) == 0) {
 		n = snprintf(natflow_ctl_buffer,
 		             PAGE_SIZE - 1,
+		             "# Version: %s\n"
 		             "# Usage:\n"
 		             "#    disabled=Number -- set disable/enable\n"
 		             "#    debug=<num> -- set debug\n"
@@ -93,6 +94,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 #endif
 		             "debug=%d\n"
 		             "\n",
+		             NATFLOW_VERSION,
 #if defined(CONFIG_NATFLOW_PATH)
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 		             hwnat,
