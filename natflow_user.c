@@ -1879,6 +1879,10 @@ static unsigned int natflow_user_post_hook(void *priv,
 		}
 	}
 
+	if (nf_ct_protonum(ct) != ip_hdr(skb)->protocol) { /* XXX: IPV6H->nexthdr */
+		goto out;
+	}
+
 	if (pf != NFPROTO_BRIDGE && !(ct->status & IPS_NATFLOW_SKIP_BRIDGE)) {
 		set_bit(IPS_NATFLOW_SKIP_BRIDGE_BIT, &ct->status);
 	} else if (pf == NFPROTO_BRIDGE && (ct->status & IPS_NATFLOW_SKIP_BRIDGE)) {
