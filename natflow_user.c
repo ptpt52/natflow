@@ -1879,7 +1879,10 @@ static unsigned int natflow_user_post_hook(void *priv,
 		}
 	}
 
-	if (nf_ct_protonum(ct) != ip_hdr(skb)->protocol) { /* XXX: IPV6H->nexthdr */
+	if (skb->protocol == __constant_htons(ETH_P_IP) && nf_ct_protonum(ct) != ip_hdr(skb)->protocol) {
+		goto out;
+	}
+	if (skb->protocol == __constant_htons(ETH_P_IPV6) && nf_ct_protonum(ct) != ipv6_hdr(skb)->nexthdr) {
 		goto out;
 	}
 
