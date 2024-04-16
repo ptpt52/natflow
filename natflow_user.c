@@ -431,6 +431,7 @@ static natflow_fakeuser_t *natflow_user_find_get6(union nf_inet_addr *u3)
 	tuple.src.u3 = *u3;
 	tuple.src.u.udp.port = __constant_htons(0);
 	memset(&tuple.dst.u3, 0, sizeof(tuple.dst.u3));
+	tuple.dst.u3.in6.s6_addr16[0] = 0xffff; //NATFLOW_FAKEUSER_DADDR=ffff::
 	tuple.dst.u.udp.port = __constant_htons(65535);
 	tuple.src.l3num = AF_INET6;
 	tuple.dst.protonum = IPPROTO_UDP;
@@ -631,7 +632,7 @@ static natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			IPV6H->hop_limit = 255;
 			IPV6H->saddr = ct->tuplehash[dir].tuple.src.u3.in6;
 			memset(&IPV6H->daddr, 0x0, sizeof(IPV6H->daddr));
-			IPV6H->daddr.s6_addr16[7] = 0xffff; //NATFLOW_FAKEUSER_DADDR=ffff::
+			IPV6H->daddr.s6_addr16[0] = 0xffff; //NATFLOW_FAKEUSER_DADDR=ffff::
 
 			udph = (struct udphdr *)((char *)iph + sizeof(struct ipv6hdr));
 			udph->source = __constant_htons(0);
