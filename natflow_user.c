@@ -2584,7 +2584,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 		}
 
 		if (!user)
-			return -EINVAL;
+			return -ENOENT;
 
 		fud = natflow_fakeuser_data(user);
 		fud->timestamp = 0;
@@ -2639,7 +2639,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 		}
 
 		if (!user)
-			return -EINVAL;
+			return -ENOENT;
 
 		fud = natflow_fakeuser_data(user);
 		fud->auth_status = s;
@@ -2684,7 +2684,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 		}
 
 		if (!user)
-			return -EINVAL;
+			return -ENOENT;
 
 		fud = natflow_fakeuser_data(user);
 		fud->tc.rx.tokens_per_jiffy = rx / HZ;
