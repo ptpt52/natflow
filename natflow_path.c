@@ -303,7 +303,7 @@ static inline natflow_fastnat_node_t *nfn_invert_get6(natflow_fastnat_node_t *nf
 static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, unsigned long packets, unsigned int *speed_bytes, unsigned int *speed_packets, int hw, unsigned long current_jiffies)
 {
 	struct nf_conn_acct *acct;
-	natflow_fastnat_node_t *nfn;
+	natflow_fastnat_node_t *nfn, *nfn_i = NULL;
 	unsigned long diff_jiffies = 0;
 
 	hash = hash % NATFLOW_FASTNAT_TABLE_SIZE;
@@ -349,6 +349,7 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 				natflow_update_ct_timeout(ct, diff_jiffies);
 			}
 
+			nfn_i = nfn;
 			hash = natflow_hash_v4(saddr, daddr, source, dest);
 			nfn = &natflow_fast_nat_table[hash];
 			if (nfn->saddr != saddr || nfn->daddr != daddr ||
@@ -528,6 +529,24 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 						speed_bytes[j] = speed_packets[j] = 0;
 					}
 				}
+				if (fud->auth_status == AUTH_BLOCK) {
+					struct natflow_t *nf;
+					nf = natflow_session_get(ct);
+
+					/* tell FF do not emit pkts */
+					if (nf && !(nf->status & NF_FF_USER_USE)) {
+						/* tell FF -user- need to use this conn */
+						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+					}
+					clear_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
+					nfn_i->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
+
+					NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] diff_jiffies=%u user is AUTH_BLOCK\n",
+					             hash, &nfn->saddr, ntohs(nfn->source), &nfn->daddr, ntohs(nfn->dest), (unsigned int)diff_jiffies);
+					nf_ct_put(ct);
+					return -1;
+				}
 			} while (0);
 			nf_ct_put(ct);
 			return 0;
@@ -567,6 +586,7 @@ __keepalive_ipv6_main:
 				natflow_update_ct_timeout(ct, diff_jiffies);
 			}
 
+			nfn_i = nfn;
 			hash = natflow_hash_v6(saddr.s6_addr32, daddr.s6_addr32, source, dest);
 			nfn = &natflow_fast_nat_table[hash];
 			if (memcmp(nfn->saddr6, saddr.s6_addr32, 16) || memcmp(nfn->daddr6, daddr.s6_addr32, 16) ||
@@ -745,6 +765,24 @@ __keepalive_ipv6_main:
 						atomic_add(speed_packets[j], &fud->tx_speed_packets[j]);
 						speed_bytes[j] = speed_packets[j] = 0;
 					}
+				}
+				if (fud->auth_status == AUTH_BLOCK) {
+					struct natflow_t *nf;
+					nf = natflow_session_get(ct);
+
+					/* tell FF do not emit pkts */
+					if (nf && !(nf->status & NF_FF_USER_USE)) {
+						/* tell FF -user- need to use this conn */
+						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+					}
+					clear_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
+					nfn_i->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
+
+					NATFLOW_INFO("keepalive[%u] nfn[%pI6.%u->%pI6.%u] diff_jiffies=%u ct not found\n",
+					             hash, nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest), (unsigned int)diff_jiffies);
+					nf_ct_put(ct);
+					return -1;
 				}
 			} while (0);
 			nf_ct_put(ct);

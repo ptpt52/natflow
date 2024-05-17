@@ -1755,6 +1755,11 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		/* temporary block user */
 		set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
 		ret = NF_DROP;
+		/* tell FF do not emit pkts */
+		if (nf && !(nf->status & NF_FF_USER_USE)) {
+			/* tell FF -user- need to use this conn */
+			simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+		}
 		goto out;
 	}
 
