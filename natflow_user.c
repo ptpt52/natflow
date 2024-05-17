@@ -1143,7 +1143,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		goto out;
 	}
 
-	if ((ct->status & IPS_NATFLOW_USER_BYPASS)) {
+	if ((ct->status & IPS_NATFLOW_USER_BYPASS) && (nf_ct_protonum(ct) != IPPROTO_ICMP && nf_ct_protonum(ct) != IPPROTO_ICMPV6)) {
 		goto out;
 	}
 	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL) {
@@ -1442,7 +1442,6 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	if (NULL == ct) {
 		goto out;
 	}
-	nf = natflow_session_get(ct);
 
 	if ((ct->status & IPS_NATFLOW_USER_DROP)) {
 		if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
@@ -1458,7 +1457,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		ret = NF_DROP;
 		goto out;
 	}
-	if ((ct->status & IPS_NATFLOW_USER_BYPASS)) {
+	if ((ct->status & IPS_NATFLOW_USER_BYPASS) && (nf_ct_protonum(ct) != IPPROTO_ICMP && nf_ct_protonum(ct) != IPPROTO_ICMPV6)) {
 		goto out;
 	}
 
@@ -1481,6 +1480,8 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			goto out;
 		}
 	}
+
+	nf = natflow_session_get(ct);
 
 	fud = natflow_fakeuser_data(user);
 	if (nf && !(nf->status & NF_FF_TOKEN_CTRL) && (IPS_NATFLOW_USER_TOKEN_CTRL & user->status)) {
