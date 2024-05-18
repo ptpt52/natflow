@@ -51,12 +51,19 @@ struct urlinfo {
 #define URLINFO_NOW ((jiffies - INITIAL_JIFFIES) / HZ)
 #define TIMESTAMP_FREQ 10
 	unsigned int timestamp;
-	__be32 sip;
-	__be32 dip;
+	union {
+		__be32 sip;
+		union nf_inet_addr sipv6;
+	};
+	union {
+		__be32 dip;
+		union nf_inet_addr dipv6;
+	};
 	__be16 sport;
 	__be16 dport;
 	unsigned char mac[ETH_ALEN];
 #define URLINFO_HTTPS 0x01
+#define URLINFO_IPV6 0x80
 	unsigned char flags;
 #define NATFLOW_HTTP_NONE 0
 #define NATFLOW_HTTP_GET 1
@@ -110,7 +117,7 @@ static void urllogger_store_record(struct urlinfo *url)
 			break;
 		if (url_i->sip == url->sip && url_i->dip == url->dip && url_i->dport == url->dport &&
 		        url_i->data_len == url->data_len && memcmp(url_i->data, url->data, url_i->data_len) == 0 &&
-		        (url_i->flags & URLINFO_HTTPS) == (url->flags & URLINFO_HTTPS) &&
+		        url_i->flags == url->flags &&
 		        url_i->http_method == url->http_method) {
 			url_i->hits++;
 			spin_unlock(&urllogger_store_lock);
@@ -377,8 +384,15 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 		skb->protocol = __constant_htons(ETH_P_IP);
 		skb->network_header += PPPOE_SES_HLEN;
 		bridge = 1;
-	} else if (skb->protocol != __constant_htons(ETH_P_IP))
+	} else if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+	           pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
+		skb_pull(skb, PPPOE_SES_HLEN);
+		skb->protocol = __constant_htons(ETH_P_IPV6);
+		skb->network_header += PPPOE_SES_HLEN;
+		bridge = 1;
+	} else if (skb->protocol != __constant_htons(ETH_P_IP) && skb->protocol != __constant_htons(ETH_P_IPV6)) {
 		return NF_ACCEPT;
+	}
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct)
@@ -390,6 +404,9 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 
 	if ((ct->status & IPS_NATFLOW_URLLOGGER_HANDLED))
 		goto out;
+
+	if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6)
+		goto urllogger_hook_ipv6_main;
 
 	iph = ip_hdr(skb);
 	if (iph->protocol != IPPROTO_TCP) {
@@ -511,6 +528,127 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			}
 		}
 	}
+
+urllogger_hook_ipv6_main:
+	iph = (void *)ipv6_hdr(skb);
+	if (IPV6H->version != 6 || IPV6H->nexthdr != IPPROTO_TCP) {
+		goto out;
+	}
+
+	if (skb_try_make_writable(skb, sizeof(struct ipv6hdr) + sizeof(struct tcphdr))) {
+		goto out;
+	}
+	iph = (void *)ipv6_hdr(skb);
+	l4 = (void *)iph + sizeof(struct ipv6hdr);
+
+	/* pause fastnat path */
+	nf = natflow_session_get(ct);
+	if (nf && !(nf->status & NF_FF_URLLOGGER_USE)) {
+		/* tell FF -urllogger- need this conn */
+		simple_set_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+	}
+
+	data_len = ntohs(IPV6H->payload_len) - TCPH(l4)->doff * 4;
+	if (data_len > 0) {
+		unsigned char *host = NULL;
+		int host_len = data_len;
+
+		if (skb_try_make_writable(skb, skb->len)) {
+			goto out;
+		}
+		iph = (void *)ipv6_hdr(skb);
+		l4 = (void *)iph + sizeof(struct ipv6hdr);
+
+		data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
+
+		/* check one packet only */
+		set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
+		if (nf && (nf->status & NF_FF_URLLOGGER_USE)) {
+			/* tell FF -urllogger- has finished it's job */
+			simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+		}
+
+		/* try to get HTTPS/TLS SNI HOST */
+		host = tls_sni_search(data, &host_len);
+		if (host) {
+			struct urlinfo *url = kmalloc(ALIGN(sizeof(struct urlinfo) + host_len + 1, __URLINFO_ALIGN), GFP_ATOMIC);
+			if (!url)
+				goto out;
+			INIT_LIST_HEAD(&url->list);
+			memcpy(url->data, host, host_len);
+			url->data[host_len] = 0;
+			url->data_len = host_len + 1;
+			if (urllogger_store_tuple_type == 0) {
+				/* 0: dir0-src dir0-dst */
+				url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
+				url->dipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3;
+				url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+				url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
+			} else if (urllogger_store_tuple_type == 1) {
+				/* 1: dir0-src dir1-src */
+				url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
+				url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
+				url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+				url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+			} else {
+				/* 2: dir1-dst dir1-src */
+				url->sipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3;
+				url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
+				url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
+				url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+			}
+			url->timestamp = URLINFO_NOW;
+			url->flags = URLINFO_HTTPS;
+			url->flags |= URLINFO_IPV6;
+			url->http_method = 0;
+			url->hits = 1;
+			memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
+
+			urllogger_store_record(url);
+		} else {
+			unsigned char *uri = NULL;
+			int uri_len = 0;
+			int http_method = 0;
+			if (http_url_search(data, &host_len, &host, &uri_len, &uri, &http_method) > 0) {
+				struct urlinfo *url = kmalloc(ALIGN(sizeof(struct urlinfo) + host_len + uri_len + 1, __URLINFO_ALIGN), GFP_ATOMIC);
+				if (!url)
+					goto out;
+				INIT_LIST_HEAD(&url->list);
+				memcpy(url->data, host, host_len);
+				memcpy(url->data + host_len, uri, uri_len);
+				url->data[host_len + uri_len] = 0;
+				url->data_len = host_len + uri_len + 1;
+				if (urllogger_store_tuple_type == 0) {
+					/* 0: dir0-src dir0-dst */
+					url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
+					url->dipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3;
+					url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+					url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
+				} else if (urllogger_store_tuple_type == 1) {
+					/* 1: dir0-src dir1-src */
+					url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
+					url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
+					url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+					url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+				} else {
+					/* 2: dir1-dst dir1-src */
+					url->sipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3;
+					url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
+					url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
+					url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+				}
+				url->timestamp = URLINFO_NOW;
+				url->flags = 0;
+				url->flags |= URLINFO_IPV6;
+				url->http_method = http_method;
+				url->hits = 1;
+				memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
+
+				urllogger_store_record(url);
+			}
+		}
+	}
+
 out:
 	if (bridge) {
 		skb->network_header -= PPPOE_SES_HLEN;
@@ -529,6 +667,15 @@ static struct nf_hook_ops urllogger_hooks[] = {
 		.hook = natflow_urllogger_hook_v1,
 		.pf = PF_INET,
 		.hooknum = NF_INET_FORWARD,
+		.priority = NF_IP_PRI_FILTER - 10,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_urllogger_hook_v1,
+		.pf = AF_INET6,
+		.hooknum = NF_INET_PRE_ROUTING,
 		.priority = NF_IP_PRI_FILTER - 10,
 	},
 	{
@@ -644,7 +791,7 @@ done:
 static ssize_t urllogger_read(struct file *file, char __user *buf,
                               size_t count, loff_t *ppos)
 {
-	size_t len;
+	size_t len = 0;
 	ssize_t ret;
 	struct urlinfo *url;
 	struct urllogger_user *user = file->private_data;
@@ -670,13 +817,20 @@ static ssize_t urllogger_read(struct file *file, char __user *buf,
 	if (url) {
 		/* timestamp, mac,              sip,            sport,dip,            dport,hits, meth,type, url\n
 		   4294967295,FF:AA:BB:CC:DD:EE,123.123.123.123,65535,111.111.111.111,65535,65535,POST,HTTP,url\n
-		   -----------------------------------------------------------------------------------------89bytes
+		   -----------------------------------------------------------------------------------------89bytes + 48bytes(if ipv6)
 		 */
-		if (89 + url->data_len + 1 /* \n */ <= URLLOGGER_DATALEN) {
-			len = sprintf(user->data, "%u,%02X:%02X:%02X:%02X:%02X:%02X,%pI4,%u,%pI4,%u,%u,%s,%s,%s\n",
-			              url->timestamp, url->mac[0], url->mac[1], url->mac[2], url->mac[3], url->mac[4], url->mac[5],
-			              &url->sip, ntohs(url->sport), &url->dip, ntohs(url->dport), url->hits,
-			              NATFLOW_http_method[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->data);
+		if (89 + 48 + url->data_len + 1 /* \n */ <= URLLOGGER_DATALEN) {
+			if ((url->flags & URLINFO_IPV6)) {
+				len = sprintf(user->data, "%u,%02X:%02X:%02X:%02X:%02X:%02X,%pI6,%u,%pI6,%u,%u,%s,%s,%s\n",
+				              url->timestamp, url->mac[0], url->mac[1], url->mac[2], url->mac[3], url->mac[4], url->mac[5],
+				              &url->sipv6, ntohs(url->sport), &url->dipv6, ntohs(url->dport), url->hits,
+				              NATFLOW_http_method[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->data);
+			} else {
+				len = sprintf(user->data, "%u,%02X:%02X:%02X:%02X:%02X:%02X,%pI4,%u,%pI4,%u,%u,%s,%s,%s\n",
+				              url->timestamp, url->mac[0], url->mac[1], url->mac[2], url->mac[3], url->mac[4], url->mac[5],
+				              &url->sip, ntohs(url->sport), &url->dip, ntohs(url->dport), url->hits,
+				              NATFLOW_http_method[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->data);
+			}
 			if (len > count) {
 				ret = -EINVAL;
 				goto out;
