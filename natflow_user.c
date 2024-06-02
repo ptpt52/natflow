@@ -1155,6 +1155,9 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	         ipv4_is_multicast(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
 	         ipv4_is_lbcast(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip))) {
 		goto out;
+	} else if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6 &&
+	           (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6.s6_addr16[0] == __constant_htons(0xfe80))) {
+		goto out;
 	}
 
 	if (in == NULL)
@@ -1866,6 +1869,9 @@ static unsigned int natflow_user_post_hook(void *priv,
 		         ipv4_is_loopback(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip) ||
 		         ipv4_is_multicast(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip) ||
 		         ipv4_is_lbcast(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip))) {
+			goto out;
+		} else if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6 &&
+		           (ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.in6.s6_addr16[0] == __constant_htons(0xfe80))) {
 			goto out;
 		}
 		if (!natflow_is_lan_zone(out)
