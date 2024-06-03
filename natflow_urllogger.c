@@ -40,11 +40,26 @@
 
 static int urllogger_major = 0;
 static int urllogger_minor = 0;
-static int number_of_devices = 1;
 static struct cdev urllogger_cdev;
 const char *urllogger_dev_name = "urllogger_queue";
 static struct class *urllogger_class;
 static struct device *urllogger_dev;
+
+static inline ssize_t urlinfo_copy_host_tolower(unsigned char *dst, unsigned char *src, ssize_t n)
+{
+	ssize_t i = 0;
+	for (; i < n; i++) {
+		if (src[i] == '/')
+			break;
+		if (src[i] >= 'A' && src[i] <= 'Z')
+			dst[i] = src[i] - 'A' + 'a';
+		else
+			dst[i] = src[i];
+	}
+	memcpy(dst + i, src + i, n - i);
+
+	return i;
+}
 
 struct urlinfo {
 	struct list_head list;
@@ -72,6 +87,11 @@ struct urlinfo {
 	unsigned char http_method;
 	unsigned short hits;
 	unsigned short data_len;
+	unsigned short host_len;
+	unsigned char acl_idx;
+#define URLINFO_ACL_ACTION_RECORD 0
+#define URLINFO_ACL_ACTION_DROP 1
+	unsigned char acl_action;
 	unsigned char data[0];
 };
 
@@ -152,6 +172,64 @@ static void urllogger_store_clear(void)
 		urlinfo_release(url);
 	}
 	spin_unlock_bh(&urllogger_store_lock);
+}
+
+static int hostacl_major = 0;
+static int hostacl_minor = 0;
+static struct cdev hostacl_cdev;
+const char *hostacl_dev_name = "hostacl_ctl";
+static struct class *hostacl_class;
+static struct device *hostacl_dev;
+
+static unsigned char *host_acl_buffer = NULL;
+static ssize_t host_acl_buffer_size = 0;
+static ssize_t host_acl_buffer_len = 0;
+
+/* return: 0 = accept 1 = drop */
+static int urllogger_acl(struct urlinfo *url)
+{
+	int ret = 0;
+	unsigned char backup_c;
+	unsigned char *acl_buffer = host_acl_buffer;
+
+	backup_c = url->data[url->host_len];
+	url->data[url->host_len] = 0;
+
+	url->acl_idx = 64; /* 64 = no acl matched */
+	url->acl_action = URLINFO_ACL_ACTION_RECORD;
+
+	if (url->host_len >= 1 && acl_buffer != NULL) { /* at least a.b pattern */
+		int i = 0;
+		unsigned char *ptr = NULL;
+
+		ptr = strstr(acl_buffer, url->data);
+		while (ptr == NULL) {
+			while (url->host_len >= i + 1 && url->data[i] != '.') {
+				i++;
+			}
+			i++;
+			if (url->host_len < i + 1) {
+				break;
+			}
+
+			ptr = strstr(acl_buffer, url->data + i);
+		}
+
+		if (ptr != NULL && ((ptr[url->host_len - i] & 0x80) != 0 || ptr[url->host_len - i] == 0)) {
+			unsigned char b = *(ptr - 1);
+			if ((b & 0x80)) {
+				url->acl_idx = (b & 0x3f);
+
+				if ((b & 0x40)) {
+					url->acl_action = URLINFO_ACL_ACTION_DROP;
+					ret = 1;
+				}
+			}
+		}
+	}
+
+	url->data[url->host_len] = backup_c;
+	return ret;
 }
 
 static unsigned char *tls_sni_search(unsigned char *data, int *data_len)
@@ -365,7 +443,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 	//const struct net_device *out = state->out;
 #endif
 #endif
-	int dir = 0;
+	int ret = NF_ACCEPT;
 	enum ip_conntrack_info ctinfo;
 	int data_len;
 	unsigned char *data;
@@ -398,8 +476,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 	if (NULL == ct)
 		goto out;
 
-	dir = CTINFO2DIR(ctinfo);
-	if (dir != IP_CT_DIR_ORIGINAL)
+	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
 		goto out;
 
 	if ((ct->status & IPS_NATFLOW_URLLOGGER_HANDLED))
@@ -453,7 +530,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			if (!url)
 				goto out;
 			INIT_LIST_HEAD(&url->list);
-			memcpy(url->data, host, host_len);
+			url->host_len = urlinfo_copy_host_tolower(url->data, host, host_len);
 			url->data[host_len] = 0;
 			url->data_len = host_len + 1;
 			if (urllogger_store_tuple_type == 0) {
@@ -481,7 +558,10 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			url->hits = 1;
 			memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
 
-			//printk("%pI4:%u->%pI4:%u, url=%s, https, t=%u\n", &url->sip, ntohs(url->sport), &url->dip, ntohs(url->dport), url->data, url->timestamp);
+			if (urllogger_acl(url) != 0) {
+				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+				ret = NF_DROP;
+			}
 
 			urllogger_store_record(url);
 		} else {
@@ -493,7 +573,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 				if (!url)
 					goto out;
 				INIT_LIST_HEAD(&url->list);
-				memcpy(url->data, host, host_len);
+				url->host_len = urlinfo_copy_host_tolower(url->data, host, host_len);
 				memcpy(url->data + host_len, uri, uri_len);
 				url->data[host_len + uri_len] = 0;
 				url->data_len = host_len + uri_len + 1;
@@ -522,7 +602,10 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 				url->hits = 1;
 				memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
 
-				//printk("%pI4:%u->%pI4:%u, url=%s, http, t=%u\n", &url->sip, ntohs(url->sport), &url->dip, ntohs(url->dport), url->data, url->timestamp);
+				if (urllogger_acl(url) != 0) {
+					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+					ret = NF_DROP;
+				}
 
 				urllogger_store_record(url);
 			}
@@ -575,7 +658,7 @@ urllogger_hook_ipv6_main:
 			if (!url)
 				goto out;
 			INIT_LIST_HEAD(&url->list);
-			memcpy(url->data, host, host_len);
+			url->host_len = urlinfo_copy_host_tolower(url->data, host, host_len);
 			url->data[host_len] = 0;
 			url->data_len = host_len + 1;
 			if (urllogger_store_tuple_type == 0) {
@@ -604,6 +687,11 @@ urllogger_hook_ipv6_main:
 			url->hits = 1;
 			memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
 
+			if (urllogger_acl(url) != 0) {
+				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+				ret = NF_DROP;
+			}
+
 			urllogger_store_record(url);
 		} else {
 			unsigned char *uri = NULL;
@@ -614,7 +702,7 @@ urllogger_hook_ipv6_main:
 				if (!url)
 					goto out;
 				INIT_LIST_HEAD(&url->list);
-				memcpy(url->data, host, host_len);
+				url->host_len = urlinfo_copy_host_tolower(url->data, host, host_len);
 				memcpy(url->data + host_len, uri, uri_len);
 				url->data[host_len + uri_len] = 0;
 				url->data_len = host_len + uri_len + 1;
@@ -644,6 +732,11 @@ urllogger_hook_ipv6_main:
 				url->hits = 1;
 				memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
 
+				if (urllogger_acl(url) != 0) {
+					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+					ret = NF_DROP;
+				}
+
 				urllogger_store_record(url);
 			}
 		}
@@ -656,7 +749,7 @@ out:
 		skb_push(skb, PPPOE_SES_HLEN);
 	}
 
-	return NF_ACCEPT;
+	return ret;
 }
 
 static struct nf_hook_ops urllogger_hooks[] = {
@@ -779,21 +872,21 @@ static ssize_t urllogger_read(struct file *file, char __user *buf,
 	spin_unlock_bh(&urllogger_store_lock);
 
 	if (url) {
-		/* timestamp, mac,              sip,            sport,dip,            dport,hits, meth,type, url\n
-		   4294967295,FF:AA:BB:CC:DD:EE,123.123.123.123,65535,111.111.111.111,65535,65535,POST,HTTP,url\n
-		   -----------------------------------------------------------------------------------------89bytes + 48bytes(if ipv6)
+		/* timestamp, mac,              sip,            sport,dip,            dport,hits, meth,type,acl_idx,acl_action, url\n
+		   4294967295,FF:AA:BB:CC:DD:EE,123.123.123.123,65535,111.111.111.111,65535,65535,POST,HTTP,64,1,url\n
+		   ----------------------------------------------------------------------------------------------94bytes + 48bytes(if ipv6)
 		 */
-		if (89 + 48 + url->data_len + 1 /* \n */ <= URLLOGGER_DATALEN) {
+		if (94 + 48 + url->data_len + 1 /* \n */ <= URLLOGGER_DATALEN) {
 			if ((url->flags & URLINFO_IPV6)) {
-				len = sprintf(user->data, "%u,%02X:%02X:%02X:%02X:%02X:%02X,%pI6,%u,%pI6,%u,%u,%s,%s,%s\n",
+				len = sprintf(user->data, "%u,%02X:%02X:%02X:%02X:%02X:%02X,%pI6,%u,%pI6,%u,%u,%s,%s,%u,%u,%s\n",
 				              url->timestamp, url->mac[0], url->mac[1], url->mac[2], url->mac[3], url->mac[4], url->mac[5],
 				              &url->sipv6, ntohs(url->sport), &url->dipv6, ntohs(url->dport), url->hits,
-				              NATFLOW_http_method[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->data);
+				              NATFLOW_http_method[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->acl_idx, url->acl_action, url->data);
 			} else {
-				len = sprintf(user->data, "%u,%02X:%02X:%02X:%02X:%02X:%02X,%pI4,%u,%pI4,%u,%u,%s,%s,%s\n",
+				len = sprintf(user->data, "%u,%02X:%02X:%02X:%02X:%02X:%02X,%pI4,%u,%pI4,%u,%u,%s,%s,%u,%u,%s\n",
 				              url->timestamp, url->mac[0], url->mac[1], url->mac[2], url->mac[3], url->mac[4], url->mac[5],
 				              &url->sip, ntohs(url->sport), &url->dip, ntohs(url->dport), url->hits,
-				              NATFLOW_http_method[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->data);
+				              NATFLOW_http_method[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->acl_idx, url->acl_action, url->data);
 			}
 			if (len > count) {
 				ret = -EINVAL;
@@ -915,7 +1008,304 @@ static struct ctl_table urllogger_root_table[] = {
 };
 #endif
 
-static struct ctl_table_header *urllogger_table_header;
+static struct ctl_table_header *urllogger_table_header = NULL;
+
+static int hostacl_ctl_buffer_use = 0;
+static char *hostacl_ctl_buffer = NULL;
+static void *hostacl_start(struct seq_file *m, loff_t *pos)
+{
+	int n = 0;
+
+	if ((*pos) == 0) {
+		n = snprintf(hostacl_ctl_buffer,
+		             PAGE_SIZE - 1,
+		             "# Usage:\n"
+		             "#    clear -- clear all existing acl rule(s)\n"
+		             "#    add acl=<id>,<act>,<host> --add one rule\n"
+		             "#\n"
+		             "\n");
+		hostacl_ctl_buffer[n] = 0;
+		return hostacl_ctl_buffer;
+	} else if ((*pos) == 1) {
+		strcpy(hostacl_ctl_buffer, "ACL=:\n");
+		return hostacl_ctl_buffer;
+	} else if ((*pos) == 2) {
+		if (host_acl_buffer != NULL) {
+			return host_acl_buffer;
+		}
+	} else if ((*pos) == 3) {
+		strcpy(hostacl_ctl_buffer, "\n");
+		return hostacl_ctl_buffer;
+	}
+
+	return NULL;
+}
+
+static void *hostacl_next(struct seq_file *m, void *v, loff_t *pos)
+{
+	(*pos)++;
+	if ((*pos) > 0) {
+		return hostacl_start(m, pos);
+	}
+	return NULL;
+}
+
+static void hostacl_stop(struct seq_file *m, void *v)
+{
+}
+
+static int hostacl_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%s", (char *)v);
+	return 0;
+}
+
+const struct seq_operations hostacl_seq_ops = {
+	.start = hostacl_start,
+	.next = hostacl_next,
+	.stop = hostacl_stop,
+	.show = hostacl_show,
+};
+
+static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+{
+	int err = 0;
+	int n, l;
+	int cnt = MAX_IOCTL_LEN;
+	static char data[MAX_IOCTL_LEN];
+	static int data_left = 0;
+
+	cnt -= data_left;
+	if (buf_len < cnt)
+		cnt = buf_len;
+
+	if (copy_from_user(data + data_left, buf, cnt) != 0)
+		return -EACCES;
+
+	n = 0;
+	while(n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
+	if (n) {
+		*offset += n;
+		data_left = 0;
+		return n;
+	}
+
+	//make sure line ended with '\n' and line len <= MAX_IOCTL_LEN
+	l = 0;
+	while (l < cnt && data[l + data_left] != '\n') l++;
+	if (l >= cnt) {
+		data_left += l;
+		if (data_left >= MAX_IOCTL_LEN) {
+			NATFLOW_println("err: too long a line");
+			data_left = 0;
+			return -EINVAL;
+		}
+		goto done;
+	} else {
+		data[l + data_left] = '\0';
+		data_left = 0;
+		l++;
+	}
+
+	if (strncmp(data, "clear", 5) == 0) {
+		void *tmp = host_acl_buffer;
+		host_acl_buffer = NULL;
+		synchronize_rcu();
+		if (tmp)
+			kfree(tmp);
+		goto done;
+	} else if (strncmp(data, "add acl=", 8) == 0) {
+		unsigned int idx = 64;
+		unsigned int act;
+		n = sscanf(data, "add acl=%u,%u,", &idx, &act);
+		if (n == 2) {
+			if (act == 1) {
+				act = 0x40;
+			} else {
+				act = 0x00;
+			}
+
+			if (idx >= 0 && idx <= 63) {
+				int i = 8;
+				while (data[i] != ',' && data[i] != 0) {
+					i++;
+				}
+				if (data[i] == ',') {
+					i++;
+					while (data[i] != ',' && data[i] != 0) {
+						i++;
+					}
+					if (data[i] == ',') {
+						i++;
+						n = 0;
+						while (data[i + n] != 0) {
+							n++;
+						}
+						if (data[i + n] == 0 && n >= 1) {
+							unsigned char *new_buffer;
+							ssize_t add_size = 0;
+							if (host_acl_buffer == NULL) {
+								new_buffer = kmalloc(PAGE_SIZE, GFP_KERNEL);
+								if (new_buffer == NULL) {
+									return -ENOMEM;
+								}
+								new_buffer[0] = 0;
+								host_acl_buffer_size = PAGE_SIZE;
+								host_acl_buffer_len = 1;
+								host_acl_buffer = new_buffer;
+							}
+							while (host_acl_buffer_size + add_size < host_acl_buffer_len + n + 1) {
+								add_size += PAGE_SIZE;
+							}
+							new_buffer = host_acl_buffer;
+							if (add_size > 0) {
+								unsigned char *old_buffer = host_acl_buffer;
+								new_buffer = kmalloc(host_acl_buffer_size + add_size, GFP_KERNEL);
+								if (new_buffer == NULL) {
+									return -ENOMEM;
+								}
+								memcpy(new_buffer, host_acl_buffer, host_acl_buffer_len);
+								host_acl_buffer = new_buffer;
+								synchronize_rcu();
+								kfree(old_buffer);
+							}
+							new_buffer[host_acl_buffer_len + n] = 0;
+							new_buffer[host_acl_buffer_len - 1] = (unsigned char)(0x80|act|idx);
+							memcpy(new_buffer + host_acl_buffer_len, data + i, n);
+							host_acl_buffer_len += n + 1;
+							goto done;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	NATFLOW_println("ignoring line[%s]", data);
+	if (err != 0) {
+		return err;
+	}
+
+done:
+	*offset += l;
+	return l;
+}
+
+static ssize_t hostacl_read(struct file *file, char __user *buf, size_t buf_len, loff_t *offset)
+{
+	return seq_read(file, buf, buf_len, offset);
+}
+
+static int hostacl_open(struct inode *inode, struct file *file)
+{
+	int ret;
+	//set nonseekable
+	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
+
+	if (hostacl_ctl_buffer_use++ == 0) {
+		hostacl_ctl_buffer = kmalloc(PAGE_SIZE, GFP_KERNEL);
+		if (hostacl_ctl_buffer == NULL) {
+			hostacl_ctl_buffer_use--;
+			return -ENOMEM;
+		}
+	}
+
+	ret = seq_open(file, &hostacl_seq_ops);
+	if (ret)
+		return ret;
+	return 0;
+}
+
+static int hostacl_release(struct inode *inode, struct file *file)
+{
+	int ret = seq_release(inode, file);
+
+	if (--hostacl_ctl_buffer_use == 0) {
+		kfree(hostacl_ctl_buffer);
+		hostacl_ctl_buffer = NULL;
+	}
+
+	return ret;
+}
+
+static struct file_operations hostacl_fops = {
+	.owner = THIS_MODULE,
+	.open = hostacl_open,
+	.release = hostacl_release,
+	.read = hostacl_read,
+	.write = hostacl_write,
+	.llseek  = seq_lseek,
+};
+
+static int natflow_hostacl_init(void)
+{
+	int ret = 0;
+	dev_t devno;
+
+	if (hostacl_major > 0) {
+		devno = MKDEV(hostacl_major, hostacl_minor);
+		ret = register_chrdev_region(devno, 1, hostacl_dev_name);
+	} else {
+		ret = alloc_chrdev_region(&devno, hostacl_minor, 1, hostacl_dev_name);
+	}
+	if (ret < 0) {
+		NATFLOW_println("alloc_chrdev_region failed!");
+		return ret;
+	}
+	hostacl_major = MAJOR(devno);
+	hostacl_minor = MINOR(devno);
+	NATFLOW_println("hostacl_major=%d, hostacl_minor=%d", hostacl_major, hostacl_minor);
+
+	cdev_init(&hostacl_cdev, &hostacl_fops);
+	hostacl_cdev.owner = THIS_MODULE;
+	hostacl_cdev.ops = &hostacl_fops;
+
+	ret = cdev_add(&hostacl_cdev, devno, 1);
+	if (ret) {
+		NATFLOW_println("adding chardev, error=%d", ret);
+		goto cdev_add_failed;
+	}
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
+	hostacl_class = class_create(THIS_MODULE, "hostacl_class");
+#else
+	hostacl_class = class_create("hostacl_class");
+#endif
+	if (IS_ERR(hostacl_class)) {
+		NATFLOW_println("failed in creating class");
+		ret = -EINVAL;
+		goto class_create_failed;
+	}
+
+	hostacl_dev = device_create(hostacl_class, NULL, devno, NULL, hostacl_dev_name);
+	if (IS_ERR(hostacl_dev)) {
+		ret = -EINVAL;
+		goto device_create_failed;
+	}
+
+	return 0;
+
+	//device_destroy(hostacl_class, devno);
+device_create_failed:
+	class_destroy(hostacl_class);
+class_create_failed:
+	cdev_del(&hostacl_cdev);
+cdev_add_failed:
+	unregister_chrdev_region(devno, 1);
+	return ret;
+}
+
+static void natflow_hostacl_exit(void)
+{
+	dev_t devno;
+
+	devno = MKDEV(hostacl_major, hostacl_minor);
+
+	device_destroy(hostacl_class, devno);
+	class_destroy(hostacl_class);
+	cdev_del(&hostacl_cdev);
+	unregister_chrdev_region(devno, 1);
+}
 
 int natflow_urllogger_init(void)
 {
@@ -924,9 +1314,9 @@ int natflow_urllogger_init(void)
 
 	if (urllogger_major > 0) {
 		devno = MKDEV(urllogger_major, urllogger_minor);
-		ret = register_chrdev_region(devno, number_of_devices, urllogger_dev_name);
+		ret = register_chrdev_region(devno, 1, urllogger_dev_name);
 	} else {
-		ret = alloc_chrdev_region(&devno, urllogger_minor, number_of_devices, urllogger_dev_name);
+		ret = alloc_chrdev_region(&devno, urllogger_minor, 1, urllogger_dev_name);
 	}
 	if (ret < 0) {
 		NATFLOW_println("alloc_chrdev_region failed!");
@@ -958,7 +1348,7 @@ int natflow_urllogger_init(void)
 	}
 
 	urllogger_dev = device_create(urllogger_class, NULL, devno, NULL, urllogger_dev_name);
-	if (!urllogger_dev) {
+	if (IS_ERR(urllogger_dev)) {
 		ret = -EINVAL;
 		goto device_create_failed;
 	}
@@ -966,6 +1356,10 @@ int natflow_urllogger_init(void)
 	ret = nf_register_hooks(urllogger_hooks, ARRAY_SIZE(urllogger_hooks));
 	if (ret != 0)
 		goto nf_register_hooks_failed;
+
+	ret = natflow_hostacl_init();
+	if (ret != 0)
+		goto natflow_hostacl_init_failed;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 	urllogger_table_header = register_sysctl_table(urllogger_root_table);
@@ -975,7 +1369,9 @@ int natflow_urllogger_init(void)
 
 	return 0;
 
-	//nf_unregister_hooks(urllogger_hooks, ARRAY_SIZE(urllogger_hooks));
+	//natflow_hostacl_exit();
+natflow_hostacl_init_failed:
+	nf_unregister_hooks(urllogger_hooks, ARRAY_SIZE(urllogger_hooks));
 nf_register_hooks_failed:
 	device_destroy(urllogger_class, devno);
 device_create_failed:
@@ -983,7 +1379,7 @@ device_create_failed:
 class_create_failed:
 	cdev_del(&urllogger_cdev);
 cdev_add_failed:
-	unregister_chrdev_region(devno, number_of_devices);
+	unregister_chrdev_region(devno, 1);
 	return ret;
 }
 
@@ -991,12 +1387,14 @@ void natflow_urllogger_exit(void)
 {
 	dev_t devno;
 
+	natflow_hostacl_exit();
+
 	devno = MKDEV(urllogger_major, urllogger_minor);
 
 	device_destroy(urllogger_class, devno);
 	class_destroy(urllogger_class);
 	cdev_del(&urllogger_cdev);
-	unregister_chrdev_region(devno, number_of_devices);
+	unregister_chrdev_region(devno, 1);
 
 	nf_unregister_hooks(urllogger_hooks, ARRAY_SIZE(urllogger_hooks));
 	urllogger_store_clear();
