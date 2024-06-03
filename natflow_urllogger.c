@@ -218,9 +218,9 @@ static int urllogger_acl(struct urlinfo *url)
 		if (ptr != NULL && ((ptr[url->host_len - i] & 0x80) != 0 || ptr[url->host_len - i] == 0)) {
 			unsigned char b = *(ptr - 1);
 			if ((b & 0x80)) {
-				url->acl_idx = (b & 0x3f);
+				url->acl_idx = (b & 0x1f);
 
-				if ((b & 0x40)) {
+				if ((b & 0x60)) {
 					url->acl_action = URLINFO_ACL_ACTION_DROP;
 					ret = 1;
 				}
@@ -1119,13 +1119,13 @@ static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t b
 		unsigned int act;
 		n = sscanf(data, "add acl=%u,%u,", &idx, &act);
 		if (n == 2) {
-			if (act == 1) {
-				act = 0x40;
+			if (act >= 0 && act < 4) {
+				act = (0x60 & (act << 5));
 			} else {
 				act = 0x00;
 			}
 
-			if (idx >= 0 && idx <= 63) {
+			if (idx >= 0 && idx <= 31) {
 				int i = 8;
 				while (data[i] != ',' && data[i] != 0) {
 					i++;
