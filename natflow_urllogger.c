@@ -561,6 +561,11 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			if (urllogger_acl(url) != 0) {
 				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 				ret = NF_DROP;
+				/* tell FF do not emit pkts */
+				if (nf && !(nf->status & NF_FF_USER_USE)) {
+					/* tell FF -user- need to use this conn */
+					simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+				}
 			}
 
 			urllogger_store_record(url);
@@ -605,6 +610,11 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 				if (urllogger_acl(url) != 0) {
 					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 					ret = NF_DROP;
+					/* tell FF do not emit pkts */
+					if (nf && !(nf->status & NF_FF_USER_USE)) {
+						/* tell FF -user- need to use this conn */
+						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+					}
 				}
 
 				urllogger_store_record(url);
@@ -690,6 +700,11 @@ urllogger_hook_ipv6_main:
 			if (urllogger_acl(url) != 0) {
 				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 				ret = NF_DROP;
+				/* tell FF do not emit pkts */
+				if (nf && !(nf->status & NF_FF_USER_USE)) {
+					/* tell FF -user- need to use this conn */
+					simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+				}
 			}
 
 			urllogger_store_record(url);
@@ -735,6 +750,11 @@ urllogger_hook_ipv6_main:
 				if (urllogger_acl(url) != 0) {
 					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 					ret = NF_DROP;
+					/* tell FF do not emit pkts */
+					if (nf && !(nf->status & NF_FF_USER_USE)) {
+						/* tell FF -user- need to use this conn */
+						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+					}
 				}
 
 				urllogger_store_record(url);
