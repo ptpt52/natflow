@@ -91,6 +91,8 @@ struct urlinfo {
 	unsigned char acl_idx;
 #define URLINFO_ACL_ACTION_RECORD 0
 #define URLINFO_ACL_ACTION_DROP 1
+#define URLINFO_ACL_ACTION_RESET 2
+#define URLINFO_ACL_ACTION_REDIRECT 3
 	unsigned char acl_action;
 	unsigned char data[0];
 };
@@ -407,6 +409,100 @@ static int http_url_search(unsigned char *data,
 	return 0; /* not found */
 }
 
+static inline void natflow_urllogger_tcp_reply_rstack(const struct net_device *dev, struct sk_buff *oskb, struct nf_conn *ct, int pppoe_hdr)
+{
+	struct sk_buff *nskb;
+	struct ethhdr *neth, *oeth;
+	struct iphdr *niph, *oiph;
+	struct tcphdr *otcph, *ntcph;
+	int len;
+	unsigned int csum;
+	int offset, header_len;
+	int pppoe_len = 0;
+
+	if (pppoe_hdr) {
+		pppoe_len = PPPOE_SES_HLEN;
+		skb_push(oskb, PPPOE_SES_HLEN);
+		oskb->protocol = __constant_htons(ETH_P_PPP_SES);
+	}
+
+	oeth = (struct ethhdr *)skb_mac_header(oskb);
+	oiph = ip_hdr(oskb);
+	otcph = (struct tcphdr *)((void *)oiph + oiph->ihl*4);
+
+	offset = pppoe_len + sizeof(struct iphdr) + sizeof(struct tcphdr) - oskb->len;
+	header_len = offset < 0 ? 0 : offset;
+	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
+	if (!nskb) {
+		NATFLOW_ERROR("alloc_skb fail\n");
+		goto out;
+	}
+	if (offset <= 0) {
+		if (pskb_trim(nskb, nskb->len + offset)) {
+			NATFLOW_ERROR("pskb_trim fail: len=%d, offset=%d\n", nskb->len, offset);
+			consume_skb(nskb);
+			goto out;
+		}
+	} else {
+		nskb->len += offset;
+		nskb->tail += offset;
+	}
+
+	//setup mac header
+	neth = eth_hdr(nskb);
+	niph = ip_hdr(nskb);
+	if ((char *)niph - (char *)neth >= ETH_HLEN) {
+		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
+		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
+		//neth->h_proto = htons(ETH_P_IP);
+	}
+	//setup ip header
+	memset(niph, 0, sizeof(struct iphdr));
+	niph->saddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
+	niph->daddr = oiph->saddr;
+	niph->version = oiph->version;
+	niph->ihl = 5;
+	niph->tos = 0;
+	niph->tot_len = htons(nskb->len - pppoe_len);
+	niph->ttl = 0x80;
+	niph->protocol = oiph->protocol;
+	niph->id = __constant_htons(0xDEAD);
+	niph->frag_off = 0x0;
+	ip_send_check(niph);
+	//setup tcp header
+	ntcph = (struct tcphdr *)((char *)ip_hdr(nskb) + sizeof(struct iphdr));
+	memset(ntcph, 0, sizeof(struct tcphdr));
+	ntcph->source = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
+	ntcph->dest = otcph->source;
+	ntcph->seq = otcph->ack_seq;
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->tot_len) - (oiph->ihl<<2) - (otcph->doff<<2));
+	ntcph->doff = 5;
+	ntcph->ack = 1;
+	ntcph->rst = 1;
+	ntcph->psh = 0;
+	ntcph->fin = 0;
+	ntcph->window = 0;
+	//sum check
+	len = ntohs(niph->tot_len) - (niph->ihl<<2);
+	csum = csum_partial((char*)ntcph, len, 0);
+	ntcph->check = tcp_v4_check(len, niph->saddr, niph->daddr, csum);
+	//ready to send out
+	skb_push(nskb, (char *)niph - (char *)neth - pppoe_len);
+	if (pppoe_hdr) {
+		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(nskb) + ETH_HLEN);
+		ph->length = htons(ntohs(ip_hdr(nskb)->tot_len) + 2);
+	}
+	nskb->dev = (struct net_device *)dev;
+	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+
+	dev_queue_xmit(nskb);
+out:
+	if (pppoe_hdr) {
+		oskb->protocol = __constant_htons(ETH_P_IP);
+		skb_pull(oskb, PPPOE_SES_HLEN);
+	}
+}
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned int natflow_urllogger_hook_v1(unsigned int hooknum,
         struct sk_buff *skb,
@@ -421,14 +517,14 @@ static unsigned int natflow_urllogger_hook_v1(const struct nf_hook_ops *ops,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
-	unsigned int hooknum = ops->hooknum;
+	//unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_urllogger_hook_v1(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
-	unsigned int hooknum = state->hook;
-	//const struct net_device *in = state->in;
+	//unsigned int hooknum = state->hook;
+	const struct net_device *in = state->in;
 	//const struct net_device *out = state->out;
 #else
 static unsigned int natflow_urllogger_hook_v1(void *priv,
@@ -436,7 +532,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
         const struct nf_hook_state *state)
 {
 	//unsigned int hooknum = state->hook;
-	//const struct net_device *in = state->in;
+	const struct net_device *in = state->in;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
 	//const struct net_device *out = state->out;
 #endif
@@ -564,6 +660,9 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 					/* tell FF -user- need to use this conn */
 					simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
 				}
+				if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
+					natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+				}
 			}
 
 			urllogger_store_record(url);
@@ -612,6 +711,9 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 					if (nf && !(nf->status & NF_FF_USER_USE)) {
 						/* tell FF -user- need to use this conn */
 						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+					}
+					if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
+						natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
 					}
 				}
 
@@ -703,6 +805,9 @@ urllogger_hook_ipv6_main:
 					/* tell FF -user- need to use this conn */
 					simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
 				}
+				if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
+					;
+				}
 			}
 
 			urllogger_store_record(url);
@@ -752,6 +857,9 @@ urllogger_hook_ipv6_main:
 					if (nf && !(nf->status & NF_FF_USER_USE)) {
 						/* tell FF -user- need to use this conn */
 						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+					}
+					if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
+						;
 					}
 				}
 
