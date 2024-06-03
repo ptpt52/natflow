@@ -35,6 +35,7 @@
 #include <net/ip.h>
 #include <net/tcp.h>
 #include <net/udp.h>
+#include <net/ip6_checksum.h>
 #include "natflow_common.h"
 #include "natflow_urllogger.h"
 
@@ -503,6 +504,97 @@ out:
 	}
 }
 
+static inline void natflow_urllogger_tcp_reply_rstack6(const struct net_device *dev, struct sk_buff *oskb, struct nf_conn *ct, int pppoe_hdr)
+{
+	struct sk_buff *nskb;
+	struct ethhdr *neth, *oeth;
+	struct ipv6hdr *niph, *oiph;
+	struct tcphdr *otcph, *ntcph;
+	int len;
+	unsigned int csum;
+	int offset, header_len;
+	int pppoe_len = 0;
+
+	if (pppoe_hdr) {
+		pppoe_len = PPPOE_SES_HLEN;
+		skb_push(oskb, PPPOE_SES_HLEN);
+		oskb->protocol = __constant_htons(ETH_P_PPP_SES);
+	}
+
+	oeth = (struct ethhdr *)skb_mac_header(oskb);
+	oiph = ipv6_hdr(oskb);
+	otcph = (struct tcphdr *)((void *)oiph + sizeof(struct ipv6hdr));
+
+	offset = pppoe_len + sizeof(struct ipv6hdr) + sizeof(struct tcphdr) - oskb->len;
+	header_len = offset < 0 ? 0 : offset;
+	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
+	if (!nskb) {
+		NATFLOW_ERROR("alloc_skb fail\n");
+		goto out;
+	}
+	if (offset <= 0) {
+		if (pskb_trim(nskb, nskb->len + offset)) {
+			NATFLOW_ERROR("pskb_trim fail: len=%d, offset=%d\n", nskb->len, offset);
+			consume_skb(nskb);
+			goto out;
+		}
+	} else {
+		nskb->len += offset;
+		nskb->tail += offset;
+	}
+
+	//setup mac header
+	neth = eth_hdr(nskb);
+	niph = ipv6_hdr(nskb);
+	if ((char *)niph - (char *)neth >= ETH_HLEN) {
+		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
+		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
+		//neth->h_proto = htons(ETH_P_IP);
+	}
+	//setup ip header
+	memset(niph, 0, sizeof(struct iphdr));
+	niph->version = oiph->version;
+	niph->priority = oiph->priority;
+	niph->saddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.in6;
+	niph->daddr = oiph->saddr;
+	niph->flow_lbl[2] = niph->flow_lbl[1] = niph->flow_lbl[0] = 0;
+	niph->payload_len = htons(sizeof(struct tcphdr));
+	niph->nexthdr = IPPROTO_TCP;
+	niph->hop_limit = 255;
+	//setup tcp header
+	ntcph = (struct tcphdr *)((char *)ip_hdr(nskb) + sizeof(struct ipv6hdr));
+	memset(ntcph, 0, sizeof(struct tcphdr));
+	ntcph->source = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
+	ntcph->dest = otcph->source;
+	ntcph->seq = otcph->ack_seq;
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff<<2));
+	ntcph->doff = 5;
+	ntcph->ack = 1;
+	ntcph->rst = 1;
+	ntcph->psh = 0;
+	ntcph->fin = 0;
+	ntcph->window = 0;
+	//sum check
+	len = ntohs(niph->payload_len);
+	csum = csum_partial((char*)ntcph, len, 0);
+	ntcph->check = tcp_v6_check(len, &niph->saddr, &niph->daddr, csum);
+	//ready to send out
+	skb_push(nskb, (char *)niph - (char *)neth - pppoe_len);
+	if (pppoe_hdr) {
+		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(nskb) + ETH_HLEN);
+		ph->length = htons(ntohs(ipv6_hdr(nskb)->payload_len) + sizeof(struct ipv6hdr) + 2);
+	}
+	nskb->dev = (struct net_device *)dev;
+	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+
+	dev_queue_xmit(nskb);
+out:
+	if (pppoe_hdr) {
+		oskb->protocol = __constant_htons(ETH_P_IP);
+		skb_pull(oskb, PPPOE_SES_HLEN);
+	}
+}
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned int natflow_urllogger_hook_v1(unsigned int hooknum,
         struct sk_buff *skb,
@@ -806,7 +898,7 @@ urllogger_hook_ipv6_main:
 					simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
 				}
 				if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
-					;
+					natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
 				}
 			}
 
@@ -859,7 +951,7 @@ urllogger_hook_ipv6_main:
 						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
 					}
 					if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
-						;
+						natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
 					}
 				}
 
