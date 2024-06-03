@@ -220,10 +220,8 @@ static int urllogger_acl(struct urlinfo *url)
 			if ((b & 0x80)) {
 				url->acl_idx = (b & 0x1f);
 
-				if ((b & 0x60)) {
-					url->acl_action = URLINFO_ACL_ACTION_DROP;
-					ret = 1;
-				}
+				ret = ((b & 0x60) >> 5);
+				url->acl_action = ret;
 			}
 		}
 	}
