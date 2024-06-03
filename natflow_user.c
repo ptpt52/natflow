@@ -627,7 +627,7 @@ static natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			IPV6H->version = 6;
 			IPV6H->priority = 0;
 			IPV6H->flow_lbl[2] = IPV6H->flow_lbl[1] = IPV6H->flow_lbl[0] = 0;
-			IPV6H->payload_len = sizeof(struct udphdr);
+			IPV6H->payload_len = htons(sizeof(struct udphdr));
 			IPV6H->nexthdr = IPPROTO_UDP;
 			IPV6H->hop_limit = 255;
 			IPV6H->saddr = ct->tuplehash[dir].tuple.src.u3.in6;
