@@ -696,41 +696,6 @@ struct urllogger_user {
 #define URLLOGGER_MEMSIZE ALIGN(sizeof(struct urllogger_user), 2048)
 #define URLLOGGER_DATALEN (URLLOGGER_MEMSIZE - sizeof(struct urllogger_user))
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
-static ssize_t urllogger_write_iter(struct kiocb *iocb, struct iov_iter *from)
-{
-	char *buf;
-	struct file *file = iocb->ki_filp;
-	struct devkmsg_user *user = file->private_data;
-	size_t len = iov_iter_count(from);
-	ssize_t ret = len;
-
-	if (!user || len > 1024)
-		return -EINVAL;
-
-	buf = kmalloc(len + 1, GFP_KERNEL);
-	if (buf == NULL)
-		return -ENOMEM;
-
-	buf[len] = '\0';
-	if (!copy_from_iter_full(buf, len, from)) {
-		kfree(buf);
-		return -EFAULT;
-	}
-
-	if (memcmp(buf, "clear", 5) == 0) {
-		urllogger_store_clear();
-	} else {
-		NATFLOW_println("unkown command: %s", buf);
-		ret = -EINVAL;
-	}
-
-	kfree(buf);
-	return ret;
-}
-
-#else
-
 static ssize_t urllogger_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
 {
 	int err = 0;
@@ -785,7 +750,6 @@ done:
 	*offset += l;
 	return l;
 }
-#endif
 
 /* read one and clear one */
 static ssize_t urllogger_read(struct file *file, char __user *buf,
@@ -882,11 +846,7 @@ static int urllogger_release(struct inode *inode, struct file *file)
 const struct file_operations urllogger_fops = {
 	.open = urllogger_open,
 	.read = urllogger_read,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
-	.write_iter = urllogger_write_iter,
-#else
 	.write = urllogger_write,
-#endif
 	.release = urllogger_release,
 };
 
