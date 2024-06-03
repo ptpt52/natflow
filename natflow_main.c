@@ -364,7 +364,7 @@ static int __init natflow_init(void) {
 	}
 
 	natflow_dev = device_create(natflow_class, NULL, devno, NULL, natflow_dev_name);
-	if (!natflow_dev) {
+	if (IS_ERR(natflow_dev)) {
 		retval = -EINVAL;
 		goto device_create_failed;
 	}

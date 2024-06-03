@@ -428,7 +428,7 @@ int natflow_zone_init(void)
 	}
 
 	natflow_zone_dev = device_create(natflow_zone_class, NULL, devno, NULL, natflow_zone_dev_name);
-	if (!natflow_zone_dev) {
+	if (IS_ERR(natflow_zone_dev)) {
 		retval = -EINVAL;
 		goto device_create_failed;
 	}

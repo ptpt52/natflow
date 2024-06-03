@@ -630,7 +630,7 @@ int conntrackinfo_init(void)
 	}
 
 	conntrackinfo_dev = device_create(conntrackinfo_class, NULL, devno, NULL, conntrackinfo_dev_name);
-	if (!conntrackinfo_dev) {
+	if (IS_ERR(conntrackinfo_dev)) {
 		retval = -EINVAL;
 		goto device_create_failed;
 	}

@@ -2990,7 +2990,7 @@ static int userinfo_init(void)
 	}
 
 	userinfo_dev = device_create(userinfo_class, NULL, devno, NULL, userinfo_dev_name);
-	if (!userinfo_dev) {
+	if (IS_ERR(userinfo_dev)) {
 		retval = -EINVAL;
 		goto device_create_failed;
 	}
@@ -3195,7 +3195,7 @@ static int userinfo_event_init(void)
 	}
 
 	userinfo_event_dev = device_create(userinfo_event_class, NULL, devno, NULL, userinfo_event_dev_name);
-	if (!userinfo_event_dev) {
+	if (IS_ERR(userinfo_event_dev)) {
 		retval = -EINVAL;
 		goto device_create_failed;
 	}
@@ -3743,7 +3743,7 @@ static int qos_init(void)
 	}
 
 	qos_dev = device_create(qos_class, NULL, devno, NULL, qos_dev_name);
-	if (!qos_dev) {
+	if (IS_ERR(qos_dev)) {
 		retval = -EINVAL;
 		goto device_create_failed;
 	}
@@ -3827,7 +3827,7 @@ int natflow_user_init(void)
 	}
 
 	natflow_user_dev = device_create(natflow_user_class, NULL, devno, NULL, natflow_user_dev_name);
-	if (!natflow_user_dev) {
+	if (IS_ERR(natflow_user_dev)) {
 		retval = -EINVAL;
 		goto device_create_failed;
 	}
