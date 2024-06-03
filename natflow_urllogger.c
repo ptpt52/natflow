@@ -675,7 +675,7 @@ static struct nf_hook_ops urllogger_hooks[] = {
 #endif
 		.hook = natflow_urllogger_hook_v1,
 		.pf = AF_INET6,
-		.hooknum = NF_INET_PRE_ROUTING,
+		.hooknum = NF_INET_FORWARD,
 		.priority = NF_IP_PRI_FILTER - 10,
 	},
 	{
