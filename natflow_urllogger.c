@@ -1136,12 +1136,8 @@ static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t b
 		unsigned int idx = 64;
 		unsigned int act;
 		n = sscanf(data, "add acl=%u,%u,", &idx, &act);
-		if (n == 2) {
-			if (act >= 0 && act < 4) {
-				act = (0x60 & (act << 5));
-			} else {
-				act = 0x00;
-			}
+		if (n == 2 && act >= 0 && act < 4) {
+			act = (0x60 & (act << 5));
 
 			if (idx >= 0 && idx <= 31) {
 				int i = 8;
