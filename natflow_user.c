@@ -1446,7 +1446,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		goto out;
 	}
 
-	if ((ct->status & IPS_NATFLOW_USER_DROP)) {
+	if ((ct->status & IPS_NATFLOW_CT_DROP)) {
 		if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
 			struct iphdr *iph = ip_hdr(skb);
 			void *l4 = (void *)iph + iph->ihl * 4;
@@ -1694,7 +1694,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			}
 
 			if (iph->protocol != IPPROTO_TCP) {
-				set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
+				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 				goto out;
 			}
 
@@ -1703,11 +1703,11 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			if ((data_len > 4 && strncasecmp(data, "GET ", 4) == 0) || (data_len > 5 && strncasecmp(data, "POST ", 5) == 0)) {
 				NATFLOW_INFO(DEBUG_TCP_FMT ": sending HTTP 302 redirect dev=%s\n", DEBUG_TCP_ARG(iph,l4), in->name);
 				natflow_auth_http_302(in, skb, user, bridge);
-				set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
+				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 				ret = NF_DROP;
 				goto out;
 			} else if (data_len > 0) {
-				set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
+				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 				ret = NF_DROP;
 				goto out;
 			} else if (TCPH(l4)->ack && !TCPH(l4)->syn) {
@@ -1740,7 +1740,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 								if (i + 24 < data_len && strncasecmp(data + i, "Host: open.weixin.qq.com", 24) == 0) {
 									natflow_auth_open_weixin_reply(in, skb, bridge);
 									natflow_auth_convert_tcprst(skb);
-									set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
+									set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 									goto out;
 								}
 							}
@@ -1757,7 +1757,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		break;
 	case AUTH_BLOCK:
 		/* temporary block user */
-		set_bit(IPS_NATFLOW_USER_DROP_BIT, &ct->status);
+		set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 		ret = NF_DROP;
 		/* tell FF do not emit pkts */
 		if (nf && !(nf->status & NF_FF_USER_USE)) {
