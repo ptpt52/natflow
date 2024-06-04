@@ -203,32 +203,39 @@ static int urllogger_acl(struct urlinfo *url)
 
 	if (url->host_len >= 1 && acl_buffer != NULL) { /* at least a.b pattern */
 		int i = 0;
+		unsigned char b;
 		unsigned char *ptr = NULL;
 
-		ptr = strstr(acl_buffer, url->data);
 		while (ptr == NULL) {
+			ptr = strstr(acl_buffer, url->data + i);
+			while (ptr != NULL) {
+				b = *(ptr - 1);
+				if (((ptr[url->host_len - i] & 0x80) != 0 || ptr[url->host_len - i] == 0) && (b & 0x80) != 0) {
+					//found
+					url->acl_idx = (b & 0x1f);
+					ret = ((b & 0x60) >> 5);
+					url->acl_action = ret;
+					goto __done;
+				}
+				if (ptr[url->host_len - i] == 0) {
+					ptr = NULL;
+					break;
+				}
+				ptr = strstr(ptr + url->host_len - i, url->data + i);
+			}
 			while (url->host_len >= i + 1 && url->data[i] != '.') {
 				i++;
+			}
+			if (url->data[i] != '.') {
+				break;
 			}
 			i++;
 			if (url->host_len < i + 1) {
 				break;
 			}
-
-			ptr = strstr(acl_buffer, url->data + i);
-		}
-
-		if (ptr != NULL && ((ptr[url->host_len - i] & 0x80) != 0 || ptr[url->host_len - i] == 0)) {
-			unsigned char b = *(ptr - 1);
-			if ((b & 0x80)) {
-				url->acl_idx = (b & 0x1f);
-
-				ret = ((b & 0x60) >> 5);
-				url->acl_action = ret;
-			}
 		}
 	}
-
+__done:
 	url->data[url->host_len] = backup_c;
 	return ret;
 }
