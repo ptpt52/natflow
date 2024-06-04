@@ -233,10 +233,11 @@ static int urllogger_acl(struct urlinfo *url)
 	return ret;
 }
 
-static unsigned char *tls_sni_search(unsigned char *data, int *data_len)
+static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *needmore)
 {
 	unsigned char *p = data;
 	int p_len = *data_len;
+	int i_data_len = p_len;
 	unsigned int i = 0;
 	unsigned short len;
 
@@ -248,34 +249,39 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len)
 	len = ntohs(get_byte2(p + i + 0)); //content_len
 	i += 2;
 	if (i >= p_len) return NULL;
-	if (i + len > p_len) return NULL;
+	if (i + len > p_len) {
+		if (needmore && p[i] == 0x01) //HanShake Type is Client Hello
+			*needmore = 1;
+	}
 
 	p = p + i;
 	p_len = len;
+	i_data_len -= i;
 	i = 0;
 
 	if (p[i + 0] != 0x01) { //HanShake Type NOT Client Hello
 		return NULL;
 	}
 	i += 1;
-	if (i >= p_len) return NULL;
+	if (i >= p_len || i >= i_data_len) return NULL;
 	len = (p[i + 0] << 8) + ntohs(get_byte2(p + i + 0 + 1)); //hanshake_len
 	i += 1 + 2;
-	if (i >= p_len) return NULL;
+	if (i >= p_len || i >= i_data_len) return NULL;
 	if (i + len > p_len) return NULL;
 
 	p = p + i;
 	p_len = len;
+	i_data_len -= i;
 	i = 0;
 
 	i += 2 + 32;
-	if (i >= p_len) return NULL; //tls_v, random
+	if (i >= p_len || i >= i_data_len) return NULL; //tls_v, random
 	i += 1 + p[i + 0];
-	if (i >= p_len) return NULL; //session id
+	if (i >= p_len || i >= i_data_len) return NULL; //session id
 	i += 2 + ntohs(get_byte2(p + i + 0));
-	if (i >= p_len) return NULL; //Cipher Suites
+	if (i >= p_len || i >= i_data_len) return NULL; //Cipher Suites
 	i += 1 + p[i + 0];
-	if (i >= p_len) return NULL; //Compression Methods
+	if (i >= p_len || i >= i_data_len) return NULL; //Compression Methods
 
 	len = ntohs(get_byte2(p + i + 0)); //ext_len
 	i += 2;
@@ -283,40 +289,43 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len)
 
 	p = p + i;
 	p_len = len;
+	i_data_len -= i;
 	i = 0;
 
-	while (i < p_len) {
+	while (i < p_len && i < i_data_len) {
 		if (get_byte2(p + i + 0) != __constant_htons(0)) {
 			i += 2 + 2 + ntohs(get_byte2(p + i + 0 + 2));
 			continue;
 		}
 		len = ntohs(get_byte2(p + i + 0 + 2)); //sn_len
 		i = i + 2 + 2;
-		if (i + len > p_len) return NULL;
+		if (i + len > p_len || i + len > i_data_len) return NULL;
 
 		p = p + i;
 		p_len = len;
+		i_data_len -= i;
 		i = 0;
 		break;
 	}
-	if (i >= p_len) return NULL;
+	if (i >= p_len || i >= i_data_len) return NULL;
 
 	len = ntohs(get_byte2(p + i + 0)); //snl_len
 	i += 2;
-	if (i + len > p_len) return NULL;
+	if (i + len > p_len || i + len > i_data_len) return NULL;
 
 	p = p + i;
 	p_len = len;
+	i_data_len -= i;
 	i = 0;
 
-	while (i < p_len) {
+	while (i < p_len && i < i_data_len) {
 		if (p[i + 0] != 0) {
 			i += 1 + 2 + ntohs(get_byte2(p + i + 0 + 1));
 			continue;
 		}
 		len = ntohs(get_byte2(p + i + 0 + 1));
 		i += 1 + 2;
-		if (i + len > p_len) return NULL;
+		if (i + len > p_len || i + len > i_data_len) return NULL;
 
 		*data_len = len;
 		return (p + i);
@@ -590,6 +599,177 @@ out:
 	}
 }
 
+struct urllogger_sni_cache_node {
+	unsigned long active_jiffies;
+	union {
+		__be32 src_ip;
+		struct in6_addr src_ipv6;
+	};
+	union {
+		__be32 dst_ip;
+		struct in6_addr dst_ipv6;
+	};
+	__be16 src_port;
+	__be16 dst_port;
+	unsigned short add_data_len;
+	struct sk_buff *skb;
+};
+
+#define URLLOGGER_CACHE_TIMEOUT 4
+#define MAX_URLLOGGER_SNI_CACHE_NODE 64
+static struct urllogger_sni_cache_node urllogger_sni_cache[NR_CPUS][MAX_URLLOGGER_SNI_CACHE_NODE];
+
+static inline void urllogger_sni_cache_init(void)
+{
+	int i, j;
+	for (i = 0; i < NR_CPUS; i++) {
+		for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
+			urllogger_sni_cache[i][j].skb = NULL;
+		}
+	}
+}
+
+static inline void urllogger_sni_cache_cleanup(void)
+{
+	int i, j;
+	for (i = 0; i < NR_CPUS; i++) {
+		for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
+			if (urllogger_sni_cache[i][j].skb != NULL) {
+				consume_skb(urllogger_sni_cache[i][j].skb);
+				urllogger_sni_cache[i][j].skb = NULL;
+			}
+		}
+	}
+}
+
+static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, struct sk_buff *skb, unsigned short add_data_len)
+{
+	int i = smp_processor_id();
+	int j;
+	int next_to_use = MAX_URLLOGGER_SNI_CACHE_NODE;
+	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
+		if (urllogger_sni_cache[i][j].skb != NULL &&
+		        urllogger_sni_cache[i][j].src_ip == src_ip &&
+		        urllogger_sni_cache[i][j].src_port == src_port &&
+		        urllogger_sni_cache[i][j].dst_ip == dst_ip &&
+		        urllogger_sni_cache[i][j].dst_port == dst_port) {
+			return -EEXIST;
+		} else if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE && urllogger_sni_cache[i][j].skb == NULL) {
+			next_to_use = j;
+		}
+	}
+	if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE) {
+		return -ENOMEM;
+	}
+
+	urllogger_sni_cache[i][next_to_use].src_ip = src_ip;
+	urllogger_sni_cache[i][next_to_use].src_port = src_port;
+	urllogger_sni_cache[i][next_to_use].dst_ip = dst_ip;
+	urllogger_sni_cache[i][next_to_use].dst_port = dst_port;
+	urllogger_sni_cache[i][next_to_use].add_data_len = add_data_len;
+	urllogger_sni_cache[i][next_to_use].skb = skb;
+	urllogger_sni_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
+
+	return 0;
+}
+
+static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 src_port, struct in6_addr *dst_ip, __be16 dst_port, struct sk_buff *skb, unsigned short add_data_len)
+{
+	int i = smp_processor_id();
+	int j;
+	int next_to_use = MAX_URLLOGGER_SNI_CACHE_NODE;
+	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
+		if (urllogger_sni_cache[i][j].skb != NULL &&
+		        memcmp(&urllogger_sni_cache[i][j].src_ipv6, src_ip, 16) == 0 &&
+		        urllogger_sni_cache[i][j].src_port == src_port &&
+		        memcmp(&urllogger_sni_cache[i][j].dst_ipv6, dst_ip, 16) == 0 &&
+		        urllogger_sni_cache[i][j].dst_port == dst_port) {
+			return -EEXIST;
+		} else if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE && urllogger_sni_cache[i][j].skb == NULL) {
+			next_to_use = j;
+		}
+	}
+	if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE) {
+		return -ENOMEM;
+	}
+
+	memcpy(&urllogger_sni_cache[i][next_to_use].src_ipv6, src_ip, 16);
+	urllogger_sni_cache[i][next_to_use].src_port = src_port;
+	memcpy(&urllogger_sni_cache[i][next_to_use].dst_ipv6, dst_ip, 16);
+	urllogger_sni_cache[i][next_to_use].dst_port = dst_port;
+	urllogger_sni_cache[i][next_to_use].add_data_len = add_data_len;
+	urllogger_sni_cache[i][next_to_use].skb = skb;
+	urllogger_sni_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
+
+	return 0;
+}
+
+static inline struct sk_buff *urllogger_sni_cache_detach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, unsigned short *add_data_len)
+{
+	int i = smp_processor_id();
+	int j = 0;
+	struct sk_buff *skb = NULL;
+	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
+		if (urllogger_sni_cache[i][j].skb != NULL) {
+			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
+				consume_skb(urllogger_sni_cache[i][j].skb);
+				urllogger_sni_cache[i][j].skb = NULL;
+			} else if (urllogger_sni_cache[i][j].src_ip == src_ip &&
+			           urllogger_sni_cache[i][j].src_port == src_port &&
+			           urllogger_sni_cache[i][j].dst_ip == dst_ip &&
+			           urllogger_sni_cache[i][j].dst_port == dst_port) {
+				skb = urllogger_sni_cache[i][j].skb;
+				*add_data_len = urllogger_sni_cache[i][j].add_data_len;
+				urllogger_sni_cache[i][j].skb = NULL;
+				break;
+			}
+		}
+	}
+	for (; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
+		if (urllogger_sni_cache[i][j].skb != NULL) {
+			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
+				consume_skb(urllogger_sni_cache[i][j].skb);
+				urllogger_sni_cache[i][j].skb = NULL;
+			}
+		}
+	}
+
+	return skb;
+}
+
+static inline struct sk_buff *urllogger_sni_cache_detach6(struct in6_addr *src_ip, __be16 src_port, struct in6_addr *dst_ip, __be16 dst_port, unsigned short *add_data_len)
+{
+	int i = smp_processor_id();
+	int j = 0;
+	struct sk_buff *skb = NULL;
+	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
+		if (urllogger_sni_cache[i][j].skb != NULL) {
+			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
+				consume_skb(urllogger_sni_cache[i][j].skb);
+				urllogger_sni_cache[i][j].skb = NULL;
+			} else if (memcmp(&urllogger_sni_cache[i][j].src_ipv6, src_ip, 16) == 0 &&
+			           urllogger_sni_cache[i][j].src_port == src_port &&
+			           memcmp(&urllogger_sni_cache[i][j].dst_ipv6, dst_ip, 16) == 0 &&
+			           urllogger_sni_cache[i][j].dst_port == dst_port) {
+				skb = urllogger_sni_cache[i][j].skb;
+				*add_data_len = urllogger_sni_cache[i][j].add_data_len;
+				urllogger_sni_cache[i][j].skb = NULL;
+				break;
+			}
+		}
+	}
+	for (; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
+		if (urllogger_sni_cache[i][j].skb != NULL) {
+			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
+				consume_skb(urllogger_sni_cache[i][j].skb);
+				urllogger_sni_cache[i][j].skb = NULL;
+			}
+		}
+	}
+
+	return skb;
+}
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned int natflow_urllogger_hook_v1(unsigned int hooknum,
         struct sk_buff *skb,
@@ -604,13 +784,13 @@ static unsigned int natflow_urllogger_hook_v1(const struct nf_hook_ops *ops,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
-	//unsigned int hooknum = ops->hooknum;
+	unsigned int hooknum = ops->hooknum;
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
 static unsigned int natflow_urllogger_hook_v1(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
-	//unsigned int hooknum = state->hook;
+	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 	//const struct net_device *out = state->out;
 #else
@@ -618,7 +798,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
-	//unsigned int hooknum = state->hook;
+	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
 	//const struct net_device *out = state->out;
@@ -686,8 +866,10 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 
 	data_len = ntohs(iph->tot_len) - (iph->ihl * 4 + TCPH(l4)->doff * 4);
 	if (data_len > 0) {
+		struct sk_buff *prev_skb = NULL;
 		unsigned char *host = NULL;
-		int host_len = data_len;
+		int host_len;
+		unsigned short add_data_len = 0;
 
 		if (skb_try_make_writable(skb, skb->len)) {
 			goto out;
@@ -695,8 +877,73 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 		iph = ip_hdr(skb);
 		l4 = (void *)iph + iph->ihl * 4;
 
-		data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
+		prev_skb = urllogger_sni_cache_detach(iph->saddr, TCPH(l4)->source, iph->daddr, TCPH(l4)->dest, &add_data_len);
+		if (prev_skb) {
+			struct iphdr *prev_iph = ip_hdr(prev_skb);
+			void *prev_l4 = (void *)prev_iph + prev_iph->ihl * 4;
+			int prev_data_len = ntohs(prev_iph->tot_len) - (prev_iph->ihl * 4 + TCPH(prev_l4)->doff * 4);
 
+			data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
+
+			if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq) + prev_data_len + add_data_len) {
+				int needmore = 0;
+				if (skb_tailroom(prev_skb) < add_data_len + data_len &&
+				        pskb_expand_head(prev_skb, 0, add_data_len + data_len, GFP_ATOMIC)) {
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": pskb_expand_head failed\n", DEBUG_TCP_ARG(iph,l4));
+					consume_skb(prev_skb);
+					return NF_ACCEPT;
+				}
+				prev_iph = ip_hdr(prev_skb);
+				prev_l4 = (void *)prev_iph + prev_iph->ihl * 4;
+
+				memcpy(prev_skb->data + prev_skb->len + add_data_len, data, data_len);
+				add_data_len += data_len;
+
+				data = prev_skb->data + prev_iph->ihl * 4 + TCPH(prev_l4)->doff * 4;
+				host_len = prev_data_len + add_data_len;
+				host = tls_sni_search(data, &host_len, &needmore);
+				if (!host && needmore == 1) {
+					if (add_data_len >= 32 * 1024 ||
+					        urllogger_sni_cache_attach(prev_iph->saddr, TCPH(prev_l4)->source,
+					                                   prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
+						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": urllogger_sni_cache_attach failed with add_data_len=%u\n", DEBUG_TCP_ARG(iph,l4), add_data_len);
+						consume_skb(prev_skb);
+						goto __urllogger_ip_skip;
+					}
+					return NF_ACCEPT;
+				}
+			} else if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq)) {
+				if (urllogger_sni_cache_attach(prev_iph->saddr, TCPH(prev_l4)->source,
+				                               prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": urllogger_sni_cache_attach failed\n", DEBUG_TCP_ARG(iph,l4));
+					consume_skb(prev_skb);
+					goto __urllogger_ip_skip;
+				}
+				return NF_ACCEPT;
+			} else {
+				consume_skb(prev_skb);
+				goto __urllogger_ip_skip;
+			}
+		} else {
+			int needmore = 0;
+			data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
+			host_len = data_len;
+			host = tls_sni_search(data, &host_len, &needmore);
+			if (!host && needmore == 1) {
+				prev_skb = skb_copy(skb,GFP_ATOMIC);
+				if (prev_skb) {
+					if (urllogger_sni_cache_attach(iph->saddr, TCPH(l4)->source, iph->daddr, TCPH(l4)->dest, prev_skb, 0) != 0) {
+						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": urllogger_sni_cache_attach failed\n", DEBUG_TCP_ARG(iph,l4));
+						consume_skb(prev_skb);
+						goto __urllogger_ip_skip;
+					}
+				}
+				return NF_ACCEPT;
+			}
+		}
+
+		data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
+__urllogger_ip_skip:
 		/* check one packet only */
 		set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
 		if (nf && (nf->status & NF_FF_URLLOGGER_USE)) {
@@ -704,8 +951,6 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
 		}
 
-		/* try to get HTTPS/TLS SNI HOST */
-		host = tls_sni_search(data, &host_len);
 		if (host) {
 			struct urlinfo *url = kmalloc(ALIGN(sizeof(struct urlinfo) + host_len + 1, __URLINFO_ALIGN), GFP_ATOMIC);
 			if (!url)
@@ -757,6 +1002,8 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			unsigned char *uri = NULL;
 			int uri_len = 0;
 			int http_method = 0;
+
+			host_len = data_len;
 			if (http_url_search(data, &host_len, &host, &uri_len, &uri, &http_method) > 0) {
 				struct urlinfo *url = kmalloc(ALIGN(sizeof(struct urlinfo) + host_len + uri_len + 1, __URLINFO_ALIGN), GFP_ATOMIC);
 				if (!url)
@@ -830,8 +1077,10 @@ urllogger_hook_ipv6_main:
 
 	data_len = ntohs(IPV6H->payload_len) - TCPH(l4)->doff * 4;
 	if (data_len > 0) {
+		struct sk_buff *prev_skb = NULL;
 		unsigned char *host = NULL;
-		int host_len = data_len;
+		int host_len;
+		unsigned short add_data_len = 0;
 
 		if (skb_try_make_writable(skb, skb->len)) {
 			goto out;
@@ -839,8 +1088,73 @@ urllogger_hook_ipv6_main:
 		iph = (void *)ipv6_hdr(skb);
 		l4 = (void *)iph + sizeof(struct ipv6hdr);
 
-		data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
+		prev_skb = urllogger_sni_cache_detach6(&IPV6H->saddr, TCPH(l4)->source, &IPV6H->daddr, TCPH(l4)->dest, &add_data_len);
+		if (prev_skb) {
+			struct ipv6hdr *prev_iph = ipv6_hdr(prev_skb);
+			void *prev_l4 = (void *)prev_iph + sizeof(struct ipv6hdr);
+			int prev_data_len = ntohs(prev_iph->payload_len) - TCPH(prev_l4)->doff * 4;
 
+			data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
+
+			if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq) + prev_data_len + add_data_len) {
+				int needmore = 0;
+				if (skb_tailroom(prev_skb) < add_data_len + data_len &&
+				        pskb_expand_head(prev_skb, 0, add_data_len + data_len, GFP_ATOMIC)) {
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": pskb_expand_head failed\n", DEBUG_TCP_ARG6(iph,l4));
+					consume_skb(prev_skb);
+					return NF_ACCEPT;
+				}
+				prev_iph = ipv6_hdr(prev_skb);
+				prev_l4 = (void *)prev_iph + sizeof(struct ipv6hdr);
+
+				memcpy(prev_skb->data + prev_skb->len + add_data_len, data, data_len);
+				add_data_len += data_len;
+
+				data = prev_skb->data + sizeof(struct ipv6hdr) + TCPH(prev_l4)->doff * 4;
+				host_len = prev_data_len + add_data_len;
+				host = tls_sni_search(data, &host_len, &needmore);
+				if (!host && needmore == 1) {
+					if (add_data_len >= 32 * 1024 ||
+					        urllogger_sni_cache_attach6(&prev_iph->saddr, TCPH(prev_l4)->source,
+					                                   &prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
+						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": urllogger_sni_cache_attach6 failed with add_data_len=%u\n", DEBUG_TCP_ARG6(iph,l4), add_data_len);
+						consume_skb(prev_skb);
+						goto __urllogger_ipv6_skip;
+					}
+					return NF_ACCEPT;
+				}
+			} else if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq)) {
+				if (urllogger_sni_cache_attach6(&prev_iph->saddr, TCPH(prev_l4)->source,
+				                               &prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": urllogger_sni_cache_attach6 failed\n", DEBUG_TCP_ARG6(iph,l4));
+					consume_skb(prev_skb);
+					goto __urllogger_ipv6_skip;
+				}
+				return NF_ACCEPT;
+			} else {
+				consume_skb(prev_skb);
+				goto __urllogger_ipv6_skip;
+			}
+		} else {
+			int needmore = 0;
+			data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
+			host_len = data_len;
+			host = tls_sni_search(data, &host_len, &needmore);
+			if (!host && needmore == 1) {
+				prev_skb = skb_copy(skb,GFP_ATOMIC);
+				if (prev_skb) {
+					if (urllogger_sni_cache_attach6(&IPV6H->saddr, TCPH(l4)->source, &IPV6H->daddr, TCPH(l4)->dest, prev_skb, 0) != 0) {
+						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": urllogger_sni_cache_attach6 failed\n", DEBUG_TCP_ARG6(iph,l4));
+						consume_skb(prev_skb);
+						goto __urllogger_ip_skip;
+					}
+				}
+				return NF_ACCEPT;
+			}
+		}
+
+		data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
+__urllogger_ipv6_skip:
 		/* check one packet only */
 		set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
 		if (nf && (nf->status & NF_FF_URLLOGGER_USE)) {
@@ -848,8 +1162,6 @@ urllogger_hook_ipv6_main:
 			simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
 		}
 
-		/* try to get HTTPS/TLS SNI HOST */
-		host = tls_sni_search(data, &host_len);
 		if (host) {
 			struct urlinfo *url = kmalloc(ALIGN(sizeof(struct urlinfo) + host_len + 1, __URLINFO_ALIGN), GFP_ATOMIC);
 			if (!url)
@@ -902,6 +1214,8 @@ urllogger_hook_ipv6_main:
 			unsigned char *uri = NULL;
 			int uri_len = 0;
 			int http_method = 0;
+
+			host_len = data_len;
 			if (http_url_search(data, &host_len, &host, &uri_len, &uri, &http_method) > 0) {
 				struct urlinfo *url = kmalloc(ALIGN(sizeof(struct urlinfo) + host_len + uri_len + 1, __URLINFO_ALIGN), GFP_ATOMIC);
 				if (!url)
@@ -1521,6 +1835,8 @@ int natflow_urllogger_init(void)
 	int ret = 0;
 	dev_t devno;
 
+	urllogger_sni_cache_init();
+
 	if (urllogger_major > 0) {
 		devno = MKDEV(urllogger_major, urllogger_minor);
 		ret = register_chrdev_region(devno, 1, urllogger_dev_name);
@@ -1609,4 +1925,6 @@ void natflow_urllogger_exit(void)
 	urllogger_store_clear();
 
 	unregister_sysctl_table(urllogger_table_header);
+
+	urllogger_sni_cache_cleanup();
 }
