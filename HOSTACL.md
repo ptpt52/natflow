@@ -7,9 +7,43 @@ OUTPUT:
 # Usage:
 #    clear -- clear all existing acl rule(s)
 #    add acl=<id>,<act>,<host> --add one rule
+#    IPSET format: host_acl_rule<id>_<fml>
+#    <fml>=ipv4/ipv6/mac
 #
 
-ACL=:
+
+ACL0=
+ACL1=
+ACL2=
+ACL3=
+ACL4=
+ACL5=
+ACL6=
+ACL7=
+ACL8=
+ACL9=
+ACL10=
+ACL11=
+ACL12=
+ACL13=
+ACL14=
+ACL15=
+ACL16=
+ACL17=
+ACL18=
+ACL19=
+ACL20=
+ACL21=
+ACL22=
+ACL23=
+ACL24=
+ACL25=
+ACL26=
+ACL27=
+ACL28=
+ACL29=
+ACL30=
+ACL31=
 ```
 
 define:
