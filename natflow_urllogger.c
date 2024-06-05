@@ -229,9 +229,6 @@ static int urllogger_acl(struct urlinfo *url, int rule_id)
 	backup_c = url->data[url->host_len];
 	url->data[url->host_len] = 0;
 
-	url->acl_idx = 64; /* 64 = no acl matched */
-	url->acl_action = URLINFO_ACL_ACTION_RECORD;
-
 	if (url->host_len >= 1 && acl_buffer != NULL) { /* at least a.b pattern */
 		int i = 0;
 		unsigned char b;
