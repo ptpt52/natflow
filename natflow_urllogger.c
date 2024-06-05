@@ -1736,6 +1736,8 @@ static void *hostacl_start(struct seq_file *m, loff_t *pos)
 		             "# Usage:\n"
 		             "#    clear -- clear all existing acl rule(s)\n"
 		             "#    add acl=<id>,<act>,<host> --add one rule\n"
+		             "#    IPSET format: host_acl_rule<id>_<fml>\n"
+		             "#    <fml>=ipv4/ipv6/mac\n"
 		             "#\n"
 		             "\n");
 		hostacl_ctl_buffer[n] = 0;
