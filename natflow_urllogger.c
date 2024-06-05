@@ -184,16 +184,47 @@ const char *hostacl_dev_name = "hostacl_ctl";
 static struct class *hostacl_class;
 static struct device *hostacl_dev;
 
-static unsigned char *host_acl_buffer = NULL;
-static ssize_t host_acl_buffer_size = 0;
-static ssize_t host_acl_buffer_len = 0;
+struct acl_rule {
+	unsigned char *acl_buffer;
+	ssize_t acl_buffer_size;
+	ssize_t acl_buffer_len;
+};
 
-/* return: 0 = accept 1 = drop */
-static int urllogger_acl(struct urlinfo *url)
+#define ACL_RULE_ALLOC_SIZE 256
+#define ACL_RULE_MAX 32
+static int acl_rule_max = 0;
+static struct acl_rule acl_rule_node[ACL_RULE_MAX];
+
+static void acl_rule_init(void)
+{
+	int rule_id;
+	for (rule_id = 0; rule_id < ACL_RULE_MAX; rule_id++) {
+		acl_rule_node[rule_id].acl_buffer = NULL;
+	}
+}
+static void acl_rule_clear(void)
+{
+	void *tmp;
+	int rule_id;
+	for (rule_id = 0; rule_id < ACL_RULE_MAX; rule_id++) {
+		tmp = acl_rule_node[rule_id].acl_buffer;
+		if (tmp != NULL) {
+			acl_rule_node[rule_id].acl_buffer = NULL;
+			synchronize_rcu();
+			kfree(tmp);
+		}
+	}
+	acl_rule_max = 0;
+}
+
+/* return: 0 = no matched, 1 = matched */
+static int urllogger_acl(struct urlinfo *url, int rule_id)
 {
 	int ret = 0;
 	unsigned char backup_c;
-	unsigned char *acl_buffer = host_acl_buffer;
+	unsigned char *acl_buffer;
+
+	acl_buffer = acl_rule_node[rule_id].acl_buffer;
 
 	backup_c = url->data[url->host_len];
 	url->data[url->host_len] = 0;
@@ -215,6 +246,7 @@ static int urllogger_acl(struct urlinfo *url)
 					url->acl_idx = (b & 0x1f);
 					ret = ((b & 0x60) >> 5);
 					url->acl_action = ret;
+					ret = 1;
 					goto __done;
 				}
 				if (ptr[url->host_len - i] == 0) {
@@ -799,7 +831,7 @@ static unsigned int natflow_urllogger_hook_v1(const struct nf_hook_ops *ops,
 {
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
-	//const struct net_device *out = state->out;
+	const struct net_device *out = state->out;
 #else
 static unsigned int natflow_urllogger_hook_v1(void *priv,
         struct sk_buff *skb,
@@ -808,7 +840,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
-	//const struct net_device *out = state->out;
+	const struct net_device *out = state->out;
 #endif
 #endif
 	int ret = NF_ACCEPT;
@@ -959,6 +991,7 @@ __urllogger_ip_skip:
 		}
 
 		if (host) {
+			int rule_id = 0;
 			struct urlinfo *url = kmalloc(ALIGN(sizeof(struct urlinfo) + host_len + 1, __URLINFO_ALIGN), GFP_ATOMIC);
 			if (!url)
 				goto out;
@@ -991,22 +1024,59 @@ __urllogger_ip_skip:
 			url->hits = 1;
 			memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
 
-			if (urllogger_acl(url) != 0) {
-				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-				ret = NF_DROP;
-				/* tell FF do not emit pkts */
-				if (nf && !(nf->status & NF_FF_USER_USE)) {
-					/* tell FF -user- need to use this conn */
-					simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+			url->acl_idx = 64; /* 64 = before acl matching */
+			url->acl_action = URLINFO_ACL_ACTION_RECORD;
+			do {
+				int ret_ip;
+				int ret_mac;
+				for (; rule_id < acl_rule_max; ) {
+					char ipset_name[32];
+
+					snprintf(ipset_name, 32, "host_acl_rule%u_ipv4", rule_id);
+					ret_ip = IP_SET_test_src_ip(state, in, out, skb, ipset_name);
+					if (ret_ip > 0) {
+						break;
+					}
+
+					snprintf(ipset_name, 32, "host_acl_rule%u_mac", rule_id);
+					ret_mac = IP_SET_test_src_mac(state, in, out, skb, ipset_name);
+					if (ret_mac > 0) {
+						break;
+					}
+
+					if (ret_ip == -EINVAL && ret_mac == -EINVAL) {
+						break;
+					}
+
+					rule_id++;
 				}
-				if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
-					natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+				if (rule_id < acl_rule_max) {
+					if (urllogger_acl(url, rule_id) == 1) {
+						if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
+							set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+							ret = NF_DROP;
+							/* tell FF do not emit pkts */
+							if (nf && !(nf->status & NF_FF_USER_USE)) {
+								/* tell FF -user- need to use this conn */
+								simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+							}
+							if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
+								natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+							}
+							break;
+						}
+					}
+				} else {
+					break;
 				}
-			}
+
+				rule_id++;
+			} while (1);
 
 			urllogger_store_record(url);
 		} else {
 			unsigned char *uri = NULL;
+			int rule_id = 0;
 			int uri_len = 0;
 			int http_method = 0;
 
@@ -1045,18 +1115,54 @@ __urllogger_ip_skip:
 				url->hits = 1;
 				memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
 
-				if (urllogger_acl(url) != 0) {
-					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-					ret = NF_DROP;
-					/* tell FF do not emit pkts */
-					if (nf && !(nf->status & NF_FF_USER_USE)) {
-						/* tell FF -user- need to use this conn */
-						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+				url->acl_idx = 64; /* 64 = before acl matching */
+				url->acl_action = URLINFO_ACL_ACTION_RECORD;
+				do {
+					int ret_ip;
+					int ret_mac;
+					for (; rule_id < acl_rule_max; ) {
+						char ipset_name[32];
+
+						snprintf(ipset_name, 32, "host_acl_rule%u_ipv4", rule_id);
+						ret_ip = IP_SET_test_src_ip(state, in, out, skb, ipset_name);
+						if (ret_ip > 0) {
+							break;
+						}
+
+						snprintf(ipset_name, 32, "host_acl_rule%u_mac", rule_id);
+						ret_mac = IP_SET_test_src_mac(state, in, out, skb, ipset_name);
+						if (ret_mac > 0) {
+							break;
+						}
+
+						if (ret_ip == -EINVAL && ret_mac == -EINVAL) {
+							break;
+						}
+
+						rule_id++;
 					}
-					if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
-						natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+					if (rule_id < acl_rule_max) {
+						if (urllogger_acl(url, rule_id) == 1) {
+							if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
+								set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+								ret = NF_DROP;
+								/* tell FF do not emit pkts */
+								if (nf && !(nf->status & NF_FF_USER_USE)) {
+									/* tell FF -user- need to use this conn */
+									simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+								}
+								if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
+									natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+								}
+								break;
+							}
+						}
+					} else {
+						break;
 					}
-				}
+
+					rule_id++;
+				} while (1);
 
 				urllogger_store_record(url);
 			}
@@ -1123,7 +1229,7 @@ urllogger_hook_ipv6_main:
 				if (!host && needmore == 1) {
 					if (add_data_len >= 32 * 1024 ||
 					        urllogger_sni_cache_attach6(&prev_iph->saddr, TCPH(prev_l4)->source,
-					                                   &prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
+					                                    &prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
 						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": urllogger_sni_cache_attach6 failed with add_data_len=%u\n", DEBUG_TCP_ARG6(iph,l4), add_data_len);
 						consume_skb(prev_skb);
 						goto __urllogger_ipv6_skip;
@@ -1132,7 +1238,7 @@ urllogger_hook_ipv6_main:
 				}
 			} else if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq)) {
 				if (urllogger_sni_cache_attach6(&prev_iph->saddr, TCPH(prev_l4)->source,
-				                               &prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
+				                                &prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": urllogger_sni_cache_attach6 failed\n", DEBUG_TCP_ARG6(iph,l4));
 					consume_skb(prev_skb);
 					goto __urllogger_ipv6_skip;
@@ -1170,6 +1276,7 @@ __urllogger_ipv6_skip:
 		}
 
 		if (host) {
+			int rule_id = 0;
 			struct urlinfo *url = kmalloc(ALIGN(sizeof(struct urlinfo) + host_len + 1, __URLINFO_ALIGN), GFP_ATOMIC);
 			if (!url)
 				goto out;
@@ -1203,22 +1310,59 @@ __urllogger_ipv6_skip:
 			url->hits = 1;
 			memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
 
-			if (urllogger_acl(url) != 0) {
-				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-				ret = NF_DROP;
-				/* tell FF do not emit pkts */
-				if (nf && !(nf->status & NF_FF_USER_USE)) {
-					/* tell FF -user- need to use this conn */
-					simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+			url->acl_idx = 64; /* 64 = before acl matching */
+			url->acl_action = URLINFO_ACL_ACTION_RECORD;
+			do {
+				int ret_ip;
+				int ret_mac;
+				for (; rule_id < acl_rule_max; ) {
+					char ipset_name[32];
+
+					snprintf(ipset_name, 32, "host_acl_rule%u_ipv6", rule_id);
+					ret_ip = IP_SET_test_src_ip(state, in, out, skb, ipset_name);
+					if (ret_ip > 0) {
+						break;
+					}
+
+					snprintf(ipset_name, 32, "host_acl_rule%u_mac", rule_id);
+					ret_mac = IP_SET_test_src_mac(state, in, out, skb, ipset_name);
+					if (ret_mac > 0) {
+						break;
+					}
+
+					if (ret_ip == -EINVAL && ret_mac == -EINVAL) {
+						break;
+					}
+
+					rule_id++;
 				}
-				if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
-					natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
+				if (rule_id < acl_rule_max) {
+					if (urllogger_acl(url, rule_id) == 1) {
+						if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
+							set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+							ret = NF_DROP;
+							/* tell FF do not emit pkts */
+							if (nf && !(nf->status & NF_FF_USER_USE)) {
+								/* tell FF -user- need to use this conn */
+								simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+							}
+							if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
+								natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
+							}
+							break;
+						}
+					}
+				} else {
+					break;
 				}
-			}
+
+				rule_id++;
+			} while (1);
 
 			urllogger_store_record(url);
 		} else {
 			unsigned char *uri = NULL;
+			int rule_id = 0;
 			int uri_len = 0;
 			int http_method = 0;
 
@@ -1258,18 +1402,54 @@ __urllogger_ipv6_skip:
 				url->hits = 1;
 				memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
 
-				if (urllogger_acl(url) != 0) {
-					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-					ret = NF_DROP;
-					/* tell FF do not emit pkts */
-					if (nf && !(nf->status & NF_FF_USER_USE)) {
-						/* tell FF -user- need to use this conn */
-						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+				url->acl_idx = 64; /* 64 = before acl matching */
+				url->acl_action = URLINFO_ACL_ACTION_RECORD;
+				do {
+					int ret_ip;
+					int ret_mac;
+					for (; rule_id < acl_rule_max; ) {
+						char ipset_name[32];
+
+						snprintf(ipset_name, 32, "host_acl_rule%u_ipv6", rule_id);
+						ret_ip = IP_SET_test_src_ip(state, in, out, skb, ipset_name);
+						if (ret_ip > 0) {
+							break;
+						}
+
+						snprintf(ipset_name, 32, "host_acl_rule%u_mac", rule_id);
+						ret_mac = IP_SET_test_src_mac(state, in, out, skb, ipset_name);
+						if (ret_mac > 0) {
+							break;
+						}
+
+						if (ret_ip == -EINVAL && ret_mac == -EINVAL) {
+							break;
+						}
+
+						rule_id++;
 					}
-					if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
-						natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
+					if (rule_id < acl_rule_max) {
+						if (urllogger_acl(url, rule_id) == 1) {
+							if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
+								set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+								ret = NF_DROP;
+								/* tell FF do not emit pkts */
+								if (nf && !(nf->status & NF_FF_USER_USE)) {
+									/* tell FF -user- need to use this conn */
+									simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+								}
+								if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
+									natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
+								}
+								break;
+							}
+						}
+					} else {
+						break;
 					}
-				}
+
+					rule_id++;
+				} while (1);
 
 				urllogger_store_record(url);
 			}
@@ -1560,16 +1740,27 @@ static void *hostacl_start(struct seq_file *m, loff_t *pos)
 		             "\n");
 		hostacl_ctl_buffer[n] = 0;
 		return hostacl_ctl_buffer;
-	} else if ((*pos) == 1) {
-		strcpy(hostacl_ctl_buffer, "ACL=:\n");
-		return hostacl_ctl_buffer;
-	} else if ((*pos) == 2) {
-		if (host_acl_buffer != NULL) {
-			return host_acl_buffer;
+	} else if ((*pos) % 2 == 1) {
+		if ( ((*pos) - 1) / 2 < ACL_RULE_MAX ) {
+			snprintf(hostacl_ctl_buffer, PAGE_SIZE, "\nACL%u=", (unsigned int)((*pos) - 1) / 2);
+			return hostacl_ctl_buffer;
+		} else if ( ((*pos) - 1) / 2 == ACL_RULE_MAX ) {
+			strcpy(hostacl_ctl_buffer, "\n");
+			return hostacl_ctl_buffer;
+		} else {
+			return NULL;
 		}
-	} else if ((*pos) == 3) {
-		strcpy(hostacl_ctl_buffer, "\n");
-		return hostacl_ctl_buffer;
+	} else if ((*pos) % 2 == 0) {
+		if ( ((*pos) - 1) / 2 < ACL_RULE_MAX ) {
+			if (acl_rule_node[((*pos) - 1) / 2].acl_buffer != NULL) {
+				return acl_rule_node[((*pos) - 1) / 2].acl_buffer;
+			} else {
+				strcpy(hostacl_ctl_buffer, "");
+				return hostacl_ctl_buffer;
+			}
+		} else {
+			return NULL;
+		}
 	}
 
 	return NULL;
@@ -1642,11 +1833,7 @@ static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t b
 	}
 
 	if (strncmp(data, "clear", 5) == 0) {
-		void *tmp = host_acl_buffer;
-		host_acl_buffer = NULL;
-		synchronize_rcu();
-		if (tmp)
-			kfree(tmp);
+		acl_rule_clear();
 		goto done;
 	} else if (strncmp(data, "add acl=", 8) == 0) {
 		unsigned int idx = 64;
@@ -1655,7 +1842,7 @@ static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t b
 		if (n == 2 && act >= 0 && act < 4) {
 			act = (0x60 & (act << 5));
 
-			if (idx >= 0 && idx <= 31) {
+			if (idx >= 0 && idx < ACL_RULE_MAX) {
 				int i = 8;
 				while (data[i] != ',' && data[i] != 0) {
 					i++;
@@ -1674,35 +1861,38 @@ static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t b
 						if (data[i + n] == 0 && n >= 1) {
 							unsigned char *new_buffer;
 							ssize_t add_size = 0;
-							if (host_acl_buffer == NULL) {
-								new_buffer = kmalloc(PAGE_SIZE, GFP_KERNEL);
+							if (acl_rule_node[idx].acl_buffer == NULL) {
+								new_buffer = kmalloc(ACL_RULE_ALLOC_SIZE, GFP_KERNEL);
 								if (new_buffer == NULL) {
 									return -ENOMEM;
 								}
 								new_buffer[0] = 0;
-								host_acl_buffer_size = PAGE_SIZE;
-								host_acl_buffer_len = 1;
-								host_acl_buffer = new_buffer;
+								acl_rule_node[idx].acl_buffer_size = ACL_RULE_ALLOC_SIZE;
+								acl_rule_node[idx].acl_buffer_len = 1;
+								acl_rule_node[idx].acl_buffer = new_buffer;
 							}
-							while (host_acl_buffer_size + add_size < host_acl_buffer_len + n + 1) {
-								add_size += PAGE_SIZE;
+							while (acl_rule_node[idx].acl_buffer_size + add_size < acl_rule_node[idx].acl_buffer_len + n + 1) {
+								add_size += ACL_RULE_ALLOC_SIZE;
 							}
-							new_buffer = host_acl_buffer;
+							new_buffer = acl_rule_node[idx].acl_buffer;
 							if (add_size > 0) {
-								unsigned char *old_buffer = host_acl_buffer;
-								new_buffer = kmalloc(host_acl_buffer_size + add_size, GFP_KERNEL);
+								unsigned char *old_buffer = acl_rule_node[idx].acl_buffer;
+								new_buffer = kmalloc(acl_rule_node[idx].acl_buffer_size + add_size, GFP_KERNEL);
 								if (new_buffer == NULL) {
 									return -ENOMEM;
 								}
-								memcpy(new_buffer, host_acl_buffer, host_acl_buffer_len);
-								host_acl_buffer = new_buffer;
+								memcpy(new_buffer, acl_rule_node[idx].acl_buffer, acl_rule_node[idx].acl_buffer_len);
+								acl_rule_node[idx].acl_buffer = new_buffer;
 								synchronize_rcu();
 								kfree(old_buffer);
 							}
-							new_buffer[host_acl_buffer_len + n] = 0;
-							new_buffer[host_acl_buffer_len - 1] = (unsigned char)(0x80|act|idx);
-							memcpy(new_buffer + host_acl_buffer_len, data + i, n);
-							host_acl_buffer_len += n + 1;
+							new_buffer[acl_rule_node[idx].acl_buffer_len + n] = 0;
+							new_buffer[acl_rule_node[idx].acl_buffer_len - 1] = (unsigned char)(0x80|act|idx);
+							memcpy(new_buffer + acl_rule_node[idx].acl_buffer_len, data + i, n);
+							acl_rule_node[idx].acl_buffer_len += n + 1;
+							if (idx >= acl_rule_max) {
+								acl_rule_max =  idx + 1;
+							}
 							goto done;
 						}
 					}
@@ -1772,6 +1962,8 @@ static int natflow_hostacl_init(void)
 	int ret = 0;
 	dev_t devno;
 
+	acl_rule_init();
+
 	if (hostacl_major > 0) {
 		devno = MKDEV(hostacl_major, hostacl_minor);
 		ret = register_chrdev_region(devno, 1, hostacl_dev_name);
@@ -1835,6 +2027,8 @@ static void natflow_hostacl_exit(void)
 	class_destroy(hostacl_class);
 	cdev_del(&hostacl_cdev);
 	unregister_chrdev_region(devno, 1);
+
+	acl_rule_clear();
 }
 
 int natflow_urllogger_init(void)

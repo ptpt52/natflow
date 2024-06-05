@@ -207,8 +207,7 @@ int ip_set_test_src_ip(const struct net_device *in, const struct net_device *out
 	id = ip_set_get_byname(ip_set_name, &set);
 #endif
 	if (id == IPSET_INVALID_ID) {
-		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
-		return 0;
+		return -EINVAL;
 	}
 
 	ret = ip_set_test(id, skb, &par, &opt);
@@ -567,8 +566,7 @@ int ip_set_test_src_mac(const struct net_device *in, const struct net_device *ou
 	id = ip_set_get_byname(ip_set_name, &set);
 #endif
 	if (id == IPSET_INVALID_ID) {
-		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
-		return 0;
+		return -EINVAL;
 	}
 
 	ret = ip_set_test(id, skb, &par, &opt);
