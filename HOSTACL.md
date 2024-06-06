@@ -1,8 +1,12 @@
-## read all ACL
+# ACL Management and URL Logging Guide
 
-API: `cat /dev/hostacl_ctl`
+This document outlines the steps for managing Access Control Lists (ACL) and enabling URL logging. It includes commands for reading, adding, and clearing ACLs, as well as enabling the URL logger and reading URL logs.
 
-OUTPUT:
+## Read All ACLs
+
+**API:** `cat /dev/hostacl_ctl`
+
+**Output Example:**
 ```
 # Usage:
 #    clear -- clear all existing acl rule(s)
@@ -11,82 +15,83 @@ OUTPUT:
 #    <fml>=ipv4/ipv6/mac
 #
 
-
 ACL0=
 ACL1=
-ACL2=
-ACL3=
-ACL4=
-ACL5=
-ACL6=
-ACL7=
-ACL8=
-ACL9=
-ACL10=
-ACL11=
-ACL12=
-ACL13=
-ACL14=
-ACL15=
-ACL16=
-ACL17=
-ACL18=
-ACL19=
-ACL20=
-ACL21=
-ACL22=
-ACL23=
-ACL24=
-ACL25=
-ACL26=
-ACL27=
-ACL28=
-ACL29=
-ACL30=
+...
 ACL31=
 ```
 
-define:
+### Definitions:
+
+**id:** 0~31
+
+**act:** 0~3
+  - 0 = record
+  - 1 = drop
+  - 2 = reset
+  - 3 = redirect
+
+**host:** Hostname
+
+### IPSET Integration
+
+If the system creates an **ipset**, each ACL rule will match the **ipset** before applying ACL controls. The **ipset** format is `host_acl_rule<id>_<fml>`, where `<id>` is the ACL rule ID and `<fml>` can be `ipv4`, `ipv6`, or `mac`.
+
+Example 1: Create an **ipset** `host_acl_rule0_ipv4` to make ACL0 apply controls only after matching an IPv4 address.
 ```
-<id>: 0~31
-
-<act>: 0~3
-	0 = record
-	1 = drop
-	2 = reset
-	3 = redirct
-
-<host>: Hostname
+ipset create host_acl_rule0_ipv4 hash:net family inet
+ipset add host_acl_rule0_ipv4 192.168.15.100
+ipset add host_acl_rule0_ipv4 192.168.15.101
 ```
 
-## add one ACL
+Example 2: Create an **ipset** `host_acl_rule0_ipv6` to make ACL0 apply controls only after matching an IPv6 address.
+```
+ipset create host_acl_rule0_ipv6 hash:net family inet6
+ipset add host_acl_rule0_ipv6 2400::123
+```
 
-API: `echo add acl=<id>,<act>,<host> >/dev/hostacl_ctl`
+Example 3: Create an **ipset** `host_acl_rule0_mac` to make ACL0 apply controls only after matching an MAC address.
+```
+ipset create host_acl_rule0_mac hash:mac
+ipset add host_acl_rule0_mac 11:22:33:aa:bb:cc
+```
 
-EXAMPLE: add baidu.com to ACL, rule id = 0, action = 2(reset)
+## Add One ACL
+
+**API:** `echo add acl=<id>,<act>,<host> >/dev/hostacl_ctl`
+
+**Example:** Add `baidu.com` to ACL with rule ID 0 and action 2 (reset).
 ```
 echo add acl=0,2,baidu.com >/dev/hostacl_ctl
 ```
 
-## clear all ACL
+Add more to ACL0:
+```
+echo add acl=0,2,qq.com >/dev/hostacl_ctl
+echo add acl=0,2,sina.com >/dev/hostacl_ctl
+```
 
-API: `echo clear >/dev/hostacl_ctl`
+## Clear All ACLs
 
-## enable urllogger
+**API:** `echo clear >/dev/hostacl_ctl`
 
-This is needed to make hostacl work.
+## Enable URL Logger
 
-API: `echo "1" >/proc/sys/urllogger_store/enable`
+This step is necessary to make hostacl work.
 
-## read url log (ACL log)
+**API:** `echo "1" >/proc/sys/urllogger_store/enable`
 
-API: `cat /dev/urllogger_queue`
+## Read URL Log (ACL Log)
 
-URL log format:
+**API:** `cat /dev/urllogger_queue`
+
+### URL Log Format:
 ```
 timestamp,mac,sip,sport,dip,dport,hits,method,type,acl_idx,acl_action,url
+```
 
-example:
+### Example Output:
+```
 15682,74:8F:AA:BB:BE:CD,192.168.16.101,61938,129.226.103.123,443,1,NONE,SSL,64,0,otheve.beacon.qq.com
 15684,74:8F:AA:BB:BE:CD,fd57:538a:7ca5:0000:18c5:8212:7bc2:086f,61940,240e:097c:002f:0002:0000:0000:0000:005c,443,1,NONE,SSL,64,0,tpstelemetry.tencent.com
 15693,74:8F:AA:BB:BE:CD,192.168.16.101,61957,8.8.8.8,443,4,NONE,SSL,64,0,dns.google
@@ -97,4 +102,17 @@ example:
 15701,74:8F:AA:BB:BE:CD,192.168.16.101,61970,113.240.75.249,443,1,NONE,SSL,64,0,tpstelemetry.tencent.com
 15720,24:0A:AA:CC:8D:4E,192.168.16.224,53230,185.125.190.96,80,1,GET,HTTP,64,0,connectivity-check.ubuntu.com/
 ```
-Note: `acl_idx=64` indicates no ACL matched.
+**Note:** `acl_idx=64` indicates no ACL matched.
+
+timestamp is uptime seconds, convert timestamp to date time:
+```sh
+#example time=timestamp
+time=15682
+
+UP=$(cat /proc/uptime | cut -d\. -f1)
+UP=$((UP&0xffffffff))
+NOW=$(date +%s)
+T=$((NOW+time-UP))
+T=$(date "+%Y-%m-%d %H:%M:%S" -d @$T)
+echo $T
+```
