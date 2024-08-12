@@ -3564,7 +3564,7 @@ slow_fastpath6:
 		if (NULL == user) {
 			break;
 		}
-		if (memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3, &ct->tuplehash[!d].tuple.src.u3, sizeof(union nf_inet_addr)) != 0) {
+		if (memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3, &ct->tuplehash[dir].tuple.src.u3, sizeof(union nf_inet_addr)) != 0) {
 			d = 0;
 		} else {
 			d = 1;
