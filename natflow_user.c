@@ -329,17 +329,17 @@ unsigned int redirect_ip = __constant_htonl((10<<24)|(10<<16)|(10<<8)|(10<<0));
 static unsigned int natflow_user_timeout = 1800;
 #define NATFLOW_USER_TIMEOUT 300
 
-static struct sk_buff *natflow_user_uskbs[NR_CPUS];
+static DEFINE_PER_CPU(struct sk_buff *, natflow_user_uskbs);
 #define NATFLOW_USKB_SIZE (sizeof(struct iphdr) + sizeof(struct ipv6hdr) + sizeof(struct udphdr))
 #define NATFLOW_FAKEUSER_DADDR __constant_htonl(0x7fffffff)
 
-static inline struct sk_buff *uskb_of_this_cpu(int id)
+static inline struct sk_buff *uskb_of_this_cpu(void)
 {
-	BUG_ON(id >= NR_CPUS);
-	if (!natflow_user_uskbs[id]) {
-		natflow_user_uskbs[id] = __alloc_skb(NATFLOW_USKB_SIZE, GFP_ATOMIC, 0, numa_node_id());
+	struct sk_buff **ptr = this_cpu_ptr(&natflow_user_uskbs);
+	if (!*ptr) {
+		*ptr = __alloc_skb(NATFLOW_USKB_SIZE, GFP_ATOMIC, 0, numa_node_id());
 	}
-	return natflow_user_uskbs[id];
+	return *ptr;
 }
 
 void natflow_user_timeout_touch(natflow_fakeuser_t *nfu)
@@ -522,7 +522,7 @@ static natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 		struct udphdr *udph;
 		enum ip_conntrack_info ctinfo;
 
-		uskb = uskb_of_this_cpu(smp_processor_id());
+		uskb = uskb_of_this_cpu();
 		if (uskb == NULL) {
 			return NULL;
 		}
@@ -3773,12 +3773,13 @@ static void qos_exit(void)
 
 int natflow_user_init(void)
 {
-	int i;
+	int cpu;
 	int retval = 0;
 	dev_t devno;
 
-	for (i = 0; i < NR_CPUS; i++) {
-		natflow_user_uskbs[i] = NULL;
+	for_each_possible_cpu(cpu) {
+		struct sk_buff **ptr = per_cpu_ptr(&natflow_user_uskbs, cpu);
+		*ptr = NULL;
 	}
 
 	retval = nf_register_hooks(user_hooks, ARRAY_SIZE(user_hooks));
@@ -3874,7 +3875,7 @@ nf_register_hooks_failed:
 
 void natflow_user_exit(void)
 {
-	int i;
+	int cpu;
 	dev_t devno;
 
 	qos_exit();
@@ -3894,10 +3895,12 @@ void natflow_user_exit(void)
 
 	nf_unregister_hooks(user_hooks, ARRAY_SIZE(user_hooks));
 
-	for (i = 0; i < NR_CPUS; i++) {
-		if (natflow_user_uskbs[i]) {
-			kfree(natflow_user_uskbs[i]);
-			natflow_user_uskbs[i] = NULL;
+
+	for_each_possible_cpu(cpu) {
+		struct sk_buff **ptr = per_cpu_ptr(&natflow_user_uskbs, cpu);
+		if (*ptr) {
+			kfree(*ptr);
+			*ptr = NULL;
 		}
 	}
 }
