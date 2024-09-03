@@ -653,14 +653,15 @@ struct urllogger_sni_cache_node {
 
 #define URLLOGGER_CACHE_TIMEOUT 4
 #define MAX_URLLOGGER_SNI_CACHE_NODE 64
-static struct urllogger_sni_cache_node urllogger_sni_cache[NR_CPUS][MAX_URLLOGGER_SNI_CACHE_NODE];
+static DEFINE_PER_CPU(struct urllogger_sni_cache_node[MAX_URLLOGGER_SNI_CACHE_NODE], urllogger_sni_cache);
 
 static inline void urllogger_sni_cache_init(void)
 {
 	int i, j;
-	for (i = 0; i < NR_CPUS; i++) {
+	for_each_possible_cpu(i) {
+		struct urllogger_sni_cache_node *ptr = this_cpu_ptr(urllogger_sni_cache);
 		for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-			urllogger_sni_cache[i][j].skb = NULL;
+			ptr[j].skb = NULL;
 		}
 	}
 }
@@ -668,11 +669,12 @@ static inline void urllogger_sni_cache_init(void)
 static inline void urllogger_sni_cache_cleanup(void)
 {
 	int i, j;
-	for (i = 0; i < NR_CPUS; i++) {
+	for_each_possible_cpu(i) {
+		struct urllogger_sni_cache_node *ptr = this_cpu_ptr(urllogger_sni_cache);
 		for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-			if (urllogger_sni_cache[i][j].skb != NULL) {
-				consume_skb(urllogger_sni_cache[i][j].skb);
-				urllogger_sni_cache[i][j].skb = NULL;
+			if (ptr[j].skb != NULL) {
+				consume_skb(ptr[j].skb);
+				ptr[j].skb = NULL;
 			}
 		}
 	}
@@ -680,17 +682,17 @@ static inline void urllogger_sni_cache_cleanup(void)
 
 static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, struct sk_buff *skb, unsigned short add_data_len)
 {
-	int i = smp_processor_id();
 	int j;
 	int next_to_use = MAX_URLLOGGER_SNI_CACHE_NODE;
+	struct urllogger_sni_cache_node *ptr = this_cpu_ptr(urllogger_sni_cache);
 	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-		if (urllogger_sni_cache[i][j].skb != NULL &&
-		        urllogger_sni_cache[i][j].src_ip == src_ip &&
-		        urllogger_sni_cache[i][j].src_port == src_port &&
-		        urllogger_sni_cache[i][j].dst_ip == dst_ip &&
-		        urllogger_sni_cache[i][j].dst_port == dst_port) {
+		if (ptr[j].skb != NULL &&
+		        ptr[j].src_ip == src_ip &&
+		        ptr[j].src_port == src_port &&
+		        ptr[j].dst_ip == dst_ip &&
+		        ptr[j].dst_port == dst_port) {
 			return -EEXIST;
-		} else if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE && urllogger_sni_cache[i][j].skb == NULL) {
+		} else if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE && ptr[j].skb == NULL) {
 			next_to_use = j;
 		}
 	}
@@ -698,30 +700,30 @@ static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __b
 		return -ENOMEM;
 	}
 
-	urllogger_sni_cache[i][next_to_use].src_ip = src_ip;
-	urllogger_sni_cache[i][next_to_use].src_port = src_port;
-	urllogger_sni_cache[i][next_to_use].dst_ip = dst_ip;
-	urllogger_sni_cache[i][next_to_use].dst_port = dst_port;
-	urllogger_sni_cache[i][next_to_use].add_data_len = add_data_len;
-	urllogger_sni_cache[i][next_to_use].skb = skb;
-	urllogger_sni_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
+	ptr[next_to_use].src_ip = src_ip;
+	ptr[next_to_use].src_port = src_port;
+	ptr[next_to_use].dst_ip = dst_ip;
+	ptr[next_to_use].dst_port = dst_port;
+	ptr[next_to_use].add_data_len = add_data_len;
+	ptr[next_to_use].skb = skb;
+	ptr[next_to_use].active_jiffies = (unsigned long)jiffies;
 
 	return 0;
 }
 
 static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 src_port, struct in6_addr *dst_ip, __be16 dst_port, struct sk_buff *skb, unsigned short add_data_len)
 {
-	int i = smp_processor_id();
 	int j;
 	int next_to_use = MAX_URLLOGGER_SNI_CACHE_NODE;
+	struct urllogger_sni_cache_node *ptr = this_cpu_ptr(urllogger_sni_cache);
 	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-		if (urllogger_sni_cache[i][j].skb != NULL &&
-		        memcmp(&urllogger_sni_cache[i][j].src_ipv6, src_ip, 16) == 0 &&
-		        urllogger_sni_cache[i][j].src_port == src_port &&
-		        memcmp(&urllogger_sni_cache[i][j].dst_ipv6, dst_ip, 16) == 0 &&
-		        urllogger_sni_cache[i][j].dst_port == dst_port) {
+		if (ptr[j].skb != NULL &&
+		        memcmp(&ptr[j].src_ipv6, src_ip, 16) == 0 &&
+		        ptr[j].src_port == src_port &&
+		        memcmp(&ptr[j].dst_ipv6, dst_ip, 16) == 0 &&
+		        ptr[j].dst_port == dst_port) {
 			return -EEXIST;
-		} else if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE && urllogger_sni_cache[i][j].skb == NULL) {
+		} else if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE && ptr[j].skb == NULL) {
 			next_to_use = j;
 		}
 	}
@@ -729,43 +731,43 @@ static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 sr
 		return -ENOMEM;
 	}
 
-	memcpy(&urllogger_sni_cache[i][next_to_use].src_ipv6, src_ip, 16);
-	urllogger_sni_cache[i][next_to_use].src_port = src_port;
-	memcpy(&urllogger_sni_cache[i][next_to_use].dst_ipv6, dst_ip, 16);
-	urllogger_sni_cache[i][next_to_use].dst_port = dst_port;
-	urllogger_sni_cache[i][next_to_use].add_data_len = add_data_len;
-	urllogger_sni_cache[i][next_to_use].skb = skb;
-	urllogger_sni_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
+	memcpy(&ptr[next_to_use].src_ipv6, src_ip, 16);
+	ptr[next_to_use].src_port = src_port;
+	memcpy(&ptr[next_to_use].dst_ipv6, dst_ip, 16);
+	ptr[next_to_use].dst_port = dst_port;
+	ptr[next_to_use].add_data_len = add_data_len;
+	ptr[next_to_use].skb = skb;
+	ptr[next_to_use].active_jiffies = (unsigned long)jiffies;
 
 	return 0;
 }
 
 static inline struct sk_buff *urllogger_sni_cache_detach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, unsigned short *add_data_len)
 {
-	int i = smp_processor_id();
 	int j = 0;
 	struct sk_buff *skb = NULL;
+	struct urllogger_sni_cache_node *ptr = this_cpu_ptr(urllogger_sni_cache);
 	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-		if (urllogger_sni_cache[i][j].skb != NULL) {
-			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
-				consume_skb(urllogger_sni_cache[i][j].skb);
-				urllogger_sni_cache[i][j].skb = NULL;
-			} else if (urllogger_sni_cache[i][j].src_ip == src_ip &&
-			           urllogger_sni_cache[i][j].src_port == src_port &&
-			           urllogger_sni_cache[i][j].dst_ip == dst_ip &&
-			           urllogger_sni_cache[i][j].dst_port == dst_port) {
-				skb = urllogger_sni_cache[i][j].skb;
-				*add_data_len = urllogger_sni_cache[i][j].add_data_len;
-				urllogger_sni_cache[i][j].skb = NULL;
+		if (ptr[j].skb != NULL) {
+			if (time_after(jiffies, ptr[j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
+				consume_skb(ptr[j].skb);
+				ptr[j].skb = NULL;
+			} else if (ptr[j].src_ip == src_ip &&
+			           ptr[j].src_port == src_port &&
+			           ptr[j].dst_ip == dst_ip &&
+			           ptr[j].dst_port == dst_port) {
+				skb = ptr[j].skb;
+				*add_data_len = ptr[j].add_data_len;
+				ptr[j].skb = NULL;
 				break;
 			}
 		}
 	}
 	for (; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-		if (urllogger_sni_cache[i][j].skb != NULL) {
-			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
-				consume_skb(urllogger_sni_cache[i][j].skb);
-				urllogger_sni_cache[i][j].skb = NULL;
+		if (ptr[j].skb != NULL) {
+			if (time_after(jiffies, ptr[j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
+				consume_skb(ptr[j].skb);
+				ptr[j].skb = NULL;
 			}
 		}
 	}
@@ -775,30 +777,30 @@ static inline struct sk_buff *urllogger_sni_cache_detach(__be32 src_ip, __be16 s
 
 static inline struct sk_buff *urllogger_sni_cache_detach6(struct in6_addr *src_ip, __be16 src_port, struct in6_addr *dst_ip, __be16 dst_port, unsigned short *add_data_len)
 {
-	int i = smp_processor_id();
 	int j = 0;
 	struct sk_buff *skb = NULL;
+	struct urllogger_sni_cache_node *ptr = this_cpu_ptr(urllogger_sni_cache);
 	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-		if (urllogger_sni_cache[i][j].skb != NULL) {
-			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
-				consume_skb(urllogger_sni_cache[i][j].skb);
-				urllogger_sni_cache[i][j].skb = NULL;
-			} else if (memcmp(&urllogger_sni_cache[i][j].src_ipv6, src_ip, 16) == 0 &&
-			           urllogger_sni_cache[i][j].src_port == src_port &&
-			           memcmp(&urllogger_sni_cache[i][j].dst_ipv6, dst_ip, 16) == 0 &&
-			           urllogger_sni_cache[i][j].dst_port == dst_port) {
-				skb = urllogger_sni_cache[i][j].skb;
-				*add_data_len = urllogger_sni_cache[i][j].add_data_len;
-				urllogger_sni_cache[i][j].skb = NULL;
+		if (ptr[j].skb != NULL) {
+			if (time_after(jiffies, ptr[j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
+				consume_skb(ptr[j].skb);
+				ptr[j].skb = NULL;
+			} else if (memcmp(&ptr[j].src_ipv6, src_ip, 16) == 0 &&
+			           ptr[j].src_port == src_port &&
+			           memcmp(&ptr[j].dst_ipv6, dst_ip, 16) == 0 &&
+			           ptr[j].dst_port == dst_port) {
+				skb = ptr[j].skb;
+				*add_data_len = ptr[j].add_data_len;
+				ptr[j].skb = NULL;
 				break;
 			}
 		}
 	}
 	for (; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-		if (urllogger_sni_cache[i][j].skb != NULL) {
-			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
-				consume_skb(urllogger_sni_cache[i][j].skb);
-				urllogger_sni_cache[i][j].skb = NULL;
+		if (ptr[j].skb != NULL) {
+			if (time_after(jiffies, ptr[j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
+				consume_skb(ptr[j].skb);
+				ptr[j].skb = NULL;
 			}
 		}
 	}
