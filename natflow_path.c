@@ -818,14 +818,14 @@ struct natflow_offload {
 	flow_offload_t flow;
 };
 
+static DEFINE_PER_CPU(struct natflow_offload, natflow_offload);
+
 static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow_t *nf)
 {
-	static struct natflow_offload natflow_offload[NR_CPUS];
-
 	int dir;
 	flow_offload_tuple_t *ft;
 	struct nf_conntrack_tuple *ctt;
-	struct natflow_offload *natflow = &natflow_offload[smp_processor_id()];
+	struct natflow_offload *natflow = this_cpu_ptr(&natflow_offload);
 	flow_offload_t *flow = &natflow->flow;
 	int orig_hash, reply_hash;
 	natflow_fastnat_node_t *nfn;
