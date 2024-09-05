@@ -968,7 +968,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			host_len = data_len;
 			host = tls_sni_search(data, &host_len, &needmore);
 			if (!host && needmore == 1) {
-				prev_skb = skb_copy(skb,GFP_ATOMIC);
+				prev_skb = skb_copy(skb, GFP_ATOMIC);
 				if (prev_skb) {
 					if (urllogger_sni_cache_attach(iph->saddr, TCPH(l4)->source, iph->daddr, TCPH(l4)->dest, prev_skb, 0) != 0) {
 						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": urllogger_sni_cache_attach failed\n", DEBUG_TCP_ARG(iph,l4));
@@ -1253,12 +1253,12 @@ urllogger_hook_ipv6_main:
 			host_len = data_len;
 			host = tls_sni_search(data, &host_len, &needmore);
 			if (!host && needmore == 1) {
-				prev_skb = skb_copy(skb,GFP_ATOMIC);
+				prev_skb = skb_copy(skb, GFP_ATOMIC);
 				if (prev_skb) {
 					if (urllogger_sni_cache_attach6(&IPV6H->saddr, TCPH(l4)->source, &IPV6H->daddr, TCPH(l4)->dest, prev_skb, 0) != 0) {
 						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": urllogger_sni_cache_attach6 failed\n", DEBUG_TCP_ARG6(iph,l4));
 						consume_skb(prev_skb);
-						goto __urllogger_ip_skip;
+						goto __urllogger_ipv6_skip;
 					}
 				}
 				return NF_ACCEPT;
