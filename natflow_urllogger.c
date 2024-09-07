@@ -1167,6 +1167,7 @@ __urllogger_ip_skip:
 			}
 		}
 	}
+	goto out;
 
 urllogger_hook_ipv6_main:
 	iph = (void *)ipv6_hdr(skb);
