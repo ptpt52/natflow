@@ -1724,11 +1724,10 @@ static struct ctl_table urllogger_root_table[] = {
 
 static struct ctl_table_header *urllogger_table_header = NULL;
 
-static int hostacl_ctl_buffer_use = 0;
-static char *hostacl_ctl_buffer = NULL;
 static void *hostacl_start(struct seq_file *m, loff_t *pos)
 {
 	int n = 0;
+	char *hostacl_ctl_buffer = m->private;
 
 	if ((*pos) == 0) {
 		n = snprintf(hostacl_ctl_buffer,
@@ -1924,15 +1923,7 @@ static int hostacl_open(struct inode *inode, struct file *file)
 	//set nonseekable
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
-	if (hostacl_ctl_buffer_use++ == 0) {
-		hostacl_ctl_buffer = kmalloc(PAGE_SIZE, GFP_KERNEL);
-		if (hostacl_ctl_buffer == NULL) {
-			hostacl_ctl_buffer_use--;
-			return -ENOMEM;
-		}
-	}
-
-	ret = seq_open(file, &hostacl_seq_ops);
+	ret = seq_open_private(file, &hostacl_seq_ops, PAGE_SIZE);
 	if (ret)
 		return ret;
 	return 0;
@@ -1940,13 +1931,7 @@ static int hostacl_open(struct inode *inode, struct file *file)
 
 static int hostacl_release(struct inode *inode, struct file *file)
 {
-	int ret = seq_release(inode, file);
-
-	if (--hostacl_ctl_buffer_use == 0) {
-		kfree(hostacl_ctl_buffer);
-		hostacl_ctl_buffer = NULL;
-	}
-
+	int ret = seq_release_private(inode, file);
 	return ret;
 }
 

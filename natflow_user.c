@@ -2109,11 +2109,10 @@ static inline struct auth_rule_t *natflow_auth_rule_get(int idx)
 	return NULL;
 }
 
-static int natflow_user_ctl_buffer_use = 0;
-static char *natflow_user_ctl_buffer = NULL;
 static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 {
 	int n = 0;
+	char *natflow_user_ctl_buffer = m->private;
 
 	if ((*pos) == 0) {
 		n = snprintf(natflow_user_ctl_buffer,
@@ -2398,15 +2397,7 @@ static int natflow_user_open(struct inode *inode, struct file *file)
 	//set nonseekable
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
-	if (natflow_user_ctl_buffer_use++ == 0) {
-		natflow_user_ctl_buffer = kmalloc(PAGE_SIZE, GFP_KERNEL);
-		if (natflow_user_ctl_buffer == NULL) {
-			natflow_user_ctl_buffer_use--;
-			return -ENOMEM;
-		}
-	}
-
-	ret = seq_open(file, &natflow_user_seq_ops);
+	ret = seq_open_private(file, &natflow_user_seq_ops, PAGE_SIZE);
 	if (ret)
 		return ret;
 	return 0;
@@ -2414,13 +2405,7 @@ static int natflow_user_open(struct inode *inode, struct file *file)
 
 static int natflow_user_release(struct inode *inode, struct file *file)
 {
-	int ret = seq_release(inode, file);
-
-	if (--natflow_user_ctl_buffer_use == 0) {
-		kfree(natflow_user_ctl_buffer);
-		natflow_user_ctl_buffer = NULL;
-	}
-
+	int ret = seq_release_private(inode, file);
 	return ret;
 }
 
@@ -3236,11 +3221,10 @@ static inline struct qos_rule *qos_rule_get(int idx)
 	return NULL;
 }
 
-static int qos_ctl_buffer_use = 0;
-static char *qos_ctl_buffer = NULL;
 static void *qos_start(struct seq_file *m, loff_t *pos)
 {
 	int n = 0;
+	char *qos_ctl_buffer = m->private;
 
 	if ((*pos) == 0) {
 		n = snprintf(qos_ctl_buffer,
@@ -3665,15 +3649,7 @@ static int qos_open(struct inode *inode, struct file *file)
 	//set nonseekable
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
-	if (qos_ctl_buffer_use++ == 0) {
-		qos_ctl_buffer = kmalloc(PAGE_SIZE, GFP_KERNEL);
-		if (qos_ctl_buffer == NULL) {
-			qos_ctl_buffer_use--;
-			return -ENOMEM;
-		}
-	}
-
-	ret = seq_open(file, &qos_seq_ops);
+	ret = seq_open_private(file, &qos_seq_ops, PAGE_SIZE);
 	if (ret)
 		return ret;
 	return 0;
@@ -3681,13 +3657,7 @@ static int qos_open(struct inode *inode, struct file *file)
 
 static int qos_release(struct inode *inode, struct file *file)
 {
-	int ret = seq_release(inode, file);
-
-	if (--qos_ctl_buffer_use == 0) {
-		kfree(qos_ctl_buffer);
-		qos_ctl_buffer = NULL;
-	}
-
+	int ret = seq_release_private(inode, file);
 	return ret;
 }
 

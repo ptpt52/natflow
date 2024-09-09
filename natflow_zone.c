@@ -167,11 +167,10 @@ static inline struct zone_match_t *natflow_zone_match_get(int idx)
 	return NULL;
 }
 
-static int natflow_zone_ctl_buffer_use = 0;
-static char *natflow_zone_ctl_buffer = NULL;
 static void *natflow_zone_start(struct seq_file *m, loff_t *pos)
 {
 	int n = 0;
+	char *natflow_zone_ctl_buffer = m->private;
 
 	if ((*pos) == 0) {
 		n = snprintf(natflow_zone_ctl_buffer,
@@ -331,15 +330,7 @@ static int natflow_zone_open(struct inode *inode, struct file *file)
 	//set nonseekable
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
-	if (natflow_zone_ctl_buffer_use++ == 0) {
-		natflow_zone_ctl_buffer = kmalloc(PAGE_SIZE, GFP_KERNEL);
-		if (natflow_zone_ctl_buffer == NULL) {
-			natflow_zone_ctl_buffer_use--;
-			return -ENOMEM;
-		}
-	}
-
-	ret = seq_open(file, &natflow_zone_seq_ops);
+	ret = seq_open_private(file, &natflow_zone_seq_ops, PAGE_SIZE);
 	if (ret)
 		return ret;
 	return 0;
@@ -347,13 +338,7 @@ static int natflow_zone_open(struct inode *inode, struct file *file)
 
 static int natflow_zone_release(struct inode *inode, struct file *file)
 {
-	int ret = seq_release(inode, file);
-
-	if (--natflow_zone_ctl_buffer_use == 0) {
-		kfree(natflow_zone_ctl_buffer);
-		natflow_zone_ctl_buffer = NULL;
-	}
-
+	int ret = seq_release_private(inode, file);
 	return ret;
 }
 

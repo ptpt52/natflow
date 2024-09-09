@@ -54,11 +54,10 @@ const char *natflow_dev_name = "natflow_ctl";
 static struct class *natflow_class;
 static struct device *natflow_dev;
 
-static int natflow_ctl_buffer_use = 0;
-static char *natflow_ctl_buffer = NULL;
 static void *natflow_start(struct seq_file *m, loff_t *pos)
 {
 	int n = 0;
+	char *natflow_ctl_buffer = m->private;
 
 	if ((*pos) == 0) {
 		n = snprintf(natflow_ctl_buffer,
@@ -287,16 +286,7 @@ static int natflow_open(struct inode *inode, struct file *file)
 	//set nonseekable
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
-	if (natflow_ctl_buffer_use++ == 0)
-	{
-		natflow_ctl_buffer = kmalloc(PAGE_SIZE, GFP_KERNEL);
-		if (natflow_ctl_buffer == NULL) {
-			natflow_ctl_buffer_use--;
-			return -ENOMEM;
-		}
-	}
-
-	ret = seq_open(file, &natflow_seq_ops);
+	ret = seq_open_private(file, &natflow_seq_ops, PAGE_SIZE);
 	if (ret)
 		return ret;
 
@@ -305,13 +295,7 @@ static int natflow_open(struct inode *inode, struct file *file)
 
 static int natflow_release(struct inode *inode, struct file *file)
 {
-	int ret = seq_release(inode, file);
-
-	if (--natflow_ctl_buffer_use == 0) {
-		kfree(natflow_ctl_buffer);
-		natflow_ctl_buffer = NULL;
-	}
-
+	int ret = seq_release_private(inode, file);
 	return ret;
 }
 
