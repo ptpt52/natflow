@@ -1705,7 +1705,6 @@ static struct ctl_table urllogger_table[] = {
 		.mode           = S_IRUGO|S_IWUSR,
 		.proc_handler   = proc_douintvec,
 	},
-	{ }
 };
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
