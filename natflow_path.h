@@ -28,7 +28,7 @@
 extern unsigned short hwnat;
 extern unsigned short hwnat_wed_disabled;
 extern unsigned int delay_pkts;
-extern unsigned int skip_qos_to_slow_path;
+extern unsigned int go_slowpath_if_no_qos;
 
 extern void natflow_disabled_set(int v);
 extern int natflow_disabled_get(void);

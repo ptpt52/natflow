@@ -83,7 +83,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 #endif
 #endif
 		             "#    delay_pkts=%u\n"
-		             "#    skip_qos_to_slow_path=%u\n"
+		             "#    go_slowpath_if_no_qos=%u\n"
 #endif
 		             "#\n"
 		             "# Reload cmd:\n"
@@ -103,7 +103,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 #endif
 #endif
 		             delay_pkts,
-		             skip_qos_to_slow_path,
+		             go_slowpath_if_no_qos,
 		             natflow_disabled_get(),
 			     ifname_group_type,
 #endif
@@ -240,11 +240,11 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 			delay_pkts = d;
 			goto done;
 		}
-	} else if (strncmp(data, "skip_qos_to_slow_path=", 22) == 0) {
+	} else if (strncmp(data, "go_slowpath_if_no_qos=", 22) == 0) {
 		int d;
-		n = sscanf(data, "skip_qos_to_slow_path=%u", &d);
+		n = sscanf(data, "go_slowpath_if_no_qos=%u", &d);
 		if (n == 1) {
-			skip_qos_to_slow_path = d;
+			go_slowpath_if_no_qos = d;
 			goto done;
 		}
 	} else if (strncmp(data, "ifname_group_type=", 18) == 0) {
