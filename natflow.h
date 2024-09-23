@@ -25,7 +25,8 @@ typedef struct natflow_route_t {
 	unsigned short vlan_tci:12;
 	unsigned char l2_head[NF_L2_MAX_LEN];
 	unsigned short l2_head_len;
-	unsigned short ttl_in;
+	unsigned short ifname_group:2;
+	unsigned short ttl_in:14;
 	struct net_device *outdev;
 } natflow_route_t;
 

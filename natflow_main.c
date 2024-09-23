@@ -66,8 +66,8 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             "# Usage:\n"
 		             "#    disabled=Number -- set disable/enable\n"
 		             "#    debug=<num> -- set debug\n"
-		             "#    ifname_clear -- clear ifname filter\n"
-		             "#    ifname_add=<ifname> -- add ifname to filter\n"
+		             "#    ifname_group_type=<num> -- set ifname_group_type\n"
+		             "#    ifname_group_add=<ifname> -- add ifname to filter\n"
 		             "#\n"
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 		             "# Info: CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH\n"
@@ -90,6 +90,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             "\n"
 #if defined(CONFIG_NATFLOW_PATH)
 		             "disabled=%u\n"
+		             "ifname_group_type=%u\n"
 #endif
 		             "debug=%d\n"
 		             "\n",
@@ -104,6 +105,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             delay_pkts,
 		             skip_qos_to_slow_path,
 		             natflow_disabled_get(),
+			     ifname_group_type,
 #endif
 		             debug);
 		natflow_ctl_buffer[n] = 0;
@@ -111,16 +113,14 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 	}
 #if defined(CONFIG_NATFLOW_PATH)
 	else if ((*pos) > 0) {
-		struct ifname_match *im;
-		struct net_device *dev = NULL;
-
-		im = ifname_match_get((*pos) - 1, &dev);
-		if (im) {
+		struct net_device *dev = ifname_group_get((*pos) - 1);
+		if (dev) {
 			n = snprintf(natflow_ctl_buffer,
 			             PAGE_SIZE - 1,
-			             "ifname_add=%s\n",
+			             "ifname_group_add=%s\n",
 			             dev->name);
 			natflow_ctl_buffer[n] = 0;
+			dev_put(dev);
 			return natflow_ctl_buffer;
 		}
 	}
@@ -247,17 +247,21 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 			skip_qos_to_slow_path = d;
 			goto done;
 		}
-	} else if (strncmp(data, "ifname_clear", 12) == 0) {
-		ifname_match_clear();
-		goto done;
-	} else if (strncmp(data, "ifname_add=", 11) == 0) {
+	} else if (strncmp(data, "ifname_group_type=", 18) == 0) {
+		int d;
+		n = sscanf(data, "ifname_group_type=%u", &d);
+		if (n == 1) {
+			ifname_group_type = d;
+			goto done;
+		}
+	} else if (strncmp(data, "ifname_group_add=", 11) == 0) {
 		char *ifname = NULL;
 		ifname = kmalloc(2048, GFP_KERNEL);
 		if (!ifname)
 			return -ENOMEM;
-		n = sscanf(data, "ifname_add=%s\n", ifname);
+		n = sscanf(data, "ifname_group_add=%s\n", ifname);
 		if (n == 1) {
-			err = ifname_match_add(ifname);
+			err = ifname_group_add(ifname);
 			if (err == 0) {
 				kfree(ifname);
 				goto done;

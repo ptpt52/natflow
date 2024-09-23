@@ -349,12 +349,13 @@ struct ifname_match {
 };
 #define IFNAME_MATCH_MAX 64
 
-/* define IFF_PPPOE indicate pppoe dev */
+/* define IFF_PPPOE indicate pppoe dev (ref: include/uapi/linux/if.h) */
 #define IFF_PPPOE (1<<25)
+#define IFF_IFNAME_GROUP (1<<26)
 
-extern void ifname_match_clear(void);
-extern int ifname_match_add(const unsigned char *ifname);
-extern struct ifname_match *ifname_match_get(int idx, struct net_device **out_dev);
+extern int ifname_group_type;
+extern int ifname_group_add(const unsigned char *ifname);
+extern struct net_device *ifname_group_get(int idx);
 
 extern int natflow_path_init(void);
 extern void natflow_path_exit(void);

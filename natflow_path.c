@@ -41,84 +41,60 @@
 #define ARPHRD_RAWIP 519
 #endif
 
-static struct ifname_match ifname_match_fastnat[IFNAME_MATCH_MAX];
-
-static void ifname_match_init(void)
+static inline struct net_device *vlan_find_dev_rcu(struct net_device *real_dev,
+        __be16 vlan_proto, u16 vlan_id)
 {
-	ifname_match_fastnat[0].ifindex = -1;
+	if (real_dev->vlan_info)
+		return __vlan_find_dev_deep_rcu(real_dev, vlan_proto, vlan_id);
+	return NULL;
 }
 
-void ifname_match_clear(void)
-{
-	ifname_match_init();
-}
+#define fastnat_for_all 0
+#define fastnat_ifname_group_only 1
+#define fastnat_ifname_group_bypass 2
+int ifname_group_type = fastnat_for_all;
 
-int ifname_match_add(const unsigned char *ifname)
+int ifname_group_add(const unsigned char *ifname)
 {
 	int ret = -ENOENT;
 	struct net_device *dev;
+
 	rcu_read_lock();
 	dev = first_net_device(&init_net);
 	while (dev) {
 		if (strncmp(dev->name, ifname, IFNAMSIZ) == 0) {
-			int i = 0;
-			short ifindex = dev->ifindex;
-			unsigned short vlan_id = 0;
-			if (is_vlan_dev(dev)) {
-				ifindex = vlan_dev_priv(dev)->real_dev->ifindex;
-				vlan_id = vlan_dev_priv(dev)->vlan_id;
-			}
-			for (i = 0; i < IFNAME_MATCH_MAX; i++) {
-				if (ifname_match_fastnat[i].ifindex == -1)
-					break;
-				if (ifname_match_fastnat[i].ifindex == ifindex && ifname_match_fastnat[i].vlan_id == vlan_id) {
-					ret = -EEXIST;
-					goto out;
-				}
-			}
-			if (i == IFNAME_MATCH_MAX) {
-				ret = -ENOSPC;
-				goto out;
-			}
-
-			if (i + 1 < IFNAME_MATCH_MAX) {
-				ifname_match_fastnat[i + 1].ifindex = -1;
-			}
-			ifname_match_fastnat[i].ifindex = ifindex;
-			ifname_match_fastnat[i].vlan_id = vlan_id;
+			dev->flags |= IFF_IFNAME_GROUP;
+			NATFLOW_println("Success ifname_group_add %s", ifname);
 			ret = 0;
-
-			NATFLOW_println("Success add ifname_match[%d] %s (ifindex=%d vlan_id=%u)\n", i, ifname, ifindex, vlan_id);
 			break;
 		}
 		dev = next_net_device(dev);
 	}
-out:
 	rcu_read_unlock();
+
 	return ret;
 }
 
-struct ifname_match *ifname_match_get(int idx, struct net_device **out_dev)
+struct net_device *ifname_group_get(int idx)
 {
-	struct net_device *dev;
+	int idx_cnt = 0;
+	struct net_device *dev = NULL;
 
-	if (idx >= IFNAME_MATCH_MAX || ifname_match_fastnat[idx].ifindex == -1)
-		return NULL;
-
-	dev = dev_get_by_index(&init_net, ifname_match_fastnat[idx].ifindex);
-	if (!dev)
-		return NULL;
-
-	if (ifname_match_fastnat[idx].vlan_id != 0) {
-		dev = vlan_lookup_dev(dev, ifname_match_fastnat[idx].vlan_id);
-		if (dev) {
-			*out_dev = dev;
-			return &ifname_match_fastnat[idx];
+	rcu_read_lock();
+	dev = first_net_device(&init_net);
+	while (dev) {
+		if ((dev->flags & IFF_IFNAME_GROUP)) {
+			idx_cnt++;
+			if (idx_cnt == idx + 1) {
+				dev_hold(dev);
+				break;
+			}
 		}
+		dev = next_net_device(dev);
 	}
+	rcu_read_unlock();
 
-	*out_dev = dev;
-	return &ifname_match_fastnat[idx];
+	return dev;
 }
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
@@ -1032,7 +1008,14 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 					memcpy(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN, l2 + ETH_HLEN, l2_len - ETH_HLEN);
 				}
 				nf->rroute[NF_FF_DIR_REPLY].outdev = dev;
+				if ((dev->flags & IFF_IFNAME_GROUP)) {
+					nf->rroute[NF_FF_DIR_REPLY].ifname_group = 1;
+				}
 				if (skb_vlan_tag_present(skb)) {
+					struct net_device *vlan_dev = vlan_find_dev_rcu(dev, skb->vlan_proto, skb_vlan_tag_get_id(skb));
+					if (vlan_dev && (vlan_dev->flags & IFF_IFNAME_GROUP)) {
+						nf->rroute[NF_FF_DIR_REPLY].ifname_group = 1;
+					}
 					nf->rroute[NF_FF_DIR_REPLY].vlan_present = 1;
 					nf->rroute[NF_FF_DIR_REPLY].vlan_tci = skb_vlan_tag_get_id(skb);
 					if (skb->vlan_proto == htons(ETH_P_8021Q))
@@ -1060,7 +1043,14 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 					memcpy(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN, l2 + ETH_HLEN, l2_len - ETH_HLEN);
 				}
 				nf->rroute[NF_FF_DIR_ORIGINAL].outdev = dev;
+				if ((dev->flags & IFF_IFNAME_GROUP)) {
+					nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group = 1;
+				}
 				if (skb_vlan_tag_present(skb)) {
+					struct net_device *vlan_dev = vlan_find_dev_rcu(dev, skb->vlan_proto, skb_vlan_tag_get_id(skb));
+					if (vlan_dev && (vlan_dev->flags & IFF_IFNAME_GROUP)) {
+						nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group = 1;
+					}
 					nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present = 1;
 					nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci = skb_vlan_tag_get_id(skb);
 					if (skb->vlan_proto == htons(ETH_P_8021Q))
@@ -1829,33 +1819,11 @@ slow_fastpath:
 		}
 	}
 
-	/* if ifname filter enabled, do fastnat for matched ifname only */
-	if (!(nf->status & NF_FF_IFNAME_MATCH) && ifname_match_fastnat[0].ifindex != -1) {
-		int i;
-		short orig_match = 0, reply_match = 0;
-		struct ifname_match *im;
-		for (i = 0; i < IFNAME_MATCH_MAX; i++) {
-			im = &ifname_match_fastnat[i];
-			if (im->ifindex == -1)
-				break;
-			if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev->ifindex == im->ifindex &&
-			        ((nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present && nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci == im->vlan_id) ||
-			         im->vlan_id == 0)) {
-				orig_match = 1;
-			}
-			if (nf->rroute[NF_FF_DIR_REPLY].outdev->ifindex == im->ifindex &&
-			        ((nf->rroute[NF_FF_DIR_REPLY].vlan_present && nf->rroute[NF_FF_DIR_REPLY].vlan_tci == im->vlan_id) ||
-			         im->vlan_id == 0)) {
-				reply_match = 1;
-			}
-			if (orig_match && reply_match) {
-				break;
-			}
-		}
-
+	if (!(nf->status & NF_FF_IFNAME_MATCH) && ifname_group_type == fastnat_ifname_group_only) {
 		simple_set_bit(NF_FF_IFNAME_MATCH_BIT, &nf->status);
 
-		if (!(orig_match && reply_match) && !(nf->status & NF_FF_TOKEN_CTRL)) {
+		if (!(nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group == 1 && nf->rroute[NF_FF_DIR_REPLY].ifname_group == 1) &&
+		        !(nf->status & NF_FF_TOKEN_CTRL)) {
 			/* ifname not matched, skip fastnat for this conn */
 			struct nf_conn_help *help = nfct_help(ct);
 			if (help && !help->helper) {
@@ -3455,33 +3423,11 @@ slow_fastpath6:
 		}
 	}
 
-	/* if ifname filter enabled, do fastnat for matched ifname only */
-	if (!(nf->status & NF_FF_IFNAME_MATCH) && ifname_match_fastnat[0].ifindex != -1) {
-		int i;
-		short orig_match = 0, reply_match = 0;
-		struct ifname_match *im;
-		for (i = 0; i < IFNAME_MATCH_MAX; i++) {
-			im = &ifname_match_fastnat[i];
-			if (im->ifindex == -1)
-				break;
-			if (nf->rroute[NF_FF_DIR_ORIGINAL].outdev->ifindex == im->ifindex &&
-			        ((nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present && nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci == im->vlan_id) ||
-			         im->vlan_id == 0)) {
-				orig_match = 1;
-			}
-			if (nf->rroute[NF_FF_DIR_REPLY].outdev->ifindex == im->ifindex &&
-			        ((nf->rroute[NF_FF_DIR_REPLY].vlan_present && nf->rroute[NF_FF_DIR_REPLY].vlan_tci == im->vlan_id) ||
-			         im->vlan_id == 0)) {
-				reply_match = 1;
-			}
-			if (orig_match && reply_match) {
-				break;
-			}
-		}
-
+	if (!(nf->status & NF_FF_IFNAME_MATCH) && ifname_group_type == fastnat_ifname_group_only) {
 		simple_set_bit(NF_FF_IFNAME_MATCH_BIT, &nf->status);
 
-		if (!(orig_match && reply_match) && !(nf->status & NF_FF_TOKEN_CTRL)) {
+		if (!(nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group == 1 && nf->rroute[NF_FF_DIR_REPLY].ifname_group == 1) &&
+		        !(nf->status & NF_FF_TOKEN_CTRL)) {
 			/* ifname not matched, skip fastnat for this conn */
 			struct nf_conn_help *help = nfct_help(ct);
 			if (help && !help->helper) {
@@ -4841,7 +4787,6 @@ int natflow_path_init(void)
 
 	need_conntrack();
 	natflow_update_magic(1);
-	ifname_match_init();
 
 	register_netdevice_notifier(&natflow_netdev_notifier);
 
