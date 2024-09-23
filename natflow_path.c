@@ -75,6 +75,21 @@ int ifname_group_add(const unsigned char *ifname)
 	return ret;
 }
 
+void ifname_group_clear(void)
+{
+	struct net_device *dev = NULL;
+
+	rcu_read_lock();
+	dev = first_net_device(&init_net);
+	while (dev) {
+		if ((dev->flags & IFF_IFNAME_GROUP)) {
+			dev->flags &= ~IFF_IFNAME_GROUP;
+		}
+		dev = next_net_device(dev);
+	}
+	rcu_read_unlock();
+}
+
 struct net_device *ifname_group_get(int idx)
 {
 	int idx_cnt = 0;

@@ -254,7 +254,10 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 			ifname_group_type = d;
 			goto done;
 		}
-	} else if (strncmp(data, "ifname_group_add=", 11) == 0) {
+	} else if (strncmp(data, "ifname_group_clear", 18) == 0) {
+		ifname_group_clear();
+		goto done;
+	} else if (strncmp(data, "ifname_group_add=", 17) == 0) {
 		char *ifname = NULL;
 		ifname = kmalloc(2048, GFP_KERNEL);
 		if (!ifname)

@@ -343,17 +343,12 @@ static inline struct net_device *get_macvlan_real_dev(struct net_device *dev)
 
 void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir);
 
-struct ifname_match {
-	short ifindex;
-	unsigned short vlan_id;
-};
-#define IFNAME_MATCH_MAX 64
-
 /* define IFF_PPPOE indicate pppoe dev (ref: include/uapi/linux/if.h) */
 #define IFF_PPPOE (1<<25)
 #define IFF_IFNAME_GROUP (1<<26)
 
 extern int ifname_group_type;
+extern void ifname_group_clear(void);
 extern int ifname_group_add(const unsigned char *ifname);
 extern struct net_device *ifname_group_get(int idx);
 
