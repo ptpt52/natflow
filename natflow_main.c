@@ -105,7 +105,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             delay_pkts,
 		             go_slowpath_if_no_qos,
 		             natflow_disabled_get(),
-			     ifname_group_type,
+		             ifname_group_type,
 #endif
 		             debug);
 		natflow_ctl_buffer[n] = 0;

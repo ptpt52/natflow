@@ -1834,51 +1834,58 @@ slow_fastpath:
 		}
 	}
 
-	if (!(nf->status & NF_FF_IFNAME_MATCH) && ifname_group_type == fastnat_ifname_group_only) {
-		simple_set_bit(NF_FF_IFNAME_MATCH_BIT, &nf->status);
+	if (!(nf->status & NF_FF_TOKEN_CTRL)) {
+		if (ifname_group_type != fastnat_for_all && !simple_test_and_set_bit(NF_FF_IFNAME_MATCH_BIT, &nf->status)) {
+			if (
+			    (ifname_group_type == fastnat_ifname_group_only &&
+			     !(nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group == 1 &&
+			       nf->rroute[NF_FF_DIR_REPLY].ifname_group == 1))
+			    ||
+			    (ifname_group_type == fastnat_ifname_group_bypass &&
+			     (nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group == 1 &&
+			      nf->rroute[NF_FF_DIR_REPLY].ifname_group == 1))
+			) {
+				/* ifname not matched, skip fastnat for this conn */
+				struct nf_conn_help *help = nfct_help(ct);
+				if (help && !help->helper) {
+					/* this conn do not need helper, clear it for nss */
+					ct->ext->offset[NF_CT_EXT_HELPER] = 0;
+				}
 
-		if (!(nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group == 1 && nf->rroute[NF_FF_DIR_REPLY].ifname_group == 1) &&
-		        !(nf->status & NF_FF_TOKEN_CTRL)) {
-			/* ifname not matched, skip fastnat for this conn */
+				switch (iph->protocol) {
+				case IPPROTO_TCP:
+					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) go slowpath\n",
+					             DEBUG_TCP_ARG(iph,l4),
+					             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
+					             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
+					             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
+					             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) go slowpath\n",
+					             DEBUG_UDP_ARG(iph,l4),
+					             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
+					             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
+					             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
+					             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
+					break;
+				}
+				set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
+				goto out;
+			}
+
+			simple_set_bit(NF_FF_FORCE_FASTNAT_BIT, &nf->status);
+		}
+
+		if (go_slowpath_if_no_qos && !(nf->status & NF_FF_FORCE_FASTNAT)) {
 			struct nf_conn_help *help = nfct_help(ct);
 			if (help && !help->helper) {
 				/* this conn do not need helper, clear it for nss */
 				ct->ext->offset[NF_CT_EXT_HELPER] = 0;
 			}
-
-			switch (iph->protocol) {
-			case IPPROTO_TCP:
-				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) not matched\n",
-				             DEBUG_TCP_ARG(iph,l4),
-				             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
-				             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
-				             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
-				             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
-				break;
-			case IPPROTO_UDP:
-				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) not matched\n",
-				             DEBUG_UDP_ARG(iph,l4),
-				             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
-				             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
-				             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
-				             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
-				break;
-			}
 			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
 			goto out;
 		}
-
-		simple_set_bit(NF_FF_IFNAME_FILTER_BIT, &nf->status);
-	}
-
-	if (go_slowpath_if_no_qos && !(nf->status & NF_FF_TOKEN_CTRL) && !(nf->status & NF_FF_IFNAME_FILTER)) {
-		struct nf_conn_help *help = nfct_help(ct);
-		if (help && !help->helper) {
-			/* this conn do not need helper, clear it for nss */
-			ct->ext->offset[NF_CT_EXT_HELPER] = 0;
-		}
-		set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
-		goto out;
 	}
 
 	/* skip for defrag-skb or large packets */
@@ -3438,51 +3445,58 @@ slow_fastpath6:
 		}
 	}
 
-	if (!(nf->status & NF_FF_IFNAME_MATCH) && ifname_group_type == fastnat_ifname_group_only) {
-		simple_set_bit(NF_FF_IFNAME_MATCH_BIT, &nf->status);
+	if (!(nf->status & NF_FF_TOKEN_CTRL)) {
+		if (ifname_group_type != fastnat_for_all && !simple_test_and_set_bit(NF_FF_IFNAME_MATCH_BIT, &nf->status)) {
+			if (
+			    (ifname_group_type == fastnat_ifname_group_only &&
+			     !(nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group == 1 &&
+			       nf->rroute[NF_FF_DIR_REPLY].ifname_group == 1))
+			    ||
+			    (ifname_group_type == fastnat_ifname_group_bypass &&
+			     (nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group == 1 &&
+			      nf->rroute[NF_FF_DIR_REPLY].ifname_group == 1))
+			) {
+				/* ifname not matched, skip fastnat for this conn */
+				struct nf_conn_help *help = nfct_help(ct);
+				if (help && !help->helper) {
+					/* this conn do not need helper, clear it for nss */
+					ct->ext->offset[NF_CT_EXT_HELPER] = 0;
+				}
 
-		if (!(nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group == 1 && nf->rroute[NF_FF_DIR_REPLY].ifname_group == 1) &&
-		        !(nf->status & NF_FF_TOKEN_CTRL)) {
-			/* ifname not matched, skip fastnat for this conn */
+				switch (IPV6H->nexthdr) {
+				case IPPROTO_TCP:
+					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6 ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) not matched\n",
+					             DEBUG_TCP_ARG6(iph,l4),
+					             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
+					             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
+					             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
+					             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
+					break;
+				case IPPROTO_UDP:
+					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6 ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) not matched\n",
+					             DEBUG_UDP_ARG6(iph,l4),
+					             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
+					             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
+					             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
+					             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
+					break;
+				}
+				set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
+				goto out6;
+			}
+
+			simple_set_bit(NF_FF_FORCE_FASTNAT_BIT, &nf->status);
+		}
+
+		if (go_slowpath_if_no_qos && !(nf->status & NF_FF_FORCE_FASTNAT)) {
 			struct nf_conn_help *help = nfct_help(ct);
 			if (help && !help->helper) {
 				/* this conn do not need helper, clear it for nss */
 				ct->ext->offset[NF_CT_EXT_HELPER] = 0;
 			}
-
-			switch (IPV6H->nexthdr) {
-			case IPPROTO_TCP:
-				NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6 ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) not matched\n",
-				             DEBUG_TCP_ARG6(iph,l4),
-				             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
-				             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
-				             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
-				             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
-				break;
-			case IPPROTO_UDP:
-				NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6 ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) not matched\n",
-				             DEBUG_UDP_ARG6(iph,l4),
-				             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
-				             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
-				             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
-				             nf->rroute[NF_FF_DIR_REPLY].vlan_present ? (int)nf->rroute[NF_FF_DIR_REPLY].vlan_tci : -1);
-				break;
-			}
 			set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
 			goto out6;
 		}
-
-		simple_set_bit(NF_FF_IFNAME_FILTER_BIT, &nf->status);
-	}
-
-	if (go_slowpath_if_no_qos && !(nf->status & NF_FF_TOKEN_CTRL) && !(nf->status & NF_FF_IFNAME_FILTER)) {
-		struct nf_conn_help *help = nfct_help(ct);
-		if (help && !help->helper) {
-			/* this conn do not need helper, clear it for nss */
-			ct->ext->offset[NF_CT_EXT_HELPER] = 0;
-		}
-		set_bit(IPS_NATFLOW_FF_STOP_BIT, &ct->status);
-		goto out6;
 	}
 
 	/* skip for defrag-skb or large packets */
