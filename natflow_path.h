@@ -346,11 +346,25 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 /* define IFF_PPPOE indicate pppoe dev (ref: include/uapi/linux/if.h) */
 #define IFF_PPPOE (1<<25)
 #define IFF_IFNAME_GROUP (1<<26)
+#define IFF_VLINE_L2_PORT (1<<27)
+#define IFF_VLINE_FAMILY_IPV4 (1<<28)
+#define IFF_VLINE_FAMILY_IPV6 (1<<29)
 
 extern int ifname_group_type;
 extern void ifname_group_clear(void);
 extern int ifname_group_add(const unsigned char *ifname);
 extern struct net_device *ifname_group_get(int idx);
+
+#define VLINE_L3_PORT 0
+#define VLINE_L2_PORT 1
+extern unsigned char (*vline_fwd_map_get(unsigned int idx, unsigned char *family))[2][IFNAMSIZ];
+extern int vline_fwd_map_config_add(const unsigned char *dst_ifname, const unsigned char *src_ifname, unsigned char family);
+extern void vline_fwd_map_config_clear(void);
+extern int vline_fwd_map_config_apply(void);
+
+#define VLINE_FAMILY_ALL 0
+#define VLINE_FAMILY_IPV4 1
+#define VLINE_FAMILY_IPV6 2
 
 extern int natflow_path_init(void);
 extern void natflow_path_exit(void);

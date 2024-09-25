@@ -58,16 +58,25 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 {
 	int n = 0;
 	char *natflow_ctl_buffer = m->private;
+#if defined(CONFIG_NATFLOW_PATH)
+	unsigned long *lpos = (unsigned long *)natflow_ctl_buffer;
+#endif
+
+	natflow_ctl_buffer = natflow_ctl_buffer + sizeof(unsigned long);
 
 	if ((*pos) == 0) {
 		n = snprintf(natflow_ctl_buffer,
-		             PAGE_SIZE - 1,
+		             PAGE_SIZE - 1 - sizeof(unsigned long),
 		             "# Version: %s\n"
 		             "# Usage:\n"
 		             "#    disabled=Number -- set disable/enable\n"
 		             "#    debug=<num> -- set debug\n"
 		             "#    ifname_group_type=<num> -- set ifname_group_type\n"
+		             "#    ifname_group_clear -- clear all ifname_group\n"
 		             "#    ifname_group_add=<ifname> -- add ifname to filter\n"
+		             "#    vline_clear -- clear vline\n"
+		             "#    vline_add=<ifname>,<ifname>,<family> -- add vline <family>=ipv4/ipv6/all\n"
+		             "#    vline_apply -- apply vline config\n"
 		             "#\n"
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
 		             "# Info: CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH\n"
@@ -115,13 +124,28 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 	else if ((*pos) > 0) {
 		struct net_device *dev = ifname_group_get((*pos) - 1);
 		if (dev) {
+			*lpos = (*pos);
 			n = snprintf(natflow_ctl_buffer,
-			             PAGE_SIZE - 1,
+			             PAGE_SIZE - 1 - sizeof(unsigned long),
 			             "ifname_group_add=%s\n",
 			             dev->name);
 			natflow_ctl_buffer[n] = 0;
 			dev_put(dev);
 			return natflow_ctl_buffer;
+		} else {
+			unsigned char family = 0;
+			unsigned char (*ptr)[2][IFNAMSIZ];
+			if (*pos == 1)
+				*lpos = 0;
+			ptr = vline_fwd_map_get((*pos) - (*lpos) - 1, &family);
+			if (ptr) {
+				n = snprintf(natflow_ctl_buffer,
+				             PAGE_SIZE - 1 - sizeof(unsigned long),
+				             "vline_add=%s,%s,%s\n",
+				             (*ptr)[0], (*ptr)[1], family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
+				natflow_ctl_buffer[n] = 0;
+				return natflow_ctl_buffer;
+			}
 		}
 	}
 #endif
@@ -271,6 +295,34 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 			}
 		}
 		kfree(ifname);
+	} else if (strncmp(data, "vline_clear", 11) == 0) {
+		vline_fwd_map_config_clear();
+		goto done;
+	} else if (strncmp(data, "vline_add=", 10) == 0) {
+		char str[3][16];
+		n = sscanf(data, "vline_add=%15[^,],%15[^,],%4[^,]\n", str[0], str[1], str[2]);
+		if (n == 3) {
+			unsigned char family = 255;
+			if ((memcmp(str[2], "ipv4", 5) == 0)) {
+				family = VLINE_FAMILY_IPV4;
+			} else if ((memcmp(str[2], "ipv6", 5) == 0)) {
+				family = VLINE_FAMILY_IPV6;
+			} else if ((memcmp(str[2], "all", 4) == 0)) {
+				family = VLINE_FAMILY_ALL;
+			}
+			if (family != 255) {
+				err = vline_fwd_map_config_add(str[0], str[1], family);
+				if (err == 0) {
+					goto done;
+				}
+			}
+			err = -EINVAL;
+		}
+	} else if (strncmp(data, "vline_apply", 11) == 0) {
+		err = vline_fwd_map_config_apply();
+		if (err == 0) {
+			goto done;
+		}
 	} else if (strncmp(data, "update_magic", 12) == 0) {
 		natflow_update_magic(0);
 		goto done;

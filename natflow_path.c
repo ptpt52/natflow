@@ -41,6 +41,202 @@
 #define ARPHRD_RAWIP 519
 #endif
 
+#define VLINE_FWD_MAX_NUM 64
+#define VLINE_FWD_MAP_CONFIG_NUM 8
+static struct net_device *vline_fwd_map[VLINE_FWD_MAX_NUM];
+static unsigned char vline_fwd_map_config[VLINE_FWD_MAP_CONFIG_NUM][2][IFNAMSIZ];
+static unsigned char vline_fwd_map_family_config[VLINE_FWD_MAP_CONFIG_NUM];
+
+unsigned char (*vline_fwd_map_get(unsigned int idx, unsigned char *family))[2][IFNAMSIZ]
+{
+	if  (idx >= VLINE_FWD_MAP_CONFIG_NUM || vline_fwd_map_config[idx][0][0] == 0)
+		return NULL;
+	*family = vline_fwd_map_family_config[idx];
+	return &vline_fwd_map_config[idx];
+}
+
+int vline_fwd_map_config_add(const unsigned char *dst_ifname, const unsigned char *src_ifname, unsigned char family)
+{
+	int i;
+	for (i = 0; i < VLINE_FWD_MAP_CONFIG_NUM; i++) {
+		if (vline_fwd_map_config[i][0][0] == 0) {
+			strncpy(vline_fwd_map_config[i][0], src_ifname, IFNAMSIZ);
+			strncpy(vline_fwd_map_config[i][1], dst_ifname, IFNAMSIZ);
+			vline_fwd_map_family_config[i] = family;
+			return 0;
+		}
+	}
+	return -ENOMEM;
+}
+
+void vline_fwd_map_config_clear(void)
+{
+	int i;
+	for (i = 0; i < VLINE_FWD_MAP_CONFIG_NUM; i++) {
+		vline_fwd_map_config[i][0][0] = 0;
+	}
+}
+
+static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsigned char *src_ifname, unsigned char family)
+{
+	struct net_device *dev;
+	struct net_device *dst_dev = NULL, *src_dev = NULL;
+
+	rcu_read_lock();
+	dev = first_net_device(&init_net);
+	while (dev) {
+		if (strncmp(dev->name, dst_ifname, IFNAMSIZ) == 0) {
+			if (netdev_master_upper_dev_get_rcu(dev)) {
+				rcu_read_unlock();
+				NATFLOW_println("vline config invalid %s,%s,%s",
+				                dst_ifname, src_ifname,
+				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
+				return -EINVAL;
+			}
+			dst_dev = dev;
+		} else if (strncmp(dev->name, src_ifname, IFNAMSIZ) == 0) {
+			if (netdev_master_upper_dev_get_rcu(dev)) {
+				rcu_read_unlock();
+				NATFLOW_println("vline config invalid %s,%s,%s",
+				                src_ifname, dst_ifname,
+				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
+				return -EINVAL;
+			}
+			src_dev = dev;
+		}
+		if (src_dev && dst_dev) {
+			break;
+		}
+		dev = next_net_device(dev);
+	}
+
+	if (src_dev && dst_dev) {
+		if (family == VLINE_FAMILY_IPV4) {
+			src_dev->flags &= ~IFF_VLINE_FAMILY_IPV6;
+			src_dev->flags |= IFF_VLINE_FAMILY_IPV4;
+			dst_dev->flags &= ~IFF_VLINE_FAMILY_IPV6;
+			dst_dev->flags |= IFF_VLINE_FAMILY_IPV4;
+		} else if (family == VLINE_FAMILY_IPV6) {
+			src_dev->flags &= ~IFF_VLINE_FAMILY_IPV4;
+			src_dev->flags |= IFF_VLINE_FAMILY_IPV6;
+			dst_dev->flags &= ~IFF_VLINE_FAMILY_IPV4;
+			dst_dev->flags |= IFF_VLINE_FAMILY_IPV6;
+		} else {
+			src_dev->flags &= ~(IFF_VLINE_FAMILY_IPV4 | IFF_VLINE_FAMILY_IPV6);
+			dst_dev->flags &= ~(IFF_VLINE_FAMILY_IPV4 | IFF_VLINE_FAMILY_IPV6);
+		}
+
+		if (netif_is_bridge_master(src_dev)) {
+			struct net_device *upper_dev;
+			dev = first_net_device(&init_net);
+			while (dev) {
+				upper_dev = netdev_master_upper_dev_get_rcu(dev);
+				if (upper_dev == src_dev) {
+					dev->flags |= IFF_VLINE_L2_PORT;
+					if (family == VLINE_FAMILY_IPV4) {
+						dev->flags &= ~IFF_VLINE_FAMILY_IPV6;
+						dev->flags |= IFF_VLINE_FAMILY_IPV4;
+					} else if (family == VLINE_FAMILY_IPV6) {
+						dev->flags &= ~IFF_VLINE_FAMILY_IPV4;
+						dev->flags |= IFF_VLINE_FAMILY_IPV6;
+					} else {
+						dev->flags &= ~(IFF_VLINE_FAMILY_IPV4 | IFF_VLINE_FAMILY_IPV6);
+					}
+					vline_fwd_map[dev->ifindex] = dst_dev;
+					NATFLOW_println("update %s(%s)->%s", dev->name, src_dev->name, dst_dev->name);
+				}
+				dev = next_net_device(dev);
+			}
+		} else {
+			src_dev->flags &= ~IFF_VLINE_L2_PORT;
+			vline_fwd_map[src_dev->ifindex] = dst_dev;
+			NATFLOW_println("update %s->%s", src_dev->name, dst_dev->name);
+		}
+
+		if (netif_is_bridge_master(dst_dev)) {
+			struct net_device *upper_dev;
+			dev = first_net_device(&init_net);
+			while (dev) {
+				upper_dev = netdev_master_upper_dev_get_rcu(dev);
+				if (upper_dev == dst_dev) {
+					dev->flags |= IFF_VLINE_L2_PORT;
+					if (family == VLINE_FAMILY_IPV4) {
+						dev->flags &= ~IFF_VLINE_FAMILY_IPV6;
+						dev->flags |= IFF_VLINE_FAMILY_IPV4;
+					} else if (family == VLINE_FAMILY_IPV6) {
+						dev->flags &= ~IFF_VLINE_FAMILY_IPV4;
+						dev->flags |= IFF_VLINE_FAMILY_IPV6;
+					} else {
+						dev->flags &= ~(IFF_VLINE_FAMILY_IPV4 | IFF_VLINE_FAMILY_IPV6);
+					}
+					vline_fwd_map[dev->ifindex] = src_dev;
+					NATFLOW_println("update %s(%s)->%s", dev->name, dst_dev->name, src_dev->name);
+				}
+				dev = next_net_device(dev);
+			}
+		} else {
+			dst_dev->flags &= ~IFF_VLINE_L2_PORT;
+			vline_fwd_map[dst_dev->ifindex] = src_dev;
+			NATFLOW_println("update %s->%s", dst_dev->name, src_dev->name);
+		}
+	}
+	rcu_read_unlock();
+
+	return 0;
+}
+
+int vline_fwd_map_config_apply(void)
+{
+	int i;
+	int err = 0;
+	for (i = 0; i < VLINE_FWD_MAX_NUM; i++) {
+		vline_fwd_map[i] = NULL;
+	}
+	NATFLOW_println("apply config");
+	for (i = 0; i < VLINE_FWD_MAP_CONFIG_NUM; i++) {
+		if (vline_fwd_map_config[i][0][0] == 0) {
+			break;
+		}
+		err = vline_fwd_map_add(vline_fwd_map_config[i][0], vline_fwd_map_config[i][1], vline_fwd_map_family_config[i]);
+		if (err != 0)
+			return err;
+	}
+	return 0;
+}
+
+static inline int vline_fwd_map_ifup_handle(struct net_device *dev)
+{
+	int i;
+	struct net_device *upper_dev;
+
+	/*
+	if (netif_is_bridge_master(dev) || netif_is_bond_master(dev) || netif_is_team_master(dev) || netif_is_ovs_master(dev)) {
+		return -EINVAL;
+	}
+	*/
+
+	NATFLOW_println("handle event for dev=%s", dev->name);
+	rcu_read_lock();
+	upper_dev = netdev_master_upper_dev_get_rcu(dev);
+	for (i = 0; i < VLINE_FWD_MAP_CONFIG_NUM; i++) {
+		if (upper_dev) {
+			if (strncmp(upper_dev->name, vline_fwd_map_config[i][0], IFNAMSIZ) == 0 ||
+			        strncmp(upper_dev->name, vline_fwd_map_config[i][1], IFNAMSIZ) == 0) {
+				rcu_read_unlock();
+				return vline_fwd_map_add(vline_fwd_map_config[i][0], vline_fwd_map_config[i][1], vline_fwd_map_family_config[i]);
+			}
+		}
+		if (strncmp(dev->name, vline_fwd_map_config[i][0], IFNAMSIZ) == 0 ||
+		        strncmp(dev->name, vline_fwd_map_config[i][1], IFNAMSIZ) == 0) {
+			rcu_read_unlock();
+			return vline_fwd_map_add(vline_fwd_map_config[i][0], vline_fwd_map_config[i][1], vline_fwd_map_family_config[i]);
+		}
+	}
+	rcu_read_unlock();
+
+	return 0;
+}
+
 static inline struct net_device *vlan_find_dev_rcu(struct net_device *real_dev,
         __be16 vlan_proto, u16 vlan_id)
 {
@@ -4824,6 +5020,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 			                !!(vlan_features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)));
 			natflow_check_device(dev);
 		}
+		vline_fwd_map_ifup_handle(dev);
 		return NOTIFY_DONE;
 	}
 #endif
@@ -4864,6 +5061,7 @@ int natflow_path_init(void)
 	}
 #endif
 
+	vline_fwd_map_config_clear();
 	need_conntrack();
 	natflow_update_magic(1);
 
