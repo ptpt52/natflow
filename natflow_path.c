@@ -3060,6 +3060,17 @@ out:
 					return ret;
 				}
 
+				if (skb->dev->type != ARPHRD_RAWIP) {
+					if ((skb->dev->flags & IFF_VLINE_L2_PORT)) {
+						struct net_device *upper_dev = netdev_master_upper_dev_get_rcu(skb->dev);
+						if (upper_dev && ether_addr_equal(upper_dev->dev_addr, eth_hdr(skb)->h_dest)) {
+							return  ret;
+						}
+					} else if (ether_addr_equal(skb->dev->dev_addr, eth_hdr(skb)->h_dest)) {
+						return ret;
+					}
+				}
+
 				ret = nf_conntrack_confirm(skb);
 				if (ret != NF_ACCEPT) {
 					return ret;
@@ -4714,6 +4725,17 @@ out6:
 					skb->dev = vline_fwd_map[skb->dev->ifindex];
 					dev_queue_xmit(skb);
 					return ret;
+				}
+
+				if (skb->dev->type != ARPHRD_RAWIP) {
+					if ((skb->dev->flags & IFF_VLINE_L2_PORT)) {
+						struct net_device *upper_dev = netdev_master_upper_dev_get_rcu(skb->dev);
+						if (upper_dev && ether_addr_equal(upper_dev->dev_addr, eth_hdr(skb)->h_dest)) {
+							return  ret;
+						}
+					} else if (ether_addr_equal(skb->dev->dev_addr, eth_hdr(skb)->h_dest)) {
+						return ret;
+					}
 				}
 
 				ret = nf_conntrack_confirm(skb);
