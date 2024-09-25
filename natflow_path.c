@@ -142,6 +142,11 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 					} else {
 						dev->flags &= ~(IFF_VLINE_FAMILY_IPV4 | IFF_VLINE_FAMILY_IPV6);
 					}
+					if (dev->ifindex >= VLINE_FWD_MAX_NUM) {
+						NATFLOW_println("update %s(%s)->%s failed, ifindex(%u) >= %u", dev->name, src_dev->name, dst_dev->name, dev->ifindex, VLINE_FWD_MAX_NUM);
+						rcu_read_unlock();
+						return -EINVAL;
+					}
 					vline_fwd_map[dev->ifindex] = dst_dev;
 					NATFLOW_println("update %s(%s)->%s", dev->name, src_dev->name, dst_dev->name);
 				}
@@ -149,6 +154,11 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 			}
 		} else {
 			src_dev->flags &= ~IFF_VLINE_L2_PORT;
+			if (src_dev->ifindex >= VLINE_FWD_MAX_NUM) {
+				NATFLOW_println("update %s->%s failed, ifindex(%u) >= %u", src_dev->name, dst_dev->name, src_dev->ifindex, VLINE_FWD_MAX_NUM);
+				rcu_read_unlock();
+				return -EINVAL;
+			}
 			vline_fwd_map[src_dev->ifindex] = dst_dev;
 			NATFLOW_println("update %s->%s", src_dev->name, dst_dev->name);
 		}
@@ -169,6 +179,11 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 					} else {
 						dev->flags &= ~(IFF_VLINE_FAMILY_IPV4 | IFF_VLINE_FAMILY_IPV6);
 					}
+					if (dev->ifindex >= VLINE_FWD_MAX_NUM) {
+						NATFLOW_println("update %s(%s)->%s failed, ifindex(%u) >= %u", dev->name, dst_dev->name, src_dev->name, dev->ifindex, VLINE_FWD_MAX_NUM);
+						rcu_read_unlock();
+						return -EINVAL;
+					}
 					vline_fwd_map[dev->ifindex] = src_dev;
 					NATFLOW_println("update %s(%s)->%s", dev->name, dst_dev->name, src_dev->name);
 				}
@@ -176,6 +191,11 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 			}
 		} else {
 			dst_dev->flags &= ~IFF_VLINE_L2_PORT;
+			if (dst_dev->ifindex >= VLINE_FWD_MAX_NUM) {
+				NATFLOW_println("update %s->%s failed, ifindex(%u) >= %u", dst_dev->name, src_dev->name, dst_dev->ifindex, VLINE_FWD_MAX_NUM);
+				rcu_read_unlock();
+				return -EINVAL;
+			}
 			vline_fwd_map[dst_dev->ifindex] = src_dev;
 			NATFLOW_println("update %s->%s", dst_dev->name, src_dev->name);
 		}
