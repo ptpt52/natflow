@@ -5082,6 +5082,7 @@ int natflow_path_init(void)
 #endif
 
 	vline_fwd_map_config_clear();
+	vline_fwd_map_config_apply();
 	need_conntrack();
 	natflow_update_magic(1);
 
