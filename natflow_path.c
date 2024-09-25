@@ -1452,19 +1452,15 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		}
 #endif
 
-		if (unlikely(nf_ct_get(skb, &ctinfo) != NULL)) {
-			goto out;
-		}
-
-		if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
-			goto out;
-		}
 		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
 		        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
 			ingress_pad_len = PPPOE_SES_HLEN;
 		} else if (skb->protocol == __constant_htons(ETH_P_IP)) {
 			ingress_pad_len = 0;
 		} else {
+			if (skb->protocol == __constant_htons(ETH_P_ARP)) {
+				goto out;
+			}
 			/* XXX: deliver ipv6 pkts to __hook_ipv6_main */
 			if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
 			        pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
@@ -1472,7 +1468,14 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			} else if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
 				goto __hook_ipv6_main;
 			}
-			goto out;
+
+			if (unlikely(nf_ct_get(skb, &ctinfo) != NULL)) {
+				goto out6;
+			}
+
+			if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
+				goto out6;
+			}
 		}
 
 		if (ingress_pad_len > 0) {
@@ -1481,6 +1484,14 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			}
 			skb_pull_rcsum(skb, ingress_pad_len);
 			skb->network_header += ingress_pad_len;
+		}
+
+		if (unlikely(nf_ct_get(skb, &ctinfo) != NULL)) {
+			goto out;
+		}
+
+		if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
+			goto out;
 		}
 
 		if (!pskb_may_pull(skb, sizeof(struct iphdr))) {
@@ -3035,20 +3046,20 @@ out:
 
 		//XXXXXXXX
 		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && vline_fwd_map[skb->dev->ifindex] != NULL) {
-			if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST ||
-			        skb->protocol == __constant_htons(ETH_P_ARP)) {
-				skb = skb_clone(skb, GFP_ATOMIC);
-				if (!skb) {
+			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV6)) {
+				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST ||
+				        skb->protocol == __constant_htons(ETH_P_ARP)) {
+					skb = skb_clone(skb, GFP_ATOMIC);
+					if (!skb) {
+						return ret;
+					}
+					skb_push(skb, ETH_HLEN);
+					skb_reset_mac_header(skb);
+					skb->dev = vline_fwd_map[skb->dev->ifindex];
+					dev_queue_xmit(skb);
 					return ret;
 				}
-				skb_push(skb, ETH_HLEN);
-				skb_reset_mac_header(skb);
-				skb->dev = vline_fwd_map[skb->dev->ifindex];
-				dev_queue_xmit(skb);
-				return ret;
-			}
 
-			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV6)) {
 				ret = nf_conntrack_confirm(skb);
 				if (ret != NF_ACCEPT) {
 					return ret;
@@ -4693,6 +4704,18 @@ out6:
 		//XXXXXXXX
 		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && vline_fwd_map[skb->dev->ifindex] != NULL) {
 			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV4)) {
+				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
+					skb = skb_clone(skb, GFP_ATOMIC);
+					if (!skb) {
+						return ret;
+					}
+					skb_push(skb, ETH_HLEN);
+					skb_reset_mac_header(skb);
+					skb->dev = vline_fwd_map[skb->dev->ifindex];
+					dev_queue_xmit(skb);
+					return ret;
+				}
+
 				ret = nf_conntrack_confirm(skb);
 				if (ret != NF_ACCEPT) {
 					return ret;
