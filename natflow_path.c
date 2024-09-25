@@ -1452,11 +1452,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		}
 #endif
 
-		if (unlikely(nf_ct_get(skb, &ctinfo) != NULL))
-			return NF_ACCEPT;
+		if (unlikely(nf_ct_get(skb, &ctinfo) != NULL)) {
+			goto out;
+		}
 
 		if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
-			return NF_ACCEPT;
+			goto out;
 		}
 		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
 		        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
@@ -1471,7 +1472,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			} else if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
 				goto __hook_ipv6_main;
 			}
-			return NF_ACCEPT;
+			goto out;
 		}
 
 		if (ingress_pad_len > 0) {
@@ -3030,6 +3031,57 @@ out:
 		}
 		if (ingress_trim_off) {
 			skb->len += ingress_trim_off;
+		}
+
+		//XXXXXXXX
+		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && vline_fwd_map[skb->dev->ifindex] != NULL) {
+			if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST ||
+			        skb->protocol == __constant_htons(ETH_P_ARP)) {
+				skb = skb_clone(skb, GFP_ATOMIC);
+				if (!skb) {
+					return ret;
+				}
+				skb_push(skb, ETH_HLEN);
+				skb_reset_mac_header(skb);
+				skb->dev = vline_fwd_map[skb->dev->ifindex];
+				dev_queue_xmit(skb);
+				return ret;
+			}
+
+			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV6)) {
+				ret = nf_conntrack_confirm(skb);
+				if (ret != NF_ACCEPT) {
+					return ret;
+				}
+
+				ct = nf_ct_get(skb, &ctinfo);
+				if (ct) {
+					unsigned int mtu;
+					dir = CTINFO2DIR(ctinfo);
+					nf = natflow_session_get(ct);
+					if (nf) {
+						if (!(nf->status & (NF_FF_BRIDGE | NF_FF_ROUTE))) {
+							simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+						}
+						if (skb_dst(skb)) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+							mtu = ip_skb_dst_mtu(skb);
+#else
+							mtu = ip_skb_dst_mtu(NULL, skb);
+#endif
+							if (nf->rroute[dir].mtu != mtu) {
+								nf->rroute[dir].mtu = mtu;
+							}
+						}
+					}
+				}
+
+				skb_push(skb, ETH_HLEN);
+				skb_reset_mac_header(skb);
+				skb->dev = vline_fwd_map[skb->dev->ifindex];
+				dev_queue_xmit(skb);
+				return NF_STOLEN;
+			}
 		}
 	}
 #else
@@ -4636,6 +4688,44 @@ out6:
 		}
 		if (ingress_trim_off) {
 			skb->len += ingress_trim_off;
+		}
+
+		//XXXXXXXX
+		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && vline_fwd_map[skb->dev->ifindex] != NULL) {
+			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV4)) {
+				ret = nf_conntrack_confirm(skb);
+				if (ret != NF_ACCEPT) {
+					return ret;
+				}
+
+				ct = nf_ct_get(skb, &ctinfo);
+				if (ct) {
+					unsigned int mtu;
+					dir = CTINFO2DIR(ctinfo);
+					nf = natflow_session_get(ct);
+					if (nf) {
+						if (!(nf->status & (NF_FF_BRIDGE | NF_FF_ROUTE))) {
+							simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+						}
+						if (skb_dst(skb)) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+							mtu = ip_skb_dst_mtu(skb);
+#else
+							mtu = ip_skb_dst_mtu(NULL, skb);
+#endif
+							if (nf->rroute[dir].mtu != mtu) {
+								nf->rroute[dir].mtu = mtu;
+							}
+						}
+					}
+				}
+
+				skb_push(skb, ETH_HLEN);
+				skb_reset_mac_header(skb);
+				skb->dev = vline_fwd_map[skb->dev->ifindex];
+				dev_queue_xmit(skb);
+				return NF_STOLEN;
+			}
 		}
 	}
 #else
