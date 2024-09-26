@@ -93,11 +93,25 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
 			}
+			if (dev->type == ARPHRD_RAWIP) {
+				rcu_read_unlock();
+				NATFLOW_println("vline config invalid %s,%s,%s should not be ARPHRD_RAWIP",
+				                dst_ifname, src_ifname,
+				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
+				return -EINVAL;
+			}
 			dst_dev = dev;
 		} else if (strncmp(dev->name, src_ifname, IFNAMSIZ) == 0) {
 			if (netdev_master_upper_dev_get_rcu(dev)) {
 				rcu_read_unlock();
 				NATFLOW_println("vline config invalid %s,%s,%s",
+				                src_ifname, dst_ifname,
+				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
+				return -EINVAL;
+			}
+			if (dev->type == ARPHRD_RAWIP) {
+				rcu_read_unlock();
+				NATFLOW_println("vline config invalid %s,%s,%s should not be ARPHRD_RAWIP",
 				                src_ifname, dst_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
