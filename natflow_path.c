@@ -208,7 +208,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 int vline_fwd_map_config_apply(void)
 {
 	int i;
-	int err = 0;
+	int err = 0, ret = 0;
 	for (i = 0; i < VLINE_FWD_MAX_NUM; i++) {
 		vline_fwd_map[i] = NULL;
 	}
@@ -219,9 +219,9 @@ int vline_fwd_map_config_apply(void)
 		}
 		err = vline_fwd_map_add(vline_fwd_map_config[i][0], vline_fwd_map_config[i][1], vline_fwd_map_family_config[i]);
 		if (err != 0)
-			return err;
+			ret = err;
 	}
-	return 0;
+	return ret;
 }
 
 static inline int vline_fwd_map_ifup_handle(struct net_device *dev)
