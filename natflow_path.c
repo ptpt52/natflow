@@ -4710,7 +4710,8 @@ out6:
 		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && vline_fwd_map[skb->dev->ifindex] != NULL) {
 			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV4) ||
 			        skb->protocol == __constant_htons(ETH_P_PPP_DISC) ||
-			        skb->protocol == __constant_htons(ETH_P_PPP_SES)) {
+			        skb->protocol == __constant_htons(ETH_P_PPP_SES) ||
+				skb->protocol != __constant_htons(ETH_P_IPV6) /* for unknown packets */) {
 				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
 					skb = skb_clone(skb, GFP_ATOMIC);
 					if (!skb) {
