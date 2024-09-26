@@ -79,6 +79,7 @@ void vline_fwd_map_config_clear(void)
 
 static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsigned char *src_ifname, unsigned char family)
 {
+	int ret = 0;
 	struct net_device *dev;
 	struct net_device *dst_dev = NULL, *src_dev = NULL;
 
@@ -213,10 +214,12 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 			vline_fwd_map[dst_dev->ifindex] = src_dev;
 			NATFLOW_println("update %s->%s", dst_dev->name, src_dev->name);
 		}
+	} else {
+		ret = -ENODEV;
 	}
 	rcu_read_unlock();
 
-	return 0;
+	return ret;
 }
 
 int vline_fwd_map_config_apply(void)
