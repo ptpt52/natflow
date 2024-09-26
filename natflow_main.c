@@ -137,7 +137,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 			unsigned char (*ptr)[2][IFNAMSIZ];
 			if (*pos == 1)
 				*lpos = 0;
-			ptr = vline_fwd_map_get((*pos) - (*lpos) - 1, &family);
+			ptr = vline_fwd_map_config_get((*pos) - (*lpos) - 1, &family);
 			if (ptr) {
 				n = snprintf(natflow_ctl_buffer,
 				             PAGE_SIZE - 1 - sizeof(unsigned long),
@@ -311,7 +311,7 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 				family = VLINE_FAMILY_ALL;
 			}
 			if (family != 255) {
-				err = vline_fwd_map_config_add(str[0], str[1], family);
+				err = vline_fwd_map_config_add(str[1], str[0], family);
 				if (err == 0) {
 					goto done;
 				}

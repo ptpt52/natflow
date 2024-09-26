@@ -47,7 +47,7 @@ static struct net_device *vline_fwd_map[VLINE_FWD_MAX_NUM];
 static unsigned char vline_fwd_map_config[VLINE_FWD_MAP_CONFIG_NUM][2][IFNAMSIZ];
 static unsigned char vline_fwd_map_family_config[VLINE_FWD_MAP_CONFIG_NUM];
 
-unsigned char (*vline_fwd_map_get(unsigned int idx, unsigned char *family))[2][IFNAMSIZ]
+unsigned char (*vline_fwd_map_config_get(unsigned int idx, unsigned char *family))[2][IFNAMSIZ]
 {
 	if  (idx >= VLINE_FWD_MAP_CONFIG_NUM || vline_fwd_map_config[idx][0][0] == 0)
 		return NULL;

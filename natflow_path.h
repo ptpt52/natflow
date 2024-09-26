@@ -357,7 +357,7 @@ extern struct net_device *ifname_group_get(int idx);
 
 #define VLINE_L3_PORT 0
 #define VLINE_L2_PORT 1
-extern unsigned char (*vline_fwd_map_get(unsigned int idx, unsigned char *family))[2][IFNAMSIZ];
+extern unsigned char (*vline_fwd_map_config_get(unsigned int idx, unsigned char *family))[2][IFNAMSIZ];
 extern int vline_fwd_map_config_add(const unsigned char *dst_ifname, const unsigned char *src_ifname, unsigned char family);
 extern void vline_fwd_map_config_clear(void);
 extern int vline_fwd_map_config_apply(void);
