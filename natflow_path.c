@@ -257,6 +257,20 @@ static inline int vline_fwd_map_ifup_handle(struct net_device *dev)
 	return 0;
 }
 
+static inline int vline_fwd_map_unregister_handle(struct net_device *dev)
+{
+	int i;
+
+	NATFLOW_println("handle event for dev=%s", dev->name);
+	for (i = 0; i < VLINE_FWD_MAX_NUM; i++) {
+		if (vline_fwd_map[i] == dev) {
+			vline_fwd_map[i] = NULL;
+		}
+	}
+
+	return 0;
+}
+
 static inline struct net_device *vlan_find_dev_rcu(struct net_device *real_dev,
         __be16 vlan_proto, u16 vlan_id)
 {
@@ -4711,7 +4725,23 @@ out6:
 			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV4) ||
 			        skb->protocol == __constant_htons(ETH_P_PPP_DISC) ||
 			        skb->protocol == __constant_htons(ETH_P_PPP_SES) ||
-				skb->protocol != __constant_htons(ETH_P_IPV6) /* for unknown packets */) {
+			        skb->protocol != __constant_htons(ETH_P_IPV6) /* for unknown packets */) {
+
+				if (unlikely(is_link_local_ether_addr(eth_hdr(skb)->h_dest))) {
+					switch (eth_hdr(skb)->h_dest[5]) {
+					case 0x01: /* IEEE MAC (Pause) */
+						return ret;
+					case 0x00: /* Bridge Group Address */
+					case 0x0E: /* 802.1AB LLDP */
+					default: /* Allow selective forwarding for most other protocols */
+						skb_push(skb, ETH_HLEN);
+						skb_reset_mac_header(skb);
+						skb->dev = vline_fwd_map[skb->dev->ifindex];
+						dev_queue_xmit(skb);
+						return NF_STOLEN;
+					}
+				}
+
 				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
 					skb = skb_clone(skb, GFP_ATOMIC);
 					if (!skb) {
@@ -5188,6 +5218,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 	natflow_hwnat_stop(dev);
 #endif
 	natflow_update_magic(0);
+	vline_fwd_map_unregister_handle(dev);
 
 	NATFLOW_println("catch NETDEV_UNREGISTER event for dev=%s", dev->name);
 
