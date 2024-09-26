@@ -3060,6 +3060,8 @@ fastnat_check:
 out:
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (pf == NFPROTO_NETDEV) {
+		struct net_device *outdev;
+
 		if (ingress_pad_len == PPPOE_SES_HLEN) {
 			skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
 			skb_push_rcsum(skb, PPPOE_SES_HLEN);
@@ -3070,7 +3072,7 @@ out:
 		}
 
 		//XXXXXXXX
-		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && vline_fwd_map[skb->dev->ifindex] != NULL) {
+		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = vline_fwd_map[skb->dev->ifindex]) != NULL) {
 			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV6)) {
 				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST ||
 				        skb->protocol == __constant_htons(ETH_P_ARP)) {
@@ -3080,7 +3082,7 @@ out:
 					}
 					skb_push(skb, ETH_HLEN);
 					skb_reset_mac_header(skb);
-					skb->dev = vline_fwd_map[skb->dev->ifindex];
+					skb->dev = outdev;
 					dev_queue_xmit(skb);
 					return ret;
 				}
@@ -3125,7 +3127,7 @@ out:
 
 				skb_push(skb, ETH_HLEN);
 				skb_reset_mac_header(skb);
-				skb->dev = vline_fwd_map[skb->dev->ifindex];
+				skb->dev = outdev;
 				dev_queue_xmit(skb);
 				return NF_STOLEN;
 			}
@@ -4728,6 +4730,8 @@ fastnat_check6:
 out6:
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (pf == NFPROTO_NETDEV) {
+		struct net_device *outdev;
+
 		if (ingress_pad_len == PPPOE_SES_HLEN) {
 			skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
 			skb_push_rcsum(skb, PPPOE_SES_HLEN);
@@ -4738,7 +4742,7 @@ out6:
 		}
 
 		//XXXXXXXX
-		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && vline_fwd_map[skb->dev->ifindex] != NULL) {
+		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = vline_fwd_map[skb->dev->ifindex]) != NULL) {
 			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV4) ||
 			        skb->protocol == __constant_htons(ETH_P_PPP_DISC) ||
 			        skb->protocol == __constant_htons(ETH_P_PPP_SES) ||
@@ -4753,7 +4757,7 @@ out6:
 					default: /* Allow selective forwarding for most other protocols */
 						skb_push(skb, ETH_HLEN);
 						skb_reset_mac_header(skb);
-						skb->dev = vline_fwd_map[skb->dev->ifindex];
+						skb->dev = outdev;
 						dev_queue_xmit(skb);
 						return NF_STOLEN;
 					}
@@ -4766,7 +4770,7 @@ out6:
 					}
 					skb_push(skb, ETH_HLEN);
 					skb_reset_mac_header(skb);
-					skb->dev = vline_fwd_map[skb->dev->ifindex];
+					skb->dev = outdev;
 					dev_queue_xmit(skb);
 					return ret;
 				}
@@ -4811,7 +4815,7 @@ out6:
 
 				skb_push(skb, ETH_HLEN);
 				skb_reset_mac_header(skb);
-				skb->dev = vline_fwd_map[skb->dev->ifindex];
+				skb->dev = outdev;
 				dev_queue_xmit(skb);
 				return NF_STOLEN;
 			}
