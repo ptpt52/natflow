@@ -500,7 +500,7 @@ static natflow_fakeuser_t *natflow_user_lookup_in(struct nf_conn *ct, int dir)
 	return natflow_user_get(ct);
 }
 
-static natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
+natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 {
 	natflow_fakeuser_t *user = NULL;
 

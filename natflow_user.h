@@ -99,4 +99,6 @@ typedef enum {
 	AUTH_UNKNOWN = 15,
 } auth_status_t;
 
+extern natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir);
+
 #endif /* _NATFLOW_USER_H_ */

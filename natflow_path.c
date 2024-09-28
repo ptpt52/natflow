@@ -94,6 +94,13 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
 			}
+			if ((dev->flags & IFF_NOARP) && family != VLINE_FAMILY_IPV6) {
+				rcu_read_unlock();
+				NATFLOW_println("vline config invalid %s,%s,%s should not be IFF_NOARP",
+						dst_ifname, src_ifname,
+						family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
+				return -EINVAL;
+			}
 			dst_dev = dev;
 		} else if (strncmp(dev->name, src_ifname, IFNAMSIZ) == 0) {
 			if (netdev_master_upper_dev_get_rcu(dev)) {
@@ -101,6 +108,13 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 				NATFLOW_println("vline config invalid %s,%s,%s",
 				                src_ifname, dst_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
+				return -EINVAL;
+			}
+			if ((dev->flags & IFF_NOARP) && family != VLINE_FAMILY_IPV6) {
+				rcu_read_unlock();
+				NATFLOW_println("vline config invalid %s,%s,%s should not be IFF_NOARP",
+						src_ifname, dst_ifname,
+						family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
 			}
 			src_dev = dev;
@@ -3060,35 +3074,6 @@ out:
 		//XXXXXXXX
 		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = vline_fwd_map[skb->dev->ifindex]) != NULL) {
 			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV6)) {
-				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST ||
-				        skb->protocol == __constant_htons(ETH_P_ARP)) {
-					skb = skb_clone(skb, GFP_ATOMIC);
-					if (!skb) {
-						return ret;
-					}
-					skb_push(skb, ETH_HLEN);
-					skb_reset_mac_header(skb);
-					skb->dev = outdev;
-					dev_queue_xmit(skb);
-					return ret;
-				}
-
-				if (skb->dev->type != ARPHRD_RAWIP) {
-					if ((skb->dev->flags & IFF_VLINE_L2_PORT)) {
-						struct net_device *upper_dev = netdev_master_upper_dev_get_rcu(skb->dev);
-						if (upper_dev && ether_addr_equal(upper_dev->dev_addr, eth_hdr(skb)->h_dest)) {
-							return  ret;
-						}
-					} else if (ether_addr_equal(skb->dev->dev_addr, eth_hdr(skb)->h_dest)) {
-						return ret;
-					}
-				}
-
-				ret = nf_conntrack_confirm(skb);
-				if (ret != NF_ACCEPT) {
-					return ret;
-				}
-
 				ct = nf_ct_get(skb, &ctinfo);
 				if (ct) {
 					unsigned int mtu;
@@ -3109,6 +3094,35 @@ out:
 							}
 						}
 					}
+				}
+
+				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST ||
+				        skb->protocol == __constant_htons(ETH_P_ARP)) {
+					skb = skb_clone(skb, GFP_ATOMIC);
+					if (!skb) {
+						return ret;
+					}
+					skb_push(skb, ETH_HLEN);
+					skb_reset_mac_header(skb);
+					skb->dev = outdev;
+					dev_queue_xmit(skb);
+					return ret;
+				}
+
+				if ((skb->dev->flags & IFF_NOARP)) {
+					if ((skb->dev->flags & IFF_VLINE_L2_PORT)) {
+						struct net_device *upper_dev = netdev_master_upper_dev_get_rcu(skb->dev);
+						if (upper_dev && ether_addr_equal(upper_dev->dev_addr, eth_hdr(skb)->h_dest)) {
+							return  ret;
+						}
+					} else if (ether_addr_equal(skb->dev->dev_addr, eth_hdr(skb)->h_dest)) {
+						return ret;
+					}
+				}
+
+				ret = nf_conntrack_confirm(skb);
+				if (ret != NF_ACCEPT) {
+					return ret;
 				}
 
 				skb_push(skb, ETH_HLEN);
@@ -4734,14 +4748,14 @@ out6:
 			        skb->protocol == __constant_htons(ETH_P_PPP_SES) ||
 			        skb->protocol != __constant_htons(ETH_P_IPV6) /* for unknown packets */) {
 
-				if (skb->dev->type != ARPHRD_RAWIP && unlikely(is_link_local_ether_addr(eth_hdr(skb)->h_dest))) {
+				if (!(skb->dev->flags & IFF_NOARP) && unlikely(is_link_local_ether_addr(eth_hdr(skb)->h_dest))) {
 					switch (eth_hdr(skb)->h_dest[5]) {
 					case 0x01: /* IEEE MAC (Pause) */
 						return ret;
 					case 0x00: /* Bridge Group Address */
 					case 0x0E: /* 802.1AB LLDP */
 					default: /* Allow selective forwarding for most other protocols */
-						if (outdev->type != ARPHRD_RAWIP) {
+						if (!(outdev->flags & IFF_NOARP)) {
 							skb_push(skb, ETH_HLEN);
 							skb_reset_mac_header(skb);
 						}
@@ -4751,8 +4765,47 @@ out6:
 					}
 				}
 
-				if (skb->dev->type == ARPHRD_RAWIP) {
-					if (outdev->type != ARPHRD_RAWIP) { /* in:ARPHRD_RAWIP --> out:!ARPHRD_RAWIP */
+				ct = nf_ct_get(skb, &ctinfo);
+				if (ct) {
+					unsigned int mtu;
+					dir = CTINFO2DIR(ctinfo);
+					nf = natflow_session_get(ct);
+					if (nf) {
+						if (!(nf->status & (NF_FF_BRIDGE | NF_FF_ROUTE))) {
+							simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+						}
+						if (skb_dst(skb)) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+							mtu = ip_skb_dst_mtu(skb);
+#else
+							mtu = ip_skb_dst_mtu(NULL, skb);
+#endif
+							if (nf->rroute[dir].mtu != mtu) {
+								nf->rroute[dir].mtu = mtu;
+							}
+						}
+					}
+
+					if (!(skb->dev->flags & IFF_NOARP)) {
+						natflow_fakeuser_t *user;
+						struct fakeuser_data_t *fud;
+
+						user = natflow_user_in(ct, dir);
+						if (user) {
+							fud = natflow_fakeuser_data(user);
+							if (timestamp_offset(fud->timestamp, jiffies) >= 8 * HZ) {
+								if (memcmp(eth_hdr(skb)->h_source, fud->macaddr, ETH_ALEN) != 0) {
+									memcpy(fud->macaddr, eth_hdr(skb)->h_source, ETH_ALEN);
+								}
+								fud->timestamp = jiffies;
+								natflow_user_timeout_touch(user);
+							}
+						}
+					}
+				}
+
+				if ((skb->dev->flags & IFF_NOARP)) {
+					if (!(outdev->flags & IFF_NOARP)) { /* in:IFF_NOARP --> out:!IFF_NOARP */
 						if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
 							struct ethhdr *eth;
 
@@ -4804,7 +4857,7 @@ out6:
 					if (!skb) {
 						return ret;
 					}
-					if (outdev->type != ARPHRD_RAWIP) {
+					if (!(outdev->flags & IFF_NOARP)) {
 						skb_push(skb, ETH_HLEN);
 						skb_reset_mac_header(skb);
 					}
@@ -4813,7 +4866,7 @@ out6:
 					return ret;
 				}
 
-				if (skb->dev->type != ARPHRD_RAWIP) {
+				if (!(skb->dev->flags & IFF_NOARP)) {
 					if ((skb->dev->flags & IFF_VLINE_L2_PORT)) {
 						struct net_device *upper_dev = netdev_master_upper_dev_get_rcu(skb->dev);
 						if (upper_dev && ether_addr_equal(upper_dev->dev_addr, eth_hdr(skb)->h_dest)) {
@@ -4829,29 +4882,7 @@ out6:
 					return ret;
 				}
 
-				ct = nf_ct_get(skb, &ctinfo);
-				if (ct) {
-					unsigned int mtu;
-					dir = CTINFO2DIR(ctinfo);
-					nf = natflow_session_get(ct);
-					if (nf) {
-						if (!(nf->status & (NF_FF_BRIDGE | NF_FF_ROUTE))) {
-							simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
-						}
-						if (skb_dst(skb)) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
-							mtu = ip_skb_dst_mtu(skb);
-#else
-							mtu = ip_skb_dst_mtu(NULL, skb);
-#endif
-							if (nf->rroute[dir].mtu != mtu) {
-								nf->rroute[dir].mtu = mtu;
-							}
-						}
-					}
-				}
-
-				if (outdev->type != ARPHRD_RAWIP) {
+				if (!(outdev->flags & IFF_NOARP)) {
 					skb_push(skb, ETH_HLEN);
 					skb_reset_mac_header(skb);
 				}
