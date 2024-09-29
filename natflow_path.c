@@ -97,8 +97,8 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 			if ((dev->flags & IFF_NOARP) && family != VLINE_FAMILY_IPV6) {
 				rcu_read_unlock();
 				NATFLOW_println("vline config invalid %s,%s,%s should not be IFF_NOARP",
-						dst_ifname, src_ifname,
-						family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
+				                dst_ifname, src_ifname,
+				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
 			}
 			dst_dev = dev;
@@ -113,8 +113,8 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 			if ((dev->flags & IFF_NOARP) && family != VLINE_FAMILY_IPV6) {
 				rcu_read_unlock();
 				NATFLOW_println("vline config invalid %s,%s,%s should not be IFF_NOARP",
-						src_ifname, dst_ifname,
-						family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
+				                src_ifname, dst_ifname,
+				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
 			}
 			src_dev = dev;
@@ -4813,7 +4813,16 @@ out6:
 							eth = (void *)((unsigned char *)iph - ETH_HLEN);
 
 							eth->h_proto = __constant_htons(ETH_P_IPV6);
-							ether_addr_copy(eth->h_source, outdev->dev_addr);
+							if (IPV6H->saddr.s6_addr16[0] == __constant_htons(0xfe80)) {
+								eth->h_source[0] = IPV6H->saddr.s6_addr[8] ^ 0x02;
+								eth->h_source[1] = IPV6H->saddr.s6_addr[9];
+								eth->h_source[2] = IPV6H->saddr.s6_addr[10];
+								eth->h_source[3] = IPV6H->saddr.s6_addr[13];
+								eth->h_source[4] = IPV6H->saddr.s6_addr[14];
+								eth->h_source[5] = IPV6H->saddr.s6_addr[15];
+							} else {
+								ether_addr_copy(eth->h_source, outdev->dev_addr);
+							}
 
 							if (IPV6H->daddr.s6_addr16[0] == __constant_htons(0xfe80)) {
 								eth->h_dest[0] = IPV6H->daddr.s6_addr[8] ^ 0x02;
@@ -4822,14 +4831,7 @@ out6:
 								eth->h_dest[3] = IPV6H->daddr.s6_addr[13];
 								eth->h_dest[4] = IPV6H->daddr.s6_addr[14];
 								eth->h_dest[5] = IPV6H->daddr.s6_addr[15];
-								if (IPV6H->saddr.s6_addr16[0] == __constant_htons(0xfe80)) {
-									eth->h_source[0] = IPV6H->saddr.s6_addr[8] ^ 0x02;
-									eth->h_source[1] = IPV6H->saddr.s6_addr[9];
-									eth->h_source[2] = IPV6H->saddr.s6_addr[10];
-									eth->h_source[3] = IPV6H->saddr.s6_addr[13];
-									eth->h_source[4] = IPV6H->saddr.s6_addr[14];
-									eth->h_source[5] = IPV6H->saddr.s6_addr[15];
-								}
+								skb->pkt_type = PACKET_MULTICAST; /* fake PACKET_MULTICAST */
 							} else if (ipv6_addr_is_multicast(&IPV6H->daddr)) {
 								eth->h_dest[0] = 0x33;
 								eth->h_dest[1] = 0x33;
@@ -4837,15 +4839,26 @@ out6:
 								eth->h_dest[3] = IPV6H->daddr.s6_addr[13];
 								eth->h_dest[4] = IPV6H->daddr.s6_addr[14];
 								eth->h_dest[5] = IPV6H->daddr.s6_addr[15];
-							}
-							ct = nf_ct_get(skb, &ctinfo);
-							if (ct) {
-								natflow_fakeuser_t *user;
-								struct fakeuser_data_t *fud;
-								user = natflow_user_get(ct);
-								if (user && memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3, &IPV6H->daddr, sizeof(union nf_inet_addr)) == 0) {
-									fud = natflow_fakeuser_data(user);
-									ether_addr_copy(eth->h_dest, fud->macaddr);
+								skb->pkt_type = PACKET_MULTICAST;
+							} else {
+								ct = nf_ct_get(skb, &ctinfo);
+								if (ct) {
+									natflow_fakeuser_t *user;
+									struct fakeuser_data_t *fud;
+									user = natflow_user_get(ct);
+									if (user &&
+									        memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3, &IPV6H->daddr, sizeof(union nf_inet_addr)) == 0) {
+										fud = natflow_fakeuser_data(user);
+										ether_addr_copy(eth->h_dest, fud->macaddr);
+									} else {
+										if (skb->pkt_type != PACKET_BROADCAST && skb->pkt_type != PACKET_MULTICAST) {
+											return ret;
+										}
+									}
+								} else {
+									if (skb->pkt_type != PACKET_BROADCAST && skb->pkt_type != PACKET_MULTICAST) {
+										return ret;
+									}
 								}
 							}
 						}
