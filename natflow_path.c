@@ -129,8 +129,8 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 		if ((src_dev->flags & IFF_NOARP) && (dst_dev->flags & IFF_NOARP)) {
 			rcu_read_unlock();
 			NATFLOW_println("vline config invalid %s,%s,%s should not be dual IFF_NOARP",
-					src_ifname, dst_ifname,
-					family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
+			                src_ifname, dst_ifname,
+			                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 			return -EINVAL;
 		}
 
@@ -4782,9 +4782,11 @@ out6:
 							if (ret != NF_ACCEPT) {
 								return ret;
 							}
+							ct = nf_ct_get(skb, &ctinfo);
 						}
 					}
 				}
+
 				if (ct) {
 					unsigned int mtu;
 					dir = CTINFO2DIR(ctinfo);
@@ -4866,7 +4868,9 @@ out6:
 								if (ct) {
 									user = natflow_user_get(ct);
 									if (user &&
-									        memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3, &IPV6H->daddr, sizeof(union nf_inet_addr)) == 0) {
+									        memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3,
+									               &IPV6H->daddr,
+									               sizeof(union nf_inet_addr)) == 0) {
 										fud = natflow_fakeuser_data(user);
 										ether_addr_copy(eth->h_dest, fud->macaddr);
 									} else {
@@ -4875,7 +4879,9 @@ out6:
 								} else {
 									user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
 									if (user &&
-									        memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3, &IPV6H->daddr, sizeof(union nf_inet_addr)) == 0) {
+									        memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3,
+									               &IPV6H->daddr,
+									               sizeof(union nf_inet_addr)) == 0) {
 										fud = natflow_fakeuser_data(user);
 										ether_addr_copy(eth->h_dest, fud->macaddr);
 									} else {
