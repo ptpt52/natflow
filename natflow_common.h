@@ -212,6 +212,7 @@ extern const char *const hooknames[];
 #define UDPH(u) ((struct udphdr *)(u))
 #define ICMPH(i) ((struct icmphdr *)(i))
 #define PPPOEH(p) ((struct pppoe_hdr *)(p))
+#define ICMP6H(i) ((struct icmp6hdr *)(i))
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 6, 0)) || (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 15) && LINUX_VERSION_CODE <KERNEL_VERSION(4, 5, 0))
 #else

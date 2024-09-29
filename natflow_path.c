@@ -23,6 +23,7 @@
 #include <linux/version.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter_bridge.h>
+#include <net/ndisc.h>
 #include <net/ipv6.h>
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_helper.h>
@@ -4874,7 +4875,17 @@ out6:
 										fud = natflow_fakeuser_data(user);
 										ether_addr_copy(eth->h_dest, fud->macaddr);
 									} else {
-										return ret;
+										if (IPV6H->daddr.s6_addr[11] == 0xff && IPV6H->daddr.s6_addr[12] == 0xfe) {
+											eth->h_dest[0] = IPV6H->daddr.s6_addr[8] ^ 0x02;
+											eth->h_dest[1] = IPV6H->daddr.s6_addr[9];
+											eth->h_dest[2] = IPV6H->daddr.s6_addr[10];
+											eth->h_dest[3] = IPV6H->daddr.s6_addr[13];
+											eth->h_dest[4] = IPV6H->daddr.s6_addr[14];
+											eth->h_dest[5] = IPV6H->daddr.s6_addr[15];
+											skb->pkt_type = PACKET_MULTICAST; /* fake PACKET_MULTICAST */
+										} else {
+											return ret;
+										}
 									}
 								} else {
 									user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
@@ -4885,12 +4896,98 @@ out6:
 										fud = natflow_fakeuser_data(user);
 										ether_addr_copy(eth->h_dest, fud->macaddr);
 									} else {
-										return ret;
+										if (IPV6H->daddr.s6_addr[11] == 0xff && IPV6H->daddr.s6_addr[12] == 0xfe) {
+											eth->h_dest[0] = IPV6H->daddr.s6_addr[8] ^ 0x02;
+											eth->h_dest[1] = IPV6H->daddr.s6_addr[9];
+											eth->h_dest[2] = IPV6H->daddr.s6_addr[10];
+											eth->h_dest[3] = IPV6H->daddr.s6_addr[13];
+											eth->h_dest[4] = IPV6H->daddr.s6_addr[14];
+											eth->h_dest[5] = IPV6H->daddr.s6_addr[15];
+											skb->pkt_type = PACKET_MULTICAST; /* fake PACKET_MULTICAST */
+										} else {
+											return ret;
+										}
 									}
 								}
 							}
 						}
 					}
+				}
+
+				if ((outdev->flags & IFF_NOARP)) {
+					do {
+						//received Neighbor Solicitation
+						//fake and reply Neighbor Advertisement for link local address
+						if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
+							unsigned char *ta;
+							iph = (void *)ipv6_hdr(skb);
+							l4 = (void *)iph + sizeof(struct ipv6hdr);
+							if (IPV6H->nexthdr != IPPROTO_ICMPV6) {
+								break;
+							}
+
+							if (!pskb_may_pull(skb, skb->len) || skb_try_make_writable(skb, skb->len)) {
+								return NF_DROP;
+							}
+							iph = (void *)ipv6_hdr(skb);
+							l4 = (void *)iph + sizeof(struct ipv6hdr);
+
+							if (ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION &&
+							        skb->len >= sizeof(struct ipv6hdr) + 8 + 16) {
+								struct ethhdr *eth;
+
+								if (skb->len < sizeof(struct ipv6hdr) + 8 + 16 + 8 &&
+								        pskb_expand_head(skb, skb_headroom(skb), sizeof(struct ipv6hdr) + 8 + 16 + 8 - skb->len, GFP_ATOMIC)) {
+									break;
+								}
+								iph = (void *)ipv6_hdr(skb);
+								l4 = (void *)iph + sizeof(struct ipv6hdr);
+
+								skb->len = sizeof(struct ipv6hdr) + 8 + 16 + 8;
+
+								ta = l4 + 8;
+								if (!(ta[0] == 0xfe && ta[1] == 0x80)) {
+									break;
+								}
+
+								eth = eth_hdr(skb);
+
+								ICMP6H(l4)->icmp6_type = NDISC_NEIGHBOUR_ADVERTISEMENT;
+								ICMP6H(l4)->icmp6_code = 0;
+								ICMP6H(l4)->icmp6_cksum = 0;
+
+								ICMP6H(l4)->icmp6_router = 1;
+								ICMP6H(l4)->icmp6_solicited = 1;
+								ICMP6H(l4)->icmp6_override = 0;
+								ICMP6H(l4)->icmp6_ndiscreserved = 0;
+
+								IPV6H->daddr = IPV6H->saddr;
+								memcpy(&IPV6H->saddr, ta, 16);
+
+								ether_addr_copy(eth->h_dest, eth->h_source);
+								eth->h_source[0] = ta[8] ^ 0x02;
+								eth->h_source[1] = ta[9];
+								eth->h_source[2] = ta[10];
+								eth->h_source[3] = ta[13];
+								eth->h_source[4] = ta[14];
+								eth->h_source[5] = ta[15];
+
+								ta[16] = 1; //Type: Source link-layer address
+								ta[17] = 1; //Length: 8 bytes
+								ether_addr_copy(ta + 18, eth->h_source);
+
+								ICMP6H(l4)->icmp6_cksum = csum_ipv6_magic(&IPV6H->saddr,
+								                          &IPV6H->daddr,
+								                          skb->len - sizeof(struct ipv6hdr),
+								                          IPPROTO_ICMPV6,
+								                          csum_partial(l4, skb->len - sizeof(struct ipv6hdr), 0));
+
+								skb_push(skb, ETH_HLEN);
+								dev_queue_xmit(skb);
+								return NF_STOLEN;
+							}
+						}
+					} while (0);
 				}
 
 				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
