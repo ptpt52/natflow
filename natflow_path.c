@@ -126,6 +126,14 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 	}
 
 	if (src_dev && dst_dev) {
+		if ((src_dev->flags & IFF_NOARP) && (dst_dev->flags & IFF_NOARP)) {
+			rcu_read_unlock();
+			NATFLOW_println("vline config invalid %s,%s,%s should not be dual IFF_NOARP",
+					src_ifname, dst_ifname,
+					family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
+			return -EINVAL;
+		}
+
 		if (family == VLINE_FAMILY_IPV4) {
 			src_dev->flags &= ~IFF_VLINE_FAMILY_IPV6;
 			src_dev->flags |= IFF_VLINE_FAMILY_IPV4;
