@@ -4766,6 +4766,17 @@ out6:
 				}
 
 				ct = nf_ct_get(skb, &ctinfo);
+				if (!ct) {
+					if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
+						iph = (void *)ipv6_hdr(skb);
+						if (IPV6H->nexthdr == NEXTHDR_ICMP) {
+							ret = nf_conntrack_in_compat(dev_net(skb->dev), PF_INET, NF_INET_PRE_ROUTING, skb);
+							if (ret != NF_ACCEPT) {
+								return ret;
+							}
+						}
+					}
+				}
 				if (ct) {
 					unsigned int mtu;
 					dir = CTINFO2DIR(ctinfo);
@@ -4841,22 +4852,25 @@ out6:
 								eth->h_dest[5] = IPV6H->daddr.s6_addr[15];
 								skb->pkt_type = PACKET_MULTICAST;
 							} else {
+								natflow_fakeuser_t *user;
+								struct fakeuser_data_t *fud;
 								ct = nf_ct_get(skb, &ctinfo);
 								if (ct) {
-									natflow_fakeuser_t *user;
-									struct fakeuser_data_t *fud;
 									user = natflow_user_get(ct);
 									if (user &&
 									        memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3, &IPV6H->daddr, sizeof(union nf_inet_addr)) == 0) {
 										fud = natflow_fakeuser_data(user);
 										ether_addr_copy(eth->h_dest, fud->macaddr);
 									} else {
-										if (skb->pkt_type != PACKET_BROADCAST && skb->pkt_type != PACKET_MULTICAST) {
-											return ret;
-										}
+										return ret;
 									}
 								} else {
-									if (skb->pkt_type != PACKET_BROADCAST && skb->pkt_type != PACKET_MULTICAST) {
+									user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
+									if (user &&
+									        memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3, &IPV6H->daddr, sizeof(union nf_inet_addr)) == 0) {
+										fud = natflow_fakeuser_data(user);
+										ether_addr_copy(eth->h_dest, fud->macaddr);
+									} else {
 										return ret;
 									}
 								}

@@ -100,5 +100,6 @@ typedef enum {
 } auth_status_t;
 
 extern natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir);
+extern natflow_fakeuser_t *natflow_user_find_get6(union nf_inet_addr *u3);
 
 #endif /* _NATFLOW_USER_H_ */

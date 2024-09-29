@@ -420,7 +420,7 @@ static natflow_fakeuser_t *natflow_user_find_get(__be32 ip)
 	return user;
 }
 
-static natflow_fakeuser_t *natflow_user_find_get6(union nf_inet_addr *u3)
+natflow_fakeuser_t *natflow_user_find_get6(union nf_inet_addr *u3)
 {
 	natflow_fakeuser_t *user = NULL;
 
