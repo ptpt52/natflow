@@ -4836,7 +4836,10 @@ out6:
 							eth = (void *)((unsigned char *)iph - ETH_HLEN);
 
 							eth->h_proto = __constant_htons(ETH_P_IPV6);
-							if (IPV6H->saddr.s6_addr16[0] == __constant_htons(0xfe80)) {
+							if (IPV6H->saddr.s6_addr16[0] == __constant_htons(0xfe80)
+							        // && IPV6H->saddr.s6_addr[11] == 0xff
+							        // && IPV6H->saddr.s6_addr[12] == 0xfe // XXX: fake EUI-64 even it is not */
+							   ) {
 								eth->h_source[0] = IPV6H->saddr.s6_addr[8] ^ 0x02;
 								eth->h_source[1] = IPV6H->saddr.s6_addr[9];
 								eth->h_source[2] = IPV6H->saddr.s6_addr[10];
@@ -4847,7 +4850,9 @@ out6:
 								ether_addr_copy(eth->h_source, outdev->dev_addr);
 							}
 
-							if (IPV6H->daddr.s6_addr16[0] == __constant_htons(0xfe80)) {
+							if (IPV6H->daddr.s6_addr16[0] == __constant_htons(0xfe80)
+							        && IPV6H->daddr.s6_addr[11] == 0xff
+							        && IPV6H->daddr.s6_addr[12] == 0xfe) {
 								eth->h_dest[0] = IPV6H->daddr.s6_addr[8] ^ 0x02;
 								eth->h_dest[1] = IPV6H->daddr.s6_addr[9];
 								eth->h_dest[2] = IPV6H->daddr.s6_addr[10];
