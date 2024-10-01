@@ -4912,7 +4912,7 @@ out6:
 							unsigned char *ta;
 							iph = (void *)ipv6_hdr(skb);
 							l4 = (void *)iph + sizeof(struct ipv6hdr);
-							if (IPV6H->nexthdr != IPPROTO_ICMPV6) {
+							if (IPV6H->nexthdr != IPPROTO_ICMPV6 || ICMP6H(l4)->icmp6_type != NDISC_NEIGHBOUR_SOLICITATION) {
 								break;
 							}
 
@@ -4922,8 +4922,7 @@ out6:
 							iph = (void *)ipv6_hdr(skb);
 							l4 = (void *)iph + sizeof(struct ipv6hdr);
 
-							if (ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION &&
-							        skb->len >= sizeof(struct ipv6hdr) + 8 + 16) {
+							if (skb->len >= sizeof(struct ipv6hdr) + 8 + 16) {
 								struct ethhdr *eth;
 
 								if (skb->len < sizeof(struct ipv6hdr) + 8 + 16 + 8 &&
