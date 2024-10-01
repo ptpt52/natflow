@@ -25,6 +25,7 @@
 #include <linux/netfilter_bridge.h>
 #include <net/ndisc.h>
 #include <net/ipv6.h>
+#include <net/ip6_checksum.h>
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_extend.h>
