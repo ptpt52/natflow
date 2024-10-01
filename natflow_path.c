@@ -4936,7 +4936,7 @@ out6:
 								skb->len = sizeof(struct ipv6hdr) + 8 + 16 + 8;
 
 								ta = l4 + 8;
-								if (!(ta[0] == 0xfe && ta[1] == 0x80)) {
+								if (!(ta[0] == 0xfe && ta[1] == 0x80 && ta[11] == 0xff && ta[12] == 0xfe)) {
 									break;
 								}
 
@@ -4978,6 +4978,26 @@ out6:
 							}
 						}
 					} while (0);
+				}
+
+				if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
+					iph = (void *)ipv6_hdr(skb);
+					l4 = (void *)iph + sizeof(struct ipv6hdr);
+					if (IPV6H->nexthdr == IPPROTO_ICMPV6
+					        && (ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION || ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT)) {
+						// flood NDISC_NEIGHBOUR_SOLICITATION/NDISC_NEIGHBOUR_ADVERTISEMENT packets
+						if (!(outdev->flags & IFF_NOARP)) {
+							skb = skb_clone(skb, GFP_ATOMIC);
+							if (!skb) {
+								return ret;
+							}
+							skb_push(skb, ETH_HLEN);
+							skb_reset_mac_header(skb);
+							skb->dev = outdev;
+							dev_queue_xmit(skb);
+						}
+						return ret;
+					}
 				}
 
 				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
