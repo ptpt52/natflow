@@ -4830,6 +4830,7 @@ out6:
 				if ((skb->dev->flags & IFF_NOARP)) {
 					if (!(outdev->flags & IFF_NOARP)) { /* in:IFF_NOARP --> out:!IFF_NOARP */
 						if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
+							int dest_found = 0;
 							struct ethhdr *eth;
 
 							iph = (void *)ipv6_hdr(skb);
@@ -4850,9 +4851,7 @@ out6:
 								ether_addr_copy(eth->h_source, outdev->dev_addr);
 							}
 
-							if (IPV6H->daddr.s6_addr16[0] == __constant_htons(0xfe80)
-							        && IPV6H->daddr.s6_addr[11] == 0xff
-							        && IPV6H->daddr.s6_addr[12] == 0xfe) {
+							if (IPV6H->daddr.s6_addr[11] == 0xff && IPV6H->daddr.s6_addr[12] == 0xfe) {
 								eth->h_dest[0] = IPV6H->daddr.s6_addr[8] ^ 0x02;
 								eth->h_dest[1] = IPV6H->daddr.s6_addr[9];
 								eth->h_dest[2] = IPV6H->daddr.s6_addr[10];
@@ -4860,6 +4859,7 @@ out6:
 								eth->h_dest[4] = IPV6H->daddr.s6_addr[14];
 								eth->h_dest[5] = IPV6H->daddr.s6_addr[15];
 								skb->pkt_type = PACKET_MULTICAST; /* fake PACKET_MULTICAST */
+								dest_found = 1;
 							} else if (ipv6_addr_is_multicast(&IPV6H->daddr)) {
 								eth->h_dest[0] = 0x33;
 								eth->h_dest[1] = 0x33;
@@ -4868,7 +4868,11 @@ out6:
 								eth->h_dest[4] = IPV6H->daddr.s6_addr[14];
 								eth->h_dest[5] = IPV6H->daddr.s6_addr[15];
 								skb->pkt_type = PACKET_MULTICAST;
-							} else {
+								dest_found = 1;
+							}
+
+							do {
+								/* try fetch h_dest from user info */
 								natflow_fakeuser_t *user;
 								struct fakeuser_data_t *fud;
 								ct = nf_ct_get(skb, &ctinfo);
@@ -4880,18 +4884,8 @@ out6:
 									               sizeof(union nf_inet_addr)) == 0) {
 										fud = natflow_fakeuser_data(user);
 										ether_addr_copy(eth->h_dest, fud->macaddr);
-									} else {
-										if (IPV6H->daddr.s6_addr[11] == 0xff && IPV6H->daddr.s6_addr[12] == 0xfe) {
-											eth->h_dest[0] = IPV6H->daddr.s6_addr[8] ^ 0x02;
-											eth->h_dest[1] = IPV6H->daddr.s6_addr[9];
-											eth->h_dest[2] = IPV6H->daddr.s6_addr[10];
-											eth->h_dest[3] = IPV6H->daddr.s6_addr[13];
-											eth->h_dest[4] = IPV6H->daddr.s6_addr[14];
-											eth->h_dest[5] = IPV6H->daddr.s6_addr[15];
-											skb->pkt_type = PACKET_MULTICAST; /* fake PACKET_MULTICAST */
-										} else {
-											return ret;
-										}
+									} else if (dest_found == 0) {
+										return ret;
 									}
 								} else {
 									user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
@@ -4901,21 +4895,11 @@ out6:
 									               sizeof(union nf_inet_addr)) == 0) {
 										fud = natflow_fakeuser_data(user);
 										ether_addr_copy(eth->h_dest, fud->macaddr);
-									} else {
-										if (IPV6H->daddr.s6_addr[11] == 0xff && IPV6H->daddr.s6_addr[12] == 0xfe) {
-											eth->h_dest[0] = IPV6H->daddr.s6_addr[8] ^ 0x02;
-											eth->h_dest[1] = IPV6H->daddr.s6_addr[9];
-											eth->h_dest[2] = IPV6H->daddr.s6_addr[10];
-											eth->h_dest[3] = IPV6H->daddr.s6_addr[13];
-											eth->h_dest[4] = IPV6H->daddr.s6_addr[14];
-											eth->h_dest[5] = IPV6H->daddr.s6_addr[15];
-											skb->pkt_type = PACKET_MULTICAST; /* fake PACKET_MULTICAST */
-										} else {
-											return ret;
-										}
+									} else if (dest_found == 0) {
+										return ret;
 									}
 								}
-							}
+							} while (0);
 						}
 					}
 				}
