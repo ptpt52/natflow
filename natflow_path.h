@@ -22,6 +22,7 @@
 #include <net/netfilter/nf_conntrack_zones.h>
 #include <net/netfilter/nf_nat.h>
 #include <linux/if_macvlan.h>
+#include <asm/byteorder.h>
 #include "natflow.h"
 #include "natflow_common.h"
 
