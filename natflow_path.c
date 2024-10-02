@@ -4783,8 +4783,13 @@ out6:
 				if (!ct) {
 					if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
 						iph = (void *)ipv6_hdr(skb);
-						if (IPV6H->nexthdr == NEXTHDR_ICMP) {
-							ret = nf_conntrack_in_compat(dev_net(skb->dev), PF_INET, NF_INET_PRE_ROUTING, skb);
+						l4 = (void *)iph + sizeof(struct ipv6hdr);
+						if (IPV6H->nexthdr == IPPROTO_ICMPV6
+						        && !(ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION ||
+						             ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT ||
+						             ICMP6H(l4)->icmp6_type == NDISC_ROUTER_SOLICITATION ||
+						             ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT)) {
+							ret = nf_conntrack_in_compat(dev_net(skb->dev), AF_INET6, NF_INET_PRE_ROUTING, skb);
 							if (ret != NF_ACCEPT) {
 								return ret;
 							}
