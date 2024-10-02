@@ -1137,6 +1137,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	int d;
 #ifdef CONFIG_NETFILTER_INGRESS
 	unsigned int re_learn = 0;
+#else
+	int bridge = 0;
 #endif
 	unsigned int ingress_pad_len = 0;
 	unsigned int ingress_trim_off = 0;
@@ -1725,6 +1727,25 @@ slow_fastpath:
 		if (ret != NF_ACCEPT) {
 			goto out;
 		}
+	}
+#else
+	/* only bridge come here */
+	if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+	        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
+		skb_pull(skb, PPPOE_SES_HLEN);
+		skb->protocol = __constant_htons(ETH_P_IP);
+		skb->network_header += PPPOE_SES_HLEN;
+		bridge = 1;
+		ingress_pad_len = PPPOE_SES_HLEN;
+	} else if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+	           pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
+		skb_pull(skb, PPPOE_SES_HLEN);
+		skb->protocol = __constant_htons(ETH_P_IPV6);
+		skb->network_header += PPPOE_SES_HLEN;
+		bridge = 1;
+		ingress_pad_len = PPPOE_SES_HLEN;
+	} else if (skb->protocol != __constant_htons(ETH_P_IP) && skb->protocol != __constant_htons(ETH_P_IPV6)) {
+		return NF_ACCEPT;
 	}
 #endif
 	if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
@@ -2792,6 +2813,12 @@ out:
 		if (ingress_trim_off) {
 			skb->len += ingress_trim_off;
 		}
+	}
+#else
+	if (bridge) {
+		skb->network_header -= PPPOE_SES_HLEN;
+		skb->protocol = __constant_htons(ETH_P_PPP_SES);
+		skb_push(skb, PPPOE_SES_HLEN);
 	}
 #endif
 	return ret;
@@ -4393,6 +4420,12 @@ out6:
 			skb->len += ingress_trim_off;
 		}
 	}
+#else
+	if (bridge) {
+		skb->network_header -= PPPOE_SES_HLEN;
+		skb->protocol = __constant_htons(ETH_P_PPP_SES);
+		skb_push(skb, PPPOE_SES_HLEN);
+	}
 #endif
 	return ret;
 }
@@ -4662,6 +4695,17 @@ static struct nf_hook_ops path_hooks[] = {
 		.hooknum = NF_INET_PRE_ROUTING,
 		.priority = NF_IP_PRI_CONNTRACK + 1,
 	},
+#ifndef CONFIG_NETFILTER_INGRESS
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_path_pre_ct_in_hook,
+		.pf = NFPROTO_BRIDGE,
+		.hooknum = NF_INET_PRE_ROUTING,
+		.priority = NF_IP_PRI_CONNTRACK + 1,
+	},
+#endif
 };
 
 #ifdef CONFIG_NETFILTER_INGRESS
