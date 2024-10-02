@@ -91,14 +91,14 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 		if (strncmp(dev->name, dst_ifname, IFNAMSIZ) == 0) {
 			if (netdev_master_upper_dev_get_rcu(dev)) {
 				rcu_read_unlock();
-				NATFLOW_println("vline config invalid %s,%s,%s",
+				NATFLOW_println("vline config invalid dst %s,%s,%s",
 				                dst_ifname, src_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
 			}
 			if ((dev->flags & IFF_NOARP) && family != VLINE_FAMILY_IPV6) {
 				rcu_read_unlock();
-				NATFLOW_println("vline config invalid %s,%s,%s should not be IFF_NOARP",
+				NATFLOW_println("vline config invalid dst %s,%s,%s should not be IFF_NOARP",
 				                dst_ifname, src_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
@@ -107,15 +107,15 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 		} else if (strncmp(dev->name, src_ifname, IFNAMSIZ) == 0) {
 			if (netdev_master_upper_dev_get_rcu(dev)) {
 				rcu_read_unlock();
-				NATFLOW_println("vline config invalid %s,%s,%s",
-				                src_ifname, dst_ifname,
+				NATFLOW_println("vline config invalid src %s,%s,%s",
+				                dst_ifname, src_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
 			}
 			if ((dev->flags & IFF_NOARP) && family != VLINE_FAMILY_IPV6) {
 				rcu_read_unlock();
-				NATFLOW_println("vline config invalid %s,%s,%s should not be IFF_NOARP",
-				                src_ifname, dst_ifname,
+				NATFLOW_println("vline config invalid src %s,%s,%s should not be IFF_NOARP",
+				                dst_ifname, src_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
 			}
@@ -133,7 +133,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 		if ((src_dev->flags & IFF_NOARP)) {
 			rcu_read_unlock();
 			NATFLOW_println("vline config invalid %s,%s,%s src_dev should not be IFF_NOARP",
-			                src_ifname, dst_ifname,
+			                dst_ifname, src_ifname,
 			                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 			return -EINVAL;
 		}
@@ -159,6 +159,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 			while (dev) {
 				upper_dev = netdev_master_upper_dev_get_rcu(dev);
 				if (upper_dev == src_dev) {
+					dev->flags |= IFF_IS_LAN;
 					dev->flags |= IFF_VLINE_L2_PORT;
 					if (family == VLINE_FAMILY_IPV4) {
 						dev->flags &= ~IFF_VLINE_FAMILY_IPV6;
@@ -196,6 +197,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 			while (dev) {
 				upper_dev = netdev_master_upper_dev_get_rcu(dev);
 				if (upper_dev == dst_dev) {
+					dev->flags &= ~IFF_IS_LAN;
 					dev->flags |= IFF_VLINE_L2_PORT;
 					if (family == VLINE_FAMILY_IPV4) {
 						dev->flags &= ~IFF_VLINE_FAMILY_IPV6;
@@ -246,7 +248,7 @@ int vline_fwd_map_config_apply(void)
 		if (vline_fwd_map_config[i][0][0] == 0) {
 			break;
 		}
-		err = vline_fwd_map_add(vline_fwd_map_config[i][0], vline_fwd_map_config[i][1], vline_fwd_map_family_config[i]);
+		err = vline_fwd_map_add(vline_fwd_map_config[i][1], vline_fwd_map_config[i][0], vline_fwd_map_family_config[i]);
 		if (err != 0)
 			ret = err;
 	}
@@ -272,13 +274,13 @@ static inline int vline_fwd_map_ifup_handle(struct net_device *dev)
 			if (strncmp(upper_dev->name, vline_fwd_map_config[i][0], IFNAMSIZ) == 0 ||
 			        strncmp(upper_dev->name, vline_fwd_map_config[i][1], IFNAMSIZ) == 0) {
 				rcu_read_unlock();
-				return vline_fwd_map_add(vline_fwd_map_config[i][0], vline_fwd_map_config[i][1], vline_fwd_map_family_config[i]);
+				return vline_fwd_map_add(vline_fwd_map_config[i][1], vline_fwd_map_config[i][0], vline_fwd_map_family_config[i]);
 			}
 		}
 		if (strncmp(dev->name, vline_fwd_map_config[i][0], IFNAMSIZ) == 0 ||
 		        strncmp(dev->name, vline_fwd_map_config[i][1], IFNAMSIZ) == 0) {
 			rcu_read_unlock();
-			return vline_fwd_map_add(vline_fwd_map_config[i][0], vline_fwd_map_config[i][1], vline_fwd_map_family_config[i]);
+			return vline_fwd_map_add(vline_fwd_map_config[i][1], vline_fwd_map_config[i][0], vline_fwd_map_family_config[i]);
 		}
 	}
 	rcu_read_unlock();
