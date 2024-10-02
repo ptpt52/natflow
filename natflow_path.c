@@ -4879,29 +4879,12 @@ out6:
 								/* try fetch h_dest from user info */
 								natflow_fakeuser_t *user;
 								struct fakeuser_data_t *fud;
-								ct = nf_ct_get(skb, &ctinfo);
-								if (ct) {
-									user = natflow_user_get(ct);
-									if (user &&
-									        memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3,
-									               &IPV6H->daddr,
-									               sizeof(union nf_inet_addr)) == 0) {
-										fud = natflow_fakeuser_data(user);
-										ether_addr_copy(eth->h_dest, fud->macaddr);
-									} else if (dest_found == 0) {
-										return ret;
-									}
-								} else {
-									user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
-									if (user &&
-									        memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3,
-									               &IPV6H->daddr,
-									               sizeof(union nf_inet_addr)) == 0) {
-										fud = natflow_fakeuser_data(user);
-										ether_addr_copy(eth->h_dest, fud->macaddr);
-									} else if (dest_found == 0) {
-										return ret;
-									}
+								user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
+								if (user) {
+									fud = natflow_fakeuser_data(user);
+									ether_addr_copy(eth->h_dest, fud->macaddr);
+								} else if (dest_found == 0) {
+									return ret;
 								}
 							} while (0);
 						}
