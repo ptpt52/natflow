@@ -4996,14 +4996,17 @@ out6:
 
 						idev = __in6_dev_get(outdev);
 						if (idev) {
+							read_lock_bh(&idev->lock);
 							list_for_each_entry(ifp, &idev->addr_list, if_list) {
 								if (ifp->addr.s6_addr16[0] == __constant_htons(0xfe80)) {
 									continue;
 								}
 								if (ipv6_prefix_equal(&IPV6H->daddr, &ifp->addr, ifp->prefix_len)) {
+									read_unlock_bh(&idev->lock);
 									return ret;
 								}
 							}
+							read_unlock_bh(&idev->lock);
 						}
 					}
 
