@@ -92,14 +92,14 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 			if (netdev_master_upper_dev_get_rcu(dev)) {
 				rcu_read_unlock();
 				NATFLOW_println("vline config invalid dst %s,%s,%s",
-				                dst_ifname, src_ifname,
+				                src_ifname, dst_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
 			}
 			if ((dev->flags & IFF_NOARP) && family != VLINE_FAMILY_IPV6) {
 				rcu_read_unlock();
 				NATFLOW_println("vline config invalid dst %s,%s,%s should not be IFF_NOARP",
-				                dst_ifname, src_ifname,
+				                src_ifname, dst_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
 			}
@@ -108,14 +108,14 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 			if (netdev_master_upper_dev_get_rcu(dev)) {
 				rcu_read_unlock();
 				NATFLOW_println("vline config invalid src %s,%s,%s",
-				                dst_ifname, src_ifname,
+				                src_ifname, dst_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
 			}
 			if ((dev->flags & IFF_NOARP) && family != VLINE_FAMILY_IPV6) {
 				rcu_read_unlock();
 				NATFLOW_println("vline config invalid src %s,%s,%s should not be IFF_NOARP",
-				                dst_ifname, src_ifname,
+				                src_ifname, dst_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
 			}
@@ -133,7 +133,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 		if ((src_dev->flags & IFF_NOARP)) {
 			rcu_read_unlock();
 			NATFLOW_println("vline config invalid %s,%s,%s src_dev should not be IFF_NOARP",
-			                dst_ifname, src_ifname,
+			                src_ifname, dst_ifname,
 			                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 			return -EINVAL;
 		}
