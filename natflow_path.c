@@ -4986,8 +4986,26 @@ out6:
 				if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
 					natflow_fakeuser_t *user;
 					struct fakeuser_data_t *fud;
+
 					iph = (void *)ipv6_hdr(skb);
 					l4 = (void *)iph + sizeof(struct ipv6hdr);
+
+					if ((skb->dev->flags & IFF_IS_LAN)) {
+						struct inet6_dev *idev;
+						struct inet6_ifaddr *ifp;
+
+						idev = __in6_dev_get(outdev);
+						if (idev) {
+							list_for_each_entry(ifp, &idev->addr_list, if_list) {
+								if (ifp->addr.s6_addr16[0] == __constant_htons(0xfe80)) {
+									continue;
+								}
+								if (ipv6_prefix_equal(&IPV6H->daddr, &ifp->addr, ifp->prefix_len)) {
+									return ret;
+								}
+							}
+						}
+					}
 
 					user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->saddr);
 					if (user) {
