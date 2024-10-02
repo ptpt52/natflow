@@ -5023,16 +5023,16 @@ out6:
 					            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_SOLICITATION ||
 					            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT)) {
 						// flood NS/NA/RS/RA packets
+						skb = skb_clone(skb, GFP_ATOMIC);
+						if (!skb) {
+							return ret;
+						}
 						if (!(outdev->flags & IFF_NOARP)) {
-							skb = skb_clone(skb, GFP_ATOMIC);
-							if (!skb) {
-								return ret;
-							}
 							skb_push(skb, ETH_HLEN);
 							skb_reset_mac_header(skb);
-							skb->dev = outdev;
-							dev_queue_xmit(skb);
 						}
+						skb->dev = outdev;
+						dev_queue_xmit(skb);
 						return ret;
 					}
 				}
