@@ -349,6 +349,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 #define IFF_VLINE_L2_PORT (1<<27)
 #define IFF_VLINE_FAMILY_IPV4 (1<<28)
 #define IFF_VLINE_FAMILY_IPV6 (1<<29)
+#define IFF_IS_LAN (1<<30)
 
 extern int ifname_group_type;
 extern void ifname_group_clear(void);

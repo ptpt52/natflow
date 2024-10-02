@@ -128,6 +128,8 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 	}
 
 	if (src_dev && dst_dev) {
+		src_dev->flags |= IFF_IS_LAN;
+		dst_dev->flags &= ~IFF_IS_LAN;
 		if ((src_dev->flags & IFF_NOARP) && (dst_dev->flags & IFF_NOARP)) {
 			rcu_read_unlock();
 			NATFLOW_println("vline config invalid %s,%s,%s should not be dual IFF_NOARP",
@@ -4980,11 +4982,36 @@ out6:
 				}
 
 				if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
+					natflow_fakeuser_t *user;
+					struct fakeuser_data_t *fud;
 					iph = (void *)ipv6_hdr(skb);
 					l4 = (void *)iph + sizeof(struct ipv6hdr);
+
+					user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->saddr);
+					if (user) {
+						fud = natflow_fakeuser_data(user);
+						if ((skb->dev->flags & IFF_IS_LAN)) {
+							if (fud->vline_lan != 1) fud->vline_lan = 1;
+						} else {
+							if (fud->vline_lan != 0) fud->vline_lan = 0;
+						}
+					}
+
+					user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
+					if (user) {
+						fud = natflow_fakeuser_data(user);
+						if (((skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 1)
+						        || (!(skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 0)) {
+							return ret;
+						}
+					}
+
 					if (IPV6H->nexthdr == IPPROTO_ICMPV6
-					        && (ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION || ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT)) {
-						// flood NDISC_NEIGHBOUR_SOLICITATION/NDISC_NEIGHBOUR_ADVERTISEMENT packets
+					        && (ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION ||
+					            ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT ||
+					            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_SOLICITATION ||
+					            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT)) {
+						// flood NS/NA/RS/RA packets
 						if (!(outdev->flags & IFF_NOARP)) {
 							skb = skb_clone(skb, GFP_ATOMIC);
 							if (!skb) {

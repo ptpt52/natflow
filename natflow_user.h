@@ -23,7 +23,15 @@ struct token_ctrl {
 typedef struct fakeuser_data_t {
 	uint32_t timestamp;
 	uint8_t macaddr[ETH_ALEN];
-	uint8_t auth_type;
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	uint8_t vline_lan:1,
+	        auth_type:7;
+#elif defined (__BIG_ENDIAN_BITFIELD)
+	uint8_t auth_type:7,
+	        vline_lan:1;
+#else
+#error  "Please fix <asm/byteorder.h>"
+#endif
 	uint8_t auth_status;
 	uint16_t auth_rule_id;
 	uint16_t auth_rule_magic;
