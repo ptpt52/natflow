@@ -76,3 +76,10 @@ index f39276d1c2d7..905597547b08 100644
         rcu_read_unlock();
         return ret;
 ```
+
+## Donate
+Buy me a beer!
+
+[<img src="https://www.paypalobjects.com/en_US/i/btn/btn_donate_LG.gif">](https://paypal.me/ptpt52)
+
+BITCOIN ADDR: `3CJ5VwxL8ageKpA3jJ561rvhkFW4FmZiqc`
