@@ -1304,6 +1304,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		skb->protocol = __constant_htons(ETH_P_IP);
 		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
 
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 		/* XXX:
 		 * MT7622 hwnat cannot handle vlan for ext dev
@@ -1315,6 +1316,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				goto out;
 			}
 		}
+#endif
 #endif
 		/* skip for defrag-skb or large packets */
 		if (skb_is_nonlinear(skb) || ntohs(iph->tot_len) > 1500 - ingress_pad_len) {
