@@ -296,6 +296,11 @@ static inline int vline_fwd_map_unregister_handle(struct net_device *dev)
 	int i;
 
 	NATFLOW_println("handle event for dev=%s", dev->name);
+	if (dev->ifindex >= VLINE_FWD_MAX_NUM) {
+		return 0;
+	}
+	vline_fwd_map[dev->ifindex] = NULL;
+
 	for (i = 0; i < VLINE_FWD_MAX_NUM; i++) {
 		if (vline_fwd_map[i] == dev) {
 			vline_fwd_map[i] = NULL;
@@ -5460,6 +5465,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 			NATFLOW_println("catch event %lu for dev=%s : set flags IFF_PPPOE", event, dev->name);
 		}
 #endif
+		vline_fwd_map_ifup_handle(dev);
 	}
 
 	NATFLOW_println("catch event %lu for dev=%s : flags=%08x", event, dev->name, dev->flags);
@@ -5482,7 +5488,6 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 			                !!(vlan_features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)));
 			natflow_check_device(dev);
 		}
-		vline_fwd_map_ifup_handle(dev);
 		return NOTIFY_DONE;
 	}
 #endif
