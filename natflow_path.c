@@ -4777,7 +4777,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
-	if (event == NETDEV_UP) {
+	if (event == NETDEV_UP || event == NETDEV_CHANGE) {
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 		if (dev->type == ARPHRD_PPP && dev->netdev_ops->ndo_flow_offload_check) {
 			flow_offload_hw_path_t path = {
@@ -4787,7 +4787,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 			dev->netdev_ops->ndo_flow_offload_check(&path);
 			if ((path.flags & FLOW_OFFLOAD_PATH_PPPOE)) {
 				dev->flags |= IFF_PPPOE;
-				NATFLOW_println("catch NETDEV_UP event for dev=%s : set flags IFF_PPPOE", dev->name);
+				NATFLOW_println("catch event %lu for dev=%s : set flags IFF_PPPOE", event, dev->name);
 			}
 		}
 		if (!ppe_dev) {
@@ -4799,10 +4799,12 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 		if (dev->type == ARPHRD_PPP &&
 		        (dev->name[0] == 'p' && dev->name[1] == 'p' && dev->name[2] == 'p' && dev->name[3] == 'o' && dev->name[4] == 'e')) {
 			dev->flags |= IFF_PPPOE;
-			NATFLOW_println("catch NETDEV_UP event for dev=%s : set flags IFF_PPPOE", dev->name);
+			NATFLOW_println("catch event %lu for dev=%s : set flags IFF_PPPOE", event, dev->name);
 		}
 #endif
 	}
+
+	NATFLOW_println("catch event %lu for dev=%s : flags=%08x", event, dev->name, dev->flags);
 
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (event == NETDEV_UP) {
