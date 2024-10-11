@@ -310,6 +310,18 @@ static inline int vline_fwd_map_unregister_handle(struct net_device *dev)
 	return 0;
 }
 
+void list_net_device_debug(void)
+{
+	struct net_device *dev;
+	rcu_read_lock();
+	dev = first_net_device(&init_net);
+	while (dev) {
+		NATFLOW_println("dev=%s (%d): flags=0x%08x", dev->name, dev->ifindex, dev->flags);
+		dev = next_net_device(dev);
+	}
+	rcu_read_unlock();
+}
+
 static inline struct net_device *vlan_find_dev_rcu(struct net_device *real_dev,
         __be16 vlan_proto, u16 vlan_id)
 {
@@ -5467,8 +5479,6 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 #endif
 		vline_fwd_map_ifup_handle(dev);
 	}
-
-	NATFLOW_println("catch event %lu for dev=%s : flags=%08x", event, dev->name, dev->flags);
 
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (event == NETDEV_UP) {

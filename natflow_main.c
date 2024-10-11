@@ -323,6 +323,9 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 		if (err == 0) {
 			goto done;
 		}
+	} else if (strncmp(data, "list_net_device", 15) == 0) {
+		list_net_device_debug();
+		goto done;
 	} else if (strncmp(data, "update_magic", 12) == 0) {
 		natflow_update_magic(0);
 		goto done;

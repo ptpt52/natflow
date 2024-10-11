@@ -368,6 +368,8 @@ extern int vline_fwd_map_config_apply(void);
 #define VLINE_FAMILY_IPV4 1
 #define VLINE_FAMILY_IPV6 2
 
+extern void list_net_device_debug(void);
+
 extern int natflow_path_init(void);
 extern void natflow_path_exit(void);
 
