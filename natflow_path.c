@@ -270,6 +270,9 @@ static inline int vline_fwd_map_ifup_handle(struct net_device *dev)
 	rcu_read_lock();
 	upper_dev = netdev_master_upper_dev_get_rcu(dev);
 	for (i = 0; i < VLINE_FWD_MAP_CONFIG_NUM; i++) {
+		if (vline_fwd_map_config[i][0][0] == 0) {
+			break;
+		}
 		if (upper_dev) {
 			if (strncmp(upper_dev->name, vline_fwd_map_config[i][0], IFNAMSIZ) == 0 ||
 			        strncmp(upper_dev->name, vline_fwd_map_config[i][1], IFNAMSIZ) == 0) {
