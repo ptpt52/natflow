@@ -4855,6 +4855,8 @@ int natflow_path_init(void)
 {
 	int ret = 0;
 
+	natflow_probe_ct_ext();
+
 #ifdef CONFIG_NETFILTER_INGRESS
 	natflow_fast_nat_table = kmalloc(sizeof(natflow_fastnat_node_t) * NATFLOW_FASTNAT_TABLE_SIZE, GFP_KERNEL);
 	if (natflow_fast_nat_table == NULL) {
