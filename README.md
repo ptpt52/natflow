@@ -1,28 +1,6 @@
 # NATflow
 
-A fast forwarding stanalone kernel module with lite kernel network stack. It could be a lite replacement of kmod-ipt-offload.
-
-## Patching
-The kernel needs to be patched to allow ALG and natflow to co-work
-```diff
-diff --git a/net/netfilter/nf_conntrack_extend.c b/net/netfilter/nf_conntrack_extend.c
-index dd62cc12e775..d5d42320f917 100644
---- a/net/netfilter/nf_conntrack_extend.c
-+++ b/net/netfilter/nf_conntrack_extend.c
-@@ -103,8 +103,11 @@ void *nf_ct_ext_add(struct nf_conn *ct, enum nf_ct_ext_id id, gfp_t gfp)
- 	if (ct->ext) {
- 		const struct nf_ct_ext *old = ct->ext;
- 
--		if (__nf_ct_ext_exist(old, id))
-+		if (__nf_ct_ext_exist(old, id)) {
-+			if (!nf_ct_is_confirmed(ct))
-+				return __nf_ct_ext_find(old, id);
- 			return NULL;
-+		}
- 		oldlen = old->len;
- 	} else {
- 		oldlen = sizeof(*new);
-```
+A fast forwarding stanalone kernel module with zero-patch to kernel. It could be a lite replacement of kmod-ipt-offload.
 
 ## Notes
 Only work for x-wrt(https://github.com/x-wrt/x-wrt)
