@@ -255,6 +255,8 @@ extern int ip_set_del_dst_ip(const struct nf_hook_state *state, struct sk_buff *
 #define IP_SET_del_dst_ip(state, in, out, skb, name) ip_set_del_dst_ip(state, skb, name)
 extern int ip_set_test_src_mac(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name);
 #define IP_SET_test_src_mac(state, in, out, skb, name) ip_set_test_src_mac(state, skb, name)
+extern int ip_set_test_dst_netport(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name);
+#define IP_SET_test_dst_netport(state, in, out, skb, name) ip_set_test_dst_netport(state, skb, name)
 #else
 extern int ip_set_test_src_ip(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name);
 #define IP_SET_test_src_ip(state, in, out, skb, name) ip_set_test_src_ip(in, out, skb, name)
@@ -270,6 +272,8 @@ extern int ip_set_del_dst_ip(const struct net_device *in, const struct net_devic
 #define IP_SET_del_dst_ip(state, in, out, skb, name) ip_set_del_dst_ip(in, out, skb, name)
 extern int ip_set_test_src_mac(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name);
 #define IP_SET_test_src_mac(state, in, out, skb, name) ip_set_test_src_mac(in, out, skb, name)
+extern int ip_set_test_dst_netport(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name);
+#define IP_SET_test_dst_netport(state, in, out, skb, name) ip_set_test_dst_netport(in, out, skb, name)
 #endif
 
 #define IP_SET_test_src_port IP_SET_test_src_ip

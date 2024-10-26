@@ -3095,6 +3095,16 @@ out:
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (pf == NFPROTO_NETDEV) {
 		struct net_device *outdev;
+		int vline_filter = 0;
+
+		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = vline_fwd_map[skb->dev->ifindex]) != NULL) {
+			if (IP_SET_test_dst_netport(state, in, out, skb, "vline_filter_dst_netport") > 0 ||
+			        IP_SET_test_dst_ip(state, in, out, skb, "vline_filter_dst") > 0 ||
+			        IP_SET_test_src_ip(state, in, out, skb, "vline_filter_src") > 0 ||
+			        IP_SET_test_src_mac(state, in, out, skb, "vline_filter_src_mac") > 0) {
+				vline_filter = 1;
+			}
+		}
 
 		if (ingress_pad_len == PPPOE_SES_HLEN) {
 			skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
@@ -3132,6 +3142,9 @@ out:
 
 				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST ||
 				        skb->protocol == __constant_htons(ETH_P_ARP)) {
+					if (vline_filter) {
+						return ret;
+					}
 					skb = skb_clone(skb, GFP_ATOMIC);
 					if (!skb) {
 						return ret;
@@ -3156,6 +3169,9 @@ out:
 
 				ret = nf_conntrack_confirm(skb);
 				if (ret != NF_ACCEPT) {
+					return ret;
+				}
+				if (vline_filter) {
 					return ret;
 				}
 
@@ -4765,6 +4781,16 @@ out6:
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (pf == NFPROTO_NETDEV) {
 		struct net_device *outdev;
+		int vline_filter = 0;
+
+		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = vline_fwd_map[skb->dev->ifindex]) != NULL) {
+			if (IP_SET_test_dst_netport(state, in, out, skb, "vline_filter_dst_netport") > 0 ||
+			        IP_SET_test_dst_ip(state, in, out, skb, "vline_filter_dst") > 0 ||
+			        IP_SET_test_src_ip(state, in, out, skb, "vline_filter_src") > 0 ||
+			        IP_SET_test_src_mac(state, in, out, skb, "vline_filter_src_mac") > 0) {
+				vline_filter = 1;
+			}
+		}
 
 		if (ingress_pad_len == PPPOE_SES_HLEN) {
 			skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
@@ -4789,6 +4815,9 @@ out6:
 					case 0x00: /* Bridge Group Address */
 					case 0x0E: /* 802.1AB LLDP */
 					default: /* Allow selective forwarding for most other protocols */
+						if (vline_filter) {
+							return ret;
+						}
 						if (!(outdev->flags & IFF_NOARP)) {
 							skb_push(skb, ETH_HLEN);
 							skb_reset_mac_header(skb);
@@ -4927,6 +4956,9 @@ out6:
 							if (IPV6H->nexthdr != IPPROTO_ICMPV6 || ICMP6H(l4)->icmp6_type != NDISC_NEIGHBOUR_SOLICITATION) {
 								break;
 							}
+							if (vline_filter) {
+								return ret;
+							}
 
 							if (!pskb_may_pull(skb, skb->len) || skb_try_make_writable(skb, skb->len)) {
 								return NF_DROP;
@@ -5042,6 +5074,9 @@ out6:
 					            ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT ||
 					            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_SOLICITATION ||
 					            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT)) {
+						if (vline_filter) {
+							return ret;
+						}
 						// flood NS/NA/RS/RA packets
 						skb = skb_clone(skb, GFP_ATOMIC);
 						if (!skb) {
@@ -5058,6 +5093,9 @@ out6:
 				}
 
 				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
+					if (vline_filter) {
+						return ret;
+					}
 					skb = skb_clone(skb, GFP_ATOMIC);
 					if (!skb) {
 						return ret;
@@ -5084,6 +5122,9 @@ out6:
 
 				ret = nf_conntrack_confirm(skb);
 				if (ret != NF_ACCEPT) {
+					return ret;
+				}
+				if (vline_filter) {
 					return ret;
 				}
 
