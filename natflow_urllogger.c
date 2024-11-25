@@ -990,10 +990,13 @@ __urllogger_ip_skip:
 		if (host) {
 			int rule_id = 0;
 			struct urlinfo *url = kmalloc(ALIGN(sizeof(struct urlinfo) + host_len + 1, __URLINFO_ALIGN), GFP_ATOMIC);
-			if (!url)
+			if (!url) {
+				if (prev_skb) consume_skb(prev_skb);
 				goto out;
+			}
 			INIT_LIST_HEAD(&url->list);
 			url->host_len = urlinfo_copy_host_tolower(url->data, host, host_len);
+			if (prev_skb) consume_skb(prev_skb);
 			url->data[host_len] = 0;
 			url->data_len = host_len + 1;
 			if (urllogger_store_tuple_type == 0) {
@@ -1276,10 +1279,13 @@ __urllogger_ipv6_skip:
 		if (host) {
 			int rule_id = 0;
 			struct urlinfo *url = kmalloc(ALIGN(sizeof(struct urlinfo) + host_len + 1, __URLINFO_ALIGN), GFP_ATOMIC);
-			if (!url)
+			if (!url) {
+				if (prev_skb) consume_skb(prev_skb);
 				goto out;
+			}
 			INIT_LIST_HEAD(&url->list);
 			url->host_len = urlinfo_copy_host_tolower(url->data, host, host_len);
+			if (prev_skb) consume_skb(prev_skb);
 			url->data[host_len] = 0;
 			url->data_len = host_len + 1;
 			if (urllogger_store_tuple_type == 0) {
