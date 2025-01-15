@@ -4198,7 +4198,7 @@ fastnat_check6:
 										nfn = (void *)(((unsigned long)nfn) ^ ((unsigned long)nfn_i));
 									}
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
-									if (hwnat && (re_learn == 2 || iph->protocol == IPPROTO_UDP) && !(ct->status & (IPS_DST_NAT | IPS_SRC_NAT))) {
+									if (hwnat && (re_learn == 2 || IPV6H->nexthdr == IPPROTO_UDP) && !(ct->status & (IPS_DST_NAT | IPS_SRC_NAT))) {
 										/* hwnat enabled */
 										struct net_device *orig_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 										struct net_device *reply_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_REPLY].outdev);
@@ -4315,7 +4315,7 @@ fastnat_check6:
 												} else {
 													/* mark FF_FAIL so never try FF */
 													simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
-													switch (iph->protocol) {
+													switch (IPV6H->nexthdr) {
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
 														             ": dir%d set hwnat offload1 failed\n",
@@ -4439,7 +4439,7 @@ fastnat_check6:
 												} else {
 													/* mark FF_FAIL so never try FF */
 													simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
-													switch (iph->protocol) {
+													switch (IPV6H->nexthdr) {
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
 														             ": dir%d set hwnat offload2 failed\n",
@@ -4562,7 +4562,7 @@ fastnat_check6:
 											} else {
 												/* mark FF_FAIL so never try FF */
 												simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
-												switch (iph->protocol) {
+												switch (IPV6H->nexthdr) {
 												case IPPROTO_TCP:
 													NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
 													             ": dir%d set hwnat offload3 failed\n",
@@ -4664,7 +4664,7 @@ fastnat_check6:
 												} else {
 													/* mark FF_FAIL so never try FF */
 													simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
-													switch (iph->protocol) {
+													switch (IPV6H->nexthdr) {
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
 														             ": dir%d set hwnat offload4 failed\n",
@@ -4725,7 +4725,7 @@ fastnat_check6:
 		if (nf->rroute[dir].vlan_present)
 			features = netdev_intersect_features(features,
 			                                     nf->rroute[dir].outdev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
-		ingress_trim_off = (iph->protocol == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
+		ingress_trim_off = (IPV6H->nexthdr == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
 		                   (features & (NETIF_F_HW_CSUM | NETIF_F_IPV6_CSUM)) && \
 		                   nf->rroute[dir].l2_head_len == ETH_HLEN;
 		if (!ingress_trim_off) {
