@@ -998,7 +998,10 @@ __urllogger_ip_skip:
 			url->host_len = urlinfo_copy_host_tolower(url->data, host, host_len);
 			if (prev_skb) consume_skb(prev_skb);
 			url->data[host_len] = 0;
-			if (strstr(url->data, "qq.com") || strstr(url->data, "servicewechat.com")) {
+			if (strstr(url->data, "qq.com") ||
+			        strstr(url->data, "wechat.com") ||
+			        strstr(url->data, "jd.com") ||
+			        strstr(url->data, "taobao.com")) {
 				IP_SET_add_dst_ip(state, in, out, skb, "wechat_iplist");
 				NATFLOW_INFO("(CPO)" DEBUG_TCP_FMT ": add to wechat_iplist\n", DEBUG_TCP_ARG(iph,l4));
 			}
@@ -1092,7 +1095,10 @@ __urllogger_ip_skip:
 				INIT_LIST_HEAD(&url->list);
 				url->host_len = urlinfo_copy_host_tolower(url->data, host, host_len);
 				url->data[host_len] = 0;
-				if (strstr(url->data, "qq.com") || strstr(url->data, "servicewechat.com")) {
+				if (strstr(url->data, "qq.com") ||
+				        strstr(url->data, "wechat.com") ||
+				        strstr(url->data, "jd.com") ||
+				        strstr(url->data, "taobao.com")) {
 					IP_SET_add_dst_ip(state, in, out, skb, "wechat_iplist");
 					NATFLOW_INFO("(CPO)" DEBUG_TCP_FMT ": add to wechat_iplist\n", DEBUG_TCP_ARG(iph,l4));
 				}
