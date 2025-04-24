@@ -1,6 +1,29 @@
 # NATflow
 
-A fast forwarding stanalone kernel module with zero-patch to kernel. It could be a lite replacement of kmod-ipt-offload.
+NATflow works by matching packets against a hash table to quickly determine forwarding information, performing necessary NAT and MAC modifications, and directly sending matched packets to the NIC, while unmatched packets follow the traditional slow path for processing.
+
+## Graph
+
+Fast Path with natflow:
+```mermaid
+graph TB
+    A[NIC] ==> B[nf_ingress]
+    B ==> K[natflow: Match hash table for info]
+    K --> |If not matched| C[PRE_ROUTING]
+    subgraph SlowPath
+        direction TB
+         C --> D[Routing Decision]
+        D --> E[FORWARD]
+        E --> F[POST_ROUTING]
+        F --> G[nf_hook_egress]
+        D -.-> I[LOCAL_IN]
+        J[LOCAL_OUT] -.-> F
+    end
+    G --> H[NIC]
+    K ==> |If matched| L["Modify packet (NAT & MAC)"]
+    L ==> |sends directly to NIC| H
+    A --> |ppe: hardware offload forward| H
+```
 
 ## Notes
 Only work for x-wrt(https://github.com/x-wrt/x-wrt)
@@ -75,29 +98,6 @@ index f39276d1c2d7..905597547b08 100644
         }
         rcu_read_unlock();
         return ret;
-```
-
-## Graph
-
-Fast Path with natflow:
-```mermaid
-graph TB
-    A[NIC] ==> B[nf_ingress]
-    B ==> K[natflow: Match hash table for info]
-    K --> |If not matched| C[PRE_ROUTING]
-    subgraph SlowPath
-        direction TB
-         C --> D[Routing Decision]
-        D --> E[FORWARD]
-        E --> F[POST_ROUTING]
-        F --> G[nf_hook_egress]
-        D -.-> I[LOCAL_IN]
-        J[LOCAL_OUT] -.-> F
-    end
-    G --> H[NIC]
-    K ==> |If matched| L["Modify packet (NAT & MAC)"]
-    L ==> |sends directly to NIC| H
-    A --> |ppe: hardware offload forward| H
 ```
 
 ## Donate
