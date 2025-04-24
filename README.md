@@ -77,6 +77,29 @@ index f39276d1c2d7..905597547b08 100644
         return ret;
 ```
 
+## Graph
+
+Fast Path with natflow:
+```mermaid
+graph TB
+    A[NIC] ==> B[nf_ingress]
+    B ==> K[natflow: Match hash table for info]
+    K --> |If not matched| C[PRE_ROUTING]
+    subgraph SlowPath
+        direction TB
+         C --> D[Routing Decision]
+        D --> E[FORWARD]
+        E --> F[POST_ROUTING]
+        F --> G[nf_hook_egress]
+        D -.-> I[LOCAL_IN]
+        J[LOCAL_OUT] -.-> F
+    end
+    G --> H[NIC]
+    K ==> |If matched| L["Modify packet (NAT & MAC)"]
+    L ==> |sends directly to NIC| H
+    A --> |ppe: hardware offload forward| H
+```
+
 ## Donate
 Buy me a beer!
 
