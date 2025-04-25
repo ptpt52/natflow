@@ -26,24 +26,68 @@ graph TB
 ```
 
 ## Notes
-Only work for x-wrt(https://github.com/x-wrt/x-wrt)
+**natflow** is a versatile and high-performance network acceleration solution that provides the following key features:
 
-hwnat support for mt7621/mt7622/MT7981/MT7986
+1. **Fastpath for High-Speed Packet Forwarding** :
+  * Implements a software-based fast path for rapid packet forwarding.
+  * Works on any platform, delivering exceptional forwarding performance.
+2. **Hardware NAT (hwnat) Support** :
+  * For specific platforms like **MT7621** , **MT7622** , **MT7981** , **MT7986** , and others, **natflow** provides hardware NAT support, enabling hardware-based acceleration for even higher performance.
+  * Requires kernel patches for proper integration.
+3. **User Identification and Traffic Auditing** :
+  * Identifies individual IP users and monitors their traffic and speed.
+  * Provides detailed traffic auditing for user-level insights.
+4. **Traffic Control (QoS)** :
+  * Enables bandwidth management and traffic shaping for users.
+  * Ensures fair usage and optimized network performance.
+5. **Internet Access Control** :
+  * Allows or blocks internet access for specific users based on policies.
+6. **URL Auditing (urllogger)** :
+  * Monitors and logs the domains or URLs accessed by users.
+  * Offers visibility into user browsing behavior.
+7. **Website Access Control** :
+  * Matches user traffic against defined rules to restrict access to specific websites.
 
-hwnat with wed support for mt7622/MT7981/MT7986
-```
-port--port hwnat supported:
-port-->ppe-->port
-port<--ppe<--port
+**natflow** combines software fast path, hardware acceleration (on supported platforms), and advanced user management and auditing features, making it ideal for performance-critical and policy-driven network environments.
 
-wifi--port hwnat supported:
-wifi-->cpu-->ppe-->port
-wifi<--cpu<--ppe<--port
+## Natflow Hardware Acceleration Overview
 
-wifi-port hwnat with wed supported:
-wifi-->cpu-->ppe-->port
-wifi<--ppe<--port
-```
+### Hardware Acceleration Support on X-WRT
+
+**Natflow** now supports hardware acceleration on [X-WRT](https://github.com/x-wrt/x-wrt), providing high-performance NAT and packet forwarding capabilities.
+
+---
+
+### Supported Platforms
+
+1. Hardware NAT (Hwnat) Support:
+- Platforms: **MT7621**, **MT7622**, **MT7981**, **MT7986**
+- Enables efficient hardware-based NAT forwarding.
+
+2. Hwnat with WED Support:
+- Platforms: **MT7622**, **MT7981**, **MT7986**
+- Combines hardware NAT acceleration with WED (WiFi Ethernet Driver) support to optimize both WiFi and wired traffic.
+
+---
+
+### Supported Forwarding Paths
+
+1. **Port-to-Port Hwnat Forwarding**
+- **Forwarding Path**:
+  - `Port --> PPE --> Port`
+  - `Port <-- PPE <-- Port`
+
+2. **WiFi-to-Port Hwnat Forwarding**
+- **Forwarding Path**:
+  - `WiFi --> CPU --> PPE --> Port`
+  - `WiFi <-- CPU <-- PPE <-- Port`
+
+3. **WiFi-to-Port Hwnat Forwarding with WED Support**
+- **Forwarding Path**:
+  - `WiFi --> CPU --> PPE --> Port`
+  - `WiFi <-- PPE <-- Port`
+
+---
 
 ## build
 To build with path and urllogger module run:
