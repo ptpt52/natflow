@@ -66,7 +66,7 @@ graph TB
 
 2. Hwnat with WED Support:
 - Platforms: **MT7622**, **MT7981**, **MT7986**
-- Combines hardware NAT acceleration with WED (WiFi Ethernet Driver) support to optimize both WiFi and wired traffic.
+- Combines hardware NAT acceleration with WED (Wireless Ethernet Dispatch) support to optimize both WiFi and wired traffic.
 
 ---
 
