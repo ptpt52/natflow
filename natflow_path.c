@@ -3115,6 +3115,9 @@ out:
 			skb->len += ingress_trim_off;
 		}
 
+		if (vline_filter) {
+			return ret;
+		}
 		//XXXXXXXX
 		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = vline_fwd_map[skb->dev->ifindex]) != NULL) {
 			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV6)) {
@@ -3142,9 +3145,6 @@ out:
 
 				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST ||
 				        skb->protocol == __constant_htons(ETH_P_ARP)) {
-					if (vline_filter) {
-						return ret;
-					}
 					skb = skb_clone(skb, GFP_ATOMIC);
 					if (!skb) {
 						return ret;
@@ -3169,9 +3169,6 @@ out:
 
 				ret = nf_conntrack_confirm(skb);
 				if (ret != NF_ACCEPT) {
-					return ret;
-				}
-				if (vline_filter) {
 					return ret;
 				}
 
@@ -4800,7 +4797,9 @@ out6:
 		if (ingress_trim_off) {
 			skb->len += ingress_trim_off;
 		}
-
+		if (vline_filter) {
+			return ret;
+		}
 		//XXXXXXXX
 		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = vline_fwd_map[skb->dev->ifindex]) != NULL) {
 			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV4) ||
@@ -4815,9 +4814,6 @@ out6:
 					case 0x00: /* Bridge Group Address */
 					case 0x0E: /* 802.1AB LLDP */
 					default: /* Allow selective forwarding for most other protocols */
-						if (vline_filter) {
-							return ret;
-						}
 						if (!(outdev->flags & IFF_NOARP)) {
 							skb_push(skb, ETH_HLEN);
 							skb_reset_mac_header(skb);
@@ -4956,9 +4952,6 @@ out6:
 							if (IPV6H->nexthdr != IPPROTO_ICMPV6 || ICMP6H(l4)->icmp6_type != NDISC_NEIGHBOUR_SOLICITATION) {
 								break;
 							}
-							if (vline_filter) {
-								return ret;
-							}
 
 							if (!pskb_may_pull(skb, skb->len) || skb_try_make_writable(skb, skb->len)) {
 								return NF_DROP;
@@ -5074,9 +5067,6 @@ out6:
 					            ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT ||
 					            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_SOLICITATION ||
 					            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT)) {
-						if (vline_filter) {
-							return ret;
-						}
 						// flood NS/NA/RS/RA packets
 						skb = skb_clone(skb, GFP_ATOMIC);
 						if (!skb) {
@@ -5093,9 +5083,6 @@ out6:
 				}
 
 				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
-					if (vline_filter) {
-						return ret;
-					}
 					skb = skb_clone(skb, GFP_ATOMIC);
 					if (!skb) {
 						return ret;
@@ -5122,9 +5109,6 @@ out6:
 
 				ret = nf_conntrack_confirm(skb);
 				if (ret != NF_ACCEPT) {
-					return ret;
-				}
-				if (vline_filter) {
 					return ret;
 				}
 
