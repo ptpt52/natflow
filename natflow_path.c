@@ -4781,9 +4781,9 @@ out6:
 		int vline_filter = 0;
 
 		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = vline_fwd_map[skb->dev->ifindex]) != NULL) {
-			if (IP_SET_test_dst_netport(state, in, out, skb, "vline_filter_dst_netport") > 0 ||
-			        IP_SET_test_dst_ip(state, in, out, skb, "vline_filter_dst") > 0 ||
-			        IP_SET_test_src_ip(state, in, out, skb, "vline_filter_src") > 0 ||
+			if (IP_SET_test_dst_netport(state, in, out, skb, "vline_filter6_dst_netport") > 0 ||
+			        IP_SET_test_dst_ip(state, in, out, skb, "vline_filter6_dst") > 0 ||
+			        IP_SET_test_src_ip(state, in, out, skb, "vline_filter6_src") > 0 ||
 			        IP_SET_test_src_mac(state, in, out, skb, "vline_filter_src_mac") > 0) {
 				vline_filter = 1;
 			}
