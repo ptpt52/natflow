@@ -3121,28 +3121,6 @@ out:
 		//XXXXXXXX
 		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = vline_fwd_map[skb->dev->ifindex]) != NULL) {
 			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV6)) {
-				ct = nf_ct_get(skb, &ctinfo);
-				if (ct) {
-					unsigned int mtu;
-					dir = CTINFO2DIR(ctinfo);
-					nf = natflow_session_get(ct);
-					if (nf) {
-						if (!(nf->status & (NF_FF_BRIDGE | NF_FF_ROUTE))) {
-							simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
-						}
-						if (skb_dst(skb)) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
-							mtu = ip_skb_dst_mtu(skb);
-#else
-							mtu = ip_skb_dst_mtu(NULL, skb);
-#endif
-							if (nf->rroute[dir].mtu != mtu) {
-								nf->rroute[dir].mtu = mtu;
-							}
-						}
-					}
-				}
-
 				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST ||
 				        skb->protocol == __constant_htons(ETH_P_ARP)) {
 					skb = skb_clone(skb, GFP_ATOMIC);
@@ -3164,6 +3142,28 @@ out:
 						}
 					} else if (ether_addr_equal(skb->dev->dev_addr, eth_hdr(skb)->h_dest)) {
 						return ret;
+					}
+				}
+
+				ct = nf_ct_get(skb, &ctinfo);
+				if (ct) {
+					unsigned int mtu;
+					dir = CTINFO2DIR(ctinfo);
+					nf = natflow_session_get(ct);
+					if (nf) {
+						if (!(nf->status & (NF_FF_BRIDGE | NF_FF_ROUTE))) {
+							simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+						}
+						if (skb_dst(skb)) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+							mtu = ip_skb_dst_mtu(skb);
+#else
+							mtu = ip_skb_dst_mtu(NULL, skb);
+#endif
+							if (nf->rroute[dir].mtu != mtu) {
+								nf->rroute[dir].mtu = mtu;
+							}
+						}
 					}
 				}
 
@@ -4824,63 +4824,6 @@ out6:
 					}
 				}
 
-				ct = nf_ct_get(skb, &ctinfo);
-				if (!ct) {
-					if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
-						iph = (void *)ipv6_hdr(skb);
-						l4 = (void *)iph + sizeof(struct ipv6hdr);
-						if (IPV6H->nexthdr == IPPROTO_ICMPV6
-						        && !(ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION ||
-						             ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT ||
-						             ICMP6H(l4)->icmp6_type == NDISC_ROUTER_SOLICITATION ||
-						             ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT)) {
-							ret = nf_conntrack_in_compat(dev_net(skb->dev), AF_INET6, NF_INET_PRE_ROUTING, skb);
-							if (ret != NF_ACCEPT) {
-								return ret;
-							}
-							ct = nf_ct_get(skb, &ctinfo);
-						}
-					}
-				}
-
-				if (ct) {
-					unsigned int mtu;
-					dir = CTINFO2DIR(ctinfo);
-					nf = natflow_session_get(ct);
-					if (nf) {
-						if (!(nf->status & (NF_FF_BRIDGE | NF_FF_ROUTE))) {
-							simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
-						}
-						if (skb_dst(skb)) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
-							mtu = ip_skb_dst_mtu(skb);
-#else
-							mtu = ip_skb_dst_mtu(NULL, skb);
-#endif
-							if (nf->rroute[dir].mtu != mtu) {
-								nf->rroute[dir].mtu = mtu;
-							}
-						}
-					}
-
-					if ((skb->dev->flags & IFF_IS_LAN)) {
-						natflow_fakeuser_t *user;
-						struct fakeuser_data_t *fud;
-
-						user = natflow_user_in(ct, dir);
-						if (user) {
-							fud = natflow_fakeuser_data(user);
-							if (timestamp_offset(fud->timestamp, jiffies) >= 8 * HZ) {
-								if (memcmp(eth_hdr(skb)->h_source, fud->macaddr, ETH_ALEN) != 0) {
-									memcpy(fud->macaddr, eth_hdr(skb)->h_source, ETH_ALEN);
-								}
-								fud->timestamp = jiffies;
-								natflow_user_timeout_touch(user);
-							}
-						}
-					}
-				}
-
 				if ((skb->dev->flags & IFF_NOARP)) {
 					if (!(outdev->flags & IFF_NOARP)) { /* in:IFF_NOARP --> out:!IFF_NOARP */
 						if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
@@ -5016,6 +4959,31 @@ out6:
 					} while (0);
 				}
 
+				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
+					skb = skb_clone(skb, GFP_ATOMIC);
+					if (!skb) {
+						return ret;
+					}
+					if (!(outdev->flags & IFF_NOARP)) {
+						skb_push(skb, ETH_HLEN);
+						skb_reset_mac_header(skb);
+					}
+					skb->dev = outdev;
+					dev_queue_xmit(skb);
+					return ret;
+				}
+
+				if (!(skb->dev->flags & IFF_NOARP)) {
+					if ((skb->dev->flags & IFF_VLINE_L2_PORT)) {
+						struct net_device *upper_dev = netdev_master_upper_dev_get_rcu(skb->dev);
+						if (upper_dev && ether_addr_equal(upper_dev->dev_addr, eth_hdr(skb)->h_dest)) {
+							return  ret;
+						}
+					} else if (ether_addr_equal(skb->dev->dev_addr, eth_hdr(skb)->h_dest)) {
+						return ret;
+					}
+				}
+
 				if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
 					natflow_fakeuser_t *user;
 					struct fakeuser_data_t *fud;
@@ -5082,28 +5050,58 @@ out6:
 					}
 				}
 
-				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
-					skb = skb_clone(skb, GFP_ATOMIC);
-					if (!skb) {
-						return ret;
-					}
-					if (!(outdev->flags & IFF_NOARP)) {
-						skb_push(skb, ETH_HLEN);
-						skb_reset_mac_header(skb);
-					}
-					skb->dev = outdev;
-					dev_queue_xmit(skb);
-					return ret;
-				}
-
-				if (!(skb->dev->flags & IFF_NOARP)) {
-					if ((skb->dev->flags & IFF_VLINE_L2_PORT)) {
-						struct net_device *upper_dev = netdev_master_upper_dev_get_rcu(skb->dev);
-						if (upper_dev && ether_addr_equal(upper_dev->dev_addr, eth_hdr(skb)->h_dest)) {
-							return  ret;
+				ct = nf_ct_get(skb, &ctinfo);
+				if (!ct) {
+					if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
+						iph = (void *)ipv6_hdr(skb);
+						l4 = (void *)iph + sizeof(struct ipv6hdr);
+						if (IPV6H->nexthdr == IPPROTO_ICMPV6
+						        && !(ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION ||
+						             ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT ||
+						             ICMP6H(l4)->icmp6_type == NDISC_ROUTER_SOLICITATION ||
+						             ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT)) {
+							ret = nf_conntrack_in_compat(dev_net(skb->dev), AF_INET6, NF_INET_PRE_ROUTING, skb);
+							if (ret != NF_ACCEPT) {
+								return ret;
+							}
+							ct = nf_ct_get(skb, &ctinfo);
 						}
-					} else if (ether_addr_equal(skb->dev->dev_addr, eth_hdr(skb)->h_dest)) {
-						return ret;
+					}
+				}
+				if (ct) {
+					unsigned int mtu;
+					dir = CTINFO2DIR(ctinfo);
+					nf = natflow_session_get(ct);
+					if (nf) {
+						if (!(nf->status & (NF_FF_BRIDGE | NF_FF_ROUTE))) {
+							simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+						}
+						if (skb_dst(skb)) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+							mtu = ip_skb_dst_mtu(skb);
+#else
+							mtu = ip_skb_dst_mtu(NULL, skb);
+#endif
+							if (nf->rroute[dir].mtu != mtu) {
+								nf->rroute[dir].mtu = mtu;
+							}
+						}
+					}
+					if ((skb->dev->flags & IFF_IS_LAN)) {
+						natflow_fakeuser_t *user;
+						struct fakeuser_data_t *fud;
+
+						user = natflow_user_in(ct, dir);
+						if (user) {
+							fud = natflow_fakeuser_data(user);
+							if (timestamp_offset(fud->timestamp, jiffies) >= 8 * HZ) {
+								if (memcmp(eth_hdr(skb)->h_source, fud->macaddr, ETH_ALEN) != 0) {
+									memcpy(fud->macaddr, eth_hdr(skb)->h_source, ETH_ALEN);
+								}
+								fud->timestamp = jiffies;
+								natflow_user_timeout_touch(user);
+							}
+						}
 					}
 				}
 
