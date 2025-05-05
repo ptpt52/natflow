@@ -3148,7 +3148,7 @@ out:
 					return ret;
 				}
 
-				if ((skb->dev->flags & IFF_NOARP)) {
+				if (!(skb->dev->flags & IFF_NOARP)) {
 					if ((skb->dev->flags & IFF_VLINE_L2_PORT)) {
 						struct net_device *upper_dev = netdev_master_upper_dev_get_rcu(skb->dev);
 						if (upper_dev && ether_addr_equal(upper_dev->dev_addr, eth_hdr(skb)->h_dest)) {
