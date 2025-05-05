@@ -79,7 +79,7 @@ void vline_fwd_map_config_clear(void)
 	}
 }
 
-static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsigned char *src_ifname, unsigned char family)
+static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsigned char *src_ifname, unsigned char family, int is_relay)
 {
 	int ret = 0;
 	struct net_device *dev;
@@ -136,6 +136,14 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 			                src_ifname, dst_ifname,
 			                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 			return -EINVAL;
+		}
+
+		if (is_relay) {
+			src_dev->flags |= IFF_VLINE_RELAY;
+			dst_dev->flags |= IFF_VLINE_RELAY;
+		} else {
+			src_dev->flags &= ~IFF_VLINE_RELAY;
+			dst_dev->flags &= ~IFF_VLINE_RELAY;
 		}
 
 		if (family == VLINE_FAMILY_IPV4) {
@@ -248,7 +256,9 @@ int vline_fwd_map_config_apply(void)
 		if (vline_fwd_map_config[i][0][0] == 0) {
 			break;
 		}
-		err = vline_fwd_map_add(vline_fwd_map_config[i][1], vline_fwd_map_config[i][0], vline_fwd_map_family_config[i]);
+		err = vline_fwd_map_add(vline_fwd_map_config[i][1], vline_fwd_map_config[i][0],
+		                        vline_fwd_map_family_config[i] & VLINE_FAMILY_MASK,
+		                        !!(vline_fwd_map_family_config[i] & VLINE_RELAY_MASK));
 		if (err != 0)
 			ret = err;
 	}
@@ -277,13 +287,17 @@ static inline int vline_fwd_map_ifup_handle(struct net_device *dev)
 			if (strncmp(upper_dev->name, vline_fwd_map_config[i][0], IFNAMSIZ) == 0 ||
 			        strncmp(upper_dev->name, vline_fwd_map_config[i][1], IFNAMSIZ) == 0) {
 				rcu_read_unlock();
-				return vline_fwd_map_add(vline_fwd_map_config[i][1], vline_fwd_map_config[i][0], vline_fwd_map_family_config[i]);
+				return vline_fwd_map_add(vline_fwd_map_config[i][1], vline_fwd_map_config[i][0],
+				                         vline_fwd_map_family_config[i] & VLINE_FAMILY_MASK,
+				                         !!(vline_fwd_map_family_config[i] & VLINE_RELAY_MASK));
 			}
 		}
 		if (strncmp(dev->name, vline_fwd_map_config[i][0], IFNAMSIZ) == 0 ||
 		        strncmp(dev->name, vline_fwd_map_config[i][1], IFNAMSIZ) == 0) {
 			rcu_read_unlock();
-			return vline_fwd_map_add(vline_fwd_map_config[i][1], vline_fwd_map_config[i][0], vline_fwd_map_family_config[i]);
+			return vline_fwd_map_add(vline_fwd_map_config[i][1], vline_fwd_map_config[i][0],
+			                         vline_fwd_map_family_config[i] & VLINE_FAMILY_MASK,
+			                         !!(vline_fwd_map_family_config[i] & VLINE_RELAY_MASK));
 		}
 	}
 	rcu_read_unlock();

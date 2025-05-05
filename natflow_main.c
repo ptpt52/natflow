@@ -76,6 +76,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 		             "#    ifname_group_add=<ifname> -- add ifname to filter\n"
 		             "#    vline_clear -- clear vline\n"
 		             "#    vline_add=<ifname>,<ifname>,<family> -- add vline <family>=ipv4/ipv6/all\n"
+		             "#    relay_add=<ifname>,<ifname>,<family> -- add relay <family>=ipv4/ipv6/all\n"
 		             "#    vline_apply -- apply vline config\n"
 		             "#\n"
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH)
@@ -141,8 +142,10 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 			if (ptr) {
 				n = snprintf(natflow_ctl_buffer,
 				             PAGE_SIZE - 1 - sizeof(unsigned long),
-				             "vline_add=%s,%s,%s\n",
-				             (*ptr)[0], (*ptr)[1], family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
+				             "%s_add=%s,%s,%s\n",
+				             (family & VLINE_RELAY_MASK) ? "relay" : "vline",
+				             (*ptr)[0], (*ptr)[1],
+				             (family & VLINE_FAMILY_MASK) == VLINE_FAMILY_IPV4 ? "ipv4" : (family & VLINE_FAMILY_MASK) == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				natflow_ctl_buffer[n] = 0;
 				return natflow_ctl_buffer;
 			}
@@ -302,7 +305,7 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 		char str[3][16];
 		n = sscanf(data, "vline_add=%15[^,],%15[^,],%4[^,]\n", str[0], str[1], str[2]);
 		if (n == 3) {
-			unsigned char family = 255;
+			unsigned char family = VLINE_FAMILY_MASK;
 			if ((memcmp(str[2], "ipv4", 5) == 0)) {
 				family = VLINE_FAMILY_IPV4;
 			} else if ((memcmp(str[2], "ipv6", 5) == 0)) {
@@ -310,8 +313,28 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 			} else if ((memcmp(str[2], "all", 4) == 0)) {
 				family = VLINE_FAMILY_ALL;
 			}
-			if (family != 255) {
+			if (family != VLINE_FAMILY_MASK) {
 				err = vline_fwd_map_config_add(str[1], str[0], family);
+				if (err == 0) {
+					goto done;
+				}
+			}
+			err = -EINVAL;
+		}
+	} else if (strncmp(data, "relay_add=", 10) == 0) {
+		char str[3][16];
+		n = sscanf(data, "relay_add=%15[^,],%15[^,],%4[^,]\n", str[0], str[1], str[2]);
+		if (n == 3) {
+			unsigned char family = VLINE_FAMILY_MASK;
+			if ((memcmp(str[2], "ipv4", 5) == 0)) {
+				family = VLINE_FAMILY_IPV4;
+			} else if ((memcmp(str[2], "ipv6", 5) == 0)) {
+				family = VLINE_FAMILY_IPV6;
+			} else if ((memcmp(str[2], "all", 4) == 0)) {
+				family = VLINE_FAMILY_ALL;
+			}
+			if (family != VLINE_FAMILY_MASK) {
+				err = vline_fwd_map_config_add(str[1], str[0], family | VLINE_RELAY_MASK);
 				if (err == 0) {
 					goto done;
 				}

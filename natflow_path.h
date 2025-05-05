@@ -351,6 +351,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 #define IFF_VLINE_FAMILY_IPV4 (1<<28)
 #define IFF_VLINE_FAMILY_IPV6 (1<<29)
 #define IFF_IS_LAN (1<<30)
+#define IFF_VLINE_RELAY (1<<31)
 
 extern int ifname_group_type;
 extern void ifname_group_clear(void);
@@ -364,6 +365,8 @@ extern int vline_fwd_map_config_add(const unsigned char *dst_ifname, const unsig
 extern void vline_fwd_map_config_clear(void);
 extern int vline_fwd_map_config_apply(void);
 
+#define VLINE_RELAY_MASK 0x80
+#define VLINE_FAMILY_MASK 0x7f
 #define VLINE_FAMILY_ALL 0
 #define VLINE_FAMILY_IPV4 1
 #define VLINE_FAMILY_IPV6 2
