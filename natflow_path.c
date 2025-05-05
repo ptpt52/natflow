@@ -139,6 +139,13 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 		}
 
 		if (is_relay) {
+			if ((dst_dev->flags & IFF_NOARP)) {
+				rcu_read_unlock();
+				NATFLOW_println("vline relay config invalid %s,%s,%s dev should not be IFF_NOARP",
+				                src_ifname, dst_ifname,
+				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
+				return -EINVAL;
+			}
 			src_dev->flags |= IFF_VLINE_RELAY;
 			dst_dev->flags |= IFF_VLINE_RELAY;
 		} else {
