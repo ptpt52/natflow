@@ -107,7 +107,11 @@ typedef enum {
 	AUTH_UNKNOWN = 15,
 } auth_status_t;
 
+extern void natflow_user_release_put(natflow_fakeuser_t *user);
 extern natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir);
+extern natflow_fakeuser_t *natflow_user_find_get(__be32 ip);
 extern natflow_fakeuser_t *natflow_user_find_get6(union nf_inet_addr *u3);
+extern natflow_fakeuser_t *natflow_user_in_get(__be32 ip, uint8_t *macaddr);
+extern natflow_fakeuser_t *natflow_user_in_get6(struct in6_addr ipv6, uint8_t *macaddr);
 
 #endif /* _NATFLOW_USER_H_ */

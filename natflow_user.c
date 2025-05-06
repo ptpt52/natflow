@@ -389,7 +389,7 @@ natflow_fakeuser_t *natflow_user_get(struct nf_conn *ct)
 	return user;
 }
 
-static natflow_fakeuser_t *natflow_user_find_get(__be32 ip)
+natflow_fakeuser_t *natflow_user_find_get(__be32 ip)
 {
 	natflow_fakeuser_t *user = NULL;
 
@@ -452,7 +452,7 @@ natflow_fakeuser_t *natflow_user_find_get6(union nf_inet_addr *u3)
 	return user;
 }
 
-static void natflow_user_release_put(natflow_fakeuser_t *user)
+void natflow_user_release_put(natflow_fakeuser_t *user)
 {
 	nf_ct_put(user);
 }
@@ -498,6 +498,261 @@ static natflow_fakeuser_t *natflow_user_lookup_in(struct nf_conn *ct, int dir)
 	}
 
 	return natflow_user_get(ct);
+}
+
+//Must release via natflow_user_release_put()
+natflow_fakeuser_t *natflow_user_in_get(__be32 ip, uint8_t *macaddr)
+{
+	natflow_fakeuser_t *user = NULL;
+	struct nf_ct_ext *new = NULL;
+	unsigned int newoff = 0;
+	int ret;
+	struct sk_buff *uskb;
+	struct iphdr *iph;
+	struct udphdr *udph;
+	enum ip_conntrack_info ctinfo;
+	struct fakeuser_data_t *fud;
+
+	uskb = uskb_of_this_cpu();
+	if (uskb == NULL) {
+		return NULL;
+	}
+	skb_reset_transport_header(uskb);
+	skb_reset_network_header(uskb);
+	skb_reset_mac_len(uskb);
+
+	uskb->protocol = __constant_htons(ETH_P_IP);
+	uskb->len = (sizeof(struct iphdr) + sizeof(struct udphdr));
+	skb_set_tail_pointer(uskb, uskb->len);
+	uskb->pkt_type = PACKET_HOST;
+	uskb->transport_header = uskb->network_header + sizeof(struct iphdr);
+
+	iph = ip_hdr(uskb);
+	iph->version = 4;
+	iph->ihl = 5;
+	iph->saddr = ip;
+	iph->daddr = NATFLOW_FAKEUSER_DADDR;
+	iph->tos = 0;
+	iph->tot_len = htons(uskb->len);
+	iph->ttl=255;
+	iph->protocol = IPPROTO_UDP;
+	iph->id = __constant_htons(0xDEAD);
+	iph->frag_off = 0;
+	iph->check = 0;
+	iph->check = ip_fast_csum(iph, iph->ihl);
+
+	udph = (struct udphdr *)((char *)iph + sizeof(struct iphdr));
+	udph->source = __constant_htons(0);
+	udph->dest = __constant_htons(65535);
+	udph->len = __constant_htons(sizeof(struct udphdr));
+	udph->check = 0;
+
+	ret = nf_conntrack_in_compat(&init_net, PF_INET, NF_INET_PRE_ROUTING, uskb);
+	if (ret != NF_ACCEPT) {
+		return NULL;
+	}
+	user = nf_ct_get(uskb, &ctinfo);
+
+	if (!user) {
+		return NULL;
+	}
+
+	if (!user->ext) {
+		skb_nfct_reset(uskb);
+		return NULL;
+	}
+	if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status) && !test_and_set_bit(IPS_NATFLOW_USER_BIT, &user->status)) {
+		newoff = ALIGN(user->ext->len, __ALIGN_64BITS);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
+		new = __krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
+#else
+		new = krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
+#endif
+		if (!new) {
+			skb_nfct_reset(uskb);
+			return NULL;
+		}
+		if (user->ext != new) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
+			kfree_rcu(user->ext, rcu);
+			user->ext = new;
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
+			kfree_rcu(user->ext, rcu);
+			rcu_assign_pointer(user->ext, new);
+#else
+			user->ext = new;
+#endif
+		}
+		new->len = newoff;
+		memset((void *)new + newoff, 0, sizeof(struct fakeuser_data_t));
+		fud = (struct fakeuser_data_t *)((void *)new + newoff);
+		spin_lock_init(&fud->tc.rx.lock);
+		spin_lock_init(&fud->tc.tx.lock);
+	}
+
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
+	do {
+		struct nf_conntrack_ecache *e = nf_ct_ecache_find(user);
+		if (e) {
+			user->ext->offset[NF_CT_EXT_ECACHE] = 0;
+		}
+	} while (0);
+#endif
+
+	ret = nf_conntrack_confirm(uskb);
+	if (ret != NF_ACCEPT) {
+		skb_nfct_reset(uskb);
+		return NULL;
+	}
+	/* XXX: in race loser_ct may be replaced in nf_conntrack_confirm,
+	 * here reload ct(user) from uskb, and it can't be NULL
+	 */
+	user = nf_ct_get(uskb, &ctinfo);
+	if (!user || nf_ct_is_dying(user)) {
+		skb_nfct_reset(uskb);
+		return NULL;
+	}
+
+	natflow_user_timeout_touch(user);
+
+	//update macaddr
+	fud = natflow_fakeuser_data(user);
+	if (memcmp(macaddr, fud->macaddr, ETH_ALEN) != 0) {
+		memcpy(fud->macaddr, macaddr, ETH_ALEN);
+	}
+	fud->timestamp = jiffies;
+
+	nf_conntrack_get(&user->ct_general);
+
+	skb_nfct_reset(uskb);
+
+	return user;
+}
+
+//Must release via natflow_user_release_put()
+natflow_fakeuser_t *natflow_user_in_get6(struct in6_addr ipv6, uint8_t *macaddr)
+{
+	natflow_fakeuser_t *user = NULL;
+	struct nf_ct_ext *new = NULL;
+	unsigned int newoff = 0;
+	int ret;
+	struct sk_buff *uskb;
+	struct iphdr *iph;
+	struct udphdr *udph;
+	enum ip_conntrack_info ctinfo;
+	struct fakeuser_data_t *fud;
+
+	uskb = uskb_of_this_cpu();
+	if (uskb == NULL) {
+		return NULL;
+	}
+	skb_reset_transport_header(uskb);
+	skb_reset_network_header(uskb);
+	skb_reset_mac_len(uskb);
+
+	uskb->protocol = __constant_htons(ETH_P_IPV6);
+	uskb->len = (sizeof(struct ipv6hdr) + sizeof(struct udphdr));
+	skb_set_tail_pointer(uskb, uskb->len);
+	uskb->pkt_type = PACKET_HOST;
+	uskb->transport_header = uskb->network_header + sizeof(struct ipv6hdr);
+
+	iph = ip_hdr(uskb);
+	IPV6H->version = 6;
+	IPV6H->priority = 0;
+	IPV6H->flow_lbl[2] = IPV6H->flow_lbl[1] = IPV6H->flow_lbl[0] = 0;
+	IPV6H->payload_len = htons(sizeof(struct udphdr));
+	IPV6H->nexthdr = IPPROTO_UDP;
+	IPV6H->hop_limit = 255;
+	IPV6H->saddr = ipv6;
+	memset(&IPV6H->daddr, 0x0, sizeof(IPV6H->daddr));
+	IPV6H->daddr.s6_addr16[0] = 0xffff; //NATFLOW_FAKEUSER_DADDR=ffff::
+
+	udph = (struct udphdr *)((char *)iph + sizeof(struct ipv6hdr));
+	udph->source = __constant_htons(0);
+	udph->dest = __constant_htons(65535);
+	udph->len = __constant_htons(sizeof(struct udphdr));
+	udph->check = 0;
+
+	ret = nf_conntrack_in_compat(&init_net, AF_INET6, NF_INET_PRE_ROUTING, uskb);
+	if (ret != NF_ACCEPT) {
+		return NULL;
+	}
+	user = nf_ct_get(uskb, &ctinfo);
+
+	if (!user) {
+		return NULL;
+	}
+
+	if (!user->ext) {
+		skb_nfct_reset(uskb);
+		return NULL;
+	}
+	if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status) && !test_and_set_bit(IPS_NATFLOW_USER_BIT, &user->status)) {
+		newoff = ALIGN(user->ext->len, __ALIGN_64BITS);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
+		new = __krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
+#else
+		new = krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
+#endif
+		if (!new) {
+			skb_nfct_reset(uskb);
+			return NULL;
+		}
+		if (user->ext != new) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
+			kfree_rcu(user->ext, rcu);
+			user->ext = new;
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
+			kfree_rcu(user->ext, rcu);
+			rcu_assign_pointer(user->ext, new);
+#else
+			user->ext = new;
+#endif
+		}
+		new->len = newoff;
+		memset((void *)new + newoff, 0, sizeof(struct fakeuser_data_t));
+		fud = (struct fakeuser_data_t *)((void *)new + newoff);
+		spin_lock_init(&fud->tc.rx.lock);
+		spin_lock_init(&fud->tc.tx.lock);
+	}
+
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
+	do {
+		struct nf_conntrack_ecache *e = nf_ct_ecache_find(user);
+		if (e) {
+			user->ext->offset[NF_CT_EXT_ECACHE] = 0;
+		}
+	} while (0);
+#endif
+
+	ret = nf_conntrack_confirm(uskb);
+	if (ret != NF_ACCEPT) {
+		skb_nfct_reset(uskb);
+		return NULL;
+	}
+	/* XXX: in race loser_ct may be replaced in nf_conntrack_confirm,
+	 * here reload ct(user) from uskb, and it can't be NULL
+	 */
+	user = nf_ct_get(uskb, &ctinfo);
+	if (!user || nf_ct_is_dying(user)) {
+		skb_nfct_reset(uskb);
+		return NULL;
+	}
+
+	natflow_user_timeout_touch(user);
+
+	//update macaddr
+	fud = natflow_fakeuser_data(user);
+	if (memcmp(macaddr, fud->macaddr, ETH_ALEN) != 0) {
+		memcpy(fud->macaddr, macaddr, ETH_ALEN);
+	}
+	fud->timestamp = jiffies;
+
+	nf_conntrack_get(&user->ct_general);
+
+	skb_nfct_reset(uskb);
+
+	return user;
 }
 
 natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
