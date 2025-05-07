@@ -871,7 +871,6 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 				spin_lock_init(&fud->tc.tx.lock);
 			}
 		} else {
-			//FIXME ipv6
 			uskb->protocol = __constant_htons(ETH_P_IPV6);
 			uskb->len = (sizeof(struct ipv6hdr) + sizeof(struct udphdr));
 			skb_set_tail_pointer(uskb, uskb->len);
