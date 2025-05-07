@@ -4980,11 +4980,12 @@ out6:
 						if (!(outdev->flags & IFF_NOARP)) {
 							skb_push(skb, ETH_HLEN);
 							skb_reset_mac_header(skb);
+							skb->dev = outdev;
+							dev_queue_xmit(skb);
+							return NF_STOLEN;
 						}
-						skb->dev = outdev;
-						dev_queue_xmit(skb);
-						return NF_STOLEN;
 					}
+					return ret;
 				}
 
 				if ((skb->dev->flags & IFF_NOARP)) {
