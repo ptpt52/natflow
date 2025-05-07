@@ -4980,24 +4980,40 @@ out6:
 						            ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT ||
 						            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_SOLICITATION ||
 						            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT)) {
-							// flood NS/NA/RS/RA packets
-							skb = skb_copy(skb, GFP_ATOMIC);
-							if (!skb) {
+							struct ethhdr *eth;
+							natflow_fakeuser_t *user = NULL;
+							if (ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT || ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT) {
+								user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
+								if (user) {
+									struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
+									eth = eth_hdr(skb);
+									ether_addr_copy(eth->h_dest, fud->macaddr);
+									natflow_user_release_put(user);
+								}
+							}
+
+							if (!pskb_may_pull(skb, skb->len) || skb_try_make_writable(skb, skb->len)) {
 								return ret;
 							}
+							if (!user) {
+								// flood NS/NA/RS/RA packets
+								skb = skb_copy(skb, GFP_ATOMIC);
+								if (!skb) {
+									return ret;
+								}
+							} else {
+								ret = NF_STOLEN;
+							}
+							iph = (void *)ipv6_hdr(skb);
+							l4 = (void *)iph + sizeof(struct ipv6hdr);
+
 							do {
 								unsigned char *opt_ptr;
-								struct ethhdr *eth = eth_hdr(skb);
-								natflow_fakeuser_t *user = natflow_user_in_get6((union nf_inet_addr *)&IPV6H->saddr, eth->h_source);
+								eth = eth_hdr(skb);
+								user = natflow_user_in_get6((union nf_inet_addr *)&IPV6H->saddr, eth->h_source);
 								natflow_user_release_put(user);
 								ether_addr_copy(eth->h_source, outdev->dev_addr);
 
-								if (!pskb_may_pull(skb, skb->len) || skb_try_make_writable(skb, skb->len)) {
-									consume_skb(skb);
-									return ret;
-								}
-								iph = (void *)ipv6_hdr(skb);
-								l4 = (void *)iph + sizeof(struct ipv6hdr);
 								opt_ptr = (unsigned char *)(l4 + 8); //RS ptr options
 								if (ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT) {
 									opt_ptr = (unsigned char *)(l4 + 16);
@@ -5022,16 +5038,6 @@ out6:
 										break;
 									}
 									opt_ptr += opt_len;
-								}
-
-								if (ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT || ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT) {
-									user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
-									if (user) {
-										struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-										eth = eth_hdr(skb);
-										ether_addr_copy(eth->h_dest, fud->macaddr);
-										natflow_user_release_put(user);
-									}
 								}
 							} while (0);
 							skb_push(skb, ETH_HLEN);
