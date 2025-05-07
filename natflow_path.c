@@ -4985,9 +4985,6 @@ out6:
 							if (!skb) {
 								return ret;
 							}
-							skb_push(skb, ETH_HLEN);
-							skb_reset_mac_header(skb);
-							skb->dev = outdev;
 							do {
 								unsigned char *opt_ptr;
 								struct ethhdr *eth = eth_hdr(skb);
@@ -5037,6 +5034,9 @@ out6:
 									}
 								}
 							} while (0);
+							skb_push(skb, ETH_HLEN);
+							skb_reset_mac_header(skb);
+							skb->dev = outdev;
 							dev_queue_xmit(skb);
 							return ret;
 						}
