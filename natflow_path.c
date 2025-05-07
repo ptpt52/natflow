@@ -3204,6 +3204,7 @@ out:
 						return ret;
 					}
 
+					/*
 					do {
 						struct in_device *in_dev;
 						struct in_ifaddr *ifa;
@@ -3227,6 +3228,22 @@ out:
 						}
 						rcu_read_unlock();
 					} while (0);
+					*/
+
+					do {
+						natflow_fakeuser_t *user;
+						struct ethhdr *eth = eth_hdr(skb);
+						iph = (void *)ip_hdr(skb);
+						user = natflow_user_find_get(iph->daddr);
+						if (user) {
+							struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
+							ether_addr_copy(eth->h_dest, fud->macaddr);
+							natflow_user_release_put(user);
+						} else {
+							//go kernel route path
+							return ret;
+						}
+					} while (0);
 
 					ct = nf_ct_get(skb, &ctinfo);
 					if (ct) {
@@ -3249,21 +3266,6 @@ out:
 							}
 						}
 					}
-
-					do {
-						natflow_fakeuser_t *user;
-						struct ethhdr *eth = eth_hdr(skb);
-						iph = (void *)ip_hdr(skb);
-						user = natflow_user_find_get(iph->daddr);
-						if (user) {
-							struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-							ether_addr_copy(eth->h_dest, fud->macaddr);
-							natflow_user_release_put(user);
-						} else {
-							//go kernel route path
-							return ret;
-						}
-					} while (0);
 
 					ret = nf_conntrack_confirm(skb);
 					if (ret != NF_ACCEPT) {
