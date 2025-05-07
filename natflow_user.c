@@ -630,7 +630,7 @@ natflow_fakeuser_t *natflow_user_in_get(__be32 ip, uint8_t *macaddr)
 }
 
 //Must release via natflow_user_release_put()
-natflow_fakeuser_t *natflow_user_in_get6(struct in6_addr ipv6, uint8_t *macaddr)
+natflow_fakeuser_t *natflow_user_in_get6(union nf_inet_addr *u3, uint8_t *macaddr)
 {
 	natflow_fakeuser_t *user = NULL;
 	struct nf_ct_ext *new = NULL;
@@ -663,7 +663,7 @@ natflow_fakeuser_t *natflow_user_in_get6(struct in6_addr ipv6, uint8_t *macaddr)
 	IPV6H->payload_len = htons(sizeof(struct udphdr));
 	IPV6H->nexthdr = IPPROTO_UDP;
 	IPV6H->hop_limit = 255;
-	IPV6H->saddr = ipv6;
+	IPV6H->saddr = u3->in6;
 	memset(&IPV6H->daddr, 0x0, sizeof(IPV6H->daddr));
 	IPV6H->daddr.s6_addr16[0] = 0xffff; //NATFLOW_FAKEUSER_DADDR=ffff::
 

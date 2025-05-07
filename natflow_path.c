@@ -4969,7 +4969,151 @@ out6:
 			        skb->protocol == __constant_htons(ETH_P_PPP_DISC) ||
 			        skb->protocol == __constant_htons(ETH_P_PPP_SES) ||
 			        skb->protocol != __constant_htons(ETH_P_IPV6) /* for unknown packets */) {
+				//XXX: relay
+				if ((outdev->flags & IFF_VLINE_RELAY)) {
+					if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
+						iph = (void *)ipv6_hdr(skb);
+						l4 = (void *)iph + sizeof(struct ipv6hdr);
 
+						if (IPV6H->nexthdr == IPPROTO_ICMPV6
+						        && (ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION ||
+						            ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT ||
+						            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_SOLICITATION ||
+						            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT)) {
+							// flood NS/NA/RS/RA packets
+							skb = skb_copy(skb, GFP_ATOMIC);
+							if (!skb) {
+								return ret;
+							}
+							skb_push(skb, ETH_HLEN);
+							skb_reset_mac_header(skb);
+							skb->dev = outdev;
+							do {
+								unsigned char *opt_ptr;
+								struct ethhdr *eth = eth_hdr(skb);
+								natflow_fakeuser_t *user = natflow_user_in_get6((union nf_inet_addr *)&IPV6H->saddr, eth->h_source);
+								natflow_user_release_put(user);
+								ether_addr_copy(eth->h_source, outdev->dev_addr);
+
+								if (!pskb_may_pull(skb, skb->len) || skb_try_make_writable(skb, skb->len)) {
+									consume_skb(skb);
+									return ret;
+								}
+								iph = (void *)ipv6_hdr(skb);
+								l4 = (void *)iph + sizeof(struct ipv6hdr);
+								opt_ptr = (unsigned char *)(l4 + 8); //RS ptr options
+								if (ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT) {
+									opt_ptr = (unsigned char *)(l4 + 16);
+								} else if (ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION ||
+								           ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT) {
+									opt_ptr = (unsigned char *)(l4 + 24);
+								}
+
+								while (opt_ptr + 2 <= skb_tail_pointer(skb)) {
+									u8 opt_type = opt_ptr[0];
+									u8 opt_len = opt_ptr[1] * 8;
+									if (opt_len == 0 || opt_ptr + opt_len > skb_tail_pointer(skb))
+										break;
+									if ((opt_type == 1 || opt_type == 2 /* NA */) && opt_len >= 8) {
+										memcpy(opt_ptr + 2, outdev->dev_addr, ETH_ALEN);
+										ICMP6H(l4)->icmp6_cksum = 0;
+										ICMP6H(l4)->icmp6_cksum = csum_ipv6_magic(&IPV6H->saddr,
+										                          &IPV6H->daddr,
+										                          skb->len - sizeof(struct ipv6hdr),
+										                          IPPROTO_ICMPV6,
+										                          csum_partial(l4, skb->len - sizeof(struct ipv6hdr), 0));
+										break;
+									}
+									opt_ptr += opt_len;
+								}
+
+								if (ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT || ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT) {
+									user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
+									if (user) {
+										struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
+										eth = eth_hdr(skb);
+										ether_addr_copy(eth->h_dest, fud->macaddr);
+										natflow_user_release_put(user);
+									}
+								}
+							} while (0);
+							dev_queue_xmit(skb);
+							return ret;
+						}
+					}
+
+					if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
+						if (!pskb_may_pull(skb, skb->len) || skb_try_make_writable(skb, skb->len)) {
+							return NF_DROP;
+						}
+						skb = skb_copy(skb, GFP_ATOMIC);
+						if (!skb) {
+							return ret;
+						}
+						skb_push(skb, ETH_HLEN);
+						skb_reset_mac_header(skb);
+						skb->dev = outdev;
+						do {
+							struct ethhdr *eth = eth_hdr(skb);
+							ether_addr_copy(eth->h_source, outdev->dev_addr);
+						} while (0);
+						dev_queue_xmit(skb);
+						return ret;
+					}
+
+					if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
+						iph = (void *)ipv6_hdr(skb);
+						natflow_fakeuser_t *user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
+						if (user) {
+							struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
+							struct ethhdr *eth = eth_hdr(skb);
+							ether_addr_copy(eth->h_dest, fud->macaddr);
+							natflow_user_release_put(user);
+						} else {
+							//go kernel route path
+							return ret;
+						}
+					}
+
+					ct = nf_ct_get(skb, &ctinfo);
+					if (ct) {
+						unsigned int mtu;
+						dir = CTINFO2DIR(ctinfo);
+						nf = natflow_session_get(ct);
+						if (nf) {
+							if (!(nf->status & (NF_FF_BRIDGE | NF_FF_ROUTE))) {
+								simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
+							}
+							if (skb_dst(skb)) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+								mtu = ip_skb_dst_mtu(skb);
+#else
+								mtu = ip_skb_dst_mtu(NULL, skb);
+#endif
+								if (nf->rroute[dir].mtu != mtu) {
+									nf->rroute[dir].mtu = mtu;
+								}
+							}
+						}
+					}
+
+					ret = nf_conntrack_confirm(skb);
+					if (ret != NF_ACCEPT) {
+						return ret;
+					}
+
+					skb_push(skb, ETH_HLEN);
+					skb_reset_mac_header(skb);
+					skb->dev = outdev;
+					do {
+						struct ethhdr *eth = eth_hdr(skb);
+						ether_addr_copy(eth->h_source, outdev->dev_addr);
+					} while (0);
+					dev_queue_xmit(skb);
+					return NF_STOLEN;
+				}
+
+				//XXX: vline
 				if (!(skb->dev->flags & IFF_NOARP) && unlikely(is_link_local_ether_addr(eth_hdr(skb)->h_dest))) {
 					switch (eth_hdr(skb)->h_dest[5]) {
 					case 0x01: /* IEEE MAC (Pause) */
