@@ -3171,9 +3171,7 @@ out:
 						if (!skb) {
 							return ret;
 						}
-						skb_push(skb, ETH_HLEN);
-						skb_reset_mac_header(skb);
-						skb->dev = outdev;
+
 						do {
 							natflow_fakeuser_t *user;
 							uint8_t macaddr[ETH_ALEN];
@@ -3195,50 +3193,41 @@ out:
 									ipaddr = get_byte4((void *)arph + 8 + ETH_ALEN); //sip
 									get_byte6((void *)arph + 8, macaddr); //sha
 									user = natflow_user_in_get(ipaddr, macaddr); //learn or update macaddr cache
+									if (user) {
+										struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
+										if ((skb->dev->flags & IFF_IS_LAN)) {
+											if (fud->vline_lan != 1) fud->vline_lan = 1;
+										} else {
+											if (fud->vline_lan != 0) fud->vline_lan = 0;
+										}
+									}
 									natflow_user_release_put(user);
 								}
 								ether_addr_copy((void *)arph + 8, outdev->dev_addr);
 							}
 						} while (0);
+						skb_push(skb, ETH_HLEN);
+						skb_reset_mac_header(skb);
+						skb->dev = outdev;
 						dev_queue_xmit(skb);
 						return ret;
 					}
 
-					/*
-					do {
-						struct in_device *in_dev;
-						struct in_ifaddr *ifa;
-						struct net_device *upper_dev = skb->dev;
-
-						iph = (void *)ip_hdr(skb);
-
-						if ((skb->dev->flags & IFF_VLINE_L2_PORT)) {
-							upper_dev = netdev_master_upper_dev_get_rcu(skb->dev);
-						}
-						rcu_read_lock();
-						in_dev = __in_dev_get_rcu(upper_dev);
-						if (in_dev) {
-							for (ifa = rcu_dereference(in_dev->ifa_list); ifa;
-							        ifa = rcu_dereference(ifa->ifa_next)) {
-								if (ifa->ifa_address == iph->daddr) {
-									rcu_read_unlock();
-									return ret;
-								}
-							}
-						}
-						rcu_read_unlock();
-					} while (0);
-					*/
-
 					do {
 						natflow_fakeuser_t *user;
-						struct ethhdr *eth = eth_hdr(skb);
 						iph = (void *)ip_hdr(skb);
 						user = natflow_user_find_get(iph->daddr);
 						if (user) {
 							struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-							ether_addr_copy(eth->h_dest, fud->macaddr);
-							natflow_user_release_put(user);
+							if (((skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 0) ||
+							        (!(skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 1)) {
+								struct ethhdr *eth = eth_hdr(skb);
+								ether_addr_copy(eth->h_dest, fud->macaddr);
+								natflow_user_release_put(user);
+							} else {
+								//go kernel route path
+								return ret;
+							}
 						} else {
 							//go kernel route path
 							return ret;
@@ -4981,28 +4970,35 @@ out6:
 						            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_SOLICITATION ||
 						            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT)) {
 							struct ethhdr *eth;
-							natflow_fakeuser_t *user = NULL;
-							if (ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT || ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT) {
-								user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
-								if (user) {
-									struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
+							natflow_fakeuser_t *user;
+							user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
+							if (user) {
+								struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
+								if (((skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 0) ||
+								        (!(skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 1)) {
 									eth = eth_hdr(skb);
 									ether_addr_copy(eth->h_dest, fud->macaddr);
 									natflow_user_release_put(user);
+									ret = NF_STOLEN;
+								} else {
+									skb = skb_copy(skb, GFP_ATOMIC);
+									if (!skb) {
+										natflow_user_release_put(user);
+										return ret;
+									}
+									eth = eth_hdr(skb);
+									ether_addr_copy(eth->h_dest, fud->macaddr);
+									natflow_user_release_put(user);
+								}
+							} else {
+								skb = skb_copy(skb, GFP_ATOMIC);
+								if (!skb) {
+									return ret;
 								}
 							}
 
 							if (!pskb_may_pull(skb, skb->len) || skb_try_make_writable(skb, skb->len)) {
 								return ret;
-							}
-							if (!user) {
-								// flood NS/NA/RS/RA packets
-								skb = skb_copy(skb, GFP_ATOMIC);
-								if (!skb) {
-									return ret;
-								}
-							} else {
-								ret = NF_STOLEN;
 							}
 							iph = (void *)ipv6_hdr(skb);
 							l4 = (void *)iph + sizeof(struct ipv6hdr);
@@ -5011,6 +5007,14 @@ out6:
 								unsigned char *opt_ptr;
 								eth = eth_hdr(skb);
 								user = natflow_user_in_get6((union nf_inet_addr *)&IPV6H->saddr, eth->h_source);
+								if (user) {
+									struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
+									if ((skb->dev->flags & IFF_IS_LAN)) {
+										if (fud->vline_lan != 1) fud->vline_lan = 1;
+									} else {
+										if (fud->vline_lan != 0) fud->vline_lan = 0;
+									}
+								}
 								natflow_user_release_put(user);
 								ether_addr_copy(eth->h_source, outdev->dev_addr);
 
@@ -5068,13 +5072,20 @@ out6:
 					}
 
 					if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
+						natflow_fakeuser_t *user;
 						iph = (void *)ipv6_hdr(skb);
-						natflow_fakeuser_t *user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
+						user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
 						if (user) {
 							struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-							struct ethhdr *eth = eth_hdr(skb);
-							ether_addr_copy(eth->h_dest, fud->macaddr);
-							natflow_user_release_put(user);
+							if (((skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 0) ||
+							        (!(skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 1)) {
+								struct ethhdr *eth = eth_hdr(skb);
+								ether_addr_copy(eth->h_dest, fud->macaddr);
+								natflow_user_release_put(user);
+							} else {
+								//go kernel route path
+								return ret;
+							}
 						} else {
 							//go kernel route path
 							return ret;
