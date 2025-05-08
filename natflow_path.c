@@ -3202,6 +3202,18 @@ out:
 										}
 									}
 									natflow_user_release_put(user);
+									if (skb->pkt_type != PACKET_BROADCAST) {
+										ipaddr = get_byte4((void *)arph + 8 + ETH_ALEN + 4 + ETH_ALEN); //tip
+										user = natflow_user_find_get(ipaddr);
+										if (user) {
+											struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
+											ether_addr_copy(eth->h_dest, fud->macaddr);
+											natflow_user_release_put(user);
+										} else {
+											skb->pkt_type = PACKET_BROADCAST;
+											ether_addr_copy(eth->h_dest, "\xff\xff\xff\xff\xff\xff");
+										}
+									}
 								}
 								ether_addr_copy((void *)arph + 8, outdev->dev_addr);
 							}
