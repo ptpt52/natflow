@@ -3144,6 +3144,7 @@ out:
 			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV6)) {
 				//XXX: relay
 				if ((outdev->flags & IFF_VLINE_RELAY)) {
+					natflow_fakeuser_t *user;
 					if (skb->protocol == __constant_htons(ETH_P_IP)) {
 						iph = (void *)ip_hdr(skb);
 						l4 = (void *)iph + iph->ihl * 4;
@@ -3173,7 +3174,6 @@ out:
 						}
 
 						do {
-							natflow_fakeuser_t *user;
 							uint8_t macaddr[ETH_ALEN];
 							__be32 ipaddr;
 							struct ethhdr *eth = eth_hdr(skb);
@@ -3225,26 +3225,23 @@ out:
 						return ret;
 					}
 
-					do {
-						natflow_fakeuser_t *user;
-						iph = (void *)ip_hdr(skb);
-						user = natflow_user_find_get(iph->daddr);
-						if (user) {
-							struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-							if (((skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 0) ||
-							        (!(skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 1)) {
-								struct ethhdr *eth = eth_hdr(skb);
-								ether_addr_copy(eth->h_dest, fud->macaddr);
-								natflow_user_release_put(user);
-							} else {
-								//go kernel route path
-								return ret;
-							}
+					iph = (void *)ip_hdr(skb);
+					user = natflow_user_find_get(iph->daddr);
+					if (user) {
+						struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
+						if (((skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 0) ||
+						        (!(skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 1)) {
+							struct ethhdr *eth = eth_hdr(skb);
+							ether_addr_copy(eth->h_dest, fud->macaddr);
+							natflow_user_release_put(user);
 						} else {
 							//go kernel route path
 							return ret;
 						}
-					} while (0);
+					} else {
+						//go kernel route path
+						return ret;
+					}
 
 					ct = nf_ct_get(skb, &ctinfo);
 					if (ct) {
@@ -4972,6 +4969,7 @@ out6:
 			        skb->protocol != __constant_htons(ETH_P_IPV6) /* for unknown packets */) {
 				//XXX: relay
 				if ((outdev->flags & IFF_VLINE_RELAY)) {
+					natflow_fakeuser_t *user;
 					if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
 						iph = (void *)ipv6_hdr(skb);
 						l4 = (void *)iph + sizeof(struct ipv6hdr);
@@ -4982,7 +4980,6 @@ out6:
 						            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_SOLICITATION ||
 						            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT)) {
 							struct ethhdr *eth;
-							natflow_fakeuser_t *user;
 							user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
 							if (user) {
 								struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
@@ -5084,7 +5081,6 @@ out6:
 					}
 
 					if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
-						natflow_fakeuser_t *user;
 						iph = (void *)ipv6_hdr(skb);
 						user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
 						if (user) {
