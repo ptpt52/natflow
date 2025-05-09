@@ -3180,6 +3180,18 @@ out:
 							ether_addr_copy(eth->h_source, outdev->dev_addr);
 							if (skb->protocol == __constant_htons(ETH_P_ARP)) {
 								struct arphdr *arph = arp_hdr(skb);
+								ipaddr = get_byte4((void *)arph + 8 + ETH_ALEN); //sip
+								get_byte6((void *)arph + 8, macaddr); //sha
+								user = natflow_user_in_get(ipaddr, macaddr); //learn or update macaddr cache
+								if (user) {
+									struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
+									if ((skb->dev->flags & IFF_IS_LAN)) {
+										if (fud->vline_lan != 1) fud->vline_lan = 1;
+									} else {
+										if (fud->vline_lan != 0) fud->vline_lan = 0;
+									}
+								}
+								natflow_user_release_put(user);
 								if (arph->ar_op == htons(ARPOP_REPLY)) {
 									ipaddr = get_byte4((void *)arph + 8 + ETH_ALEN + 4 + ETH_ALEN); //tip
 									user = natflow_user_find_get(ipaddr);
@@ -3190,18 +3202,6 @@ out:
 										natflow_user_release_put(user);
 									}
 								} else if (arph->ar_op == htons(ARPOP_REQUEST)) {
-									ipaddr = get_byte4((void *)arph + 8 + ETH_ALEN); //sip
-									get_byte6((void *)arph + 8, macaddr); //sha
-									user = natflow_user_in_get(ipaddr, macaddr); //learn or update macaddr cache
-									if (user) {
-										struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-										if ((skb->dev->flags & IFF_IS_LAN)) {
-											if (fud->vline_lan != 1) fud->vline_lan = 1;
-										} else {
-											if (fud->vline_lan != 0) fud->vline_lan = 0;
-										}
-									}
-									natflow_user_release_put(user);
 									if (skb->pkt_type != PACKET_BROADCAST) {
 										ipaddr = get_byte4((void *)arph + 8 + ETH_ALEN + 4 + ETH_ALEN); //tip
 										user = natflow_user_find_get(ipaddr);
