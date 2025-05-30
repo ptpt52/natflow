@@ -283,7 +283,6 @@ static inline int vline_fwd_map_ifup_handle(struct net_device *dev)
 	}
 	*/
 
-	NATFLOW_println("handle event for dev=%s", dev->name);
 	rcu_read_lock();
 	upper_dev = netdev_master_upper_dev_get_rcu(dev);
 	for (i = 0; i < VLINE_FWD_MAP_CONFIG_NUM; i++) {
@@ -294,6 +293,7 @@ static inline int vline_fwd_map_ifup_handle(struct net_device *dev)
 			if (strncmp(upper_dev->name, vline_fwd_map_config[i][0], IFNAMSIZ) == 0 ||
 			        strncmp(upper_dev->name, vline_fwd_map_config[i][1], IFNAMSIZ) == 0) {
 				rcu_read_unlock();
+				NATFLOW_println("handle event for dev=%s", dev->name);
 				return vline_fwd_map_add(vline_fwd_map_config[i][1], vline_fwd_map_config[i][0],
 				                         vline_fwd_map_family_config[i] & VLINE_FAMILY_MASK,
 				                         !!(vline_fwd_map_family_config[i] & VLINE_RELAY_MASK));
@@ -302,6 +302,7 @@ static inline int vline_fwd_map_ifup_handle(struct net_device *dev)
 		if (strncmp(dev->name, vline_fwd_map_config[i][0], IFNAMSIZ) == 0 ||
 		        strncmp(dev->name, vline_fwd_map_config[i][1], IFNAMSIZ) == 0) {
 			rcu_read_unlock();
+			NATFLOW_println("handle event for dev=%s", dev->name);
 			return vline_fwd_map_add(vline_fwd_map_config[i][1], vline_fwd_map_config[i][0],
 			                         vline_fwd_map_family_config[i] & VLINE_FAMILY_MASK,
 			                         !!(vline_fwd_map_family_config[i] & VLINE_RELAY_MASK));
@@ -316,11 +317,13 @@ static inline int vline_fwd_map_unregister_handle(struct net_device *dev)
 {
 	int i;
 
-	NATFLOW_println("handle event for dev=%s", dev->name);
 	if (dev->ifindex >= VLINE_FWD_MAX_NUM) {
 		return 0;
 	}
-	vline_fwd_map[dev->ifindex] = NULL;
+	if (vline_fwd_map[dev->ifindex] != NULL) {
+		vline_fwd_map[dev->ifindex] = NULL;
+		NATFLOW_println("handle event for dev=%s", dev->name);
+	}
 
 	for (i = 0; i < VLINE_FWD_MAX_NUM; i++) {
 		if (vline_fwd_map[i] == dev) {
