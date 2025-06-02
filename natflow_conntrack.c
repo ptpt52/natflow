@@ -45,7 +45,11 @@ static int number_of_devices = 1;
 struct conntrackinfo {
 	struct list_head list;
 	unsigned int len;
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
+	unsigned char data[];
+#else
 	unsigned char data[0];
+#endif
 };
 #define CONNTRACKINFO_MEMSIZE ALIGN(sizeof(struct conntrackinfo), 4096)
 #define CONNTRACKINFO_DATALEN (CONNTRACKINFO_MEMSIZE - sizeof(struct conntrackinfo))

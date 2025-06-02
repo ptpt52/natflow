@@ -95,7 +95,11 @@ struct urlinfo {
 #define URLINFO_ACL_ACTION_RESET 2
 #define URLINFO_ACL_ACTION_REDIRECT 3
 	unsigned char acl_action;
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
+	unsigned char data[];
+#else
 	unsigned char data[0];
+#endif
 };
 
 #define __URLINFO_ALIGN 64
@@ -1521,7 +1525,11 @@ static struct nf_hook_ops urllogger_hooks[] = {
 
 struct urllogger_user {
 	struct mutex lock;
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
+	unsigned char data[];
+#else
 	unsigned char data[0];
+#endif
 };
 #define URLLOGGER_MEMSIZE ALIGN(sizeof(struct urllogger_user), 2048)
 #define URLLOGGER_DATALEN (URLLOGGER_MEMSIZE - sizeof(struct urllogger_user))

@@ -1115,7 +1115,11 @@ static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *
 		char location[128];
 		char data[384];
 		char header[384];
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
+		char payload[];
+#else
 		char payload[0];
+#endif
 	} *http = kmalloc(2048, GFP_ATOMIC);
 	if (!http)
 		return;
@@ -1160,7 +1164,11 @@ static inline void natflow_auth_open_weixin_reply(const struct net_device *dev, 
 	struct {
 		char data[384];
 		char header[384];
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
+		char payload[];
+#else
 		char payload[0];
+#endif
 	} *http = kmalloc(2048, GFP_ATOMIC);
 	if (!http)
 		return;
@@ -2678,7 +2686,11 @@ struct userinfo_user {
 	unsigned int next_bucket;
 	unsigned int count;
 	unsigned int status;
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
+	unsigned char data[];
+#else
 	unsigned char data[0];
+#endif
 };
 #define USERINFO_MEMSIZE ALIGN(sizeof(struct userinfo_user), 2048)
 #define USERINFO_DATALEN (USERINFO_MEMSIZE - sizeof(struct userinfo_user))
