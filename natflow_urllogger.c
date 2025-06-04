@@ -1510,7 +1510,7 @@ static struct nf_hook_ops urllogger_hooks[] = {
 		.hook = natflow_urllogger_hook_v1,
 		.pf = PF_INET,
 		.hooknum = NF_INET_FORWARD,
-		.priority = NF_IP_PRI_FILTER - 10,
+		.priority = NF_IP_PRI_FILTER + 5,
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
@@ -1519,7 +1519,7 @@ static struct nf_hook_ops urllogger_hooks[] = {
 		.hook = natflow_urllogger_hook_v1,
 		.pf = AF_INET6,
 		.hooknum = NF_INET_FORWARD,
-		.priority = NF_IP_PRI_FILTER - 10,
+		.priority = NF_IP_PRI_FILTER + 5,
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
@@ -1528,7 +1528,7 @@ static struct nf_hook_ops urllogger_hooks[] = {
 		.hook = natflow_urllogger_hook_v1,
 		.pf = NFPROTO_BRIDGE,
 		.hooknum = NF_INET_FORWARD,
-		.priority = NF_IP_PRI_FILTER - 10,
+		.priority = NF_IP_PRI_FILTER + 5,
 	},
 };
 
