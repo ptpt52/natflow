@@ -884,6 +884,10 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct)
 		goto out;
+	if ((ct->status & IPS_NATFLOW_CT_DROP)) {
+		ret = NF_DROP;
+		goto out;
+	}
 
 	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
 		goto out;
