@@ -1183,61 +1183,6 @@ static inline void natflow_auth_open_weixin_reply(const struct net_device *dev, 
 	kfree(http);
 }
 
-static inline void natflow_auth_convert_tcprst(struct sk_buff *skb)
-{
-	int offset = 0;
-	int len;
-	struct iphdr *iph;
-	struct tcphdr *tcph;
-
-	iph = ip_hdr(skb);
-	if (iph->protocol != IPPROTO_TCP)
-		return;
-	if (skb->len < ntohs(iph->tot_len))
-		return;
-	tcph = (struct tcphdr *)((void *)iph + iph->ihl * 4);
-	offset = iph->ihl * 4 + sizeof(struct tcphdr) - skb->len;
-	if (offset > 0)
-		return;
-	if (pskb_trim(skb, skb->len + offset))
-		return;
-
-	tcph->res1 = 0;
-	tcph->doff = 5;
-	tcph->syn = 0;
-	tcph->rst = 1;
-	tcph->psh = 0;
-	tcph->ack = 0;
-	tcph->fin = 0;
-	tcph->urg = 0;
-	tcph->ece = 0;
-	tcph->cwr = 0;
-	tcph->window = __constant_htons(0);
-	tcph->check = 0;
-	tcph->urg_ptr = 0;
-
-	iph->tot_len = htons(skb->len);
-	iph->id = __constant_htons(0xDEAD);
-	iph->frag_off = 0;
-
-	len = ntohs(iph->tot_len);
-	if (skb->ip_summed == CHECKSUM_PARTIAL) {
-		iph->check = 0;
-		iph->check = ip_fast_csum(iph, iph->ihl);
-		tcph->check = 0;
-		tcph->check = ~csum_tcpudp_magic(iph->saddr, iph->daddr, skb->len - iph->ihl * 4, IPPROTO_TCP, 0);
-		skb->csum_start = (unsigned char *)tcph - skb->head;
-		skb->csum_offset = offsetof(struct tcphdr, check);
-	} else {
-		iph->check = 0;
-		iph->check = ip_fast_csum(iph, iph->ihl);
-		skb->csum = 0;
-		tcph->check = 0;
-		skb->csum = skb_checksum(skb, iph->ihl * 4, len - iph->ihl * 4, 0);
-		tcph->check = csum_tcpudp_magic(iph->saddr, iph->daddr, len - iph->ihl * 4, iph->protocol, skb->csum);
-	}
-}
-
 static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, struct sk_buff *oskb, int pppoe_hdr)
 {
 	struct sk_buff *nskb;

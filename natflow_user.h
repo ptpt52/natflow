@@ -11,6 +11,10 @@
 #include <linux/if_ether.h>
 #include <net/netfilter/nf_conntrack.h>
 #include <linux/netfilter/ipset/ip_set.h>
+#include <net/ip.h>
+#include <net/tcp.h>
+#include <net/udp.h>
+#include <net/ip6_checksum.h>
 #include "natflow.h"
 
 struct token_ctrl {
@@ -113,5 +117,105 @@ extern natflow_fakeuser_t *natflow_user_find_get(__be32 ip);
 extern natflow_fakeuser_t *natflow_user_find_get6(union nf_inet_addr *u3);
 extern natflow_fakeuser_t *natflow_user_in_get(__be32 ip, uint8_t *macaddr);
 extern natflow_fakeuser_t *natflow_user_in_get6(union nf_inet_addr *u3, uint8_t *macaddr);
+
+static inline void natflow_auth_convert_tcprst(struct sk_buff *skb)
+{
+	int offset = 0;
+	int len;
+	struct iphdr *iph;
+	struct tcphdr *tcph;
+
+	iph = ip_hdr(skb);
+	if (iph->protocol != IPPROTO_TCP)
+		return;
+	if (skb->len < ntohs(iph->tot_len))
+		return;
+	tcph = (struct tcphdr *)((void *)iph + iph->ihl * 4);
+	offset = iph->ihl * 4 + sizeof(struct tcphdr) - skb->len;
+	if (offset > 0)
+		return;
+	if (pskb_trim(skb, skb->len + offset))
+		return;
+
+	tcph->res1 = 0;
+	tcph->doff = 5;
+	tcph->syn = 0;
+	tcph->rst = 1;
+	tcph->psh = 0;
+	tcph->ack = 0;
+	tcph->fin = 0;
+	tcph->urg = 0;
+	tcph->ece = 0;
+	tcph->cwr = 0;
+	tcph->window = __constant_htons(0);
+	tcph->check = 0;
+	tcph->urg_ptr = 0;
+
+	iph->tot_len = htons(skb->len);
+	iph->id = __constant_htons(0xDEAD);
+	iph->frag_off = 0;
+
+	len = ntohs(iph->tot_len);
+	if (skb->ip_summed == CHECKSUM_PARTIAL) {
+		iph->check = 0;
+		iph->check = ip_fast_csum(iph, iph->ihl);
+		tcph->check = 0;
+		tcph->check = ~csum_tcpudp_magic(iph->saddr, iph->daddr, skb->len - iph->ihl * 4, IPPROTO_TCP, 0);
+		skb->csum_start = (unsigned char *)tcph - skb->head;
+		skb->csum_offset = offsetof(struct tcphdr, check);
+	} else {
+		iph->check = 0;
+		iph->check = ip_fast_csum(iph, iph->ihl);
+		skb->csum = 0;
+		tcph->check = 0;
+		skb->csum = skb_checksum(skb, iph->ihl * 4, len - iph->ihl * 4, 0);
+		tcph->check = csum_tcpudp_magic(iph->saddr, iph->daddr, len - iph->ihl * 4, iph->protocol, skb->csum);
+	}
+}
+
+static inline void natflow_auth_convert_tcprst6(struct sk_buff *skb)
+{
+	struct ipv6hdr *ip6h = ipv6_hdr(skb);
+	struct tcphdr *tcph;
+	int tcphoff = sizeof(struct ipv6hdr);
+
+	if (ip6h->nexthdr != IPPROTO_TCP)
+		return;
+	if (skb->len < tcphoff + sizeof(struct tcphdr))
+		return;
+	tcph = (struct tcphdr *)((void *)ip6h + tcphoff);
+
+	if (pskb_trim(skb, tcphoff + sizeof(struct tcphdr)))
+		return;
+
+	tcph->doff = 5;
+	tcph->syn = 0;
+	tcph->rst = 1;
+	tcph->psh = 0;
+	tcph->ack = 0;
+	tcph->fin = 0;
+	tcph->urg = 0;
+	tcph->ece = 0;
+	tcph->cwr = 0;
+	tcph->window = __constant_htons(0);
+	tcph->check = 0;
+	tcph->urg_ptr = 0;
+
+	ip6h->payload_len = htons(sizeof(struct tcphdr));
+
+	if (skb->ip_summed == CHECKSUM_PARTIAL) {
+		tcph->check = 0;
+		tcph->check = ~csum_ipv6_magic(&ip6h->saddr, &ip6h->daddr,
+		                               sizeof(struct tcphdr), IPPROTO_TCP, 0);
+		skb->csum_start = (unsigned char *)tcph - skb->head;
+		skb->csum_offset = offsetof(struct tcphdr, check);
+	} else {
+		skb->csum = 0;
+		tcph->check = 0;
+		skb->csum = skb_checksum(skb, tcphoff, sizeof(struct tcphdr), 0);
+		tcph->check = csum_ipv6_magic(&ip6h->saddr, &ip6h->daddr,
+		                              sizeof(struct tcphdr), IPPROTO_TCP, skb->csum);
+	}
+}
 
 #endif /* _NATFLOW_USER_H_ */

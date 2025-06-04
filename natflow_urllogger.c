@@ -38,6 +38,7 @@
 #include <net/ip6_checksum.h>
 #include "natflow_common.h"
 #include "natflow_urllogger.h"
+#include "natflow_user.h"
 
 static int urllogger_major = 0;
 static int urllogger_minor = 0;
@@ -1075,6 +1076,8 @@ __urllogger_ip_skip:
 							}
 							if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
 								natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+								natflow_auth_convert_tcprst(skb);
+								ret = NF_ACCEPT;
 							}
 							break;
 						}
@@ -1176,6 +1179,8 @@ __urllogger_ip_skip:
 								}
 								if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
 									natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+									natflow_auth_convert_tcprst(skb);
+									ret = NF_ACCEPT;
 								}
 								break;
 							}
@@ -1375,6 +1380,8 @@ __urllogger_ipv6_skip:
 							}
 							if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
 								natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
+								natflow_auth_convert_tcprst6(skb);
+								ret = NF_DROP;
 							}
 							break;
 						}
@@ -1467,6 +1474,8 @@ __urllogger_ipv6_skip:
 								}
 								if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
 									natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
+									natflow_auth_convert_tcprst6(skb);
+									ret = NF_ACCEPT;
 								}
 								break;
 							}
