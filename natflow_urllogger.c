@@ -195,6 +195,13 @@ struct acl_rule {
 	ssize_t acl_buffer_len;
 };
 
+//#define URLINFO_ACL_ACTION_RECORD 0
+//#define URLINFO_ACL_ACTION_DROP 1
+//#define URLINFO_ACL_ACTION_RESET 2
+//#define URLINFO_ACL_ACTION_REDIRECT 3
+static int acl_action_default = URLINFO_ACL_ACTION_RECORD; //0: accept/record, 1: drop, 2: reset, 3: redirect
+const char *acl_action_str[] = {"accept", "drop", "reset", "redirect"};
+
 #define ACL_RULE_ALLOC_SIZE 256
 #define ACL_RULE_MAX 32
 static int acl_rule_max = 0;
@@ -1039,7 +1046,7 @@ __urllogger_ip_skip:
 			memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
 
 			url->acl_idx = 64; /* 64 = before acl matching */
-			url->acl_action = URLINFO_ACL_ACTION_RECORD;
+			url->acl_action = acl_action_default;
 			do {
 				int ret_ip;
 				int ret_mac;
@@ -1066,21 +1073,7 @@ __urllogger_ip_skip:
 				}
 				if (rule_id < acl_rule_max) {
 					if (urllogger_acl(url, rule_id) == 1) {
-						if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
-							set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-							ret = NF_DROP;
-							/* tell FF do not emit pkts */
-							if (nf && !(nf->status & NF_FF_USER_USE)) {
-								/* tell FF -user- need to use this conn */
-								simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-							}
-							if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
-								natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
-								natflow_auth_convert_tcprst(skb);
-								ret = NF_ACCEPT;
-							}
-							break;
-						}
+						break;
 					}
 				} else {
 					break;
@@ -1088,6 +1081,20 @@ __urllogger_ip_skip:
 
 				rule_id++;
 			} while (1);
+			if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
+				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+				ret = NF_DROP;
+				/* tell FF do not emit pkts */
+				if (nf && !(nf->status & NF_FF_USER_USE)) {
+					/* tell FF -user- need to use this conn */
+					simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+				}
+				if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
+					natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+					natflow_auth_convert_tcprst(skb);
+					ret = NF_ACCEPT;
+				}
+			}
 
 			urllogger_store_record(url);
 		} else {
@@ -1142,7 +1149,7 @@ __urllogger_ip_skip:
 				memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
 
 				url->acl_idx = 64; /* 64 = before acl matching */
-				url->acl_action = URLINFO_ACL_ACTION_RECORD;
+				url->acl_action = acl_action_default;
 				do {
 					int ret_ip;
 					int ret_mac;
@@ -1169,21 +1176,7 @@ __urllogger_ip_skip:
 					}
 					if (rule_id < acl_rule_max) {
 						if (urllogger_acl(url, rule_id) == 1) {
-							if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
-								set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-								ret = NF_DROP;
-								/* tell FF do not emit pkts */
-								if (nf && !(nf->status & NF_FF_USER_USE)) {
-									/* tell FF -user- need to use this conn */
-									simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-								}
-								if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
-									natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
-									natflow_auth_convert_tcprst(skb);
-									ret = NF_ACCEPT;
-								}
-								break;
-							}
+							break;
 						}
 					} else {
 						break;
@@ -1191,6 +1184,20 @@ __urllogger_ip_skip:
 
 					rule_id++;
 				} while (1);
+				if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
+					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+					ret = NF_DROP;
+					/* tell FF do not emit pkts */
+					if (nf && !(nf->status & NF_FF_USER_USE)) {
+						/* tell FF -user- need to use this conn */
+						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+					}
+					if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
+						natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+						natflow_auth_convert_tcprst(skb);
+						ret = NF_ACCEPT;
+					}
+				}
 
 				urllogger_store_record(url);
 			}
@@ -1343,7 +1350,7 @@ __urllogger_ipv6_skip:
 			memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
 
 			url->acl_idx = 64; /* 64 = before acl matching */
-			url->acl_action = URLINFO_ACL_ACTION_RECORD;
+			url->acl_action = acl_action_default;
 			do {
 				int ret_ip;
 				int ret_mac;
@@ -1370,21 +1377,7 @@ __urllogger_ipv6_skip:
 				}
 				if (rule_id < acl_rule_max) {
 					if (urllogger_acl(url, rule_id) == 1) {
-						if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
-							set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-							ret = NF_DROP;
-							/* tell FF do not emit pkts */
-							if (nf && !(nf->status & NF_FF_USER_USE)) {
-								/* tell FF -user- need to use this conn */
-								simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-							}
-							if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
-								natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
-								natflow_auth_convert_tcprst6(skb);
-								ret = NF_DROP;
-							}
-							break;
-						}
+						break;
 					}
 				} else {
 					break;
@@ -1392,6 +1385,20 @@ __urllogger_ipv6_skip:
 
 				rule_id++;
 			} while (1);
+			if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
+				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+				ret = NF_DROP;
+				/* tell FF do not emit pkts */
+				if (nf && !(nf->status & NF_FF_USER_USE)) {
+					/* tell FF -user- need to use this conn */
+					simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+				}
+				if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
+					natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
+					natflow_auth_convert_tcprst6(skb);
+					ret = NF_ACCEPT;
+				}
+			}
 
 			urllogger_store_record(url);
 		} else {
@@ -1437,7 +1444,7 @@ __urllogger_ipv6_skip:
 				memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
 
 				url->acl_idx = 64; /* 64 = before acl matching */
-				url->acl_action = URLINFO_ACL_ACTION_RECORD;
+				url->acl_action = acl_action_default;
 				do {
 					int ret_ip;
 					int ret_mac;
@@ -1464,21 +1471,7 @@ __urllogger_ipv6_skip:
 					}
 					if (rule_id < acl_rule_max) {
 						if (urllogger_acl(url, rule_id) == 1) {
-							if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
-								set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-								ret = NF_DROP;
-								/* tell FF do not emit pkts */
-								if (nf && !(nf->status & NF_FF_USER_USE)) {
-									/* tell FF -user- need to use this conn */
-									simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-								}
-								if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
-									natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
-									natflow_auth_convert_tcprst6(skb);
-									ret = NF_ACCEPT;
-								}
-								break;
-							}
+							break;
 						}
 					} else {
 						break;
@@ -1486,6 +1479,20 @@ __urllogger_ipv6_skip:
 
 					rule_id++;
 				} while (1);
+				if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
+					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+					ret = NF_DROP;
+					/* tell FF do not emit pkts */
+					if (nf && !(nf->status & NF_FF_USER_USE)) {
+						/* tell FF -user- need to use this conn */
+						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+					}
+					if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
+						natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
+						natflow_auth_convert_tcprst6(skb);
+						ret = NF_ACCEPT;
+					}
+				}
 
 				urllogger_store_record(url);
 			}
@@ -1862,11 +1869,14 @@ static void *hostacl_start(struct seq_file *m, loff_t *pos)
 		             PAGE_SIZE - 1,
 		             "# Usage:\n"
 		             "#    clear -- clear all existing acl rule(s)\n"
+		             "#    acl_action_default=accept/drop/reset/redirect\n"
 		             "#    add acl=<id>,<act>,<host> --add one rule\n"
 		             "#    IPSET format: host_acl_rule<id>_<fml>\n"
 		             "#    <fml>=ipv4/ipv6/mac\n"
 		             "#\n"
-		             "\n");
+		             "acl_action_default=%s\n"
+		             "\n",
+		             acl_action_str[acl_action_default]);
 		hostacl_ctl_buffer[n] = 0;
 		return hostacl_ctl_buffer;
 	} else if ((*pos) % 2 == 1) {
@@ -1964,6 +1974,21 @@ static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t b
 	if (strncmp(data, "clear", 5) == 0) {
 		acl_rule_clear();
 		goto done;
+	} else if (strncmp(data, "acl_action_default=", 19) == 0) {
+		if (strncmp(data + 19, "accept", 6) == 0) {
+			acl_action_default = URLINFO_ACL_ACTION_RECORD;
+		} else if (strncmp(data + 19, "drop", 4) == 0) {
+			acl_action_default = URLINFO_ACL_ACTION_DROP;
+		} else if (strncmp(data + 19, "reset", 5) == 0) {
+			acl_action_default = URLINFO_ACL_ACTION_RESET;
+		} else if (strncmp(data + 19, "redirect", 8) == 0) {
+			acl_action_default = URLINFO_ACL_ACTION_REDIRECT;
+		} else {
+			err = -EINVAL;
+		}
+		if (err == 0) {
+			goto done;
+		}
 	} else if (strncmp(data, "add acl=", 8) == 0) {
 		unsigned int idx = 64;
 		unsigned int act;
