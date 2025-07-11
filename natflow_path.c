@@ -5675,7 +5675,7 @@ out:
 }
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
-void natflow_hwnat_stop(struct net_device *dev)
+static void natflow_hwnat_stop(struct net_device *dev)
 {
 
 	flow_offload_hw_path_t stop = {
