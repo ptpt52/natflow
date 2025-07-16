@@ -15,10 +15,10 @@ graph TB
          C --> D[Routing Decision]
         D --> E[FORWARD]
         E --> F[POST_ROUTING]
-        F --> G[nf_hook_egress]
         D -.-> I[LOCAL_IN]
         J[LOCAL_OUT] -.-> F
     end
+    F --> G[nf_hook_egress]
     G --> H[NIC]
     K ==> |If matched| L["Modify packet (NAT & MAC)"]
     L ==> |sends directly to NIC| H
