@@ -39,6 +39,7 @@
 #include "natflow_common.h"
 #include "natflow_urllogger.h"
 #include "natflow_user.h"
+#include "natflow_path.h"
 
 static int urllogger_major = 0;
 static int urllogger_minor = 0;
@@ -660,6 +661,7 @@ struct urllogger_sni_cache_node {
 	__be16 src_port;
 	__be16 dst_port;
 	unsigned short add_data_len;
+	unsigned short magic;
 	struct sk_buff *skb;
 };
 
@@ -717,6 +719,11 @@ static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __b
 	urllogger_sni_cache[i][next_to_use].add_data_len = add_data_len;
 	urllogger_sni_cache[i][next_to_use].skb = skb;
 	urllogger_sni_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
+	urllogger_sni_cache[i][next_to_use].magic = natflow_path_magic;
+	smp_mb();
+	if (!netif_running(skb->dev) || !netif_carrier_ok(skb->dev)) {
+		urllogger_sni_cache[i][next_to_use].magic--;
+	}
 
 	return 0;
 }
@@ -748,6 +755,11 @@ static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 sr
 	urllogger_sni_cache[i][next_to_use].add_data_len = add_data_len;
 	urllogger_sni_cache[i][next_to_use].skb = skb;
 	urllogger_sni_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
+	urllogger_sni_cache[i][next_to_use].magic = natflow_path_magic;
+	smp_mb();
+	if (!netif_running(skb->dev) || !netif_carrier_ok(skb->dev)) {
+		urllogger_sni_cache[i][next_to_use].magic--;
+	}
 
 	return 0;
 }
@@ -765,7 +777,8 @@ static inline struct sk_buff *urllogger_sni_cache_detach(__be32 src_ip, __be16 s
 			} else if (urllogger_sni_cache[i][j].src_ip == src_ip &&
 			           urllogger_sni_cache[i][j].src_port == src_port &&
 			           urllogger_sni_cache[i][j].dst_ip == dst_ip &&
-			           urllogger_sni_cache[i][j].dst_port == dst_port) {
+			           urllogger_sni_cache[i][j].dst_port == dst_port &&
+			           urllogger_sni_cache[i][j].magic == natflow_path_magic) {
 				skb = urllogger_sni_cache[i][j].skb;
 				*add_data_len = urllogger_sni_cache[i][j].add_data_len;
 				urllogger_sni_cache[i][j].skb = NULL;
@@ -798,7 +811,8 @@ static inline struct sk_buff *urllogger_sni_cache_detach6(struct in6_addr *src_i
 			} else if (memcmp(&urllogger_sni_cache[i][j].src_ipv6, src_ip, 16) == 0 &&
 			           urllogger_sni_cache[i][j].src_port == src_port &&
 			           memcmp(&urllogger_sni_cache[i][j].dst_ipv6, dst_ip, 16) == 0 &&
-			           urllogger_sni_cache[i][j].dst_port == dst_port) {
+			           urllogger_sni_cache[i][j].dst_port == dst_port &&
+			           urllogger_sni_cache[i][j].magic == natflow_path_magic) {
 				skb = urllogger_sni_cache[i][j].skb;
 				*add_data_len = urllogger_sni_cache[i][j].add_data_len;
 				urllogger_sni_cache[i][j].skb = NULL;

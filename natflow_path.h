@@ -34,6 +34,7 @@ extern unsigned int go_slowpath_if_no_qos;
 extern void natflow_disabled_set(int v);
 extern int natflow_disabled_get(void);
 
+extern unsigned short natflow_path_magic;
 extern void natflow_update_magic(int init);
 
 static inline int natflow_nat_ip_tcp(struct sk_buff *skb, unsigned int thoff,

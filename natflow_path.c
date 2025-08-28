@@ -13,6 +13,11 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
+#include <linux/notifier.h>
+#include <linux/workqueue.h>
+#include <linux/rcupdate.h>
+#include <linux/list.h>
+#include <linux/spinlock.h>
 #include <linux/in6.h>
 #include <linux/inetdevice.h>
 #include <linux/netfilter.h>
@@ -438,7 +443,7 @@ int natflow_disabled_get(void)
 	return disabled;
 }
 
-static unsigned short natflow_path_magic = 0;
+unsigned short natflow_path_magic = 0;
 void natflow_update_magic(int init)
 {
 	if (init) {
@@ -1281,12 +1286,11 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 {
 	int magic = natflow_path_magic;
 	struct iphdr *iph = ip_hdr(skb);
-	struct net_device *dev;
+	struct net_device *dev = skb->dev;
 
-	if (!skb->dev) {
+	if (!dev || !netif_running(dev) || !netif_carrier_ok(dev)) {
 		return;
 	}
-	dev = skb->dev;
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (netif_is_bridge_master(dev) ||
 	        netif_is_ovs_master(dev) ||
@@ -1302,6 +1306,8 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 	}
 #endif
 	if (nf->magic != magic) {
+		nf->magic = magic;
+		smp_mb();
 		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
@@ -1309,7 +1315,6 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
-		nf->magic = magic;
 	}
 
 	if (dir == IP_CT_DIR_ORIGINAL) {
@@ -5811,8 +5816,41 @@ static void natflow_unhook_device(struct net_device *dev)
 }
 #endif
 
+struct natflow_netdev_entry {
+	struct net_device *dev;
+	struct list_head list;
+};
+static LIST_HEAD(natflow_netdev_list);
+static DEFINE_MUTEX(natflow_netdev_lock);
+
+static void natflow_netdev_workfn(struct work_struct *work)
+{
+	struct natflow_netdev_entry *entry;
+	LIST_HEAD(local_list);
+
+	mutex_lock(&natflow_netdev_lock);
+	list_splice_init(&natflow_netdev_list, &local_list);
+	mutex_unlock(&natflow_netdev_lock);
+
+	if (list_empty(&local_list))
+		return;
+
+	synchronize_net();
+	natflow_update_magic(0);
+	synchronize_net();
+
+	list_for_each_entry(entry, &local_list, list) {
+		dev_put(entry->dev);
+		kfree(entry);
+	}
+}
+
+static struct workqueue_struct *natflow_netdev_wq;
+static DECLARE_WORK(natflow_netdev_work, NULL);
+
 static int natflow_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
+	struct natflow_netdev_entry *entry;
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
 	if (event == NETDEV_UP || event == NETDEV_CHANGE) {
@@ -5880,12 +5918,24 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 	natflow_hwnat_stop(dev);
 #endif
-	natflow_update_magic(0);
 	vline_fwd_map_unregister_handle(dev);
 
 	NATFLOW_println("catch NETDEV_UNREGISTER event for dev=%s", dev->name);
 
-	synchronize_net();
+	if (natflow_netdev_wq) {
+		entry = kmalloc(sizeof(*entry), GFP_KERNEL);
+		if (!entry)
+			return NOTIFY_DONE;
+
+		dev_hold(dev);
+		entry->dev = dev;
+
+		mutex_lock(&natflow_netdev_lock);
+		list_add_tail(&entry->list, &natflow_netdev_list);
+		mutex_unlock(&natflow_netdev_lock);
+
+		queue_work(natflow_netdev_wq, &natflow_netdev_work);
+	}
 
 	return NOTIFY_DONE;
 }
@@ -5900,10 +5950,17 @@ int natflow_path_init(void)
 
 	natflow_probe_ct_ext();
 
+	natflow_netdev_wq = alloc_workqueue("natflow_netdev_wq", WQ_UNBOUND, 0);
+	if (natflow_netdev_wq == NULL) {
+		return -ENOMEM;
+	}
+	INIT_WORK(&natflow_netdev_work, natflow_netdev_workfn);
+
 #ifdef CONFIG_NETFILTER_INGRESS
 	natflow_fast_nat_table = kmalloc(sizeof(natflow_fastnat_node_t) * NATFLOW_FASTNAT_TABLE_SIZE, GFP_KERNEL);
 	if (natflow_fast_nat_table == NULL) {
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto alloc_natflow_fast_nat_table_failed;
 	}
 #endif
 
@@ -5923,7 +5980,9 @@ nf_register_hooks_failed:
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
 #ifdef CONFIG_NETFILTER_INGRESS
 	kfree(natflow_fast_nat_table);
+alloc_natflow_fast_nat_table_failed:
 #endif
+	destroy_workqueue(natflow_netdev_wq);
 	return ret;
 }
 
@@ -5932,6 +5991,12 @@ void natflow_path_exit(void)
 	disabled = 1;
 	nf_unregister_hooks(path_hooks, ARRAY_SIZE(path_hooks));
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
+
+	if (natflow_netdev_wq) {
+		flush_workqueue(natflow_netdev_wq);
+		destroy_workqueue(natflow_netdev_wq);
+	}
+
 #ifdef CONFIG_NETFILTER_INGRESS
 	synchronize_rcu();
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
