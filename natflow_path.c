@@ -443,7 +443,7 @@ int natflow_disabled_get(void)
 	return disabled;
 }
 
-unsigned short natflow_path_magic = 0;
+unsigned int natflow_path_magic = 0;
 void natflow_update_magic(int init)
 {
 	if (init) {
@@ -523,7 +523,7 @@ static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn
 		}
 #endif
 		diff_jiffies = ulongmindiff(jiffies, nfn->jiffies);
-		if (nfn->magic == natflow_path_magic &&
+		if (nfn->magic == NATFLOW_PATH_MAGIC &&
 		        (u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW &&
 		        nfn->saddr == saddr && nfn->daddr == daddr &&
 		        nfn->source == source && nfn->dest == dest &&
@@ -587,7 +587,7 @@ static inline natflow_fastnat_node_t *nfn_invert_get6(natflow_fastnat_node_t *nf
 		}
 #endif
 		diff_jiffies = ulongmindiff(jiffies, nfn->jiffies);
-		if (nfn->magic == natflow_path_magic &&
+		if (nfn->magic == NATFLOW_PATH_MAGIC &&
 		        (u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW &&
 		        memcmp(nfn->saddr6, saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, daddr.s6_addr32, 16) == 0 &&
 		        nfn->source == source && nfn->dest == dest &&
@@ -611,7 +611,7 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 	nfn = &natflow_fast_nat_table[hash];
 
 	diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
-	if (nfn->magic == natflow_path_magic && (u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW) {
+	if (nfn->magic == NATFLOW_PATH_MAGIC && (u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW) {
 		struct nf_conntrack_tuple tuple;
 		struct nf_conntrack_tuple_hash *h;
 
@@ -1284,7 +1284,7 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 
 void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir)
 {
-	int magic = natflow_path_magic;
+	int magic = NATFLOW_PATH_MAGIC;
 	struct iphdr *iph = ip_hdr(skb);
 	struct net_device *dev = skb->dev;
 
@@ -1485,7 +1485,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			nfn = &natflow_fast_nat_table[_I];
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 
-			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == natflow_path_magic) {
+			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == NATFLOW_PATH_MAGIC) {
 				if (!(nfn->flags & FASTNAT_BRIDGE_FWD) && skb_is_gso(skb)) {
 					if (unlikely(skb_shinfo(skb)->gso_size > nfn->mss)) {
 						skb_shinfo(skb)->gso_size = nfn->mss;
@@ -1670,7 +1670,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 #endif
 			hash = _I;
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
-			if (nfn->magic == natflow_path_magic &&
+			if (nfn->magic == NATFLOW_PATH_MAGIC &&
 			        nfn->saddr == iph->saddr && nfn->daddr == iph->daddr &&
 			        nfn->source == TCPH(l4)->source && nfn->dest == TCPH(l4)->dest &&
 			        (nfn->flags & FASTNAT_PROTO_TCP)) {
@@ -1914,7 +1914,7 @@ fast_output:
 #endif
 			hash = _I;
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
-			if (nfn->magic == natflow_path_magic &&
+			if (nfn->magic == NATFLOW_PATH_MAGIC &&
 			        nfn->saddr == iph->saddr && nfn->daddr == iph->daddr &&
 			        nfn->source == UDPH(l4)->source && nfn->dest == UDPH(l4)->dest &&
 			        (nfn->flags & FASTNAT_PROTO_UDP)) {
@@ -2458,7 +2458,7 @@ fastnat_check:
 							nfn->vlan_present = nf->rroute[d].vlan_present;
 							nfn->vlan_proto = nf->rroute[d].vlan_proto;
 							nfn->vlan_tci = nf->rroute[d].vlan_tci;
-							nfn->magic = natflow_path_magic;
+							nfn->magic = NATFLOW_PATH_MAGIC;
 							nfn->jiffies = jiffies;
 							nfn->keepalive_jiffies = jiffies;
 
@@ -2490,7 +2490,7 @@ fastnat_check:
 						}
 
 						if ((nf->status & NF_FF_ORIGINAL_CHECK) && (nf->status & NF_FF_REPLY_CHECK)) {
-							if (nfn->magic == natflow_path_magic &&
+							if (nfn->magic == NATFLOW_PATH_MAGIC &&
 							        ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
 							        (nfn->saddr == saddr && nfn->daddr == daddr &&
 							         nfn->source == source && nfn->dest == dest &&
@@ -2521,7 +2521,7 @@ fastnat_check:
 									nfn_i = &natflow_fast_nat_table[hash];
 								}
 #endif
-								if (nfn_i->magic == natflow_path_magic && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+								if (nfn_i->magic == NATFLOW_PATH_MAGIC && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
 								        (nfn_i->saddr == saddr && nfn_i->daddr == daddr &&
 								         nfn_i->source == source && nfn_i->dest == dest && NFN_PROTO_DEC(nfn_i->flags) == protonum)) {
 									nfn_i->jiffies = jiffies;
@@ -3386,7 +3386,7 @@ __hook_ipv6_main:
 			nfn = &natflow_fast_nat_table[_I];
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 
-			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == natflow_path_magic) {
+			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == NATFLOW_PATH_MAGIC) {
 				if (!(nfn->flags & FASTNAT_BRIDGE_FWD) && skb_is_gso(skb)) {
 					if (unlikely(skb_shinfo(skb)->gso_size > nfn->mss)) {
 						skb_shinfo(skb)->gso_size = nfn->mss;
@@ -3530,7 +3530,7 @@ __hook_ipv6_main:
 #endif
 			hash = _I;
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
-			if (nfn->magic == natflow_path_magic &&
+			if (nfn->magic == NATFLOW_PATH_MAGIC &&
 			        memcmp(nfn->saddr6, IPV6H->saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, IPV6H->daddr.s6_addr32, 16) == 0 &&
 			        nfn->source == TCPH(l4)->source && nfn->dest == TCPH(l4)->dest &&
 			        (nfn->flags & FASTNAT_PROTO_TCP)) {
@@ -3777,7 +3777,7 @@ fast_output6:
 #endif
 			hash = _I;
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
-			if (nfn->magic == natflow_path_magic &&
+			if (nfn->magic == NATFLOW_PATH_MAGIC &&
 			        memcmp(nfn->saddr6, IPV6H->saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, IPV6H->daddr.s6_addr32, 16) == 0 &&
 			        nfn->source == UDPH(l4)->source && nfn->dest == UDPH(l4)->dest &&
 			        (nfn->flags & FASTNAT_PROTO_UDP)) {
@@ -4288,7 +4288,7 @@ fastnat_check6:
 							nfn->vlan_present = nf->rroute[d].vlan_present;
 							nfn->vlan_proto = nf->rroute[d].vlan_proto;
 							nfn->vlan_tci = nf->rroute[d].vlan_tci;
-							nfn->magic = natflow_path_magic;
+							nfn->magic = NATFLOW_PATH_MAGIC;
 							nfn->jiffies = jiffies;
 							nfn->keepalive_jiffies = jiffies;
 
@@ -4320,7 +4320,7 @@ fastnat_check6:
 						}
 
 						if ((nf->status & NF_FF_ORIGINAL_CHECK) && (nf->status & NF_FF_REPLY_CHECK)) {
-							if (nfn->magic == natflow_path_magic && ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+							if (nfn->magic == NATFLOW_PATH_MAGIC && ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
 							        (memcmp(nfn->saddr6, saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, daddr.s6_addr32, 16) == 0 &&
 							         nfn->source == source && nfn->dest == dest && NFN_PROTO_DEC(nfn->flags) == protonum)) {
 								natflow_fastnat_node_t *nfn_i;
@@ -4349,7 +4349,7 @@ fastnat_check6:
 									nfn_i = &natflow_fast_nat_table[hash];
 								}
 #endif
-								if (nfn_i->magic == natflow_path_magic && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+								if (nfn_i->magic == NATFLOW_PATH_MAGIC && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
 								        (memcmp(nfn_i->saddr6, saddr.s6_addr32, 16) == 0 && memcmp(nfn_i->daddr6, daddr.s6_addr32, 16) == 0 &&
 								         nfn_i->source == source && nfn_i->dest == dest && NFN_PROTO_DEC(nfn_i->flags) == protonum)) {
 									nfn_i->jiffies = jiffies;
