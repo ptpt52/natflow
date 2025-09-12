@@ -1306,8 +1306,6 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 	}
 #endif
 	if (nf->magic != magic) {
-		nf->magic = magic;
-		smp_mb();
 		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
@@ -1315,6 +1313,8 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
+		smp_mb();
+		nf->magic = magic;
 	}
 
 	if (dir == IP_CT_DIR_ORIGINAL) {
@@ -2157,6 +2157,9 @@ slow_fastpath:
 			              !!(nf->status & NF_FF_REPLY_OK), !!(nf->status & NF_FF_ORIGINAL_OK), skb->dev->name);
 			break;
 		}
+		goto out;
+	}
+	if (nf->magic != NATFLOW_PATH_MAGIC) {
 		goto out;
 	}
 
@@ -3992,6 +3995,9 @@ slow_fastpath6:
 			break;
 		}
 		goto out6;
+	}
+	if (nf->magic != NATFLOW_PATH_MAGIC) {
+		goto out;
 	}
 
 	acct = nf_conn_acct_find(ct);
