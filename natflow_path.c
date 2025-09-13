@@ -444,6 +444,8 @@ int natflow_disabled_get(void)
 }
 
 unsigned int natflow_path_magic = 0;
+EXPORT_SYMBOL(natflow_path_magic);
+
 void natflow_update_magic(int init)
 {
 	if (init) {
