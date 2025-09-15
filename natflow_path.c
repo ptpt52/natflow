@@ -3999,7 +3999,7 @@ slow_fastpath6:
 		goto out6;
 	}
 	if (nf->magic != NATFLOW_PATH_MAGIC) {
-		goto out;
+		goto out6;
 	}
 
 	acct = nf_conn_acct_find(ct);

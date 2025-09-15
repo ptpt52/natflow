@@ -719,10 +719,10 @@ static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __b
 	urllogger_sni_cache[i][next_to_use].add_data_len = add_data_len;
 	urllogger_sni_cache[i][next_to_use].skb = skb;
 	urllogger_sni_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
-	urllogger_sni_cache[i][next_to_use].magic = NATFLOW_PATH_MAGIC;
+	urllogger_sni_cache[i][next_to_use].magic = NATFLOW_PATH_MAGIC - 1;
 	smp_mb();
-	if (!netif_running(skb->dev) || !netif_carrier_ok(skb->dev)) {
-		urllogger_sni_cache[i][next_to_use].magic--;
+	if (netif_running(skb->dev) && netif_carrier_ok(skb->dev)) {
+		urllogger_sni_cache[i][next_to_use].magic = NATFLOW_PATH_MAGIC;
 	}
 
 	return 0;
@@ -755,10 +755,10 @@ static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 sr
 	urllogger_sni_cache[i][next_to_use].add_data_len = add_data_len;
 	urllogger_sni_cache[i][next_to_use].skb = skb;
 	urllogger_sni_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
-	urllogger_sni_cache[i][next_to_use].magic = NATFLOW_PATH_MAGIC;
+	urllogger_sni_cache[i][next_to_use].magic = NATFLOW_PATH_MAGIC - 1;
 	smp_mb();
-	if (!netif_running(skb->dev) || !netif_carrier_ok(skb->dev)) {
-		urllogger_sni_cache[i][next_to_use].magic--;
+	if (netif_running(skb->dev) && netif_carrier_ok(skb->dev)) {
+		urllogger_sni_cache[i][next_to_use].magic = NATFLOW_PATH_MAGIC;
 	}
 
 	return 0;
