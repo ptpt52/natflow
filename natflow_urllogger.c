@@ -694,6 +694,7 @@ static inline void urllogger_sni_cache_cleanup(void)
 
 static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, struct sk_buff *skb, unsigned short add_data_len)
 {
+	unsigned short path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)));
 	int i = smp_processor_id();
 	int j;
 	int next_to_use = MAX_URLLOGGER_SNI_CACHE_NODE;
@@ -719,10 +720,10 @@ static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __b
 	urllogger_sni_cache[i][next_to_use].add_data_len = add_data_len;
 	urllogger_sni_cache[i][next_to_use].skb = skb;
 	urllogger_sni_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
-	urllogger_sni_cache[i][next_to_use].magic = NATFLOW_PATH_MAGIC - 1;
+	urllogger_sni_cache[i][next_to_use].magic = path_magic - 1;
 	smp_mb();
 	if (netif_running(skb->dev) && netif_carrier_ok(skb->dev)) {
-		urllogger_sni_cache[i][next_to_use].magic = NATFLOW_PATH_MAGIC;
+		urllogger_sni_cache[i][next_to_use].magic = path_magic;
 	}
 
 	return 0;
@@ -730,6 +731,7 @@ static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __b
 
 static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 src_port, struct in6_addr *dst_ip, __be16 dst_port, struct sk_buff *skb, unsigned short add_data_len)
 {
+	unsigned short path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)));
 	int i = smp_processor_id();
 	int j;
 	int next_to_use = MAX_URLLOGGER_SNI_CACHE_NODE;
@@ -755,10 +757,10 @@ static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 sr
 	urllogger_sni_cache[i][next_to_use].add_data_len = add_data_len;
 	urllogger_sni_cache[i][next_to_use].skb = skb;
 	urllogger_sni_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
-	urllogger_sni_cache[i][next_to_use].magic = NATFLOW_PATH_MAGIC - 1;
+	urllogger_sni_cache[i][next_to_use].magic = path_magic - 1;
 	smp_mb();
 	if (netif_running(skb->dev) && netif_carrier_ok(skb->dev)) {
-		urllogger_sni_cache[i][next_to_use].magic = NATFLOW_PATH_MAGIC;
+		urllogger_sni_cache[i][next_to_use].magic = path_magic;
 	}
 
 	return 0;
@@ -766,6 +768,7 @@ static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 sr
 
 static inline struct sk_buff *urllogger_sni_cache_detach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, unsigned short *add_data_len)
 {
+	unsigned short path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)));
 	int i = smp_processor_id();
 	int j = 0;
 	struct sk_buff *skb = NULL;
@@ -778,7 +781,7 @@ static inline struct sk_buff *urllogger_sni_cache_detach(__be32 src_ip, __be16 s
 			           urllogger_sni_cache[i][j].src_port == src_port &&
 			           urllogger_sni_cache[i][j].dst_ip == dst_ip &&
 			           urllogger_sni_cache[i][j].dst_port == dst_port &&
-			           urllogger_sni_cache[i][j].magic == NATFLOW_PATH_MAGIC) {
+			           urllogger_sni_cache[i][j].magic == path_magic) {
 				skb = urllogger_sni_cache[i][j].skb;
 				*add_data_len = urllogger_sni_cache[i][j].add_data_len;
 				urllogger_sni_cache[i][j].skb = NULL;
@@ -800,6 +803,7 @@ static inline struct sk_buff *urllogger_sni_cache_detach(__be32 src_ip, __be16 s
 
 static inline struct sk_buff *urllogger_sni_cache_detach6(struct in6_addr *src_ip, __be16 src_port, struct in6_addr *dst_ip, __be16 dst_port, unsigned short *add_data_len)
 {
+	unsigned short path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)));
 	int i = smp_processor_id();
 	int j = 0;
 	struct sk_buff *skb = NULL;
@@ -812,7 +816,7 @@ static inline struct sk_buff *urllogger_sni_cache_detach6(struct in6_addr *src_i
 			           urllogger_sni_cache[i][j].src_port == src_port &&
 			           memcmp(&urllogger_sni_cache[i][j].dst_ipv6, dst_ip, 16) == 0 &&
 			           urllogger_sni_cache[i][j].dst_port == dst_port &&
-			           urllogger_sni_cache[i][j].magic == NATFLOW_PATH_MAGIC) {
+			           urllogger_sni_cache[i][j].magic == path_magic) {
 				skb = urllogger_sni_cache[i][j].skb;
 				*add_data_len = urllogger_sni_cache[i][j].add_data_len;
 				urllogger_sni_cache[i][j].skb = NULL;

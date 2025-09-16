@@ -443,15 +443,15 @@ int natflow_disabled_get(void)
 	return disabled;
 }
 
-unsigned int natflow_path_magic = 0;
+atomic_t natflow_path_magic = ATOMIC_INIT(0);
 EXPORT_SYMBOL_GPL(natflow_path_magic);
 
 void natflow_update_magic(int init)
 {
 	if (init) {
-		natflow_path_magic = jiffies + get_random_u32();
+		atomic_set(&natflow_path_magic, jiffies + get_random_u32());
 	} else {
-		natflow_path_magic++;
+		atomic_inc_return_release(&natflow_path_magic);
 	}
 }
 
@@ -476,6 +476,7 @@ static inline void natflow_update_ct_timeout(struct nf_conn *ct, unsigned long e
 }
 
 static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn) {
+	unsigned short path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)));
 	unsigned int hash;
 	unsigned long diff_jiffies;
 	struct nf_conntrack_tuple tuple;
@@ -525,7 +526,7 @@ static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn
 		}
 #endif
 		diff_jiffies = ulongmindiff(jiffies, nfn->jiffies);
-		if (nfn->magic == NATFLOW_PATH_MAGIC &&
+		if (nfn->magic == path_magic &&
 		        (u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW &&
 		        nfn->saddr == saddr && nfn->daddr == daddr &&
 		        nfn->source == source && nfn->dest == dest &&
@@ -540,6 +541,7 @@ static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn
 }
 
 static inline natflow_fastnat_node_t *nfn_invert_get6(natflow_fastnat_node_t *nfn) {
+	unsigned short path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)));
 	unsigned int hash;
 	unsigned long diff_jiffies;
 	struct nf_conntrack_tuple tuple;
@@ -589,7 +591,7 @@ static inline natflow_fastnat_node_t *nfn_invert_get6(natflow_fastnat_node_t *nf
 		}
 #endif
 		diff_jiffies = ulongmindiff(jiffies, nfn->jiffies);
-		if (nfn->magic == NATFLOW_PATH_MAGIC &&
+		if (nfn->magic == path_magic &&
 		        (u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW &&
 		        memcmp(nfn->saddr6, saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, daddr.s6_addr32, 16) == 0 &&
 		        nfn->source == source && nfn->dest == dest &&
@@ -608,12 +610,13 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 	struct nf_conn_acct *acct;
 	natflow_fastnat_node_t *nfn, *nfn_i = NULL;
 	unsigned long diff_jiffies = 0;
+	unsigned short path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)));
 
 	hash = hash % NATFLOW_FASTNAT_TABLE_SIZE;
 	nfn = &natflow_fast_nat_table[hash];
 
 	diff_jiffies = ulongmindiff(current_jiffies, nfn->jiffies);
-	if (nfn->magic == NATFLOW_PATH_MAGIC && (u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW) {
+	if (nfn->magic == path_magic && (u32)diff_jiffies < NATFLOW_FF_TIMEOUT_LOW) {
 		struct nf_conntrack_tuple tuple;
 		struct nf_conntrack_tuple_hash *h;
 
@@ -1286,7 +1289,7 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 
 void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir)
 {
-	int magic = NATFLOW_PATH_MAGIC;
+	unsigned short path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)));
 	struct iphdr *iph = ip_hdr(skb);
 	struct net_device *dev = skb->dev;
 
@@ -1307,7 +1310,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 			return;
 	}
 #endif
-	if (nf->magic != magic) {
+	if (nf->magic != path_magic) {
 		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_BIT, &nf->status);
@@ -1316,7 +1319,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 		simple_clear_bit(NF_FF_ORIGINAL_OK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_ORIGINAL_BIT, &nf->status);
 		smp_mb();
-		nf->magic = magic;
+		nf->magic = path_magic;
 	}
 
 	if (dir == IP_CT_DIR_ORIGINAL) {
@@ -1454,6 +1457,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 #endif
 	unsigned int ingress_pad_len = 0;
 	unsigned int ingress_trim_off = 0;
+	unsigned short path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)));
 
 	if (disabled)
 		return NF_ACCEPT;
@@ -1487,7 +1491,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			nfn = &natflow_fast_nat_table[_I];
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 
-			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == NATFLOW_PATH_MAGIC) {
+			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == path_magic) {
 				if (!(nfn->flags & FASTNAT_BRIDGE_FWD) && skb_is_gso(skb)) {
 					if (unlikely(skb_shinfo(skb)->gso_size > nfn->mss)) {
 						skb_shinfo(skb)->gso_size = nfn->mss;
@@ -1672,7 +1676,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 #endif
 			hash = _I;
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
-			if (nfn->magic == NATFLOW_PATH_MAGIC &&
+			if (nfn->magic == path_magic &&
 			        nfn->saddr == iph->saddr && nfn->daddr == iph->daddr &&
 			        nfn->source == TCPH(l4)->source && nfn->dest == TCPH(l4)->dest &&
 			        (nfn->flags & FASTNAT_PROTO_TCP)) {
@@ -1916,7 +1920,7 @@ fast_output:
 #endif
 			hash = _I;
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
-			if (nfn->magic == NATFLOW_PATH_MAGIC &&
+			if (nfn->magic == path_magic &&
 			        nfn->saddr == iph->saddr && nfn->daddr == iph->daddr &&
 			        nfn->source == UDPH(l4)->source && nfn->dest == UDPH(l4)->dest &&
 			        (nfn->flags & FASTNAT_PROTO_UDP)) {
@@ -2161,7 +2165,7 @@ slow_fastpath:
 		}
 		goto out;
 	}
-	if (nf->magic != NATFLOW_PATH_MAGIC) {
+	if (nf->magic != path_magic) {
 		goto out;
 	}
 
@@ -2463,7 +2467,7 @@ fastnat_check:
 							nfn->vlan_present = nf->rroute[d].vlan_present;
 							nfn->vlan_proto = nf->rroute[d].vlan_proto;
 							nfn->vlan_tci = nf->rroute[d].vlan_tci;
-							nfn->magic = NATFLOW_PATH_MAGIC;
+							nfn->magic = path_magic;
 							nfn->jiffies = jiffies;
 							nfn->keepalive_jiffies = jiffies;
 
@@ -2495,7 +2499,7 @@ fastnat_check:
 						}
 
 						if ((nf->status & NF_FF_ORIGINAL_CHECK) && (nf->status & NF_FF_REPLY_CHECK)) {
-							if (nfn->magic == NATFLOW_PATH_MAGIC &&
+							if (nfn->magic == path_magic &&
 							        ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
 							        (nfn->saddr == saddr && nfn->daddr == daddr &&
 							         nfn->source == source && nfn->dest == dest &&
@@ -2526,7 +2530,7 @@ fastnat_check:
 									nfn_i = &natflow_fast_nat_table[hash];
 								}
 #endif
-								if (nfn_i->magic == NATFLOW_PATH_MAGIC && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+								if (nfn_i->magic == path_magic && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
 								        (nfn_i->saddr == saddr && nfn_i->daddr == daddr &&
 								         nfn_i->source == source && nfn_i->dest == dest && NFN_PROTO_DEC(nfn_i->flags) == protonum)) {
 									nfn_i->jiffies = jiffies;
@@ -3391,7 +3395,7 @@ __hook_ipv6_main:
 			nfn = &natflow_fast_nat_table[_I];
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
 
-			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == NATFLOW_PATH_MAGIC) {
+			if (nfn->outdev && _I <= NATFLOW_FF_TIMEOUT_LOW && nfn->magic == path_magic) {
 				if (!(nfn->flags & FASTNAT_BRIDGE_FWD) && skb_is_gso(skb)) {
 					if (unlikely(skb_shinfo(skb)->gso_size > nfn->mss)) {
 						skb_shinfo(skb)->gso_size = nfn->mss;
@@ -3535,7 +3539,7 @@ __hook_ipv6_main:
 #endif
 			hash = _I;
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
-			if (nfn->magic == NATFLOW_PATH_MAGIC &&
+			if (nfn->magic == path_magic &&
 			        memcmp(nfn->saddr6, IPV6H->saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, IPV6H->daddr.s6_addr32, 16) == 0 &&
 			        nfn->source == TCPH(l4)->source && nfn->dest == TCPH(l4)->dest &&
 			        (nfn->flags & FASTNAT_PROTO_TCP)) {
@@ -3782,7 +3786,7 @@ fast_output6:
 #endif
 			hash = _I;
 			_I = (u32)ulongmindiff(jiffies, nfn->jiffies);
-			if (nfn->magic == NATFLOW_PATH_MAGIC &&
+			if (nfn->magic == path_magic &&
 			        memcmp(nfn->saddr6, IPV6H->saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, IPV6H->daddr.s6_addr32, 16) == 0 &&
 			        nfn->source == UDPH(l4)->source && nfn->dest == UDPH(l4)->dest &&
 			        (nfn->flags & FASTNAT_PROTO_UDP)) {
@@ -3998,7 +4002,7 @@ slow_fastpath6:
 		}
 		goto out6;
 	}
-	if (nf->magic != NATFLOW_PATH_MAGIC) {
+	if (nf->magic != path_magic) {
 		goto out6;
 	}
 
@@ -4296,7 +4300,7 @@ fastnat_check6:
 							nfn->vlan_present = nf->rroute[d].vlan_present;
 							nfn->vlan_proto = nf->rroute[d].vlan_proto;
 							nfn->vlan_tci = nf->rroute[d].vlan_tci;
-							nfn->magic = NATFLOW_PATH_MAGIC;
+							nfn->magic = path_magic;
 							nfn->jiffies = jiffies;
 							nfn->keepalive_jiffies = jiffies;
 
@@ -4328,7 +4332,7 @@ fastnat_check6:
 						}
 
 						if ((nf->status & NF_FF_ORIGINAL_CHECK) && (nf->status & NF_FF_REPLY_CHECK)) {
-							if (nfn->magic == NATFLOW_PATH_MAGIC && ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+							if (nfn->magic == path_magic && ulongmindiff(jiffies, nfn->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
 							        (memcmp(nfn->saddr6, saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, daddr.s6_addr32, 16) == 0 &&
 							         nfn->source == source && nfn->dest == dest && NFN_PROTO_DEC(nfn->flags) == protonum)) {
 								natflow_fastnat_node_t *nfn_i;
@@ -4357,7 +4361,7 @@ fastnat_check6:
 									nfn_i = &natflow_fast_nat_table[hash];
 								}
 #endif
-								if (nfn_i->magic == NATFLOW_PATH_MAGIC && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
+								if (nfn_i->magic == path_magic && ulongmindiff(jiffies, nfn_i->jiffies) < NATFLOW_FF_TIMEOUT_LOW &&
 								        (memcmp(nfn_i->saddr6, saddr.s6_addr32, 16) == 0 && memcmp(nfn_i->daddr6, daddr.s6_addr32, 16) == 0 &&
 								         nfn_i->source == source && nfn_i->dest == dest && NFN_PROTO_DEC(nfn_i->flags) == protonum)) {
 									nfn_i->jiffies = jiffies;
@@ -5824,41 +5828,26 @@ static void natflow_unhook_device(struct net_device *dev)
 }
 #endif
 
-struct natflow_netdev_entry {
+struct netdev_hold_wq {
+	struct work_struct work;
 	struct net_device *dev;
-	struct list_head list;
 };
-static LIST_HEAD(natflow_netdev_list);
-static DEFINE_MUTEX(natflow_netdev_lock);
 
-static void natflow_netdev_workfn(struct work_struct *work)
+static void netdev_hold_workfn(struct work_struct *work)
 {
-	struct natflow_netdev_entry *entry;
-	LIST_HEAD(local_list);
-
-	mutex_lock(&natflow_netdev_lock);
-	list_splice_init(&natflow_netdev_list, &local_list);
-	mutex_unlock(&natflow_netdev_lock);
-
-	if (list_empty(&local_list))
-		return;
+	struct netdev_hold_wq *wq = container_of(work, struct netdev_hold_wq, work);
 
 	synchronize_net();
 	natflow_update_magic(0);
 	synchronize_net();
-
-	list_for_each_entry(entry, &local_list, list) {
-		dev_put(entry->dev);
-		kfree(entry);
-	}
+	dev_put(wq->dev);
+	kfree(wq);
 }
 
 static struct workqueue_struct *natflow_netdev_wq;
-static DECLARE_WORK(natflow_netdev_work, NULL);
 
 static int natflow_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
-	struct natflow_netdev_entry *entry;
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
 	if (event == NETDEV_UP || event == NETDEV_CHANGE) {
@@ -5930,20 +5919,18 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 
 	NATFLOW_println("catch NETDEV_UNREGISTER event for dev=%s", dev->name);
 
-	if (natflow_netdev_wq) {
-		entry = kmalloc(sizeof(*entry), GFP_KERNEL);
-		if (!entry)
-			return NOTIFY_DONE;
+	do {
+		struct netdev_hold_wq *wq = (struct netdev_hold_wq *)kzalloc(sizeof(struct netdev_hold_wq), GFP_KERNEL);
 
-		dev_hold(dev);
-		entry->dev = dev;
-
-		mutex_lock(&natflow_netdev_lock);
-		list_add_tail(&entry->list, &natflow_netdev_list);
-		mutex_unlock(&natflow_netdev_lock);
-
-		queue_work(natflow_netdev_wq, &natflow_netdev_work);
-	}
+		if (wq) {
+			dev_hold(dev);
+			wq->dev = dev;
+			INIT_WORK(&wq->work, &netdev_hold_workfn);
+			queue_work(natflow_netdev_wq, &wq->work);
+		} else {
+			NATFLOW_println("Failed to alloc dev hold workqueue for dev=%s", dev->name);
+		}
+	} while (0);
 
 	return NOTIFY_DONE;
 }
@@ -5962,7 +5949,6 @@ int natflow_path_init(void)
 	if (natflow_netdev_wq == NULL) {
 		return -ENOMEM;
 	}
-	INIT_WORK(&natflow_netdev_work, natflow_netdev_workfn);
 
 #ifdef CONFIG_NETFILTER_INGRESS
 	natflow_fast_nat_table = kmalloc(sizeof(natflow_fastnat_node_t) * NATFLOW_FASTNAT_TABLE_SIZE, GFP_KERNEL);
