@@ -1704,13 +1704,13 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				nfn->jiffies = jiffies;
 
 				/* sample up to slow path every 2s */
-				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
+				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0x3f), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
 					unsigned long bytes = nfn->flow_bytes;
 					unsigned long packets = nfn->flow_packets;
 					nfn->flow_bytes -= bytes;
 					nfn->flow_packets -= packets;
 					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets, 0, jiffies);
-					nfn->count = (nfn->jiffies / HZ) & 0xff;
+					nfn->count = (nfn->jiffies / HZ) & 0x3f;
 					wmb();
 					clear_bit(0, &nfn->status);
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
@@ -1790,6 +1790,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					}
 					ip_decrease_ttl(iph);
 				}
+				if (nfn->l3_fast_fwd)
+					goto fast_output;
+
 				if (TCPH(l4)->source != nfn->nat_source) {
 					natflow_nat_port_tcp(skb, iph->ihl * 4, TCPH(l4)->source, nfn->nat_source);
 					TCPH(l4)->source = nfn->nat_source;
@@ -1851,22 +1854,24 @@ fast_output:
 					}
 					skb_push(skb, _I);
 					skb_reset_mac_header(skb);
-					if (_I >= ETH_HLEN) {
-						memcpy(eth_hdr(skb)->h_source, nfn->h_source, ETH_ALEN);
-						memcpy(eth_hdr(skb)->h_dest, nfn->h_dest, ETH_ALEN);
-					}
-					if (_I == ETH_HLEN + PPPOE_SES_HLEN) {
-						struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
-						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_PPP_SES);
-						skb->protocol = __constant_htons(ETH_P_PPP_SES);
-						ph->ver = 1;
-						ph->type = 1;
-						ph->code = 0;
-						ph->sid = nfn->pppoe_sid;
-						ph->length = htons(ntohs(ip_hdr(skb)->tot_len) + 2);
-						*(__be16 *)((void *)ph + sizeof(struct pppoe_hdr)) = __constant_htons(PPP_IP);
-					} else if (_I == ETH_HLEN) {
-						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
+					if (!nfn->l2_fast_fwd) {
+						if (_I >= ETH_HLEN) {
+							memcpy(eth_hdr(skb)->h_source, nfn->h_source, ETH_ALEN);
+							memcpy(eth_hdr(skb)->h_dest, nfn->h_dest, ETH_ALEN);
+						}
+						if (_I == ETH_HLEN + PPPOE_SES_HLEN) {
+							struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
+							eth_hdr(skb)->h_proto = __constant_htons(ETH_P_PPP_SES);
+							skb->protocol = __constant_htons(ETH_P_PPP_SES);
+							ph->ver = 1;
+							ph->type = 1;
+							ph->code = 0;
+							ph->sid = nfn->pppoe_sid;
+							ph->length = htons(ntohs(ip_hdr(skb)->tot_len) + 2);
+							*(__be16 *)((void *)ph + sizeof(struct pppoe_hdr)) = __constant_htons(PPP_IP);
+						} else if (_I == ETH_HLEN) {
+							eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
+						}
 					}
 					skb->dev = nfn->outdev;
 					if (_I == 0 && skb->dev->type == ARPHRD_ETHER) {
@@ -1941,13 +1946,13 @@ fast_output:
 				nfn->jiffies = jiffies;
 
 				/* sample up to slow path every 2s */
-				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
+				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0x3f), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
 					unsigned long bytes = nfn->flow_bytes;
 					unsigned long packets = nfn->flow_packets;
 					nfn->flow_bytes -= bytes;
 					nfn->flow_packets -= packets;
 					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets, 0, jiffies);
-					nfn->count = (nfn->jiffies / HZ) & 0xff;
+					nfn->count = (nfn->jiffies / HZ) & 0x3f;
 					wmb();
 					clear_bit(0, &nfn->status);
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
@@ -2021,6 +2026,9 @@ fast_output:
 					}
 					ip_decrease_ttl(iph);
 				}
+				if (nfn->l3_fast_fwd)
+					goto fast_output;
+
 				if (UDPH(l4)->source != nfn->nat_source) {
 					natflow_nat_port_udp(skb, iph->ihl * 4, UDPH(l4)->source, nfn->nat_source);
 					UDPH(l4)->source = nfn->nat_source;
@@ -2464,9 +2472,12 @@ fastnat_check:
 							if (simple_test_bit(NF_FF_BRIDGE_BIT, &nf->status))
 								nfn->flags |= FASTNAT_BRIDGE_FWD;
 
+							nfn->l3_fast_fwd = 0;
+							nfn->l2_fast_fwd = 0;
 							nfn->vlan_present = nf->rroute[d].vlan_present;
 							nfn->vlan_proto = nf->rroute[d].vlan_proto;
 							nfn->vlan_tci = nf->rroute[d].vlan_tci;
+							barrier();
 							nfn->magic = path_magic;
 							nfn->jiffies = jiffies;
 							nfn->keepalive_jiffies = jiffies;
@@ -2543,6 +2554,19 @@ fastnat_check:
 										nfn = (void *)(((unsigned long)nfn) ^ ((unsigned long)nfn_i));
 										nfn_i = (void *)(((unsigned long)nfn) ^ ((unsigned long)nfn_i));
 										nfn = (void *)(((unsigned long)nfn) ^ ((unsigned long)nfn_i));
+									}
+									if (nfn->saddr == nfn->nat_saddr && nfn->daddr == nfn->nat_daddr &&
+									        nfn->source == nfn->nat_source && nfn->dest == nfn->nat_dest &&
+									        nfn_i->saddr == nfn_i->nat_saddr && nfn_i->daddr == nfn_i->nat_daddr &&
+									        nfn_i->source == nfn_i->nat_source && nfn_i->dest == nfn_i->nat_dest) {
+										nfn->l3_fast_fwd = 1;
+										nfn_i->l3_fast_fwd = 1;
+										if (memcmp(nfn->h_source, nfn_i->h_dest, ETH_ALEN) == 0 &&
+										        memcmp(nfn->h_dest, nfn_i->h_source, ETH_ALEN) == 0 &&
+										        nfn->flags == nfn_i->flags) {
+											nfn->l2_fast_fwd = 1;
+											nfn_i->l2_fast_fwd = 1;
+										}
 									}
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 									if (hwnat && (re_learn == 2 || iph->protocol == IPPROTO_UDP)) {
@@ -3567,13 +3591,13 @@ __hook_ipv6_main:
 				nfn->jiffies = jiffies;
 
 				/* sample up to slow path every 2s */
-				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
+				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0x3f), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
 					unsigned long bytes = nfn->flow_bytes;
 					unsigned long packets = nfn->flow_packets;
 					nfn->flow_bytes -= bytes;
 					nfn->flow_packets -= packets;
 					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets, 0, jiffies);
-					nfn->count = (nfn->jiffies / HZ) & 0xff;
+					nfn->count = (nfn->jiffies / HZ) & 0x3f;
 					wmb();
 					clear_bit(0, &nfn->status);
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
@@ -3653,6 +3677,8 @@ __hook_ipv6_main:
 					}
 					IPV6H->hop_limit--;
 				}
+				if (nfn->l3_fast_fwd)
+					goto fast_output6;
 
 				if (TCPH(l4)->source != nfn->nat_source) {
 					natflow_nat_port_tcp(skb, sizeof(struct ipv6hdr), TCPH(l4)->source, nfn->nat_source);
@@ -3717,22 +3743,24 @@ fast_output6:
 					}
 					skb_push(skb, _I);
 					skb_reset_mac_header(skb);
-					if (_I >= ETH_HLEN) {
-						memcpy(eth_hdr(skb)->h_source, nfn->h_source, ETH_ALEN);
-						memcpy(eth_hdr(skb)->h_dest, nfn->h_dest, ETH_ALEN);
-					}
-					if (_I == ETH_HLEN + PPPOE_SES_HLEN) {
-						struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
-						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_PPP_SES);
-						skb->protocol = __constant_htons(ETH_P_PPP_SES);
-						ph->ver = 1;
-						ph->type = 1;
-						ph->code = 0;
-						ph->sid = nfn->pppoe_sid;
-						ph->length = htons(ntohs(ipv6_hdr(skb)->payload_len) + sizeof(struct ipv6hdr) + 2);
-						*(__be16 *)((void *)ph + sizeof(struct pppoe_hdr)) = __constant_htons(PPP_IPV6);
-					} else if (_I == ETH_HLEN) {
-						eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IPV6);
+					if (!nfn->l2_fast_fwd) {
+						if (_I >= ETH_HLEN) {
+							memcpy(eth_hdr(skb)->h_source, nfn->h_source, ETH_ALEN);
+							memcpy(eth_hdr(skb)->h_dest, nfn->h_dest, ETH_ALEN);
+						}
+						if (_I == ETH_HLEN + PPPOE_SES_HLEN) {
+							struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
+							eth_hdr(skb)->h_proto = __constant_htons(ETH_P_PPP_SES);
+							skb->protocol = __constant_htons(ETH_P_PPP_SES);
+							ph->ver = 1;
+							ph->type = 1;
+							ph->code = 0;
+							ph->sid = nfn->pppoe_sid;
+							ph->length = htons(ntohs(ipv6_hdr(skb)->payload_len) + sizeof(struct ipv6hdr) + 2);
+							*(__be16 *)((void *)ph + sizeof(struct pppoe_hdr)) = __constant_htons(PPP_IPV6);
+						} else if (_I == ETH_HLEN) {
+							eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IPV6);
+						}
 					}
 					skb->dev = nfn->outdev;
 					if (_I == 0 && skb->dev->type == ARPHRD_ETHER) {
@@ -3807,13 +3835,13 @@ fast_output6:
 				nfn->jiffies = jiffies;
 
 				/* sample up to slow path every 2s */
-				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0xff), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
+				if ((u32)ucharmindiff(((nfn->jiffies / HZ) & 0x3f), nfn->count) >= NATFLOW_FF_SAMPLE_TIME && !test_and_set_bit(0, &nfn->status)) {
 					unsigned long bytes = nfn->flow_bytes;
 					unsigned long packets = nfn->flow_packets;
 					nfn->flow_bytes -= bytes;
 					nfn->flow_packets -= packets;
 					natflow_offload_keepalive(hash, bytes, packets, nfn->speed_bytes, nfn->speed_packets, 0, jiffies);
-					nfn->count = (nfn->jiffies / HZ) & 0xff;
+					nfn->count = (nfn->jiffies / HZ) & 0x3f;
 					wmb();
 					clear_bit(0, &nfn->status);
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
@@ -3887,6 +3915,8 @@ fast_output6:
 					}
 					IPV6H->hop_limit--;
 				}
+				if (nfn->l3_fast_fwd)
+					goto fast_output6;
 
 				if (UDPH(l4)->source != nfn->nat_source) {
 					natflow_nat_port_udp(skb, sizeof(struct ipv6hdr), UDPH(l4)->source, nfn->nat_source);
@@ -4297,9 +4327,12 @@ fastnat_check6:
 							if (simple_test_bit(NF_FF_BRIDGE_BIT, &nf->status))
 								nfn->flags |= FASTNAT_BRIDGE_FWD;
 
+							nfn->l3_fast_fwd = 0;
+							nfn->l2_fast_fwd = 0;
 							nfn->vlan_present = nf->rroute[d].vlan_present;
 							nfn->vlan_proto = nf->rroute[d].vlan_proto;
 							nfn->vlan_tci = nf->rroute[d].vlan_tci;
+							barrier();
 							nfn->magic = path_magic;
 							nfn->jiffies = jiffies;
 							nfn->keepalive_jiffies = jiffies;
@@ -4374,6 +4407,19 @@ fastnat_check6:
 										nfn = (void *)(((unsigned long)nfn) ^ ((unsigned long)nfn_i));
 										nfn_i = (void *)(((unsigned long)nfn) ^ ((unsigned long)nfn_i));
 										nfn = (void *)(((unsigned long)nfn) ^ ((unsigned long)nfn_i));
+									}
+									if (memcmp(nfn->saddr6, nfn->nat_saddr6, 16) == 0 && memcmp(nfn->daddr6, nfn->nat_daddr6, 16) == 0 &&
+									        nfn->source == nfn->nat_source && nfn->dest == nfn->nat_dest &&
+									        memcmp(nfn_i->saddr6, nfn_i->nat_saddr6, 16) == 0 && memcmp(nfn_i->daddr6, nfn_i->nat_daddr6, 16) == 0 &&
+									        nfn_i->source == nfn_i->nat_source && nfn_i->dest == nfn_i->nat_dest) {
+										nfn->l3_fast_fwd = 1;
+										nfn_i->l3_fast_fwd = 1;
+										if (memcmp(nfn->h_source, nfn_i->h_dest, ETH_ALEN) == 0 &&
+										        memcmp(nfn->h_dest, nfn_i->h_source, ETH_ALEN) == 0 &&
+										        nfn->flags == nfn_i->flags) {
+											nfn->l2_fast_fwd = 1;
+											nfn_i->l2_fast_fwd = 1;
+										}
 									}
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 									if (hwnat && (re_learn == 2 || IPV6H->nexthdr == IPPROTO_UDP) && !(ct->status & (IPS_DST_NAT | IPS_SRC_NAT))) {

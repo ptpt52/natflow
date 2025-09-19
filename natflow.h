@@ -221,7 +221,9 @@ struct natflow_fastnat_node_t {
 #define NFN_PROTO_ENC(protonum) ((protonum) == IPPROTO_TCP ? FASTNAT_PROTO_TCP : FASTNAT_PROTO_UDP)
 #define NFN_L3NUM_DEC(flags)    (((flags) & FASTNAT_L3NUM_IPV6) ? AF_INET6 : AF_INET)
 	unsigned char flags;
-	unsigned char count;
+	unsigned char l2_fast_fwd:1; /* NO IP/PORT mangle */
+	unsigned char l3_fast_fwd:1; /* NO MACADDR mangle */
+	unsigned char count:6;
 	unsigned short ifindex;
 	__be32 saddr,
 	       daddr;
