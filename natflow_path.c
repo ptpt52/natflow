@@ -3128,9 +3128,12 @@ fastnat_check:
 			eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IP);
 		}
 		if ((nf->status & NF_FF_TOKEN_CTRL)) { /* for tc working on bridge interface */
-			skb->dev = netdev_master_upper_dev_get_rcu(nf->rroute[dir].outdev);
-			if (!skb->dev)
-				skb->dev = nf->rroute[dir].outdev;
+			struct net_device *upper = netdev_master_upper_dev_get_rcu(skb->dev);
+			if (upper && (netif_is_bridge_master(upper) ||
+			              netif_is_bond_master(upper) ||
+			              netif_is_macvlan(upper))) {
+				skb->dev = upper;
+			}
 		}
 #ifdef CONFIG_NETFILTER_INGRESS
 		if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
@@ -4980,6 +4983,7 @@ fastnat_check6:
 			skb_reset_mac_header(skb);
 			eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IPV6);
 		}
+		/* XXX: qos is not supported on IPv6 */
 #ifdef CONFIG_NETFILTER_INGRESS
 		if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 			struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);
