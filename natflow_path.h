@@ -35,7 +35,6 @@ extern void natflow_disabled_set(int v);
 extern int natflow_disabled_get(void);
 
 #define NATFLOW_PATH_MAGIC_MASK 0xffff
-extern atomic_t natflow_path_magic;
 extern void natflow_update_magic(int init);
 
 static inline int natflow_nat_ip_tcp(struct sk_buff *skb, unsigned int thoff,

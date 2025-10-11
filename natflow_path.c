@@ -443,8 +443,7 @@ int natflow_disabled_get(void)
 	return disabled;
 }
 
-atomic_t natflow_path_magic = ATOMIC_INIT(0);
-EXPORT_SYMBOL_GPL(natflow_path_magic);
+static atomic_t natflow_path_magic = ATOMIC_INIT(0);
 
 void natflow_update_magic(int init)
 {
