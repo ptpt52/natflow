@@ -5895,6 +5895,10 @@ static void netdev_hold_workfn(struct work_struct *work)
 
 static struct workqueue_struct *natflow_netdev_wq;
 
+#if !defined(NETIF_F_GRO_FRAGLIST)
+#define NETIF_F_GRO_FRAGLIST 0
+#endif
+
 static int natflow_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
@@ -5929,13 +5933,8 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (event == NETDEV_UP) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)
 		if ((dev->features & (NETIF_F_GRO | NETIF_F_GRO_FRAGLIST))) {
 			dev->features &= ~(NETIF_F_GRO | NETIF_F_GRO_FRAGLIST);
-#else
-		if ((dev->features & NETIF_F_GRO)) {
-			dev->features &= ~(NETIF_F_GRO);
-#endif
 			netdev_update_features(dev);
 			NATFLOW_println("remove NETIF_F_GRO for dev=%s\n", dev->name);
 		}
