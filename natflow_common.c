@@ -149,6 +149,10 @@ struct natflow_t *natflow_session_get(struct nf_conn *ct)
 	struct nat_key_t *nk;
 	struct natflow_t *nf = NULL;
 
+	if (!(ct->status & IPS_NATFLOW_SESSION)) {
+		return NULL;
+	}
+
 	if (!ct->ext) {
 		return NULL;
 	}
