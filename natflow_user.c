@@ -470,7 +470,7 @@ static natflow_fakeuser_t *natflow_user_lookup_in(struct nf_conn *ct, int dir)
 		return NULL;
 	}
 
-	if (!nf_ct_is_confirmed(ct) && !user && (!ct->master || !ct->master->master)) {
+	if (!nf_ct_is_confirmed(ct) && (!ct->master || !ct->master->master)) {
 		if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
 			user = natflow_user_find_get(ct->tuplehash[dir].tuple.src.u3.ip);
 		} else {
@@ -1612,9 +1612,6 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	const struct net_device *out = state->out;
 #endif
 #endif
-#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
-	const struct net_device *br_in = NULL;
-#endif
 	natflow_t *nf = NULL;
 	struct fakeuser_data_t *fud;
 	natflow_fakeuser_t *user;
@@ -1644,9 +1641,6 @@ static unsigned int natflow_user_forward_hook(void *priv,
 
 	if (in == NULL)
 		in = skb->dev;
-#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
-	br_in = nf_bridge_get_physindev_compat(skb);
-#endif
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
@@ -1677,16 +1671,8 @@ static unsigned int natflow_user_forward_hook(void *priv,
 
 	user = natflow_user_get(ct);
 	if (NULL == user) {
-		if (!natflow_is_lan_zone(in)
-#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
-		        && (br_in == NULL || !natflow_is_lan_zone(br_in))
-#endif
-		   ) {
-			user = natflow_user_lookup_in(ct, IP_CT_DIR_REPLY);
-			if (NULL == user) {
-				goto out;
-			}
-		} else {
+		user = natflow_user_lookup_in(ct, IP_CT_DIR_ORIGINAL);
+		if (NULL == user) {
 			goto out;
 		}
 	}
@@ -2027,9 +2013,6 @@ static unsigned int natflow_user_post_hook(void *priv,
 	//const struct net_device *in = state->in;
 	const struct net_device *out = state->out;
 #endif
-#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
-	const struct net_device *br_out = NULL;
-#endif
 	struct nf_conn_acct *acct;
 	natflow_fakeuser_t *user;
 	struct nf_conn *ct;
@@ -2057,9 +2040,6 @@ static unsigned int natflow_user_post_hook(void *priv,
 
 	if (out == NULL)
 		out = skb->dev;
-#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
-	br_out = nf_bridge_get_physoutdev(skb);
-#endif
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
@@ -2068,6 +2048,9 @@ static unsigned int natflow_user_post_hook(void *priv,
 
 	user = natflow_user_get(ct);
 	if (NULL == user) {
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+		const struct net_device *br_out = nf_bridge_get_physoutdev(skb);
+#endif
 		/* XXX: no user found, maybe connection from wan to lan */
 		if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
 			goto out;
