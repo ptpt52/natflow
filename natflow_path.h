@@ -82,7 +82,7 @@ static inline int natflow_nat_ip_l4proto(struct sk_buff *skb, struct iphdr *iph,
 }
 
 static inline int natflow_nat_ipv6_l4proto(struct sk_buff *skb, struct ipv6hdr *ipv6h,
-        unsigned int thoff, struct in6_addr *addr, struct in6_addr *new_addr)
+        unsigned int thoff, const struct in6_addr *addr, const struct in6_addr *new_addr)
 {
 	int i;
 	switch (ipv6h->nexthdr) {

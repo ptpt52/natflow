@@ -114,9 +114,9 @@ typedef enum {
 extern void natflow_user_release_put(natflow_fakeuser_t *user);
 extern natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir);
 extern natflow_fakeuser_t *natflow_user_find_get(__be32 ip);
-extern natflow_fakeuser_t *natflow_user_find_get6(union nf_inet_addr *u3);
-extern natflow_fakeuser_t *natflow_user_in_get(__be32 ip, uint8_t *macaddr);
-extern natflow_fakeuser_t *natflow_user_in_get6(union nf_inet_addr *u3, uint8_t *macaddr);
+extern natflow_fakeuser_t *natflow_user_find_get6(const union nf_inet_addr *u3);
+extern natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr);
+extern natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3, const uint8_t *macaddr);
 
 static inline void natflow_auth_convert_tcprst(struct sk_buff *skb)
 {

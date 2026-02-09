@@ -786,7 +786,7 @@ static inline struct sk_buff *urllogger_sni_cache_detach(__be32 src_ip, __be16 s
 	return skb;
 }
 
-static inline struct sk_buff *urllogger_sni_cache_detach6(struct in6_addr *src_ip, __be16 src_port, struct in6_addr *dst_ip, __be16 dst_port, unsigned short *add_data_len)
+static inline struct sk_buff *urllogger_sni_cache_detach6(const struct in6_addr *src_ip, __be16 src_port, const struct in6_addr *dst_ip, __be16 dst_port, unsigned short *add_data_len)
 {
 	int i = smp_processor_id();
 	int j = 0;

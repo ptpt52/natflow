@@ -5049,7 +5049,7 @@ out6:
 						            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_SOLICITATION ||
 						            ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT)) {
 							struct ethhdr *eth;
-							user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
+							user = natflow_user_find_get6((const union nf_inet_addr *)&IPV6H->daddr);
 							if (user) {
 								struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 								if (((skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 0) ||
@@ -5084,7 +5084,7 @@ out6:
 							do {
 								unsigned char *opt_ptr;
 								eth = eth_hdr(skb);
-								user = natflow_user_in_get6((union nf_inet_addr *)&IPV6H->saddr, eth->h_source);
+								user = natflow_user_in_get6((const union nf_inet_addr *)&IPV6H->saddr, eth->h_source);
 								if (user) {
 									struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 									if ((skb->dev->flags & IFF_IS_LAN)) {
@@ -5151,7 +5151,7 @@ out6:
 
 					if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
 						iph = (void *)ipv6_hdr(skb);
-						user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
+						user = natflow_user_find_get6((const union nf_inet_addr *)&IPV6H->daddr);
 						if (user) {
 							struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 							if (((skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 0) ||
@@ -5274,7 +5274,7 @@ out6:
 								/* try fetch h_dest from user info */
 								natflow_fakeuser_t *user;
 								struct fakeuser_data_t *fud;
-								user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
+								user = natflow_user_find_get6((const union nf_inet_addr *)&IPV6H->daddr);
 								if (user) {
 									fud = natflow_fakeuser_data(user);
 									ether_addr_copy(eth->h_dest, fud->macaddr);
@@ -5414,7 +5414,7 @@ out6:
 						}
 					}
 
-					user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->saddr);
+					user = natflow_user_find_get6((const union nf_inet_addr *)&IPV6H->saddr);
 					if (user) {
 						fud = natflow_fakeuser_data(user);
 						if ((skb->dev->flags & IFF_IS_LAN)) {
@@ -5425,7 +5425,7 @@ out6:
 						natflow_user_release_put(user);
 					}
 
-					user = natflow_user_find_get6((union nf_inet_addr *)&IPV6H->daddr);
+					user = natflow_user_find_get6((const union nf_inet_addr *)&IPV6H->daddr);
 					if (user) {
 						fud = natflow_fakeuser_data(user);
 						if (((skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 1)
