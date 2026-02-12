@@ -59,6 +59,37 @@ void natflow_probe_ct_ext(void)
 	}
 }
 
+/*
+ * XXX: NOTE ABOUT krealloc() SHRINK BEHAVIOR for natflow_session_init()
+ *
+ * This implementation intentionally relies on assumptions that are
+ * NOT guaranteed by the kernel API.
+ *
+ * On the current production system:
+ *   - KASAN / SLUB debug / redzone / poisoning are disabled
+ *   - SLUB usually does not move objects when shrinking
+ *   - the underlying slab object typically remains intact
+ *
+ * Therefore, after krealloc(ptr, new_size, ...),
+ * although the region [new_size, old_size) is no longer owned by
+ * the caller according to the API contract, accessing it tends to
+ * work in practice in this environment.
+ *
+ * IMPORTANT:
+ * This is a pragmatic workaround based on allocator behavior,
+ * not a formal guarantee.
+ *
+ * If in the future:
+ *   - debugging or hardening options are enabled, or
+ *   - the allocator implementation changes, or
+ *   - the object gets reallocated during shrink,
+ *
+ * then accessing the tail beyond new_size may trigger out-of-bounds
+ * reports, panics, or memory corruption.
+ *
+ * When a safer design becomes available, this dependency should be
+ * removed by explicitly tracking sizes or restructuring the data.
+ */
 int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 {
 	struct nat_key_t *nk = NULL;
@@ -88,6 +119,33 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	nkoff = ALIGN(static_fixed_ext_off * NATCAP_FACTOR, __ALIGN_64BYTES);
 	newoff = ALIGN(nkoff + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS), __ALIGN_64BITS);
 
+	newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS);
+	alloc_size = ALIGN(newlen, __ALIGN_64BITS);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
+	new = __krealloc(old, alloc_size, gfp);
+#else
+	new = krealloc(old, alloc_size, gfp);
+#endif
+	if (!new) {
+		clear_bit(IPS_NATFLOW_SESSION_BIT, &ct->status);
+		NATFLOW_ERROR(DEBUG_FMT_PREFIX "__krealloc size=%u failed!\n", DEBUG_ARG_PREFIX, (unsigned int)alloc_size);
+		return -1;
+	}
+
+	if (new != old) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
+		kfree_rcu(old, rcu);
+		ct->ext = new;
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
+		kfree_rcu(old, rcu);
+		rcu_assign_pointer(ct->ext, new);
+#else
+		ct->ext = new;
+#endif
+		old = new;
+	}
+
 	if (static_fixed_ext_off * NATCAP_FACTOR <= NATCAP_MAX_OFF) {
 		nk = (struct nat_key_t *)((void *)old + static_fixed_ext_off * NATCAP_FACTOR);
 		if (nk->magic == NATCAP_MAGIC && nk->ext_magic == (((unsigned long)ct) & 0xffffffff)) {
@@ -95,8 +153,9 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 				//natflow exist
 				NATFLOW_WARN(DEBUG_FMT_PREFIX "natflow exist!\n", DEBUG_ARG_PREFIX);
 			}
-			nkoff = static_fixed_ext_off * NATCAP_FACTOR;
+			nkoff = ALIGN(static_fixed_ext_off * NATCAP_FACTOR, __ALIGN_64BYTES);
 			newoff = ALIGN(nk->len, __ALIGN_64BITS);
+			//BUG_ON(nk->len < nkoff);
 		} else {
 			nk = NULL;
 		}
