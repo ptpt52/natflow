@@ -291,7 +291,7 @@ static ssize_t natflow_zone_write(struct file *file, const char __user *buf, siz
 		natflow_zone_cleanup();
 		goto done;
 	} else if (strncmp(data, "lan_zone ", 9) == 0) {
-		n = sscanf(data, "lan_zone %u=%s\n", &zm.id, zm.if_name);
+		n = sscanf(data, "lan_zone %u=%14s\n", &zm.id, zm.if_name);
 		if (n == 2) {
 			zm.type = ZONE_TYPE_LAN;
 			if ((err = natflow_zone_add_tail(&zm)) == 0)
@@ -299,7 +299,7 @@ static ssize_t natflow_zone_write(struct file *file, const char __user *buf, siz
 			NATFLOW_println("natflow_zone_add_tail() failed ret=%d", err);
 		}
 	} else if (strncmp(data, "wan_zone ", 9) == 0) {
-		n = sscanf(data, "wan_zone %u=%s\n", &zm.id, zm.if_name);
+		n = sscanf(data, "wan_zone %u=%14s\n", &zm.id, zm.if_name);
 		if (n == 2) {
 			zm.type = ZONE_TYPE_WAN;
 			if ((err = natflow_zone_add_tail(&zm)) == 0)
