@@ -1658,6 +1658,24 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		goto out;
 	}
 
+	if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
+		struct iphdr *iph;
+
+		if (!pskb_may_pull(skb, sizeof(struct iphdr))) {
+			goto out;
+		}
+
+		iph = ip_hdr(skb);
+		if (iph->protocol == IPPROTO_TCP && !pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct tcphdr))) {
+			goto out;
+		}
+		if (iph->protocol == IPPROTO_UDP && !pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr))) {
+			goto out;
+		}
+	} else {
+		//FIXME ipv6
+	}
+
 	if ((ct->status & IPS_NATFLOW_CT_DROP)) {
 		if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
 			struct iphdr *iph = ip_hdr(skb);

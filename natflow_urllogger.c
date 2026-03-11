@@ -911,6 +911,9 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 	if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6)
 		goto urllogger_hook_ipv6_main;
 
+	if (!pskb_may_pull(skb, sizeof(struct iphdr))) {
+		goto out;
+	}
 	iph = ip_hdr(skb);
 	if (iph->protocol != IPPROTO_TCP) {
 		goto out;
@@ -1223,6 +1226,9 @@ __urllogger_ip_skip:
 	goto out;
 
 urllogger_hook_ipv6_main:
+	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr))) {
+		goto out;
+	}
 	iph = (void *)ipv6_hdr(skb);
 	if (IPV6H->version != 6 || IPV6H->nexthdr != IPPROTO_TCP) {
 		goto out;
