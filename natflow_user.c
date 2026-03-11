@@ -1328,19 +1328,24 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	if (disabled)
 		return NF_ACCEPT;
 
-	/* only bridge come here */
-	if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
-	        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
-		skb_pull(skb, PPPOE_SES_HLEN);
-		skb->protocol = __constant_htons(ETH_P_IP);
-		skb->network_header += PPPOE_SES_HLEN;
-		bridge = 1;
-	} else if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
-	           pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
-		skb_pull(skb, PPPOE_SES_HLEN);
-		skb->protocol = __constant_htons(ETH_P_IPV6);
-		skb->network_header += PPPOE_SES_HLEN;
-		bridge = 1;
+	if (skb->protocol == __constant_htons(ETH_P_PPP_SES)) {
+		if (!pskb_may_pull(skb, PPPOE_SES_HLEN)) {
+			return NF_DROP;
+		}
+
+		if (pppoe_proto(skb) == __constant_htons(PPP_IP)) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IP);
+			skb->network_header += PPPOE_SES_HLEN;
+			bridge = 1;
+		} else if (pppoe_proto(skb) == __constant_htons(PPP_IPV6)) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IPV6);
+			skb->network_header += PPPOE_SES_HLEN;
+			bridge = 1;
+		} else {
+			return NF_ACCEPT;
+		}
 	} else if (skb->protocol != __constant_htons(ETH_P_IP) && skb->protocol != __constant_htons(ETH_P_IPV6)) {
 		return NF_ACCEPT;
 	}
@@ -1623,18 +1628,24 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	if (disabled)
 		return NF_ACCEPT;
 
-	if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
-	        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
-		skb_pull(skb, PPPOE_SES_HLEN);
-		skb->protocol = __constant_htons(ETH_P_IP);
-		skb->network_header += PPPOE_SES_HLEN;
-		bridge = 1;
-	} else if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
-	           pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
-		skb_pull(skb, PPPOE_SES_HLEN);
-		skb->protocol = __constant_htons(ETH_P_IPV6);
-		skb->network_header += PPPOE_SES_HLEN;
-		bridge = 1;
+	if (skb->protocol == __constant_htons(ETH_P_PPP_SES)) {
+		if (!pskb_may_pull(skb, PPPOE_SES_HLEN)) {
+			return NF_DROP;
+		}
+
+		if (pppoe_proto(skb) == __constant_htons(PPP_IP)) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IP);
+			skb->network_header += PPPOE_SES_HLEN;
+			bridge = 1;
+		} else if (pppoe_proto(skb) == __constant_htons(PPP_IPV6)) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IPV6);
+			skb->network_header += PPPOE_SES_HLEN;
+			bridge = 1;
+		} else {
+			return NF_ACCEPT;
+		}
 	} else if (skb->protocol != __constant_htons(ETH_P_IP) && skb->protocol != __constant_htons(ETH_P_IPV6)) {
 		return NF_ACCEPT;
 	}
@@ -2022,18 +2033,24 @@ static unsigned int natflow_user_post_hook(void *priv,
 	if (disabled)
 		return NF_ACCEPT;
 
-	if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
-	        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
-		skb_pull(skb, PPPOE_SES_HLEN);
-		skb->protocol = __constant_htons(ETH_P_IP);
-		skb->network_header += PPPOE_SES_HLEN;
-		bridge = 1;
-	} else if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
-	           pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
-		skb_pull(skb, PPPOE_SES_HLEN);
-		skb->protocol = __constant_htons(ETH_P_IPV6);
-		skb->network_header += PPPOE_SES_HLEN;
-		bridge = 1;
+	if (skb->protocol == __constant_htons(ETH_P_PPP_SES)) {
+		if (!pskb_may_pull(skb, PPPOE_SES_HLEN)) {
+			return NF_DROP;
+		}
+
+		if (pppoe_proto(skb) == __constant_htons(PPP_IP)) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IP);
+			skb->network_header += PPPOE_SES_HLEN;
+			bridge = 1;
+		} else if (pppoe_proto(skb) == __constant_htons(PPP_IPV6)) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IPV6);
+			skb->network_header += PPPOE_SES_HLEN;
+			bridge = 1;
+		} else {
+			return NF_ACCEPT;
+		}
 	} else if (skb->protocol != __constant_htons(ETH_P_IP) && skb->protocol != __constant_htons(ETH_P_IPV6)) {
 		return NF_ACCEPT;
 	}

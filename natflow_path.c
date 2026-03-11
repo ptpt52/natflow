@@ -1475,7 +1475,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		if (hwnat && skb->dev->netdev_ops->ndo_flow_offload &&
 		        (skb->vlan_tci & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC &&
 		        (skb->hash & HWNAT_QUEUE_MAPPING_MAGIC_MASK) == HWNAT_QUEUE_MAPPING_MAGIC) {
-			if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+			if (skb->protocol == __constant_htons(ETH_P_PPP_SES) && pskb_may_pull(skb, PPPOE_SES_HLEN) &&
 			        pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
 				goto __hook_ipv6_main;
 			} else if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
@@ -1551,7 +1551,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		}
 #endif
 
-		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) && pskb_may_pull(skb, PPPOE_SES_HLEN) &&
 		        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
 			ingress_pad_len = PPPOE_SES_HLEN;
 		} else if (skb->protocol == __constant_htons(ETH_P_IP)) {
@@ -1561,7 +1561,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 				goto out;
 			}
 			/* XXX: deliver ipv6 pkts to __hook_ipv6_main */
-			if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+			if (skb->protocol == __constant_htons(ETH_P_PPP_SES) && pskb_may_pull(skb, PPPOE_SES_HLEN) &&
 			        pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
 				goto __hook_ipv6_main;
 			} else if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
@@ -2060,21 +2060,24 @@ slow_fastpath:
 		}
 	}
 #else
-	/* only bridge come here */
-	if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
-	        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
-		skb_pull(skb, PPPOE_SES_HLEN);
-		skb->protocol = __constant_htons(ETH_P_IP);
-		skb->network_header += PPPOE_SES_HLEN;
-		bridge = 1;
-		ingress_pad_len = PPPOE_SES_HLEN;
-	} else if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
-	           pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
-		skb_pull(skb, PPPOE_SES_HLEN);
-		skb->protocol = __constant_htons(ETH_P_IPV6);
-		skb->network_header += PPPOE_SES_HLEN;
-		bridge = 1;
-		ingress_pad_len = PPPOE_SES_HLEN;
+	if (skb->protocol == __constant_htons(ETH_P_PPP_SES)) {
+		if (!pskb_may_pull(skb, PPPOE_SES_HLEN)) {
+			return NF_DROP;
+		}
+
+		if (pppoe_proto(skb) == __constant_htons(PPP_IP)) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IP);
+			skb->network_header += PPPOE_SES_HLEN;
+			bridge = 1;
+		} else if (pppoe_proto(skb) == __constant_htons(PPP_IPV6)) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IPV6);
+			skb->network_header += PPPOE_SES_HLEN;
+			bridge = 1;
+		} else {
+			return NF_ACCEPT;
+		}
 	} else if (skb->protocol != __constant_htons(ETH_P_IP) && skb->protocol != __constant_htons(ETH_P_IPV6)) {
 		return NF_ACCEPT;
 	}
@@ -3482,7 +3485,7 @@ __hook_ipv6_main:
 		}
 #endif
 
-		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
+		if (skb->protocol == __constant_htons(ETH_P_PPP_SES) && pskb_may_pull(skb, PPPOE_SES_HLEN) &&
 		        pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
 			ingress_pad_len = PPPOE_SES_HLEN;
 		} else if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
@@ -5587,23 +5590,27 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (disabled)
 		return NF_ACCEPT;
 
-	/* only bridge come here */
-	if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
-	        pppoe_proto(skb) == __constant_htons(PPP_IP) /* Internet Protocol */) {
-		skb_pull(skb, PPPOE_SES_HLEN);
-		skb->protocol = __constant_htons(ETH_P_IP);
-		skb->network_header += PPPOE_SES_HLEN;
-		bridge = 1;
-	} else if (skb->protocol == __constant_htons(ETH_P_PPP_SES) &&
-	           pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
-		skb_pull(skb, PPPOE_SES_HLEN);
-		skb->protocol = __constant_htons(ETH_P_IPV6);
-		skb->network_header += PPPOE_SES_HLEN;
-		bridge = 1;
+	if (skb->protocol == __constant_htons(ETH_P_PPP_SES)) {
+		if (!pskb_may_pull(skb, PPPOE_SES_HLEN)) {
+			return NF_DROP;
+		}
+
+		if (pppoe_proto(skb) == __constant_htons(PPP_IP)) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IP);
+			skb->network_header += PPPOE_SES_HLEN;
+			bridge = 1;
+		} else if (pppoe_proto(skb) == __constant_htons(PPP_IPV6)) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IPV6);
+			skb->network_header += PPPOE_SES_HLEN;
+			bridge = 1;
+		} else {
+			return NF_ACCEPT;
+		}
 	} else if (skb->protocol != __constant_htons(ETH_P_IP) && skb->protocol != __constant_htons(ETH_P_IPV6)) {
 		return NF_ACCEPT;
 	}
-
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (NULL == ct) {
