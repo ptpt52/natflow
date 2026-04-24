@@ -130,6 +130,22 @@ static const char *const sctp_conntrack_names[] = {
 	"HEARTBEAT_ACKED",
 };
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+enum ct_dccp_states {
+	CT_DCCP_NONE,
+	CT_DCCP_REQUEST,
+	CT_DCCP_RESPOND,
+	CT_DCCP_PARTOPEN,
+	CT_DCCP_OPEN,
+	CT_DCCP_CLOSEREQ,
+	CT_DCCP_CLOSING,
+	CT_DCCP_TIMEWAIT,
+	CT_DCCP_IGNORE,
+	CT_DCCP_INVALID,
+	__CT_DCCP_MAX
+};
+#endif
+
 static const char * const dccp_state_names[] = {
 	[CT_DCCP_NONE]          = "NONE",
 	[CT_DCCP_REQUEST]       = "REQUEST",
