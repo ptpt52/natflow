@@ -1129,11 +1129,8 @@ static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *
 	         fud->macaddr[0], fud->macaddr[1], fud->macaddr[2],
 	         fud->macaddr[3], fud->macaddr[4], fud->macaddr[5],
 	         fud->auth_rule_id, jiffies);
-	http->location[sizeof(http->location) - 1] = 0;
 	n = snprintf(http->data, sizeof(http->data), http_data_fmt, http->location);
-	http->data[sizeof(http->data) - 1] = 0;
 	snprintf(http->header, sizeof(http->header), http_header_fmt, http->location, n);
-	http->header[sizeof(http->header) - 1] = 0;
 	n = sprintf(http->payload, "%s%s", http->header, http->data);
 
 	natflow_auth_reply_payload_fin(http->payload, n, skb, dev, pppoe_hdr);
@@ -1174,9 +1171,7 @@ static inline void natflow_auth_open_weixin_reply(const struct net_device *dev, 
 		return;
 
 	n = snprintf(http->data, sizeof(http->data), http_data_fmt, &redirect_ip, jiffies);
-	http->data[sizeof(http->data) - 1] = 0;
 	snprintf(http->header, sizeof(http->header), http_header_fmt, n);
-	http->header[sizeof(http->header) - 1] = 0;
 	n = sprintf(http->payload, "%s%s", http->header, http->data);
 
 	natflow_auth_reply_payload_fin(http->payload, n, skb, dev, pppoe_hdr);
