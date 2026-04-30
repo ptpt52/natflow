@@ -19,18 +19,25 @@ endif
 KERNELDIR ?= /lib/modules/$(KERNELRELEASE)/build
 KMAKE := $(MAKE) -C $(KERNELDIR) M=$(PWD)
 
+check-kerneldir:
+	@if [ ! -d "$(KERNELDIR)" ]; then \
+		echo "ERROR: kernel build dir not found: $(KERNELDIR)"; \
+		echo "Hint: install headers for $(KERNELRELEASE), or pass KERNELDIR=/path/to/linux/build"; \
+		exit 1; \
+	fi
+
 all: modules
 
-modules:
+modules: check-kerneldir
 	$(KMAKE) modules
 
-modules_install:
+modules_install: check-kerneldir
 	$(KMAKE) modules_install
 
 install: modules_install
 	depmod
 
 modules_clean:
-	$(KMAKE) clean
+	@if [ -d "$(KERNELDIR)" ]; then $(KMAKE) clean; else echo "Skip clean: $(KERNELDIR) not found"; fi
 
 clean: modules_clean
