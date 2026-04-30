@@ -239,8 +239,17 @@ struct natflow_t *natflow_session_get(struct nf_conn *ct)
 	return nf;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0) || \
+    (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 22) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 19, 0)) || \
+    (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 81) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)) || \
+    (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 134) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0)) || \
+    (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 167) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0)) || \
+    (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 203) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0)) || \
+    (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 253) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0))
+#define HAVE_IP_SET_GET_BYNAME_NLATTR 1
+#endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 22)
+#ifdef HAVE_IP_SET_GET_BYNAME_NLATTR
 static ip_set_id_t natflow_ip_set_get_byname(struct net *net, const char *ip_set_name, struct ip_set **set)
 {
 	struct {
