@@ -10,6 +10,7 @@
 #include <linux/highmem.h>
 #include <linux/udp.h>
 #include <linux/netfilter.h>
+#include <linux/netlink.h>
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_core.h>
 #include <net/netfilter/nf_conntrack_zones.h>
@@ -238,6 +239,36 @@ struct natflow_t *natflow_session_get(struct nf_conn *ct)
 	return nf;
 }
 
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 22)
+static ip_set_id_t natflow_ip_set_get_byname(struct net *net, const char *ip_set_name, struct ip_set **set)
+{
+	struct {
+		struct nlattr nla;
+		char name[IPSET_MAXNAMELEN];
+	} name_attr;
+	size_t name_len;
+
+	memset(&name_attr, 0, sizeof(name_attr));
+	name_len = strnlen(ip_set_name, IPSET_MAXNAMELEN - 1);
+	memcpy(name_attr.name, ip_set_name, name_len);
+	name_attr.nla.nla_type = 0;
+	name_attr.nla.nla_len = nla_attr_size(name_len + 1);
+
+	return ip_set_get_byname(net, &name_attr.nla, set);
+}
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+static inline ip_set_id_t natflow_ip_set_get_byname(struct net *net, const char *ip_set_name, struct ip_set **set)
+{
+	return ip_set_get_byname(net, ip_set_name, set);
+}
+#else
+static inline ip_set_id_t natflow_ip_set_get_byname(const char *ip_set_name, struct ip_set **set)
+{
+	return ip_set_get_byname(ip_set_name, set);
+}
+#endif
+
 const char *const hooknames[] = {
 	[NF_INET_PRE_ROUTING] = "PRE",
 	[NF_INET_LOCAL_IN] = "IN",
@@ -286,9 +317,9 @@ int ip_set_test_src_ip(const struct net_device *in, const struct net_device *out
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
-	id = ip_set_get_byname(net, ip_set_name, &set);
+	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
-	id = ip_set_get_byname(ip_set_name, &set);
+	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
 	if (id == IPSET_INVALID_ID) {
 		return -EINVAL;
@@ -345,9 +376,9 @@ int ip_set_test_dst_ip(const struct net_device *in, const struct net_device *out
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
-	id = ip_set_get_byname(net, ip_set_name, &set);
+	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
-	id = ip_set_get_byname(ip_set_name, &set);
+	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
 	if (id == IPSET_INVALID_ID) {
 		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
@@ -405,9 +436,9 @@ int ip_set_test_dst_netport(const struct net_device *in, const struct net_device
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
-	id = ip_set_get_byname(net, ip_set_name, &set);
+	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
-	id = ip_set_get_byname(ip_set_name, &set);
+	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
 	if (id == IPSET_INVALID_ID) {
 		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
@@ -465,9 +496,9 @@ int ip_set_add_src_ip(const struct net_device *in, const struct net_device *out,
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
-	id = ip_set_get_byname(net, ip_set_name, &set);
+	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
-	id = ip_set_get_byname(ip_set_name, &set);
+	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
 	if (id == IPSET_INVALID_ID) {
 		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
@@ -525,9 +556,9 @@ int ip_set_add_dst_ip(const struct net_device *in, const struct net_device *out,
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
-	id = ip_set_get_byname(net, ip_set_name, &set);
+	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
-	id = ip_set_get_byname(ip_set_name, &set);
+	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
 	if (id == IPSET_INVALID_ID) {
 		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
@@ -585,9 +616,9 @@ int ip_set_del_src_ip(const struct net_device *in, const struct net_device *out,
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
-	id = ip_set_get_byname(net, ip_set_name, &set);
+	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
-	id = ip_set_get_byname(ip_set_name, &set);
+	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
 	if (id == IPSET_INVALID_ID) {
 		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
@@ -645,9 +676,9 @@ int ip_set_del_dst_ip(const struct net_device *in, const struct net_device *out,
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
-	id = ip_set_get_byname(net, ip_set_name, &set);
+	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
-	id = ip_set_get_byname(ip_set_name, &set);
+	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
 	if (id == IPSET_INVALID_ID) {
 		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
@@ -705,9 +736,9 @@ int ip_set_test_src_mac(const struct net_device *in, const struct net_device *ou
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
-	id = ip_set_get_byname(net, ip_set_name, &set);
+	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
-	id = ip_set_get_byname(ip_set_name, &set);
+	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
 	if (id == IPSET_INVALID_ID) {
 		return -EINVAL;
