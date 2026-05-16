@@ -5941,9 +5941,9 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (event == NETDEV_UP) {
 		if ((dev->features & (NETIF_F_GRO | NETIF_F_GRO_FRAGLIST))) {
-			dev->features &= ~(NETIF_F_GRO | NETIF_F_GRO_FRAGLIST);
+			dev->wanted_features &= ~(NETIF_F_GRO | NETIF_F_GRO_FRAGLIST);
 			netdev_update_features(dev);
-			NATFLOW_println("remove NETIF_F_GRO for dev=%s\n", dev->name);
+			NATFLOW_println("remove NETIF_F_GRO/NETIF_F_GRO_FRAGLIST for dev=%s\n", dev->name);
 		}
 		if (!((dev->flags & IFF_LOOPBACK) ||
 		        netif_is_bridge_master(dev) ||
