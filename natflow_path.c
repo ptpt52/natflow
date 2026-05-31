@@ -1572,8 +1572,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		}
 
 		if (ingress_pad_len > 0) {
-			if (ingress_pad_len > skb->len) {
-				return NF_ACCEPT;
+			if (unlikely(ingress_pad_len > skb->len)) {
+				return NF_DROP;
 			}
 			skb_pull_rcsum(skb, ingress_pad_len);
 			skb->network_header += ingress_pad_len;
@@ -2076,10 +2076,10 @@ slow_fastpath:
 			skb->network_header += PPPOE_SES_HLEN;
 			bridge = 1;
 		} else {
-			return NF_ACCEPT;
+			goto out;
 		}
 	} else if (skb->protocol != __constant_htons(ETH_P_IP) && skb->protocol != __constant_htons(ETH_P_IPV6)) {
-		return NF_ACCEPT;
+		goto out;
 	}
 #endif
 	if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
@@ -3491,12 +3491,12 @@ __hook_ipv6_main:
 		} else if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
 			ingress_pad_len = 0;
 		} else {
-			return NF_ACCEPT;
+			goto out6;
 		}
 
 		if (ingress_pad_len > 0) {
-			if (ingress_pad_len > skb->len) {
-				return NF_ACCEPT;
+			if (unlikely(ingress_pad_len > skb->len)) {
+				return NF_DROP;
 			}
 			skb_pull_rcsum(skb, ingress_pad_len);
 			skb->network_header += ingress_pad_len;
