@@ -1111,7 +1111,10 @@ __keepalive_ipv6_main:
 }
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
-static struct net_device *ppe_dev = NULL;
+static struct net_device __rcu *ppe_dev = NULL;
+#define PPE_DEV_CACHE_NUM 4
+static struct net_device *ppe_dev_cache[PPE_DEV_CACHE_NUM] = {NULL, NULL, NULL, NULL};
+static DEFINE_MUTEX(ppe_dev_cache_lock);
 #if defined(NATFLOW_OFFLOAD_HWNAT_FAKE)
 #else
 typedef struct flow_offload flow_offload_t;
@@ -1750,19 +1753,20 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					}
 					skb->dev = nfn->outdev;
 #else
+					struct net_device *local_ppe_dev = rcu_dereference(ppe_dev);
 					if (nfn->vlan_present) {
 						if (nfn->vlan_proto == FF_ETH_P_8021Q)
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
 						else if (nfn->vlan_proto == FF_ETH_P_8021AD)
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
 					} else if (skb_vlan_tag_present(skb)) {
-						if (!ppe_dev) {
+						if (!local_ppe_dev) {
 							__vlan_hwaccel_clear_tag(skb);
 						}
-					} else if (ppe_dev) {
+					} else if (local_ppe_dev) {
 						__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), 1);
 					}
-					skb->dev = ppe_dev ? : nfn->outdev;
+					skb->dev = local_ppe_dev ? : nfn->outdev;
 #endif
 					if (skb->mac_len != ETH_HLEN && skb->mac_len != ETH_HLEN + PPPOE_SES_HLEN) { /* fake ether header for tun */
 						skb_push(skb, ETH_HLEN);
@@ -1986,19 +1990,20 @@ fast_output:
 					}
 					skb->dev = nfn->outdev;
 #else
+					struct net_device *local_ppe_dev = rcu_dereference(ppe_dev);
 					if (nfn->vlan_present) {
 						if (nfn->vlan_proto == FF_ETH_P_8021Q)
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
 						else if (nfn->vlan_proto == FF_ETH_P_8021AD)
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
 					} else if (skb_vlan_tag_present(skb)) {
-						if (!ppe_dev) {
+						if (!local_ppe_dev) {
 							__vlan_hwaccel_clear_tag(skb);
 						}
-					} else if (ppe_dev) {
+					} else if (local_ppe_dev) {
 						__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), 1);
 					}
-					skb->dev = ppe_dev ? : nfn->outdev;
+					skb->dev = local_ppe_dev ? : nfn->outdev;
 #endif
 					if (skb->mac_len != ETH_HLEN && skb->mac_len != ETH_HLEN + PPPOE_SES_HLEN) { /* fake ether header for tun */
 						skb_push(skb, ETH_HLEN);
@@ -2666,9 +2671,6 @@ fastnat_check:
 													reply.pppoe_sid =
 													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
 												}
-												if (unlikely(!ppe_dev)) {
-													ppe_dev = orig_dev;
-												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
 													NATFLOW_INFO("(PCO) dir%d set hwnat offload1 orig=[%s(vlan:%d pppoe:%d)"
@@ -2784,9 +2786,6 @@ fastnat_check:
 													reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
 													reply.pppoe_sid =
 													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
-												}
-												if (unlikely(!ppe_dev)) {
-													ppe_dev = orig_dev;
 												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
@@ -2907,9 +2906,6 @@ fastnat_check:
 												reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
 												reply.pppoe_sid =
 												    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
-											}
-											if (unlikely(!ppe_dev)) {
-												ppe_dev = reply_dev;
 											}
 											if (reply_dev->netdev_ops->ndo_flow_offload(
 											            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
@@ -3643,19 +3639,20 @@ __hook_ipv6_main:
 					}
 					skb->dev = nfn->outdev;
 #else
+					struct net_device *local_ppe_dev = rcu_dereference(ppe_dev);
 					if (nfn->vlan_present) {
 						if (nfn->vlan_proto == FF_ETH_P_8021Q)
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
 						else if (nfn->vlan_proto == FF_ETH_P_8021AD)
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
 					} else if (skb_vlan_tag_present(skb)) {
-						if (!ppe_dev) {
+						if (!local_ppe_dev) {
 							__vlan_hwaccel_clear_tag(skb);
 						}
-					} else if (ppe_dev) {
+					} else if (local_ppe_dev) {
 						__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), 1);
 					}
-					skb->dev = ppe_dev ? : nfn->outdev;
+					skb->dev = local_ppe_dev ? : nfn->outdev;
 #endif
 					if (skb->mac_len != ETH_HLEN && skb->mac_len != ETH_HLEN + PPPOE_SES_HLEN) { /* fake ether header for tun */
 						skb_push(skb, ETH_HLEN);
@@ -3881,19 +3878,20 @@ fast_output6:
 					}
 					skb->dev = nfn->outdev;
 #else
+					struct net_device *local_ppe_dev = rcu_dereference(ppe_dev);
 					if (nfn->vlan_present) {
 						if (nfn->vlan_proto == FF_ETH_P_8021Q)
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), nfn->vlan_tci);
 						else if (nfn->vlan_proto == FF_ETH_P_8021AD)
 							__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD), nfn->vlan_tci);
 					} else if (skb_vlan_tag_present(skb)) {
-						if (!ppe_dev) {
+						if (!local_ppe_dev) {
 							__vlan_hwaccel_clear_tag(skb);
 						}
-					} else if (ppe_dev) {
+					} else if (local_ppe_dev) {
 						__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), 1);
 					}
-					skb->dev = ppe_dev ? : nfn->outdev;
+					skb->dev = local_ppe_dev ? : nfn->outdev;
 #endif
 					if (skb->mac_len != ETH_HLEN && skb->mac_len != ETH_HLEN + PPPOE_SES_HLEN) { /* fake ether header for tun */
 						skb_push(skb, ETH_HLEN);
@@ -4522,9 +4520,6 @@ fastnat_check6:
 													reply.pppoe_sid =
 													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
 												}
-												if (unlikely(!ppe_dev)) {
-													ppe_dev = orig_dev;
-												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
 													NATFLOW_INFO("(PCO) dir%d set hwnat offload1 orig=[%s(vlan:%d pppoe:%d)"
@@ -4640,9 +4635,6 @@ fastnat_check6:
 													reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
 													reply.pppoe_sid =
 													    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
-												}
-												if (unlikely(!ppe_dev)) {
-													ppe_dev = orig_dev;
 												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
@@ -4763,9 +4755,6 @@ fastnat_check6:
 												reply.flags |= FLOW_OFFLOAD_PATH_PPPOE;
 												reply.pppoe_sid =
 												    ntohs(PPPOEH(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN)->sid);
-											}
-											if (unlikely(!ppe_dev)) {
-												ppe_dev = reply_dev;
 											}
 											if (reply_dev->netdev_ops->ndo_flow_offload(
 											            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
@@ -5908,6 +5897,7 @@ static struct workqueue_struct *natflow_netdev_wq;
 
 static int natflow_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
+	int i;
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
 	if (event == NETDEV_UP || event == NETDEV_CHANGE) {
@@ -5923,9 +5913,36 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 				NATFLOW_println("catch event %lu for dev=%s : set flags IFF_PPPOE", event, dev->name);
 			}
 		}
-		if (!ppe_dev) {
-			if (dev->netdev_ops->ndo_flow_offload) {
-				ppe_dev = dev;
+		if (dev->netdev_ops->ndo_flow_offload) {
+			if (netif_running(dev) && netif_carrier_ok(dev)) {
+				mutex_lock(&ppe_dev_cache_lock);
+				for (i = 0; i < PPE_DEV_CACHE_NUM; i++) {
+					if (ppe_dev_cache[i] == dev)
+						break;
+					if (ppe_dev_cache[i] == NULL) {
+						ppe_dev_cache[i] = dev;
+						break;
+					}
+				}
+				rcu_assign_pointer(ppe_dev, ppe_dev_cache[0]);
+				NATFLOW_println("catch event %lu for dev=%s set ppe=%s", event, dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
+				mutex_unlock(&ppe_dev_cache_lock);
+			} else {
+				mutex_lock(&ppe_dev_cache_lock);
+				for (i = 0; i < PPE_DEV_CACHE_NUM;) {
+					if (ppe_dev_cache[i] == dev) {
+						while (i + 1 < PPE_DEV_CACHE_NUM) {
+							ppe_dev_cache[i] = ppe_dev_cache[i + 1];
+							++i;
+						}
+						ppe_dev_cache[i] = NULL;
+						break;
+					}
+					++i;
+				}
+				rcu_assign_pointer(ppe_dev, ppe_dev_cache[0]);
+				NATFLOW_println("catch event %lu for dev=%s set ppe=%s", event, dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
+				mutex_unlock(&ppe_dev_cache_lock);
 			}
 		}
 #else
@@ -5936,6 +5953,26 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 		}
 #endif
 		vline_fwd_map_ifup_handle(dev);
+	} else if (event == NETDEV_DOWN) {
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+		if (dev->netdev_ops->ndo_flow_offload) {
+			mutex_lock(&ppe_dev_cache_lock);
+			for (i = 0; i < PPE_DEV_CACHE_NUM;) {
+				if (ppe_dev_cache[i] == dev) {
+					while (i + 1 < PPE_DEV_CACHE_NUM) {
+						ppe_dev_cache[i] = ppe_dev_cache[i + 1];
+						++i;
+					}
+					ppe_dev_cache[i] = NULL;
+					break;
+				}
+				++i;
+			}
+			rcu_assign_pointer(ppe_dev, ppe_dev_cache[0]);
+			NATFLOW_println("catch event %lu for dev=%s set ppe=%s", event, dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
+			mutex_unlock(&ppe_dev_cache_lock);
+		}
+#endif
 	}
 
 #ifdef CONFIG_NETFILTER_INGRESS
@@ -6042,6 +6079,9 @@ alloc_natflow_fast_nat_table_failed:
 
 void natflow_path_exit(void)
 {
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+	struct net_device *local_ppe_dev;
+#endif
 	disabled = 1;
 	nf_unregister_hooks(path_hooks, ARRAY_SIZE(path_hooks));
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
@@ -6054,18 +6094,24 @@ void natflow_path_exit(void)
 #ifdef CONFIG_NETFILTER_INGRESS
 	synchronize_rcu();
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
-	if (ppe_dev) {
+	rcu_read_lock();
+	local_ppe_dev = rcu_dereference(ppe_dev);
+	if (local_ppe_dev)
+		dev_hold(local_ppe_dev);
+	rcu_read_unlock();
+	if (local_ppe_dev) {
 		int i;
 		flow_offload_hw_path_t del = {
-			.dev = ppe_dev,
+			.dev = local_ppe_dev,
 			.flags = FLOW_OFFLOAD_PATH_ETHERNET | FLOW_OFFLOAD_PATH_DEL,
 		};
-		natflow_hwnat_stop(ppe_dev);
+		natflow_hwnat_stop(local_ppe_dev);
 		for (i = 0; i < NATFLOW_FASTNAT_TABLE_SIZE / 2; i++) {
 			del.vlan_id = (unsigned short)i;
 			del.vlan_proto = NATFLOW_FASTNAT_TABLE_SIZE - 1 - i;
-			ppe_dev->netdev_ops->ndo_flow_offload_check(&del);
+			local_ppe_dev->netdev_ops->ndo_flow_offload_check(&del);
 		}
+		dev_put(local_ppe_dev);
 		synchronize_rcu();
 	}
 #endif
