@@ -267,7 +267,7 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 					continue;
 				}
 
-				if (!ct_i || ct_i->len + 448 > CONNTRACKINFO_DATALEN) {
+				if (!ct_i || ct_i->len + 1024 > CONNTRACKINFO_DATALEN) {
 					ct_i = kmalloc(CONNTRACKINFO_MEMSIZE, GFP_ATOMIC);
 					if (!ct_i) {
 						nf_ct_put(ct);
@@ -288,10 +288,10 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 				l4proto = __nf_ct_l4proto_find(nf_ct_l3num(ct), nf_ct_protonum(ct));
 #endif
 
-				ct_i->len += sprintf(ct_i->data + ct_i->len, "%-8s %u %-8s %u ",
-				                     l3proto_name(nf_ct_l3num(ct)), nf_ct_l3num(ct),
-				                     l4proto_name(l4proto->l4proto), nf_ct_protonum(ct));
-				ct_i->len += sprintf(ct_i->data + ct_i->len, "%ld ", nf_ct_expires(ct) / HZ);
+				ct_i->len += snprintf(ct_i->data + ct_i->len, CONNTRACKINFO_DATALEN - ct_i->len, "%-8s %u %-8s %u ",
+				                      l3proto_name(nf_ct_l3num(ct)), nf_ct_l3num(ct),
+				                      l4proto_name(l4proto->l4proto), nf_ct_protonum(ct));
+				ct_i->len += snprintf(ct_i->data + ct_i->len, CONNTRACKINFO_DATALEN - ct_i->len, "%ld ", nf_ct_expires(ct) / HZ);
 
 				acct = nf_conn_acct_find(ct);
 
