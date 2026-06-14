@@ -5897,7 +5897,6 @@ static struct workqueue_struct *natflow_netdev_wq;
 
 static int natflow_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
-	int i;
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
 	if (event == NETDEV_UP || event == NETDEV_CHANGE) {
@@ -5914,6 +5913,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 			}
 		}
 		if (dev->netdev_ops->ndo_flow_offload) {
+			int i;
 			if (netif_running(dev) && netif_carrier_ok(dev)) {
 				mutex_lock(&ppe_dev_cache_lock);
 				for (i = 0; i < PPE_DEV_CACHE_NUM; i++) {
@@ -5956,6 +5956,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 	} else if (event == NETDEV_DOWN) {
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
 		if (dev->netdev_ops->ndo_flow_offload) {
+			int i;
 			mutex_lock(&ppe_dev_cache_lock);
 			for (i = 0; i < PPE_DEV_CACHE_NUM;) {
 				if (ppe_dev_cache[i] == dev) {
