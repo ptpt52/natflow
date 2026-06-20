@@ -39,6 +39,7 @@
 #include <net/netfilter/nf_conntrack_acct.h>
 #include <linux/if_pppox.h>
 #include <linux/ppp_defs.h>
+#include <linux/inet.h>
 #include "natflow.h"
 #include "natflow_common.h"
 #include "natflow_user.h"
@@ -133,6 +134,52 @@ void natflow_user_disabled_set(int v)
 int natflow_user_disabled_get(void)
 {
 	return disabled;
+}
+
+static int natflow_user_parse_addr(const char *p, union nf_inet_addr *u3, u_int16_t *l3num, const char **next)
+{
+	char addr[INET6_ADDRSTRLEN];
+	int len = 0;
+
+	while (*p == ' ' || *p == '\t')
+		p++;
+
+	while (p[len] && p[len] != ' ' && p[len] != '\t')
+		len++;
+
+	if (len == 0 || len >= sizeof(addr))
+		return -EINVAL;
+
+	memcpy(addr, p, len);
+	addr[len] = 0;
+
+	memset(u3, 0, sizeof(*u3));
+	if (in4_pton(addr, -1, (u8 *)&u3->ip, -1, NULL)) {
+		*l3num = AF_INET;
+	} else if (in6_pton(addr, -1, u3->in6.s6_addr, -1, NULL)) {
+		*l3num = AF_INET6;
+	} else {
+		return -EINVAL;
+	}
+
+	if (next) {
+		p += len;
+		while (*p == ' ' || *p == '\t')
+			p++;
+		*next = p;
+	}
+
+	return 0;
+}
+
+static inline natflow_fakeuser_t *natflow_user_find_addr_get(const union nf_inet_addr *u3, u_int16_t l3num)
+{
+	if (l3num == AF_INET)
+		return natflow_user_find_get(u3->ip);
+	if (l3num == AF_INET6)
+		return natflow_user_find_get6(u3);
+
+	return NULL;
 }
 
 static int qos_major = 0;
@@ -1272,6 +1319,92 @@ out:
 	}
 }
 
+static inline void natflow_auth_tcp_reply_finack6(const struct net_device *dev, struct sk_buff *oskb, int pppoe_hdr)
+{
+	struct sk_buff *nskb;
+	struct ethhdr *neth, *oeth;
+	struct ipv6hdr *niph, *oiph;
+	struct tcphdr *otcph, *ntcph;
+	int len;
+	unsigned int csum;
+	int offset, header_len;
+	int pppoe_len = 0;
+
+	if (pppoe_hdr) {
+		pppoe_len = PPPOE_SES_HLEN;
+		skb_push(oskb, PPPOE_SES_HLEN);
+		oskb->protocol = __constant_htons(ETH_P_PPP_SES);
+	}
+
+	oeth = (struct ethhdr *)skb_mac_header(oskb);
+	oiph = ipv6_hdr(oskb);
+	otcph = (struct tcphdr *)((void *)oiph + sizeof(struct ipv6hdr));
+
+	offset = pppoe_len + sizeof(struct ipv6hdr) + sizeof(struct tcphdr) - oskb->len;
+	header_len = offset < 0 ? 0 : offset;
+	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
+	if (!nskb) {
+		NATFLOW_ERROR("alloc_skb fail\n");
+		goto out;
+	}
+	if (offset <= 0) {
+		if (pskb_trim(nskb, nskb->len + offset)) {
+			NATFLOW_ERROR("pskb_trim fail: len=%d, offset=%d\n", nskb->len, offset);
+			consume_skb(nskb);
+			goto out;
+		}
+	} else {
+		nskb->len += offset;
+		nskb->tail += offset;
+	}
+
+	neth = eth_hdr(nskb);
+	niph = ipv6_hdr(nskb);
+	if ((char *)niph - (char *)neth >= ETH_HLEN) {
+		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
+		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
+	}
+
+	memset(niph, 0, sizeof(struct ipv6hdr));
+	niph->version = 6;
+	niph->priority = oiph->priority;
+	niph->saddr = oiph->daddr;
+	niph->daddr = oiph->saddr;
+	niph->payload_len = htons(sizeof(struct tcphdr));
+	niph->nexthdr = IPPROTO_TCP;
+	niph->hop_limit = 255;
+
+	ntcph = (struct tcphdr *)((char *)niph + sizeof(struct ipv6hdr));
+	memset(ntcph, 0, sizeof(struct tcphdr));
+	ntcph->source = otcph->dest;
+	ntcph->dest = otcph->source;
+	ntcph->seq = otcph->ack_seq;
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff<<2) + 1);
+	ntcph->doff = 5;
+	ntcph->ack = 1;
+	ntcph->rst = 1;
+	ntcph->window = 0;
+
+	len = ntohs(niph->payload_len);
+	csum = csum_partial((char*)ntcph, len, 0);
+	ntcph->check = tcp_v6_check(len, &niph->saddr, &niph->daddr, csum);
+
+	skb_push(nskb, (char *)niph - (char *)neth - pppoe_len);
+	if (pppoe_hdr) {
+		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(nskb) + ETH_HLEN);
+		ph->length = htons(ntohs(ipv6_hdr(nskb)->payload_len) + sizeof(struct ipv6hdr) + 2);
+	}
+	nskb->dev = (struct net_device *)dev;
+	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+
+	dev_queue_xmit(nskb);
+out:
+	if (pppoe_hdr) {
+		oskb->protocol = __constant_htons(ETH_P_IPV6);
+		skb_pull(oskb, PPPOE_SES_HLEN);
+	}
+}
+
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 static unsigned int natflow_user_pre_hook(unsigned int hooknum,
@@ -1668,7 +1801,19 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			goto out;
 		}
 	} else {
-		//FIXME ipv6
+		struct ipv6hdr *ip6h;
+
+		if (!pskb_may_pull(skb, sizeof(struct ipv6hdr))) {
+			goto out;
+		}
+
+		ip6h = ipv6_hdr(skb);
+		if (ip6h->nexthdr == IPPROTO_TCP && !pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct tcphdr))) {
+			goto out;
+		}
+		if (ip6h->nexthdr == IPPROTO_UDP && !pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr))) {
+			goto out;
+		}
 	}
 
 	if ((ct->status & IPS_NATFLOW_CT_DROP)) {
@@ -1680,7 +1825,12 @@ static unsigned int natflow_user_forward_hook(void *priv,
 				natflow_auth_tcp_reply_finack(in, skb, bridge);
 			}
 		} else {
-			//FIXME ipv6
+			struct ipv6hdr *ip6h = ipv6_hdr(skb);
+			void *l4 = (void *)ip6h + sizeof(struct ipv6hdr);
+
+			if (ip6h->nexthdr == IPPROTO_TCP && TCPH(l4)->fin && TCPH(l4)->ack) {
+				natflow_auth_tcp_reply_finack6(in, skb, bridge);
+			}
 		}
 		ret = NF_DROP;
 		goto out;
@@ -2772,38 +2922,13 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 		struct fakeuser_data_t *fud;
 		natflow_fakeuser_t *user = NULL;
 		union nf_inet_addr u3;
-		unsigned int a, b, c, d, e, f, g, h;
-		n = sscanf(data, "kick %u.%u.%u.%u", &a, &b, &c, &d);
-		if ( !(n == 4 &&
-		        (((a & 0xff) == a) &&
-		         ((b & 0xff) == b) &&
-		         ((c & 0xff) == c) &&
-		         ((d & 0xff) == d)) )) {
-			n = sscanf(data, "kick %x:%x:%x:%x:%x:%x:%x:%x", &a, &b, &c, &d, &e, &f, &g, &h);
-			if ( !(n == 8 &&
-			        (((a & 0xffff) == a) &&
-			         ((b & 0xffff) == b) &&
-			         ((c & 0xffff) == c) &&
-			         ((d & 0xffff) == d) &&
-			         ((e & 0xffff) == e) &&
-			         ((f & 0xffff) == f) &&
-			         ((g & 0xffff) == g) &&
-			         ((h & 0xffff) == h)) )) {
-				return -EINVAL;
-			}
-			u3.in6.s6_addr16[0] = htons(a);
-			u3.in6.s6_addr16[1] = htons(b);
-			u3.in6.s6_addr16[2] = htons(c);
-			u3.in6.s6_addr16[3] = htons(d);
-			u3.in6.s6_addr16[4] = htons(e);
-			u3.in6.s6_addr16[5] = htons(f);
-			u3.in6.s6_addr16[6] = htons(g);
-			u3.in6.s6_addr16[7] = htons(h);
-			user = natflow_user_find_get6(&u3);
-		} else {
-			u3.ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
-			user = natflow_user_find_get(u3.ip);
-		}
+		u_int16_t l3num;
+
+		err = natflow_user_parse_addr(data + 5, &u3, &l3num, NULL);
+		if (err != 0)
+			return err;
+
+		user = natflow_user_find_addr_get(&u3, l3num);
 
 		if (!user)
 			return -ENOENT;
@@ -2827,38 +2952,18 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 		struct fakeuser_data_t *fud;
 		natflow_fakeuser_t *user = NULL;
 		union nf_inet_addr u3;
-		unsigned int a, b, c, d, e, f, g, h, s;
-		n = sscanf(data, "set-status %u.%u.%u.%u %u", &a, &b, &c, &d, &s);
-		if ( !(n == 5 &&
-		        (((a & 0xff) == a) &&
-		         ((b & 0xff) == b) &&
-		         ((c & 0xff) == c) &&
-		         ((d & 0xff) == d)) )) {
-			n = sscanf(data, "set-status %x:%x:%x:%x:%x:%x:%x:%x %u", &a, &b, &c, &d, &e, &f, &g, &h, &s);
-			if ( !(n == 9 &&
-			        (((a & 0xffff) == a) &&
-			         ((b & 0xffff) == b) &&
-			         ((c & 0xffff) == c) &&
-			         ((d & 0xffff) == d) &&
-			         ((e & 0xffff) == e) &&
-			         ((f & 0xffff) == f) &&
-			         ((g & 0xffff) == g) &&
-			         ((h & 0xffff) == h)) )) {
-				return -EINVAL;
-			}
-			u3.in6.s6_addr16[0] = htons(a);
-			u3.in6.s6_addr16[1] = htons(b);
-			u3.in6.s6_addr16[2] = htons(c);
-			u3.in6.s6_addr16[3] = htons(d);
-			u3.in6.s6_addr16[4] = htons(e);
-			u3.in6.s6_addr16[5] = htons(f);
-			u3.in6.s6_addr16[6] = htons(g);
-			u3.in6.s6_addr16[7] = htons(h);
-			user = natflow_user_find_get6(&u3);
-		} else {
-			u3.ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
-			user = natflow_user_find_get(u3.ip);
-		}
+		u_int16_t l3num;
+		const char *p;
+		unsigned int s;
+
+		err = natflow_user_parse_addr(data + 11, &u3, &l3num, &p);
+		if (err != 0)
+			return err;
+		n = sscanf(p, "%u", &s);
+		if (n != 1)
+			return -EINVAL;
+
+		user = natflow_user_find_addr_get(&u3, l3num);
 
 		if (!user)
 			return -ENOENT;
@@ -2872,38 +2977,18 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 		struct fakeuser_data_t *fud;
 		natflow_fakeuser_t *user = NULL;
 		union nf_inet_addr u3;
-		unsigned int a, b, c, d, e, f, g, h, rx, tx;
-		n = sscanf(data, "set-token-ctrl %u.%u.%u.%u %u %u", &a, &b, &c, &d, &rx, &tx);
-		if ( !(n == 6 &&
-		        (((a & 0xff) == a) &&
-		         ((b & 0xff) == b) &&
-		         ((c & 0xff) == c) &&
-		         ((d & 0xff) == d)) )) {
-			n = sscanf(data, "set-token-ctrl %x:%x:%x:%x:%x:%x:%x:%x %u %u", &a, &b, &c, &d, &e, &f, &g, &h, &rx, &tx);
-			if ( !(n == 10 &&
-			        (((a & 0xffff) == a) &&
-			         ((b & 0xffff) == b) &&
-			         ((c & 0xffff) == c) &&
-			         ((d & 0xffff) == d) &&
-			         ((e & 0xffff) == e) &&
-			         ((f & 0xffff) == f) &&
-			         ((g & 0xffff) == g) &&
-			         ((h & 0xffff) == h)) )) {
-				return -EINVAL;
-			}
-			u3.in6.s6_addr16[0] = htons(a);
-			u3.in6.s6_addr16[1] = htons(b);
-			u3.in6.s6_addr16[2] = htons(c);
-			u3.in6.s6_addr16[3] = htons(d);
-			u3.in6.s6_addr16[4] = htons(e);
-			u3.in6.s6_addr16[5] = htons(f);
-			u3.in6.s6_addr16[6] = htons(g);
-			u3.in6.s6_addr16[7] = htons(h);
-			user = natflow_user_find_get6(&u3);
-		} else {
-			u3.ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
-			user = natflow_user_find_get(u3.ip);
-		}
+		u_int16_t l3num;
+		const char *p;
+		unsigned int rx, tx;
+
+		err = natflow_user_parse_addr(data + 15, &u3, &l3num, &p);
+		if (err != 0)
+			return err;
+		n = sscanf(p, "%u %u", &rx, &tx);
+		if (n != 2)
+			return -EINVAL;
+
+		user = natflow_user_find_addr_get(&u3, l3num);
 
 		if (!user)
 			return -ENOENT;
