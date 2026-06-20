@@ -1126,17 +1126,42 @@ struct natflow_offload {
 	flow_offload_t flow;
 };
 
+static struct natflow_offload *natflow_offload;
+static unsigned int natflow_offload_cpu_num;
+
+static inline int natflow_offload_init(void)
+{
+	natflow_offload_cpu_num = nr_cpu_ids;
+	natflow_offload = kcalloc(natflow_offload_cpu_num, sizeof(*natflow_offload), GFP_KERNEL);
+	if (natflow_offload == NULL)
+		return -ENOMEM;
+
+	return 0;
+}
+
+static inline void natflow_offload_cleanup(void)
+{
+	kfree(natflow_offload);
+	natflow_offload = NULL;
+	natflow_offload_cpu_num = 0;
+}
+
 static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow_t *nf)
 {
-	static struct natflow_offload natflow_offload[NR_CPUS];
-
 	int dir;
 	flow_offload_tuple_t *ft;
 	struct nf_conntrack_tuple *ctt;
-	struct natflow_offload *natflow = &natflow_offload[smp_processor_id()];
-	flow_offload_t *flow = &natflow->flow;
+	int cpu = smp_processor_id();
+	struct natflow_offload *natflow;
+	flow_offload_t *flow;
 	int orig_hash, reply_hash;
 	natflow_fastnat_node_t *nfn;
+
+	if (unlikely(cpu >= natflow_offload_cpu_num))
+		cpu = 0;
+
+	natflow = &natflow_offload[cpu];
+	flow = &natflow->flow;
 
 	dir = 0;
 	ft = &flow->tuplehash[dir].tuple;
@@ -6048,6 +6073,12 @@ int natflow_path_init(void)
 		return -ENOMEM;
 	}
 
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+	ret = natflow_offload_init();
+	if (ret != 0)
+		goto natflow_offload_init_failed;
+#endif
+
 #ifdef CONFIG_NETFILTER_INGRESS
 	natflow_fast_nat_table = kmalloc(sizeof(natflow_fastnat_node_t) * NATFLOW_FASTNAT_TABLE_SIZE, GFP_KERNEL);
 	if (natflow_fast_nat_table == NULL) {
@@ -6073,6 +6104,10 @@ nf_register_hooks_failed:
 #ifdef CONFIG_NETFILTER_INGRESS
 	kfree(natflow_fast_nat_table);
 alloc_natflow_fast_nat_table_failed:
+#endif
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+	natflow_offload_cleanup();
+natflow_offload_init_failed:
 #endif
 	destroy_workqueue(natflow_netdev_wq);
 	return ret;
@@ -6119,5 +6154,8 @@ void natflow_path_exit(void)
 	kfree(natflow_fast_nat_table);
 #else
 	synchronize_rcu();
+#endif
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+	natflow_offload_cleanup();
 #endif
 }
