@@ -14,6 +14,7 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
+#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
 #include <linux/netfilter.h>
@@ -672,22 +673,26 @@ struct urllogger_sni_cache_node {
 
 #define URLLOGGER_CACHE_TIMEOUT 4
 #define MAX_URLLOGGER_SNI_CACHE_NODE 64
-static struct urllogger_sni_cache_node urllogger_sni_cache[NR_CPUS][MAX_URLLOGGER_SNI_CACHE_NODE];
+static struct urllogger_sni_cache_node (*urllogger_sni_cache)[MAX_URLLOGGER_SNI_CACHE_NODE];
+static unsigned int urllogger_sni_cache_cpu_num;
 
-static inline void urllogger_sni_cache_init(void)
+static inline int urllogger_sni_cache_init(void)
 {
-	int i, j;
-	for (i = 0; i < NR_CPUS; i++) {
-		for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-			urllogger_sni_cache[i][j].skb = NULL;
-		}
-	}
+	urllogger_sni_cache_cpu_num = nr_cpu_ids;
+	urllogger_sni_cache = kcalloc(urllogger_sni_cache_cpu_num, sizeof(*urllogger_sni_cache), GFP_KERNEL);
+	if (urllogger_sni_cache == NULL)
+		return -ENOMEM;
+
+	return 0;
 }
 
 static inline void urllogger_sni_cache_cleanup(void)
 {
 	int i, j;
-	for (i = 0; i < NR_CPUS; i++) {
+	if (urllogger_sni_cache == NULL)
+		return;
+
+	for (i = 0; i < urllogger_sni_cache_cpu_num; i++) {
 		for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
 			if (urllogger_sni_cache[i][j].skb != NULL) {
 				consume_skb(urllogger_sni_cache[i][j].skb);
@@ -695,6 +700,10 @@ static inline void urllogger_sni_cache_cleanup(void)
 			}
 		}
 	}
+
+	kfree(urllogger_sni_cache);
+	urllogger_sni_cache = NULL;
+	urllogger_sni_cache_cpu_num = 0;
 }
 
 static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, struct sk_buff *skb, unsigned short add_data_len)
@@ -702,6 +711,9 @@ static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __b
 	int i = smp_processor_id();
 	int j;
 	int next_to_use = MAX_URLLOGGER_SNI_CACHE_NODE;
+	if (urllogger_sni_cache == NULL || i >= urllogger_sni_cache_cpu_num)
+		return -ENOMEM;
+
 	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
 		if (urllogger_sni_cache[i][j].skb != NULL &&
 		        urllogger_sni_cache[i][j].src_ip == src_ip &&
@@ -733,6 +745,9 @@ static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 sr
 	int i = smp_processor_id();
 	int j;
 	int next_to_use = MAX_URLLOGGER_SNI_CACHE_NODE;
+	if (urllogger_sni_cache == NULL || i >= urllogger_sni_cache_cpu_num)
+		return -ENOMEM;
+
 	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
 		if (urllogger_sni_cache[i][j].skb != NULL &&
 		        memcmp(&urllogger_sni_cache[i][j].src_ipv6, src_ip, 16) == 0 &&
@@ -764,6 +779,9 @@ static inline struct sk_buff *urllogger_sni_cache_detach(__be32 src_ip, __be16 s
 	int i = smp_processor_id();
 	int j = 0;
 	struct sk_buff *skb = NULL;
+	if (urllogger_sni_cache == NULL || i >= urllogger_sni_cache_cpu_num)
+		return NULL;
+
 	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
 		if (urllogger_sni_cache[i][j].skb != NULL) {
 			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
@@ -797,6 +815,9 @@ static inline struct sk_buff *urllogger_sni_cache_detach6(const struct in6_addr 
 	int i = smp_processor_id();
 	int j = 0;
 	struct sk_buff *skb = NULL;
+	if (urllogger_sni_cache == NULL || i >= urllogger_sni_cache_cpu_num)
+		return NULL;
+
 	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
 		if (urllogger_sni_cache[i][j].skb != NULL) {
 			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
@@ -2199,7 +2220,9 @@ int natflow_urllogger_init(void)
 	int ret = 0;
 	dev_t devno;
 
-	urllogger_sni_cache_init();
+	ret = urllogger_sni_cache_init();
+	if (ret != 0)
+		return ret;
 
 	if (urllogger_major > 0) {
 		devno = MKDEV(urllogger_major, urllogger_minor);
@@ -2209,6 +2232,7 @@ int natflow_urllogger_init(void)
 	}
 	if (ret < 0) {
 		NATFLOW_println("alloc_chrdev_region failed!");
+		urllogger_sni_cache_cleanup();
 		return ret;
 	}
 	urllogger_major = MAJOR(devno);
@@ -2269,6 +2293,7 @@ class_create_failed:
 	cdev_del(&urllogger_cdev);
 cdev_add_failed:
 	unregister_chrdev_region(devno, 1);
+	urllogger_sni_cache_cleanup();
 	return ret;
 }
 
