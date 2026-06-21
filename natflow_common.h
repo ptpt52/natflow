@@ -9,6 +9,7 @@
 #include <linux/device.h>
 #include <linux/skbuff.h>
 #include <linux/ip.h>
+#include <linux/ipv6.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
 #include <linux/icmp.h>
@@ -280,6 +281,7 @@ extern int ip_set_test_dst_netport(const struct net_device *in, const struct net
 #define IP_SET_test_dst_port IP_SET_test_dst_ip
 
 unsigned int natflow_dnat_setup(struct nf_conn *ct, __be32 addr, __be16 man_proto);
+unsigned int natflow_dnat_setup6(struct nf_conn *ct, const struct in6_addr *addr, __be16 man_proto);
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0)
 static inline unsigned int nf_conntrack_in_compat(struct net *net, u_int8_t pf, unsigned int hooknum, struct sk_buff *skb)

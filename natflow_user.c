@@ -40,6 +40,7 @@
 #include <linux/if_pppox.h>
 #include <linux/ppp_defs.h>
 #include <linux/inet.h>
+#include <net/addrconf.h>
 #include "natflow.h"
 #include "natflow_common.h"
 #include "natflow_user.h"
@@ -448,6 +449,31 @@ static unsigned int https_redirect_en = 0;
 
 /*XXX: default redirect_ip 10.10.10.10 */
 unsigned int redirect_ip = __constant_htonl((10<<24)|(10<<16)|(10<<8)|(10<<0));
+
+static inline int natflow_auth_dev_addr6(const struct net_device *dev, struct in6_addr *addr)
+{
+	struct inet6_dev *idev;
+	struct inet6_ifaddr *ifp;
+	int ret = -ENOENT;
+
+	idev = __in6_dev_get(dev);
+	if (!idev) {
+		return ret;
+	}
+
+	read_lock_bh(&idev->lock);
+	list_for_each_entry(ifp, &idev->addr_list, if_list) {
+		if (ifp->addr.s6_addr16[0] == __constant_htons(0xfe80)) {
+			continue;
+		}
+		*addr = ifp->addr;
+		ret = 0;
+		break;
+	}
+	read_unlock_bh(&idev->lock);
+
+	return ret;
+}
 
 /* user timeout 1800s */
 static unsigned int natflow_user_timeout = 1800;
@@ -1216,6 +1242,96 @@ out:
 	}
 }
 
+static inline void natflow_auth_reply_payload_fin6(const char *payload, int payload_len, struct sk_buff *oskb, const struct net_device *dev, int pppoe_hdr)
+{
+	struct sk_buff *nskb;
+	struct ethhdr *neth, *oeth;
+	struct ipv6hdr *niph, *oiph;
+	struct tcphdr *otcph, *ntcph;
+	int len;
+	unsigned int csum;
+	int offset, header_len;
+	char *data;
+	int pppoe_len = 0;
+
+	if (pppoe_hdr) {
+		pppoe_len = PPPOE_SES_HLEN;
+		skb_push(oskb, PPPOE_SES_HLEN);
+		oskb->protocol = __constant_htons(ETH_P_PPP_SES);
+	}
+
+	oeth = (struct ethhdr *)skb_mac_header(oskb);
+	oiph = ipv6_hdr(oskb);
+	otcph = (struct tcphdr *)((void *)oiph + sizeof(struct ipv6hdr));
+
+	offset = pppoe_len + sizeof(struct ipv6hdr) + sizeof(struct tcphdr) + payload_len - oskb->len;
+	header_len = offset < 0 ? 0 : offset;
+	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
+	if (!nskb) {
+		NATFLOW_ERROR("alloc_skb fail\n");
+		goto out;
+	}
+	if (offset <= 0) {
+		if (pskb_trim(nskb, nskb->len + offset)) {
+			NATFLOW_ERROR("pskb_trim fail: len=%d, offset=%d\n", nskb->len, offset);
+			consume_skb(nskb);
+			goto out;
+		}
+	} else {
+		nskb->len += offset;
+		nskb->tail += offset;
+	}
+
+	neth = eth_hdr(nskb);
+	niph = ipv6_hdr(nskb);
+	if ((char *)niph - (char *)neth >= ETH_HLEN) {
+		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
+		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
+	}
+
+	memset(niph, 0, sizeof(struct ipv6hdr));
+	niph->version = 6;
+	niph->priority = oiph->priority;
+	niph->saddr = oiph->daddr;
+	niph->daddr = oiph->saddr;
+	niph->payload_len = htons(sizeof(struct tcphdr) + payload_len);
+	niph->nexthdr = IPPROTO_TCP;
+	niph->hop_limit = 255;
+
+	data = (char *)niph + sizeof(struct ipv6hdr) + sizeof(struct tcphdr);
+	memcpy(data, payload, payload_len);
+
+	ntcph = (struct tcphdr *)((char *)niph + sizeof(struct ipv6hdr));
+	memset(ntcph, 0, sizeof(struct tcphdr));
+	ntcph->source = otcph->dest;
+	ntcph->dest = otcph->source;
+	ntcph->seq = otcph->ack_seq;
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff<<2));
+	ntcph->doff = 5;
+	ntcph->ack = 1;
+	ntcph->psh = 1;
+	ntcph->fin = 1;
+	ntcph->window = 65535;
+
+	len = ntohs(niph->payload_len);
+	csum = csum_partial((char*)ntcph, len, 0);
+	ntcph->check = tcp_v6_check(len, &niph->saddr, &niph->daddr, csum);
+
+	skb_push(nskb, (char *)niph - (char *)neth - pppoe_len);
+	if (pppoe_hdr) {
+		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(nskb) + ETH_HLEN);
+		ph->length = htons(ntohs(ipv6_hdr(nskb)->payload_len) + sizeof(struct ipv6hdr) + 2);
+	}
+	nskb->dev = (struct net_device *)dev;
+	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+	dev_queue_xmit(nskb);
+out:
+	if (pppoe_hdr) {
+		oskb->protocol = __constant_htons(ETH_P_IPV6);
+		skb_pull(oskb, PPPOE_SES_HLEN);
+	}
+}
+
 static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *skb, natflow_fakeuser_t *user, int pppoe_hdr)
 {
 	struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
@@ -1236,7 +1352,7 @@ static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *
 	                            "</BODY></HTML>\r\n";
 	int n = 0;
 	struct {
-		char location[128];
+		char location[256];
 		char data[384];
 		char header[384];
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
@@ -1248,16 +1364,33 @@ static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *
 	if (!http)
 		return;
 
-	snprintf(http->location, sizeof(http->location), "http://%pI4/index.html?ip=%pI4&mac=%02X-%02X-%02X-%02X-%02X-%02X&rid=%u&_t=%lu",
-	         &redirect_ip, &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip,
-	         fud->macaddr[0], fud->macaddr[1], fud->macaddr[2],
-	         fud->macaddr[3], fud->macaddr[4], fud->macaddr[5],
-	         fud->auth_rule_id, jiffies);
+	if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6) {
+		struct in6_addr redirect_addr6;
+
+		if (natflow_auth_dev_addr6(dev, &redirect_addr6) != 0) {
+			redirect_addr6 = ipv6_hdr(skb)->daddr;
+		}
+		snprintf(http->location, sizeof(http->location), "http://[%pI6c]/index.html?ip=%pI6c&mac=%02X-%02X-%02X-%02X-%02X-%02X&rid=%u&_t=%lu",
+		         &redirect_addr6, &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6,
+		         fud->macaddr[0], fud->macaddr[1], fud->macaddr[2],
+		         fud->macaddr[3], fud->macaddr[4], fud->macaddr[5],
+		         fud->auth_rule_id, jiffies);
+	} else {
+		snprintf(http->location, sizeof(http->location), "http://%pI4/index.html?ip=%pI4&mac=%02X-%02X-%02X-%02X-%02X-%02X&rid=%u&_t=%lu",
+		         &redirect_ip, &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip,
+		         fud->macaddr[0], fud->macaddr[1], fud->macaddr[2],
+		         fud->macaddr[3], fud->macaddr[4], fud->macaddr[5],
+		         fud->auth_rule_id, jiffies);
+	}
 	n = snprintf(http->data, sizeof(http->data), http_data_fmt, http->location);
 	snprintf(http->header, sizeof(http->header), http_header_fmt, http->location, n);
 	n = sprintf(http->payload, "%s%s", http->header, http->data);
 
-	natflow_auth_reply_payload_fin(http->payload, n, skb, dev, pppoe_hdr);
+	if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6) {
+		natflow_auth_reply_payload_fin6(http->payload, n, skb, dev, pppoe_hdr);
+	} else {
+		natflow_auth_reply_payload_fin(http->payload, n, skb, dev, pppoe_hdr);
+	}
 	kfree(http);
 }
 
@@ -1623,18 +1756,15 @@ static unsigned int natflow_user_pre_hook(void *priv,
 #endif
 			   ) {
 				//zone match ok
-				if ((ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET &&
-				        IP_SET_test_src_ip(state, in, out, skb, auth_conf->auth[i].src_ipgrp_name) > 0) ||
-				        ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6) {
-					//ipgrp match ok, IPV6 ignore ipgrp, FIXME
+				if (IP_SET_test_src_ip(state, in, out, skb, auth_conf->auth[i].src_ipgrp_name) > 0) {
+					//ipgrp match ok
 					fud->auth_rule_id = auth_conf->auth[i].id;
 
-					if (auth_conf->auth[i].auth_type == AUTH_TYPE_AUTO ||
-					        ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6) {
+					if (auth_conf->auth[i].auth_type == AUTH_TYPE_AUTO) {
 						fud->auth_type = AUTH_TYPE_AUTO;
 						fud->auth_status = AUTH_OK;
 						userinfo_event_queue(user);
-					} else if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
+					} else {
 						fud->auth_type = AUTH_TYPE_WEB;
 						fud->auth_status = AUTH_REQ;
 
@@ -1706,7 +1836,34 @@ static unsigned int natflow_user_pre_hook(void *priv,
 			}
 		}
 	} else {
-		//FIXME ipv6 AUTH_TYPE_WEB
+		if (fud->auth_status == AUTH_REQ && fud->auth_type == AUTH_TYPE_WEB && https_redirect_en != 0) {
+			struct ipv6hdr *ip6h = ipv6_hdr(skb);
+			void *l4 = (void *)ip6h + sizeof(struct ipv6hdr);
+
+			if (ip6h->nexthdr == IPPROTO_TCP) {
+				if (TCPH(l4)->dest == __constant_htons(443)) {
+					if (auth_conf->dst_bypasslist_name[0] != 0 &&
+					        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
+						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						goto out;
+					} else if (auth_conf->src_bypasslist_name[0] != 0 &&
+					           IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
+						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						goto out;
+					}
+
+					do {
+						struct in6_addr newdst;
+
+						if (natflow_auth_dev_addr6(in, &newdst) == 0) {
+							NATFLOW_DEBUG(DEBUG_FMT6_TCP ": new connection https redirect to [%pI6c]:%u\n", DEBUG_ARG6_TCP(ip6h,l4), &newdst, ntohs(https_redirect_port));
+							natflow_dnat_setup6(ct, &newdst, https_redirect_port);
+							set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						}
+					} while (0);
+				}
+			}
+		}
 	}
 out:
 	if (bridge) {
@@ -2040,58 +2197,110 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	switch(fud->auth_status) {
 	case AUTH_REQ:
 		if (fud->auth_type == AUTH_TYPE_WEB) {
-			int data_len;
-			unsigned char *data;
-			struct iphdr *iph = ip_hdr(skb);
-			void *l4 = (void *)iph + iph->ihl * 4;
-
 			/* tell FF do not emit pkts */
 			if (nf && !(nf->status & NF_FF_USER_USE)) {
 				/* tell FF -user- need to use this conn */
 				simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
 			}
 
-			if (iph->daddr == redirect_ip) {
-				set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
-				goto out;
-			}
-			if (auth_conf->dst_bypasslist_name[0] != 0 &&
-			        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
-				set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
-				goto out;
-			} else if (auth_conf->src_bypasslist_name[0] != 0 &&
-			           IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
-				set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
-				goto out;
-			}
+			if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
+				int data_len;
+				unsigned char *data;
+				struct iphdr *iph = ip_hdr(skb);
+				void *l4 = (void *)iph + iph->ihl * 4;
 
-			if (iph->protocol == IPPROTO_UDP) {
-				if (UDPH(l4)->dest == __constant_htons(53) || UDPH(l4)->dest == __constant_htons(67) || UDPH(l4)->source == __constant_htons(67)) {
+				if (iph->daddr == redirect_ip) {
 					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 					goto out;
 				}
-			}
+				if (auth_conf->dst_bypasslist_name[0] != 0 &&
+				        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
+					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					goto out;
+				} else if (auth_conf->src_bypasslist_name[0] != 0 &&
+				           IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
+					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					goto out;
+				}
 
-			if (iph->protocol != IPPROTO_TCP) {
-				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-				goto out;
-			}
+				if (iph->protocol == IPPROTO_UDP) {
+					if (UDPH(l4)->dest == __constant_htons(53) || UDPH(l4)->dest == __constant_htons(67) || UDPH(l4)->source == __constant_htons(67)) {
+						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						goto out;
+					}
+				}
 
-			data = skb->data + (iph->ihl << 2) + (TCPH(l4)->doff << 2);
-			data_len = ntohs(iph->tot_len) - ((iph->ihl << 2) + (TCPH(l4)->doff << 2));
-			if ((data_len > 4 && strncasecmp(data, "GET ", 4) == 0) || (data_len > 5 && strncasecmp(data, "POST ", 5) == 0)) {
-				NATFLOW_INFO(DEBUG_TCP_FMT ": sending HTTP 302 redirect dev=%s\n", DEBUG_TCP_ARG(iph,l4), in->name);
-				natflow_auth_http_302(in, skb, user, bridge);
-				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-				ret = NF_DROP;
-				goto out;
-			} else if (data_len > 0) {
-				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-				ret = NF_DROP;
-				goto out;
-			} else if (TCPH(l4)->ack && !TCPH(l4)->syn) {
-				natflow_auth_convert_tcprst(skb);
-				goto out;
+				if (iph->protocol != IPPROTO_TCP) {
+					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+					goto out;
+				}
+
+				data = skb->data + (iph->ihl << 2) + (TCPH(l4)->doff << 2);
+				data_len = ntohs(iph->tot_len) - ((iph->ihl << 2) + (TCPH(l4)->doff << 2));
+				if ((data_len > 4 && strncasecmp(data, "GET ", 4) == 0) || (data_len > 5 && strncasecmp(data, "POST ", 5) == 0)) {
+					NATFLOW_INFO(DEBUG_TCP_FMT ": sending HTTP 302 redirect dev=%s\n", DEBUG_TCP_ARG(iph,l4), in->name);
+					natflow_auth_http_302(in, skb, user, bridge);
+					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+					ret = NF_DROP;
+					goto out;
+				} else if (data_len > 0) {
+					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+					ret = NF_DROP;
+					goto out;
+				} else if (TCPH(l4)->ack && !TCPH(l4)->syn) {
+					natflow_auth_convert_tcprst(skb);
+					goto out;
+				}
+			} else {
+				int data_len;
+				unsigned char *data;
+				struct ipv6hdr *ip6h = ipv6_hdr(skb);
+				void *l4 = (void *)ip6h + sizeof(struct ipv6hdr);
+				struct in6_addr redirect_addr6;
+
+				if (natflow_auth_dev_addr6(in, &redirect_addr6) == 0 &&
+				        ipv6_addr_equal(&ip6h->daddr, &redirect_addr6)) {
+					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					goto out;
+				}
+				if (auth_conf->dst_bypasslist_name[0] != 0 &&
+				        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
+					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					goto out;
+				} else if (auth_conf->src_bypasslist_name[0] != 0 &&
+				           IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
+					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					goto out;
+				}
+
+				if (ip6h->nexthdr == IPPROTO_UDP) {
+					if (UDPH(l4)->dest == __constant_htons(53) || UDPH(l4)->dest == __constant_htons(546) || UDPH(l4)->source == __constant_htons(547)) {
+						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						goto out;
+					}
+				}
+
+				if (ip6h->nexthdr != IPPROTO_TCP) {
+					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+					goto out;
+				}
+
+				data = skb->data + sizeof(struct ipv6hdr) + (TCPH(l4)->doff << 2);
+				data_len = ntohs(ip6h->payload_len) - (TCPH(l4)->doff << 2);
+				if ((data_len > 4 && strncasecmp(data, "GET ", 4) == 0) || (data_len > 5 && strncasecmp(data, "POST ", 5) == 0)) {
+					NATFLOW_INFO(DEBUG_FMT6_TCP ": sending HTTP 302 redirect dev=%s\n", DEBUG_ARG6_TCP(ip6h,l4), in->name);
+					natflow_auth_http_302(in, skb, user, bridge);
+					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+					ret = NF_DROP;
+					goto out;
+				} else if (data_len > 0) {
+					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+					ret = NF_DROP;
+					goto out;
+				} else if (TCPH(l4)->ack && !TCPH(l4)->syn) {
+					natflow_auth_convert_tcprst6(skb);
+					goto out;
+				}
 			}
 		} else if (fud->auth_type == AUTH_TYPE_AUTO) {
 			fud->auth_status = AUTH_OK;
@@ -2099,7 +2308,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		}
 		break;
 	case AUTH_OK:
-		if (fud->auth_type == AUTH_TYPE_WEB) {
+		if (fud->auth_type == AUTH_TYPE_WEB && user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
 			int data_len;
 			unsigned char *data;
 			struct iphdr *iph = ip_hdr(skb);
