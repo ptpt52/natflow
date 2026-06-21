@@ -273,29 +273,31 @@ static struct {
 	struct token_ctrl tx;
 } qos_token_ctrl[QOS_TOKEN_CTRL_GROUP_MAX];
 
-static struct qos_rule {
-	union {
-		unsigned char name[16];
+typedef union {
+	unsigned char name[16];
+	__be32 ip;
+	struct {
 		__be32 ip;
-		struct {
-			__be32 ip;
-			__be32 mask;
-		} ipcidr;
-	} user;
+		__be32 mask;
+	} ipcidr;
+	struct in6_addr ip6;
+	struct {
+		struct in6_addr ip6;
+		unsigned int prefix_len;
+	} ip6cidr;
+} qos_addr_field_t;
+
+static struct qos_rule {
+	qos_addr_field_t user;
+	u_int16_t user_l3num;
 
 	union {
 		unsigned char name[16];
 		__be16 port;
 	} user_port;
 
-	union {
-		unsigned char name[16];
-		__be32 ip;
-		struct {
-			__be32 ip;
-			__be32 mask;
-		} ipcidr;
-	} remote;
+	qos_addr_field_t remote;
+	u_int16_t remote_l3num;
 
 	union {
 		unsigned char name[16];
@@ -330,6 +332,118 @@ static struct qos_rule {
 static unsigned int tc_classid_mode = 0;
 static int qos_token_ctrl_num = 0;
 
+static int qos_parse_addr_token(const char *p, union nf_inet_addr *addr, u_int16_t *l3num, unsigned int *prefix_len, int *is_cidr)
+{
+	char buf[INET6_ADDRSTRLEN + 4];
+	char *slash;
+	int len = 0;
+
+	while (p[len] && p[len] != ',' && len < sizeof(buf) - 1)
+		len++;
+	if (len == 0 || p[len] != ',')
+		return -EINVAL;
+
+	memcpy(buf, p, len);
+	buf[len] = 0;
+
+	slash = strchr(buf, '/');
+	*is_cidr = 0;
+	if (slash) {
+		unsigned int plen;
+
+		*slash = 0;
+		if (kstrtouint(slash + 1, 10, &plen))
+			return -EINVAL;
+		*prefix_len = plen;
+		*is_cidr = 1;
+	}
+
+	memset(addr, 0, sizeof(*addr));
+	if (in4_pton(buf, -1, (u8 *)&addr->ip, -1, NULL)) {
+		*l3num = AF_INET;
+		if (*is_cidr && *prefix_len > 32)
+			return -EINVAL;
+		return 0;
+	}
+
+	if (in6_pton(buf, -1, addr->in6.s6_addr, -1, NULL)) {
+		*l3num = AF_INET6;
+		if (*is_cidr && *prefix_len > 128)
+			return -EINVAL;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+static int qos_token_has_char(const char *p, char c)
+{
+	int i = 0;
+
+	while (p[i] && p[i] != ',') {
+		if (p[i] == c)
+			return 1;
+		i++;
+	}
+
+	return 0;
+}
+
+static void qos_ipv6_prefix_addr(const struct in6_addr *addr, unsigned int prefix_len, struct in6_addr *prefix)
+{
+	unsigned int full_bytes = prefix_len / 8;
+	unsigned int bits = prefix_len % 8;
+
+	memset(prefix, 0, sizeof(*prefix));
+	if (full_bytes)
+		memcpy(prefix->s6_addr, addr->s6_addr, full_bytes);
+	if (bits)
+		prefix->s6_addr[full_bytes] = addr->s6_addr[full_bytes] & (0xff << (8 - bits));
+}
+
+static int qos_store_addr(union nf_inet_addr *addr, u_int16_t l3num, unsigned int prefix_len, int is_cidr,
+                          qos_addr_field_t *dst, u_int16_t *dst_l3num, unsigned short *flag,
+                          unsigned short ip_flag, unsigned short cidr_flag)
+{
+	if (l3num == AF_INET) {
+		if (is_cidr) {
+			dst->ipcidr.ip = addr->ip;
+			if (prefix_len == 0) {
+				dst->ipcidr.ip = 0;
+				dst->ipcidr.mask = 0;
+			} else {
+				dst->ipcidr.mask = htonl(GENMASK(31, 32-prefix_len));
+				if (dst->ipcidr.ip != (dst->ipcidr.ip & dst->ipcidr.mask)) {
+					return -EINVAL;
+				}
+			}
+			*flag |= cidr_flag;
+		} else {
+			dst->ip = addr->ip;
+			*flag |= ip_flag;
+		}
+	} else if (l3num == AF_INET6) {
+		if (is_cidr) {
+			struct in6_addr prefix;
+
+			qos_ipv6_prefix_addr(&addr->in6, prefix_len, &prefix);
+			if (!ipv6_addr_equal(&addr->in6, &prefix))
+				return -EINVAL;
+			dst->ip6cidr.ip6 = prefix;
+			dst->ip6cidr.prefix_len = prefix_len;
+			*flag |= cidr_flag;
+		} else {
+			dst->ip6 = addr->in6;
+			*flag |= ip_flag;
+		}
+	} else {
+		return -EINVAL;
+	}
+
+	*dst_l3num = l3num;
+	return 0;
+}
+
 static void qos_token_ctrl_init(void)
 {
 	int i;
@@ -351,15 +465,30 @@ static int natflow_token_ctrl(struct sk_buff *skb, struct token_ctrl *tc)
 	int ret = 0;
 	int len = skb->len;
 	struct iphdr *iph = ip_hdr(skb);
-	void *l4 = (void *)iph + iph->ihl * 4;
+	void *l4;
 
-	switch (iph->protocol) {
-	case IPPROTO_TCP:
-		len -= iph->ihl * 4 + TCPH(l4)->doff * 4;
-		break;
-	case IPPROTO_UDP:
-		len -= iph->ihl * 4 + sizeof(struct udphdr);
-		break;
+	if (iph->version == 4) {
+		l4 = (void *)iph + iph->ihl * 4;
+		switch (iph->protocol) {
+		case IPPROTO_TCP:
+			len -= iph->ihl * 4 + TCPH(l4)->doff * 4;
+			break;
+		case IPPROTO_UDP:
+			len -= iph->ihl * 4 + sizeof(struct udphdr);
+			break;
+		}
+	} else if (iph->version == 6) {
+		struct ipv6hdr *ip6h = ipv6_hdr(skb);
+
+		l4 = (void *)ip6h + sizeof(struct ipv6hdr);
+		switch (ip6h->nexthdr) {
+		case IPPROTO_TCP:
+			len -= sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
+			break;
+		case IPPROTO_UDP:
+			len -= sizeof(struct ipv6hdr) + sizeof(struct udphdr);
+			break;
+		}
 	}
 
 	if (len <= 0) return 0;
@@ -2191,7 +2320,163 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			}
 		}
 	} else {
-		//FIXME ipv6
+		if (nf && !(nf->status & NF_FF_QOS_TESTED)) {
+			int i;
+			struct ipv6hdr *ip6h = ipv6_hdr(skb);
+			void *l4 = (void *)ip6h + sizeof(struct ipv6hdr);
+			int user_is_src = ipv6_addr_equal(&ip6h->saddr, &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6);
+			struct in6_addr *remote_addr = user_is_src ? &ip6h->daddr : &ip6h->saddr;
+
+			simple_set_bit(NF_FF_QOS_TESTED_BIT, &nf->status);
+
+			for (i = 0; i < qos_token_ctrl_num; i++) {
+				struct qos_rule *qr = &qos_token_ctrl_rule[i];
+				if (qr->proto) {
+					if (qr->proto != ip6h->nexthdr) {
+						continue;
+					}
+				}
+
+				if ((qr->flag & USER_TYPE_MASK)) {
+					if ((qr->flag & USER_TYPE_IP)) {
+						if (qr->user_l3num != AF_INET6 ||
+						        !ipv6_addr_equal(&qr->user.ip6, &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6)) {
+							continue;
+						}
+					} else if ((qr->flag & USER_TYPE_IPCIDR)) {
+						if (qr->user_l3num != AF_INET6 ||
+						        !ipv6_prefix_equal(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6,
+						                           &qr->user.ip6cidr.ip6, qr->user.ip6cidr.prefix_len)) {
+							continue;
+						}
+					} else {
+						if (user_is_src) {
+							if (IP_SET_test_src_ip(state, in, out, skb, qr->user.name) <= 0) {
+								continue;
+							}
+						} else {
+							if (IP_SET_test_dst_ip(state, in, out, skb, qr->user.name) <= 0) {
+								continue;
+							}
+						}
+					}
+				}
+
+				if ((qr->flag & USER_PORT_TYPE_MASK)) {
+					if ((qr->flag & USER_PORT_TYPE_PORT)) {
+						if (ip6h->nexthdr == IPPROTO_TCP) {
+							if (user_is_src) {
+								if (qr->user_port.port != TCPH(l4)->source) {
+									continue;
+								}
+							} else {
+								if (qr->user_port.port != TCPH(l4)->dest) {
+									continue;
+								}
+							}
+						} else if (ip6h->nexthdr == IPPROTO_UDP) {
+							if (user_is_src) {
+								if (qr->user_port.port != UDPH(l4)->source) {
+									continue;
+								}
+							} else {
+								if (qr->user_port.port != UDPH(l4)->dest) {
+									continue;
+								}
+							}
+						}
+					} else {
+						if (user_is_src) {
+							if (IP_SET_test_src_port(state, in, out, skb, qr->user_port.name) <= 0) {
+								continue;
+							}
+						} else {
+							if (IP_SET_test_dst_port(state, in, out, skb, qr->user_port.name) <= 0) {
+								continue;
+							}
+						}
+					}
+				}
+
+				if ((qr->flag & REMOTE_TYPE_MASK)) {
+					if ((qr->flag & REMOTE_TYPE_IP)) {
+						if (qr->remote_l3num != AF_INET6 ||
+						        !ipv6_addr_equal(&qr->remote.ip6, remote_addr)) {
+							continue;
+						}
+					} else if ((qr->flag & REMOTE_TYPE_IPCIDR)) {
+						if (qr->remote_l3num != AF_INET6 ||
+						        !ipv6_prefix_equal(remote_addr, &qr->remote.ip6cidr.ip6, qr->remote.ip6cidr.prefix_len)) {
+							continue;
+						}
+					} else {
+						if (user_is_src) {
+							if (IP_SET_test_dst_ip(state, in, out, skb, qr->remote.name) <= 0) {
+								continue;
+							}
+						} else {
+							if (IP_SET_test_src_ip(state, in, out, skb, qr->remote.name) <= 0) {
+								continue;
+							}
+						}
+					}
+				}
+
+				if ((qr->flag & REMOTE_PORT_TYPE_MASK)) {
+					if ((qr->flag & REMOTE_PORT_TYPE_PORT)) {
+						if (ip6h->nexthdr == IPPROTO_TCP) {
+							if (user_is_src) {
+								if (qr->remote_port.port != TCPH(l4)->dest) {
+									continue;
+								}
+							} else {
+								if (qr->remote_port.port != TCPH(l4)->source) {
+									continue;
+								}
+							}
+						} else if (ip6h->nexthdr == IPPROTO_UDP) {
+							if (user_is_src) {
+								if (qr->remote_port.port != UDPH(l4)->dest) {
+									continue;
+								}
+							} else {
+								if (qr->remote_port.port != UDPH(l4)->source) {
+									continue;
+								}
+							}
+						}
+					} else {
+						if (user_is_src) {
+							if (IP_SET_test_dst_port(state, in, out, skb, qr->remote_port.name) <= 0) {
+								continue;
+							}
+						} else {
+							if (IP_SET_test_src_port(state, in, out, skb, qr->remote_port.name) <= 0) {
+								continue;
+							}
+						}
+					}
+				}
+
+				nf->qos_id = i + 1;
+
+				if (nf->qos_id) {
+					switch (ip6h->nexthdr) {
+					case IPPROTO_TCP:
+						NATFLOW_INFO("(NUF)" DEBUG_TCP_FMT6 ": matched qos id=%d\n",
+						             DEBUG_TCP_ARG6(ip6h,l4), nf->qos_id);
+						break;
+					case IPPROTO_UDP:
+						NATFLOW_INFO("(NUF)" DEBUG_UDP_FMT6 ": matched qos id=%d\n",
+						             DEBUG_UDP_ARG6(ip6h,l4), nf->qos_id);
+						break;
+					}
+
+					simple_set_bit(NF_FF_TOKEN_CTRL_BIT, &nf->status);
+					break;
+				}
+			}
+		}
 	}
 
 	switch(fud->auth_status) {
@@ -3764,7 +4049,7 @@ static void *qos_start(struct seq_file *m, loff_t *pos)
 		             PAGE_SIZE - 1,
 		             "# Usage:\n"
 		             "#    clear -- clear all existing auth rule(s)\n"
-		             "#    add user=<ipset/ip/ipcidr>,user_port=<portset/port>,remote=<ipset/ip/ipcidr>,remote_port=<portset/port>,proto=<tcp/udp>,rxbytes=Bytes,txbytes=Bytes --add one rule\n"
+		             "#    add user=<ipset/ip/ipcidr/ipv6/ipv6cidr>,user_port=<portset/port>,remote=<ipset/ip/ipcidr/ipv6/ipv6cidr>,remote_port=<portset/port>,proto=<tcp/udp>,rxbytes=Bytes,txbytes=Bytes --add one rule\n"
 		             "#\n"
 		             "# tc_classid_mode=%u\n"
 		             "#\n"
@@ -3780,24 +4065,38 @@ static void *qos_start(struct seq_file *m, loff_t *pos)
 
 		if (qr) {
 			qos_ctl_buffer[0] = 0;
-			if ((qr->flag & USER_TYPE_IP))
-				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI4,", &qr->user.ip);
-			else if ((qr->flag & USER_TYPE_IPCIDR))
-				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI4/%u,", &qr->user.ipcidr.ip, hweight32(ntohl(qr->user.ipcidr.mask)));
-			else
+			if ((qr->flag & USER_TYPE_IP)) {
+				if (qr->user_l3num == AF_INET6)
+					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI6c,", &qr->user.ip6);
+				else
+					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI4,", &qr->user.ip);
+			} else if ((qr->flag & USER_TYPE_IPCIDR)) {
+				if (qr->user_l3num == AF_INET6)
+					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI6c/%u,", &qr->user.ip6cidr.ip6, qr->user.ip6cidr.prefix_len);
+				else
+					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI4/%u,", &qr->user.ipcidr.ip, hweight32(ntohl(qr->user.ipcidr.mask)));
+			} else {
 				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%s,", qr->user.name);
+			}
 
 			if ((qr->flag & USER_PORT_TYPE_PORT))
 				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "user_port=%u,", ntohs(qr->user_port.port));
 			else
 				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "user_port=%s,", qr->user_port.name);
 
-			if ((qr->flag & REMOTE_TYPE_IP))
-				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI4,", &qr->remote.ip);
-			else if ((qr->flag & REMOTE_TYPE_IPCIDR))
-				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI4/%u,", &qr->remote.ipcidr.ip, hweight32(ntohl(qr->remote.ipcidr.mask)));
-			else
+			if ((qr->flag & REMOTE_TYPE_IP)) {
+				if (qr->remote_l3num == AF_INET6)
+					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI6c,", &qr->remote.ip6);
+				else
+					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI4,", &qr->remote.ip);
+			} else if ((qr->flag & REMOTE_TYPE_IPCIDR)) {
+				if (qr->remote_l3num == AF_INET6)
+					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI6c/%u,", &qr->remote.ip6cidr.ip6, qr->remote.ip6cidr.prefix_len);
+				else
+					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI4/%u,", &qr->remote.ipcidr.ip, hweight32(ntohl(qr->remote.ipcidr.mask)));
+			} else {
 				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%s,", qr->remote.name);
+			}
 
 			if ((qr->flag & REMOTE_PORT_TYPE_PORT))
 				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote_port=%u,", ntohs(qr->remote_port.port));
@@ -3905,82 +4204,47 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 	} else if (strncmp(data, "add user=", 9) == 0) {
 		struct qos_rule *qr = kmalloc(sizeof(struct qos_rule), GFP_KERNEL);
 		if (qr) {
-			qr->flag = 0;
-			qr->rxbytes = 0;
-			qr->txbytes = 0;
-			qr->proto = 0;
+			memset(qr, 0, sizeof(*qr));
 			do {
-				int i;
 				char *p;
 				p = strstr(data, "add user=");
 				if (p) {
-					int a, b, c, d, e;
+					union nf_inet_addr addr;
+					u_int16_t l3num;
+					unsigned int prefix_len = 0;
+					int is_cidr = 0;
+					int a, b, c, d;
+
 					p = p + 9;
-					n = sscanf(p, "%d.%d.%d.%d/%d,", &a, &b, &c, &d, &e);
-					if (n == 5) {
-						for (i = 7; i < 19 && p[i] != ','; i++)
-							if (!((p[i] >= '0' && p[i] <= '9') || p[i] == '.' || p[i] == '/'))
-								break;
-						if (p[i] == ',' &&
-						        (a&0xff) == a &&
-						        (b&0xff) == b &&
-						        (c&0xff) == c &&
-						        (d&0xff) == d &&
-						        e >= 0 && e <= 32) {
-							qr->user.ipcidr.ip = htonl((a << 24) | (b << 16) | (c << 8) | d);
-							if (e == 0) {
-								qr->user.ipcidr.ip = 0;
-								qr->user.ipcidr.mask = 0;
-								qr->flag |= USER_TYPE_IPCIDR;
-							} else {
-								qr->user.ipcidr.mask = htonl(GENMASK(31, 32-e));
-								qr->flag |= USER_TYPE_IPCIDR;
-								if (qr->user.ipcidr.ip != (qr->user.ipcidr.ip & qr->user.ipcidr.mask)) {
-									err = -EINVAL;
-									NATFLOW_println("user=<ip> error ipcidr format");
-									break;
-								}
-							}
-						} else {
-							err = -EINVAL;
+					if (qos_parse_addr_token(p, &addr, &l3num, &prefix_len, &is_cidr) == 0) {
+						err = qos_store_addr(&addr, l3num, prefix_len, is_cidr,
+						                     &qr->user, &qr->user_l3num, &qr->flag,
+						                     USER_TYPE_IP, USER_TYPE_IPCIDR);
+						if (err) {
 							NATFLOW_println("user=<ip> error ipcidr format");
 							break;
 						}
+					} else if (qos_token_has_char(p, '/') || qos_token_has_char(p, ':') ||
+					           sscanf(p, "%d.%d.%d.%d", &a, &b, &c, &d) == 4) {
+						err = -EINVAL;
+						NATFLOW_println("user=<ip> error ip format");
+						break;
 					} else {
-						n = sscanf(p, "%d.%d.%d.%d,", &a, &b, &c, &d);
-						if (n == 4) {
-							for (i = 7; i < 16 && p[i] != ','; i++)
-								if (!((p[i] >= '0' && p[i] <= '9') || p[i] == '.'))
-									break;
-							if (p[i] == ',' &&
-							        (a&0xff) == a &&
-							        (b&0xff) == b &&
-							        (c&0xff) == c &&
-							        (d&0xff) == d) {
-								qr->user.ip = htonl((a << 24) | (b << 16) | (c << 8) | d);
-								qr->flag |= USER_TYPE_IP;
-							} else {
-								err = -EINVAL;
-								NATFLOW_println("user=<ip> error ip format");
-								break;
-							}
-						} else {
-							int k = 0;
-							while (p[k] && p[k] != ',' && k < sizeof(qr->user.name) - 1) {
-								qr->user.name[k] = p[k];
-								k++;
-							}
-							if (k >= sizeof(qr->user.name) - 1) {
-								err = -EINVAL;
-								NATFLOW_println("user=<name> too long");
-								break;
-							}
-							qr->user.name[k] = 0;
-							if (k != 0) {
-								qr->flag |= USER_TYPE_SET;
-							}
-							//else empty user
+						int k = 0;
+						while (p[k] && p[k] != ',' && k < sizeof(qr->user.name) - 1) {
+							qr->user.name[k] = p[k];
+							k++;
 						}
+						if (k >= sizeof(qr->user.name) - 1) {
+							err = -EINVAL;
+							NATFLOW_println("user=<name> too long");
+							break;
+						}
+						qr->user.name[k] = 0;
+						if (k != 0) {
+							qr->flag |= USER_TYPE_SET;
+						}
+						//else empty user
 					}
 				}
 
@@ -4018,73 +4282,42 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 
 				p = strstr(data, ",remote=");
 				if (p) {
-					int a, b, c, d, e;
+					union nf_inet_addr addr;
+					u_int16_t l3num;
+					unsigned int prefix_len = 0;
+					int is_cidr = 0;
+					int a, b, c, d;
+
 					p = p + 8;
-					n = sscanf(p, "%d.%d.%d.%d/%d,", &a, &b, &c, &d, &e);
-					if (n == 5) {
-						for (i = 7; i < 19 && p[i] != ','; i++)
-							if (!((p[i] >= '0' && p[i] <= '9') || p[i] == '.' || p[i] == '/'))
-								break;
-						if (p[i] == ',' &&
-						        (a&0xff) == a &&
-						        (b&0xff) == b &&
-						        (c&0xff) == c &&
-						        (d&0xff) == d &&
-						        e >= 0 && e <= 32) {
-							qr->remote.ipcidr.ip = htonl((a << 24) | (b << 16) | (c << 8) | d);
-							if (e == 0) {
-								qr->remote.ipcidr.ip = 0;
-								qr->remote.ipcidr.mask = 0;
-								qr->flag |= REMOTE_TYPE_IPCIDR;
-							} else {
-								qr->remote.ipcidr.mask = htonl(GENMASK(31, 32-e));
-								qr->flag |= REMOTE_TYPE_IPCIDR;
-								if (qr->remote.ipcidr.ip != (qr->remote.ipcidr.ip & qr->remote.ipcidr.mask)) {
-									err = -EINVAL;
-									NATFLOW_println("remote=<ip> error ipcidr format");
-									break;
-								}
-							}
-						} else {
-							err = -EINVAL;
+					if (qos_parse_addr_token(p, &addr, &l3num, &prefix_len, &is_cidr) == 0) {
+						err = qos_store_addr(&addr, l3num, prefix_len, is_cidr,
+						                     &qr->remote, &qr->remote_l3num, &qr->flag,
+						                     REMOTE_TYPE_IP, REMOTE_TYPE_IPCIDR);
+						if (err) {
 							NATFLOW_println("remote=<ip> error ipcidr format");
 							break;
 						}
+					} else if (qos_token_has_char(p, '/') || qos_token_has_char(p, ':') ||
+					           sscanf(p, "%d.%d.%d.%d", &a, &b, &c, &d) == 4) {
+						err = -EINVAL;
+						NATFLOW_println("remote=<ip> error ip format");
+						break;
 					} else {
-						n = sscanf(p, "%d.%d.%d.%d,", &a, &b, &c, &d);
-						if (n == 4) {
-							for (i = 7; i < 16 && p[i] != ','; i++)
-								if (!((p[i] >= '0' && p[i] <= '9') || p[i] == '.'))
-									break;
-							if (p[i] == ',' &&
-							        (a&0xff) == a &&
-							        (b&0xff) == b &&
-							        (c&0xff) == c &&
-							        (d&0xff) == d) {
-								qr->remote.ip = htonl((a << 24) | (b << 16) | (c << 8) | d);
-								qr->flag |= REMOTE_TYPE_IP;
-							} else {
-								err = -EINVAL;
-								NATFLOW_println("remote=<ip> error ip format");
-								break;
-							}
-						} else {
-							int k = 0;
-							while (p[k] && p[k] != ',' && k < sizeof(qr->remote.name) - 1) {
-								qr->remote.name[k] = p[k];
-								k++;
-							}
-							if (k >= sizeof(qr->remote.name) - 1) {
-								err = -EINVAL;
-								NATFLOW_println("remote=<name> too long");
-								break;
-							}
-							qr->remote.name[k] = 0;
-							if (k != 0) {
-								qr->flag |= REMOTE_TYPE_SET;
-							}
-							//else empty remote
+						int k = 0;
+						while (p[k] && p[k] != ',' && k < sizeof(qr->remote.name) - 1) {
+							qr->remote.name[k] = p[k];
+							k++;
 						}
+						if (k >= sizeof(qr->remote.name) - 1) {
+							err = -EINVAL;
+							NATFLOW_println("remote=<name> too long");
+							break;
+						}
+						qr->remote.name[k] = 0;
+						if (k != 0) {
+							qr->flag |= REMOTE_TYPE_SET;
+						}
+						//else empty remote
 					}
 				}
 

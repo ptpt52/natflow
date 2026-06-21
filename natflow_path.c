@@ -4179,7 +4179,7 @@ slow_fastpath6:
 
 		fud = natflow_fakeuser_data(user);
 		if (d == 0) {
-			if (0 && rx_token_ctrl(skb, fud, nf) < 0) {
+			if (rx_token_ctrl(skb, fud, nf) < 0) {
 				return NF_DROP;
 			} else {
 				/* download */
@@ -4203,7 +4203,7 @@ slow_fastpath6:
 				atomic_add(skb->len, &fud->rx_speed_bytes[j]);
 			}
 		} else {
-			if (0 && tx_token_ctrl(skb, fud, nf) < 0) {
+			if (tx_token_ctrl(skb, fud, nf) < 0) {
 				return NF_DROP;
 			} else {
 				/* upload */
@@ -4999,7 +4999,6 @@ fastnat_check6:
 			skb_reset_mac_header(skb);
 			eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IPV6);
 		}
-		/* XXX: qos is not supported on IPv6 */
 #ifdef CONFIG_NETFILTER_INGRESS
 		if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
 			struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(skb) + ETH_HLEN);

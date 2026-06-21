@@ -176,7 +176,7 @@ When enabled, matching QoS rules can cooperate with `tc` using QoS/classid marki
 Template:
 
 ```bash
-echo 'add user=<ipset/ip/ipcidr>,user_port=<portset/port>,remote=<ipset/ip/ipcidr>,remote_port=<portset/port>,proto=<tcp/udp>,rxbytes=<Bytes>,txbytes=<Bytes>' >/dev/qos_ctl
+echo 'add user=<ipset/ip/ipcidr/ipv6/ipv6cidr>,user_port=<portset/port>,remote=<ipset/ip/ipcidr/ipv6/ipv6cidr>,remote_port=<portset/port>,proto=<tcp/udp>,rxbytes=<Bytes>,txbytes=<Bytes>' >/dev/qos_ctl
 ```
 
 Parameter details:
@@ -184,9 +184,11 @@ Parameter details:
 - `user=` can be:
   - IPv4 (for example `192.168.1.10`)
   - IPv4 CIDR (for example `192.168.1.0/24`)
+  - IPv6 (for example `2001:db8::10`)
+  - IPv6 CIDR (for example `2001:db8::/64`)
   - set name (for example `staff_group`)
 - `user_port=`: port number or port-set name
-- `remote=`: IPv4 / IPv4 CIDR / set name
+- `remote=`: IPv4 / IPv4 CIDR / IPv6 / IPv6 CIDR / set name
 - `remote_port=`: port number or port-set name
 - `proto=`: `tcp` / `udp` / empty (empty means any)
 - `rxbytes`, `txbytes`: Bytes/s
@@ -195,6 +197,7 @@ Example:
 
 ```bash
 echo 'add user=192.168.1.0/24,user_port=,remote=,remote_port=,proto=tcp,rxbytes=1310720,txbytes=655360' >/dev/qos_ctl
+echo 'add user=2001:db8::/64,user_port=,remote=2001:4860:4860::8888,remote_port=443,proto=tcp,rxbytes=1310720,txbytes=655360' >/dev/qos_ctl
 ```
 
 Additional notes:
