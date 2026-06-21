@@ -609,10 +609,10 @@ static inline void natflow_urllogger_tcp_reply_rstack6(const struct net_device *
 	if ((char *)niph - (char *)neth >= ETH_HLEN) {
 		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
 		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
-		//neth->h_proto = htons(ETH_P_IP);
+		//neth->h_proto = htons(ETH_P_IPV6);
 	}
 	//setup ip header
-	memset(niph, 0, sizeof(struct iphdr));
+	memset(niph, 0, sizeof(struct ipv6hdr));
 	niph->version = oiph->version;
 	niph->priority = oiph->priority;
 	niph->saddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.in6;
@@ -622,7 +622,7 @@ static inline void natflow_urllogger_tcp_reply_rstack6(const struct net_device *
 	niph->nexthdr = IPPROTO_TCP;
 	niph->hop_limit = 255;
 	//setup tcp header
-	ntcph = (struct tcphdr *)((char *)ip_hdr(nskb) + sizeof(struct ipv6hdr));
+	ntcph = (struct tcphdr *)((char *)niph + sizeof(struct ipv6hdr));
 	memset(ntcph, 0, sizeof(struct tcphdr));
 	ntcph->source = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
 	ntcph->dest = otcph->source;
@@ -650,7 +650,7 @@ static inline void natflow_urllogger_tcp_reply_rstack6(const struct net_device *
 	dev_queue_xmit(nskb);
 out:
 	if (pppoe_hdr) {
-		oskb->protocol = __constant_htons(ETH_P_IP);
+		oskb->protocol = __constant_htons(ETH_P_IPV6);
 		skb_pull(oskb, PPPOE_SES_HLEN);
 	}
 }
