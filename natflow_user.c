@@ -95,6 +95,83 @@ static inline void userinfo_event_store_exit(void)
 	}
 }
 
+static inline void userinfo_event_queue(natflow_fakeuser_t *user)
+{
+	struct nf_conn_acct *acct;
+	struct fakeuser_data_t *fud;
+	struct userinfo *user_i;
+
+	if (userinfo_event_store.stage != USERINFO_EVENT_RUNNING)
+		return;
+
+	acct = nf_conn_acct_find(user);
+	if (!acct)
+		return;
+
+	user_i = kmalloc(sizeof(struct userinfo), GFP_ATOMIC);
+	if (!user_i)
+		return;
+
+	fud = natflow_fakeuser_data(user);
+	INIT_LIST_HEAD(&user_i->list);
+	user_i->timeout = nf_ct_expires(user) / HZ;
+	if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
+		user_i->l2num = 0;
+		user_i->ip = user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+	} else {
+		user_i->l2num = 1;
+		user_i->ipv6 = user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
+	}
+	memcpy(user_i->macaddr, fud->macaddr, ETH_ALEN);
+	user_i->auth_type = fud->auth_type;
+	user_i->auth_status = fud->auth_status;
+	user_i->auth_rule_id = fud->auth_rule_id;
+	user_i->rx_packets = atomic64_read(&acct->counter[0].packets);
+	user_i->rx_bytes = atomic64_read(&acct->counter[0].bytes);
+	user_i->tx_packets = atomic64_read(&acct->counter[1].packets);
+	user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
+
+	do {
+		unsigned int rx_speed_jiffies = atomic_read(&fud->rx_speed_jiffies);
+		unsigned int tx_speed_jiffies = atomic_read(&fud->tx_speed_jiffies);
+		int x = (jiffies/HZ/2) % 4;
+		unsigned int diff = uintmindiff(jiffies, rx_speed_jiffies);
+		if (diff > HZ * 2 * 4) {
+			user_i->rx_speed_packets = 0;
+			user_i->rx_speed_bytes = 0;
+		} else {
+			int rx_p2;
+			int rx_b2;
+			x = (x + 2) % 4;
+			rx_p2 = atomic_read(&fud->rx_speed_packets[x]) + 1;
+			rx_b2 = atomic_read(&fud->rx_speed_bytes[x]) + 1;
+			user_i->rx_speed_packets = rx_p2 / 2;
+			user_i->rx_speed_bytes = rx_b2 / 2;
+		}
+
+		x = (jiffies/HZ/2) % 4;
+		diff = uintmindiff(jiffies, tx_speed_jiffies);
+		if (diff > HZ * 2 * 4) {
+			user_i->tx_speed_packets = 0;
+			user_i->tx_speed_bytes = 0;
+		} else {
+			int tx_p2;
+			int tx_b2;
+			x = (x + 2) % 4;
+			tx_p2 = atomic_read(&fud->tx_speed_packets[x]) + 1;
+			tx_b2 = atomic_read(&fud->tx_speed_bytes[x]) + 1;
+			user_i->tx_speed_packets = tx_p2 / 2;
+			user_i->tx_speed_bytes = tx_b2 / 2;
+		}
+	} while (0);
+
+	spin_lock_bh(&userinfo_event_store.lock);
+	list_add_tail(&user_i->list, &userinfo_event_store.head);
+	spin_unlock_bh(&userinfo_event_store.lock);
+
+	wake_up(&userinfo_event_store.wait);
+}
+
 static int natflow_user_major = 0;
 static int natflow_user_minor = 0;
 static struct cdev natflow_user_cdev;
@@ -1556,7 +1633,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 					        ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6) {
 						fud->auth_type = AUTH_TYPE_AUTO;
 						fud->auth_status = AUTH_OK;
-						//TODO notify user
+						userinfo_event_queue(user);
 					} else if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
 						fud->auth_type = AUTH_TYPE_WEB;
 						fud->auth_status = AUTH_REQ;
@@ -1565,12 +1642,11 @@ static unsigned int natflow_user_pre_hook(void *priv,
 						if (auth_conf->auth[i].src_whitelist_name[0] != 0 &&
 						        IP_SET_test_src_ip(state, in, out, skb, auth_conf->auth[i].src_whitelist_name) > 0) {
 							fud->auth_status = AUTH_VIP;
-							//TODO notify user
 						} else if (auth_conf->auth[i].mac_whitelist_name[0] != 0 &&
 						           IP_SET_test_src_mac(state, in, out, skb, auth_conf->auth[i].mac_whitelist_name) > 0) {
 							fud->auth_status = AUTH_VIP;
-							//TODO notify user
 						}
+						userinfo_event_queue(user);
 					}
 #if defined(CONFIG_NF_CONNTRACK_MARK)
 					user->mark = fud->auth_type;
@@ -1587,71 +1663,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		}
 		fud->timestamp = jiffies;
 		natflow_user_timeout_touch(user);
-		//TODO notify user update
-		if (userinfo_event_store.stage == USERINFO_EVENT_RUNNING) {
-			struct nf_conn_acct *acct = nf_conn_acct_find(user);
-			if (acct) {
-				struct userinfo *user_i = kmalloc(sizeof(struct userinfo), GFP_ATOMIC);
-				if (user_i) {
-					INIT_LIST_HEAD(&user_i->list);
-					user_i->timeout = nf_ct_expires(user)  / HZ;
-					if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
-						user_i->l2num = 0;
-						user_i->ip = user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
-					} else {
-						user_i->l2num = 1;
-						user_i->ipv6 = user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
-					}
-					memcpy(user_i->macaddr, fud->macaddr, ETH_ALEN);
-					user_i->auth_type = fud->auth_type;
-					user_i->auth_status = fud->auth_status;
-					user_i->auth_rule_id = fud->auth_rule_id;
-					user_i->rx_packets = atomic64_read(&acct->counter[0].packets);
-					user_i->rx_bytes = atomic64_read(&acct->counter[0].bytes);
-					user_i->tx_packets = atomic64_read(&acct->counter[1].packets);
-					user_i->tx_bytes = atomic64_read(&acct->counter[1].bytes);
-
-					do {
-						unsigned int rx_speed_jiffies = atomic_read(&fud->rx_speed_jiffies);
-						unsigned int tx_speed_jiffies = atomic_read(&fud->tx_speed_jiffies);
-						int x = (jiffies/HZ/2) % 4;
-						unsigned int diff = uintmindiff(jiffies, rx_speed_jiffies);
-						if (diff > HZ * 2 * 4) {
-							user_i->rx_speed_packets = 0;
-							user_i->rx_speed_bytes = 0;
-						} else {
-							int rx_p2;
-							int rx_b2;
-							x = (x + 2) % 4;
-							rx_p2 = atomic_read(&fud->rx_speed_packets[x]) + 1;
-							rx_b2 = atomic_read(&fud->rx_speed_bytes[x]) + 1;
-							user_i->rx_speed_packets = rx_p2 / 2;
-							user_i->rx_speed_bytes = rx_b2 / 2;
-						}
-
-						x = (jiffies/HZ/2) % 4;
-						diff = uintmindiff(jiffies, tx_speed_jiffies);
-						if (diff > HZ * 2 * 4) {
-							user_i->tx_speed_packets = 0;
-							user_i->tx_speed_bytes = 0;
-						} else {
-							int tx_p2;
-							int tx_b2;
-							x = (x + 2) % 4;
-							tx_p2 = atomic_read(&fud->tx_speed_packets[x]) + 1;
-							tx_b2 = atomic_read(&fud->tx_speed_bytes[x]) + 1;
-							user_i->tx_speed_packets = tx_p2 / 2;
-							user_i->tx_speed_bytes = tx_b2 / 2;
-						}
-					} while (0);
-					spin_lock(&userinfo_event_store.lock);
-					list_add_tail(&user_i->list, &userinfo_event_store.head);
-					spin_unlock(&userinfo_event_store.lock);
-
-					wake_up(&userinfo_event_store.wait);
-				}
-			}
-		}
+		userinfo_event_queue(user);
 	}
 
 	if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
@@ -2083,7 +2095,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			}
 		} else if (fud->auth_type == AUTH_TYPE_AUTO) {
 			fud->auth_status = AUTH_OK;
-			//TODO notify user
+			userinfo_event_queue(user);
 		}
 		break;
 	case AUTH_OK:
@@ -2901,6 +2913,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 						atomic64_set(&acct->counter[1].packets, 0);
 						atomic64_set(&acct->counter[1].bytes, 0);
 					}
+					userinfo_event_queue(ct);
 
 					nf_ct_put(ct);
 				}
@@ -2945,6 +2958,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 			atomic64_set(&acct->counter[1].packets, 0);
 			atomic64_set(&acct->counter[1].bytes, 0);
 		}
+		userinfo_event_queue(user);
 
 		natflow_user_release_put(user);
 		goto done;
@@ -2970,6 +2984,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 
 		fud = natflow_fakeuser_data(user);
 		fud->auth_status = s;
+		userinfo_event_queue(user);
 
 		natflow_user_release_put(user);
 		goto done;
