@@ -3523,6 +3523,10 @@ __hook_ipv6_main:
 			skb->network_header += ingress_pad_len;
 		}
 
+		if (unlikely(nf_ct_get(skb, &ctinfo) != NULL)) {
+			goto out6;
+		}
+
 		if (!pskb_may_pull(skb, sizeof(struct ipv6hdr))) {
 			return NF_DROP;
 		}
@@ -3552,6 +3556,21 @@ __hook_ipv6_main:
 
 		skb->protocol = __constant_htons(ETH_P_IPV6);
 		skb->transport_header = skb->network_header + sizeof(struct ipv6hdr);
+
+#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
+		/* XXX:
+		 * MT7622 hwnat cannot handle vlan for ext dev
+		 * Route forwarding: all good
+		 * Bridge forwarding: cannot handle vlan tag packets, pppoe tag is good
+		 */
+		if (hwnat_wed_disabled) {
+			if (skb_vlan_tag_present(skb) && !(skb->dev->netdev_ops->ndo_flow_offload || skb->dev->netdev_ops->ndo_flow_offload_check)) {
+				goto out6;
+			}
+		}
+#endif
+#endif
 
 		/* skip for defrag-skb or large packets */
 		if (skb_is_nonlinear(skb) || _I > 1500 - ingress_pad_len) {
@@ -4138,16 +4157,16 @@ slow_fastpath6:
 	}
 
 	if (!simple_test_bit(NF_FF_BRIDGE_BIT, &nf->status)) {
-		if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
+		if (skb->len > nf->rroute[dir].mtu) {
 			if (!skb_is_gso(skb)) {
 				switch (IPV6H->nexthdr) {
 				case IPPROTO_TCP:
-					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": pmtu=%u FRAG=%p\n",
-					              DEBUG_TCP_ARG6(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": pmtu=%u len=%u\n",
+					              DEBUG_TCP_ARG6(iph,l4), nf->rroute[dir].mtu, skb->len);
 					break;
 				case IPPROTO_UDP:
-					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": pmtu=%u FRAG=%p\n",
-					              DEBUG_UDP_ARG6(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": pmtu=%u len=%u\n",
+					              DEBUG_UDP_ARG6(iph,l4), nf->rroute[dir].mtu, skb->len);
 					break;
 				}
 				goto out6;
@@ -4271,7 +4290,7 @@ slow_fastpath6:
 	}
 
 #ifdef CONFIG_NETFILTER_INGRESS
-	if (!(nf->status & NF_FF_FAIL)) {
+	if (!(nf->status & NF_FF_FAIL) && !(nf->status & NF_FF_TOKEN_CTRL)) {
 		for (d = 0; d < NF_FF_DIR_MAX; d++) {
 			if (d == NF_FF_DIR_ORIGINAL) {
 				if (!(nf->status & NF_FF_ORIGINAL_CHECK) && !simple_test_and_set_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status)) {
@@ -4998,6 +5017,14 @@ fastnat_check6:
 			skb->mac_len = ETH_HLEN;
 			skb_reset_mac_header(skb);
 			eth_hdr(skb)->h_proto = __constant_htons(ETH_P_IPV6);
+		}
+		if ((nf->status & NF_FF_TOKEN_CTRL)) { /* for tc working on bridge interface */
+			struct net_device *upper = netdev_master_upper_dev_get_rcu(skb->dev);
+			if (upper && (netif_is_bridge_master(upper) ||
+			              netif_is_bond_master(upper) ||
+			              netif_is_macvlan(upper))) {
+				skb->dev = upper;
+			}
 		}
 #ifdef CONFIG_NETFILTER_INGRESS
 		if (nf->rroute[dir].l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
