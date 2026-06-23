@@ -2149,7 +2149,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		}
 	}
 
-	nf = natflow_session_get(ct);
+	nf = natflow_session_in(ct);
 
 	fud = natflow_fakeuser_data(user);
 	if (nf && !(nf->status & NF_FF_TOKEN_CTRL) && (IPS_NATFLOW_USER_TOKEN_CTRL & user->status)) {
