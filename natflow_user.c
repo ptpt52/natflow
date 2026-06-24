@@ -576,7 +576,7 @@ static unsigned int auth_open_weixin_reply = 0;
 static unsigned short https_redirect_port = __constant_htons(443);
 static unsigned int https_redirect_en = 0;
 
-/*XXX: default redirect_ip 10.10.10.10 */
+/* Note: default redirect_ip is 10.10.10.10 */
 unsigned int redirect_ip = __constant_htonl((10<<24)|(10<<16)|(10<<8)|(10<<0));
 
 static inline int natflow_auth_dev_addr6(const struct net_device *dev, struct in6_addr *addr)
@@ -883,7 +883,7 @@ natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 		skb_nfct_reset(uskb);
 		return NULL;
 	}
-	/* XXX: in race loser_ct may be replaced in nf_conntrack_confirm,
+	/* Note: in a race condition, loser_ct may be replaced in nf_conntrack_confirm,
 	 * here reload ct(user) from uskb, and it can't be NULL
 	 */
 	user = nf_ct_get(uskb, &ctinfo);
@@ -1009,7 +1009,7 @@ natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3, const uin
 		skb_nfct_reset(uskb);
 		return NULL;
 	}
-	/* XXX: in race loser_ct may be replaced in nf_conntrack_confirm,
+	/* Note: in a race condition, loser_ct may be replaced in nf_conntrack_confirm,
 	 * here reload ct(user) from uskb, and it can't be NULL
 	 */
 	user = nf_ct_get(uskb, &ctinfo);
@@ -1246,7 +1246,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			skb_nfct_reset(uskb);
 			return NULL;
 		}
-		/* XXX: in race loser_ct may be replaced in nf_conntrack_confirm,
+		/* Note: in a race condition, loser_ct may be replaced in nf_conntrack_confirm,
 		 * here reload ct(user) from uskb, and it can't be NULL
 		 */
 		user = nf_ct_get(uskb, &ctinfo);
@@ -2737,7 +2737,7 @@ static unsigned int natflow_user_post_hook(void *priv,
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
 		const struct net_device *br_out = nf_bridge_get_physoutdev(skb);
 #endif
-		/* XXX: no user found, maybe connection from wan to lan */
+		/* Note: no user found; this might be a connection from WAN to LAN */
 		if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
 			goto out;
 		if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET &&

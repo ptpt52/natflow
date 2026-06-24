@@ -86,7 +86,7 @@ typedef struct natflow_route_t {
 #define NF_FF_IFNAME_MATCH_BIT 20
 #define NF_FF_IFNAME_MATCH (1 << NF_FF_IFNAME_MATCH_BIT)
 
-/* XXX: ALL DONE */
+/* Note: ALL DONE */
 #define NF_FF_BUSY_USE (NF_FF_USER_USE | NF_FF_URLLOGGER_USE)
 
 typedef struct natflow_t {
@@ -237,7 +237,7 @@ struct natflow_fastnat_node_t {
 	u16 mss;
 	unsigned char h_dest[ETH_ALEN];
 	__be16 pppoe_sid;
-	/* XXX: -- 64 bytes above -- */
+	/* Note: exactly 64 bytes above this point */
 	union {
 		unsigned long keepalive_jiffies;
 		unsigned int _pad2[2];
@@ -254,7 +254,7 @@ struct natflow_fastnat_node_t {
 		void *ptr; /* user ptr */
 		unsigned int _pad4[2];
 	};
-	/* XXX: -- 64 bytes above -- */
+	/* Note: exactly 64 bytes above this point */
 	__be32 saddr6[4];
 	__be32 daddr6[4];
 	__be32 nat_saddr6[4];

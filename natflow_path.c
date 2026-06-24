@@ -1301,7 +1301,7 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 #endif
 	}
 
-	/*XXX: in fact ppe don't care flags  */
+	/* Note: PPE doesn't actually care about flags */
 	flow->flags = 0;
 	if ((void *)flow->priv != (void *)natflow_offload_keepalive) {
 		flow->priv = (void *)natflow_offload_keepalive;
@@ -1588,7 +1588,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			if (skb->protocol == __constant_htons(ETH_P_ARP)) {
 				goto out;
 			}
-			/* XXX: deliver ipv6 pkts to __hook_ipv6_main */
+			/* Note: deliver IPv6 packets to __hook_ipv6_main */
 			if (skb->protocol == __constant_htons(ETH_P_PPP_SES) && pskb_may_pull(skb, PPPOE_SES_HLEN) &&
 			        pppoe_proto(skb) == __constant_htons(PPP_IPV6) /* Internet Protocol version 6 */) {
 				goto __hook_ipv6_main;
@@ -1849,7 +1849,7 @@ fast_output:
 				}
 
 				if (skb_is_gso(skb)) {
-					/* XXX: to xmit gso directly
+					/* Note: transmit GSO directly
 					 * 1. hw offload features needed
 					 * 2. hw csum features needed
 					 * 3. ether type only
@@ -2644,9 +2644,9 @@ fastnat_check:
 										simple_set_bit(NF_FF_REPLY_OFFLOAD_BIT, &nf->status);
 
 										if (orig_dev->netdev_ops->ndo_flow_offload) {
-											/* xxx: orig_dev has offload api */
+											/* Note: orig_dev has the offload API */
 											if (orig_dev == reply_dev || reply_dev->netdev_ops->ndo_flow_offload) {
-												/* xxx: both orig_dev and reply_dev has offload api */
+												/* Note: both orig_dev and reply_dev have the offload API */
 												struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
@@ -2733,7 +2733,7 @@ fastnat_check:
 #if !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 											else
 											{
-												/* xxx: olny orig_dev has offload api */
+												/* Note: only orig_dev has the offload API */
 												struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
@@ -2849,11 +2849,11 @@ fastnat_check:
 														break;
 													}
 												}
-												/* end: olny orig_dev has offload api */
+												/* end: only orig_dev has the offload API */
 											}
 											/* end: orig_dev has offload api */
 										} else if (reply_dev->netdev_ops->ndo_flow_offload) {
-											/* xxx: only reply_dev has offload api */
+											/* Note: only reply_dev has the offload API */
 											struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 											flow_offload_hw_path_t orig = {
 												.dev = orig_dev,
@@ -2972,7 +2972,7 @@ fastnat_check:
 											/* end: only reply_dev has offload api */
 										} else {
 #endif /* !defined(CONFIG_HWNAT_EXTDEV_DISABLED) */
-											/* xxx: neither orig_dev nor reply_dev has offload api */
+											/* Note: neither orig_dev nor reply_dev has the offload API */
 											if (flow_offload_add_extdev &&
 											        (orig_dev->netdev_ops->ndo_fill_forward_path ||
 											         reply_dev->netdev_ops->ndo_fill_forward_path)) {
@@ -3110,7 +3110,7 @@ fastnat_check:
 #endif
 
 	if (skb_is_gso(skb)) {
-		/* XXX: to xmit gso directly
+		/* Note: transmit GSO directly
 		 * 1. hw offload features needed
 		 * 2. hw csum features needed
 		 * 3. ether type only
@@ -3209,7 +3209,7 @@ out:
 		//XXXXXXXX
 		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = vline_fwd_map[skb->dev->ifindex]) != NULL) {
 			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV6)) {
-				//XXX: relay
+				/* Note: handle relay logic */
 				if ((outdev->flags & IFF_VLINE_RELAY)) {
 					natflow_fakeuser_t *user;
 					if (skb->protocol == __constant_htons(ETH_P_IP)) {
@@ -3348,7 +3348,7 @@ out:
 					return NF_STOLEN;
 				}
 
-				//XXX: vline
+				/* Note: handle vline logic */
 				if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST ||
 				        skb->protocol == __constant_htons(ETH_P_ARP)) {
 					skb = skb_clone(skb, GFP_ATOMIC);
@@ -3418,7 +3418,7 @@ out:
 	return ret;
 
 	/*
-	 * XXX: IPv6 main hook
+	 * Note: IPv6 main hook
 	 */
 __hook_ipv6_main:
 
@@ -3756,7 +3756,7 @@ fast_output6:
 				}
 
 				if (skb_is_gso(skb)) {
-					/* XXX: to xmit gso directly
+					/* Note: transmit GSO directly
 					 * 1. hw offload features needed
 					 * 2. hw csum features needed
 					 * 3. ether type only
@@ -4512,9 +4512,9 @@ fastnat_check6:
 										simple_set_bit(NF_FF_REPLY_OFFLOAD_BIT, &nf->status);
 
 										if (orig_dev->netdev_ops->ndo_flow_offload) {
-											/* xxx: orig_dev has offload api */
+											/* Note: orig_dev has the offload API */
 											if (orig_dev == reply_dev || reply_dev->netdev_ops->ndo_flow_offload) {
-												/* xxx: both orig_dev and reply_dev has offload api */
+												/* Note: both orig_dev and reply_dev have the offload API */
 												struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
@@ -4601,7 +4601,7 @@ fastnat_check6:
 #if !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 											else
 											{
-												/* xxx: olny orig_dev has offload api */
+												/* Note: only orig_dev has the offload API */
 												struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
@@ -4717,11 +4717,11 @@ fastnat_check6:
 														break;
 													}
 												}
-												/* end: olny orig_dev has offload api */
+												/* end: only orig_dev has the offload API */
 											}
 											/* end: orig_dev has offload api */
 										} else if (reply_dev->netdev_ops->ndo_flow_offload) {
-											/* xxx: only reply_dev has offload api */
+											/* Note: only reply_dev has the offload API */
 											struct natflow_offload *natflow = natflow_offload_alloc(ct, nf);
 											flow_offload_hw_path_t orig = {
 												.dev = orig_dev,
@@ -4840,7 +4840,7 @@ fastnat_check6:
 											/* end: only reply_dev has offload api */
 										} else {
 #endif /* !defined(CONFIG_HWNAT_EXTDEV_DISABLED) */
-											/* xxx: neither orig_dev nor reply_dev has offload api */
+											/* Note: neither orig_dev nor reply_dev has the offload API */
 											if (flow_offload_add_extdev &&
 											        (orig_dev->netdev_ops->ndo_fill_forward_path ||
 											         reply_dev->netdev_ops->ndo_fill_forward_path)) {
@@ -4978,7 +4978,7 @@ fastnat_check6:
 #endif
 
 	if (skb_is_gso(skb)) {
-		/* XXX: to xmit gso directly
+		/* Note: transmit GSO directly
 		 * 1. hw offload features needed
 		 * 2. hw csum features needed
 		 * 3. ether type only
@@ -5079,7 +5079,7 @@ out6:
 			        skb->protocol == __constant_htons(ETH_P_PPP_DISC) ||
 			        skb->protocol == __constant_htons(ETH_P_PPP_SES) ||
 			        skb->protocol != __constant_htons(ETH_P_IPV6) /* for unknown packets */) {
-				//XXX: relay
+				/* Note: handle relay logic */
 				if ((outdev->flags & IFF_VLINE_RELAY)) {
 					natflow_fakeuser_t *user;
 					if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
@@ -5250,7 +5250,7 @@ out6:
 					return NF_STOLEN;
 				}
 
-				//XXX: vline
+				/* Note: handle vline logic */
 				if (!(skb->dev->flags & IFF_NOARP) && unlikely(is_link_local_ether_addr(eth_hdr(skb)->h_dest))) {
 					switch (eth_hdr(skb)->h_dest[5]) {
 					case 0x01: /* IEEE MAC (Pause) */
