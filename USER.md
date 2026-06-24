@@ -1,9 +1,13 @@
 # NATflow User Control Interface Guide (USER.md)
 
+[← Back to Main README](README.md)
+
 This document is based on the current implementation and covers these character-device interfaces:
 
 - `/dev/userinfo_ctl`: user status query and control
 - `/dev/qos_ctl`: QoS rate-limit rule management
+- `/dev/natflow_user_ctl`: Global authentication rules configuration
+- `/dev/userinfo_event_ctl`: Asynchronous user authentication events stream
 
 > Note: Every command written to these control devices **must end with a newline (`\n`)**. Otherwise, the kernel keeps waiting for more input. Overly long lines return an error.
 
@@ -234,7 +238,42 @@ done
 
 ---
 
-## 3. FAQ
+---
+
+## 3. `/dev/natflow_user_ctl`
+
+This interface configures the global authentication rules and triggers.
+
+### 3.1 View Auth Configuration
+```bash
+cat /dev/natflow_user_ctl
+```
+Output includes current `disabled` state, `auth_conf_magic`, `redirect_ip`, timeouts, HTTP/HTTPS redirection ports, and the list of active auth rules.
+
+### 3.2 Add or Modify an Auth Rule
+Command format:
+```bash
+echo 'auth id=<id>,szone=<idx>,type=web/auto,sipgrp=<name>[,ipwhite=<name>][,macwhite=<name>]' > /dev/natflow_user_ctl
+```
+- `<id>`: The rule ID (0 to 15).
+- `szone`: Source zone ID to match.
+- `type`: Either `web` (requires web login) or `auto` (auto-pass).
+- `sipgrp`, `ipwhite`, `macwhite`: Optional IPSet names for further matching.
+
+### 3.3 Clear All Auth Rules
+```bash
+echo 'clean' > /dev/natflow_user_ctl
+```
+
+---
+
+## 4. `/dev/userinfo_event_ctl`
+
+This is a read-only stream device that outputs asynchronous user login, logout, and token control events. Scripts can continuously read (`cat /dev/userinfo_event_ctl`) to react to state changes in real-time.
+
+---
+
+## 5. FAQ
 
 1. **Command appears to do nothing**
    - Check whether the command string ends with newline (`echo` does by default, `echo -n` does not).

@@ -1,5 +1,7 @@
 # Host ACL and URL Logging Guide
 
+[← Back to Main README](README.md)
+
 This document explains how to manage Host ACL rules through `/dev/hostacl_ctl` and how to verify rule hits through `urllogger`. It covers rule query/add/clear operations, optional IPSET integration, log field definitions, timestamp conversion, and a practical troubleshooting workflow.
 
 ---

@@ -25,6 +25,15 @@ graph TB
     A --> |ppe: hardware offload forward| H
 ```
 
+## Documentation
+
+For more detailed technical insights, user guides, and configuration references, please refer to the following documents:
+
+- **[User Control Interface Guide (USER.md)](USER.md)**: Details on managing users, query statuses, and QoS token rate-limiting through `/dev/userinfo_ctl` and `/dev/qos_ctl`.
+- **[Core System Control Guide (CORE_CTL.md)](CORE_CTL.md)**: Configurations for the global fast-path engine, zone mapping (`/dev/natflow_zone_ctl`), and conntrack snapshot dumping.
+- **[Host ACL and URL Logging Guide (HOSTACL.md)](HOSTACL.md)**: Instructions on configuring host-based ACLs, tracking URL visits, and integrating with IPSet.
+- **[Technical Architecture Report (TECH_REPORT.md)](TECH_REPORT.md)**: Deep dive into the fast-path architecture, codebase structure, caching algorithms, and hook mechanisms.
+
 ## Notes
 **natflow** is a versatile and high-performance network acceleration solution that provides the following key features:
 
@@ -105,7 +114,7 @@ make EXTRA_CFLAGS="-DCONFIG_HWNAT_EXTDEV_USE_VLAN_HASH"
 make EXTRA_CFLAGS="-DCONFIG_HWNAT_EXTDEV_DISABLED"
 ```
 
-## Warnning
+## Warning
 Since `kernel < 4.10` cannot handle NF_STOLEN in ingress hook correctly, so kernel patch needed:
 ```diff
 diff --git a/include/linux/netfilter_ingress.h b/include/linux/netfilter_ingress.h
