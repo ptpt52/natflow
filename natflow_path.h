@@ -293,15 +293,14 @@ static inline struct net_device *vlan_lookup_dev(struct net_device *dev, unsigne
 {
 	struct net_device *vlan_dev;
 
-	vlan_dev = first_net_device(dev_net(dev));
-	while (vlan_dev) {
+	/* Caller must hold rcu_read_lock() while using the returned device. */
+	for_each_netdev_rcu(dev_net(dev), vlan_dev) {
 		if (is_vlan_dev(vlan_dev)) {
 			struct vlan_dev_priv *vlan = vlan_dev_priv(vlan_dev);
 			if (vlan->vlan_id == vlan_id && vlan->real_dev == dev) {
 				return vlan_dev;
 			}
 		}
-		vlan_dev = next_net_device(vlan_dev);
 	}
 	return NULL;
 }

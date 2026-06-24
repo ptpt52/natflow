@@ -128,26 +128,26 @@ static inline void natflow_zone_match_refresh(void)
 {
 	struct net_device *dev;
 
-	dev = first_net_device(&init_net);
-	while (dev) {
+	rcu_read_lock();
+	for_each_netdev_rcu(&init_net, dev) {
 		if (natflow_zone_match_update(dev) == 1) {
 			NATFLOW_INFO(DEBUG_FMT_PREFIX "dev=%s set zone=%u type=%u\n", DEBUG_ARG_PREFIX,
 			             dev->name, natflow_zone_id_get(dev), natflow_zone_type_get(dev));
 		}
-		dev = next_net_device(dev);
 	}
+	rcu_read_unlock();
 }
 
 static inline void natflow_zone_print(void)
 {
 	struct net_device *dev;
 
-	dev = first_net_device(&init_net);
-	while (dev) {
+	rcu_read_lock();
+	for_each_netdev_rcu(&init_net, dev) {
 		NATFLOW_WARN(DEBUG_FMT_PREFIX "dev=%s set zone=%u type=%u\n", DEBUG_ARG_PREFIX,
 		             dev->name, natflow_zone_id_get(dev), natflow_zone_type_get(dev));
-		dev = next_net_device(dev);
 	}
+	rcu_read_unlock();
 }
 
 

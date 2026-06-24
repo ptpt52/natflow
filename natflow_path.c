@@ -29,6 +29,8 @@
 #include <linux/netfilter.h>
 #include <linux/netfilter_bridge.h>
 #include <net/ndisc.h>
+#include <net/ip.h>
+#include <net/ip6_route.h>
 #include <net/ipv6.h>
 #include <net/ip6_checksum.h>
 #include <net/netfilter/nf_conntrack.h>
@@ -50,9 +52,43 @@
 
 #define VLINE_FWD_MAX_NUM 64
 #define VLINE_FWD_MAP_CONFIG_NUM 8
-static struct net_device *vline_fwd_map[VLINE_FWD_MAX_NUM];
+static struct net_device __rcu *vline_fwd_map[VLINE_FWD_MAX_NUM];
 static unsigned char vline_fwd_map_config[VLINE_FWD_MAP_CONFIG_NUM][2][IFNAMSIZ];
 static unsigned char vline_fwd_map_family_config[VLINE_FWD_MAP_CONFIG_NUM];
+
+static inline unsigned int natflow_skb_dst_mtu(struct sk_buff *skb, bool is_ipv6)
+{
+	if (is_ipv6)
+		return ip6_skb_dst_mtu(skb);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+	return ip_skb_dst_mtu(skb);
+#else
+	return ip_skb_dst_mtu(NULL, skb);
+#endif
+}
+
+static inline void vline_fwd_flags_clear(struct net_device *dev)
+{
+	dev->flags &= ~(IFF_IS_LAN | IFF_VLINE_L2_PORT | IFF_VLINE_FAMILY_IPV4 |
+	                IFF_VLINE_FAMILY_IPV6 | IFF_VLINE_RELAY);
+}
+
+static void vline_fwd_state_clear(void)
+{
+	int i;
+	struct net_device *dev;
+
+	for (i = 0; i < VLINE_FWD_MAX_NUM; i++) {
+		RCU_INIT_POINTER(vline_fwd_map[i], NULL);
+	}
+
+	rcu_read_lock();
+	for_each_netdev_rcu(&init_net, dev) {
+		vline_fwd_flags_clear(dev);
+	}
+	rcu_read_unlock();
+}
 
 unsigned char (*vline_fwd_map_config_get(unsigned int idx, unsigned char *family))[2][IFNAMSIZ]
 {
@@ -68,7 +104,9 @@ int vline_fwd_map_config_add(const unsigned char *dst_ifname, const unsigned cha
 	for (i = 0; i < VLINE_FWD_MAP_CONFIG_NUM; i++) {
 		if (vline_fwd_map_config[i][0][0] == 0) {
 			strncpy(vline_fwd_map_config[i][0], src_ifname, IFNAMSIZ);
+			vline_fwd_map_config[i][0][IFNAMSIZ - 1] = 0;
 			strncpy(vline_fwd_map_config[i][1], dst_ifname, IFNAMSIZ);
+			vline_fwd_map_config[i][1][IFNAMSIZ - 1] = 0;
 			vline_fwd_map_family_config[i] = family;
 			return 0;
 		}
@@ -79,8 +117,10 @@ int vline_fwd_map_config_add(const unsigned char *dst_ifname, const unsigned cha
 void vline_fwd_map_config_clear(void)
 {
 	int i;
+	vline_fwd_state_clear();
 	for (i = 0; i < VLINE_FWD_MAP_CONFIG_NUM; i++) {
-		vline_fwd_map_config[i][0][0] = 0;
+		memset(vline_fwd_map_config[i], 0, sizeof(vline_fwd_map_config[i]));
+		vline_fwd_map_family_config[i] = 0;
 	}
 }
 
@@ -91,8 +131,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 	struct net_device *dst_dev = NULL, *src_dev = NULL;
 
 	rcu_read_lock();
-	dev = first_net_device(&init_net);
-	while (dev) {
+	for_each_netdev_rcu(&init_net, dev) {
 		if (strncmp(dev->name, dst_ifname, IFNAMSIZ) == 0) {
 			if (netdev_master_upper_dev_get_rcu(dev)) {
 				rcu_read_unlock();
@@ -129,7 +168,6 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 		if (src_dev && dst_dev) {
 			break;
 		}
-		dev = next_net_device(dev);
 	}
 
 	if (src_dev && dst_dev) {
@@ -175,8 +213,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 
 		if (netif_is_bridge_master(src_dev)) {
 			struct net_device *upper_dev;
-			dev = first_net_device(&init_net);
-			while (dev) {
+			for_each_netdev_rcu(&init_net, dev) {
 				upper_dev = netdev_master_upper_dev_get_rcu(dev);
 				if (upper_dev == src_dev) {
 					dev->flags |= IFF_IS_LAN;
@@ -195,10 +232,9 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 						rcu_read_unlock();
 						return -EINVAL;
 					}
-					vline_fwd_map[dev->ifindex] = dst_dev;
+					rcu_assign_pointer(vline_fwd_map[dev->ifindex], dst_dev);
 					NATFLOW_println("update %s(%s)->%s", dev->name, src_dev->name, dst_dev->name);
 				}
-				dev = next_net_device(dev);
 			}
 		} else {
 			src_dev->flags &= ~IFF_VLINE_L2_PORT;
@@ -207,14 +243,13 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 				rcu_read_unlock();
 				return -EINVAL;
 			}
-			vline_fwd_map[src_dev->ifindex] = dst_dev;
+			rcu_assign_pointer(vline_fwd_map[src_dev->ifindex], dst_dev);
 			NATFLOW_println("update %s->%s", src_dev->name, dst_dev->name);
 		}
 
 		if (netif_is_bridge_master(dst_dev)) {
 			struct net_device *upper_dev;
-			dev = first_net_device(&init_net);
-			while (dev) {
+			for_each_netdev_rcu(&init_net, dev) {
 				upper_dev = netdev_master_upper_dev_get_rcu(dev);
 				if (upper_dev == dst_dev) {
 					dev->flags &= ~IFF_IS_LAN;
@@ -233,10 +268,9 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 						rcu_read_unlock();
 						return -EINVAL;
 					}
-					vline_fwd_map[dev->ifindex] = src_dev;
+					rcu_assign_pointer(vline_fwd_map[dev->ifindex], src_dev);
 					NATFLOW_println("update %s(%s)->%s", dev->name, dst_dev->name, src_dev->name);
 				}
-				dev = next_net_device(dev);
 			}
 		} else {
 			dst_dev->flags &= ~IFF_VLINE_L2_PORT;
@@ -245,7 +279,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 				rcu_read_unlock();
 				return -EINVAL;
 			}
-			vline_fwd_map[dst_dev->ifindex] = src_dev;
+			rcu_assign_pointer(vline_fwd_map[dst_dev->ifindex], src_dev);
 			NATFLOW_println("update %s->%s", dst_dev->name, src_dev->name);
 		}
 	} else {
@@ -260,9 +294,7 @@ int vline_fwd_map_config_apply(void)
 {
 	int i;
 	int err = 0, ret = 0;
-	for (i = 0; i < VLINE_FWD_MAX_NUM; i++) {
-		vline_fwd_map[i] = NULL;
-	}
+	vline_fwd_state_clear();
 	NATFLOW_println("apply config");
 	for (i = 0; i < VLINE_FWD_MAP_CONFIG_NUM; i++) {
 		if (vline_fwd_map_config[i][0][0] == 0) {
@@ -322,17 +354,18 @@ static inline int vline_fwd_map_unregister_handle(struct net_device *dev)
 {
 	int i;
 
+	vline_fwd_flags_clear(dev);
 	if (dev->ifindex >= VLINE_FWD_MAX_NUM) {
 		return 0;
 	}
-	if (vline_fwd_map[dev->ifindex] != NULL) {
-		vline_fwd_map[dev->ifindex] = NULL;
+	if (rcu_access_pointer(vline_fwd_map[dev->ifindex]) != NULL) {
+		RCU_INIT_POINTER(vline_fwd_map[dev->ifindex], NULL);
 		NATFLOW_println("handle event for dev=%s", dev->name);
 	}
 
 	for (i = 0; i < VLINE_FWD_MAX_NUM; i++) {
-		if (vline_fwd_map[i] == dev) {
-			vline_fwd_map[i] = NULL;
+		if (rcu_access_pointer(vline_fwd_map[i]) == dev) {
+			RCU_INIT_POINTER(vline_fwd_map[i], NULL);
 		}
 	}
 
@@ -343,10 +376,8 @@ void list_net_device_debug(void)
 {
 	struct net_device *dev;
 	rcu_read_lock();
-	dev = first_net_device(&init_net);
-	while (dev) {
+	for_each_netdev_rcu(&init_net, dev) {
 		NATFLOW_println("dev=%s (%d): flags=0x%08x", dev->name, dev->ifindex, dev->flags);
-		dev = next_net_device(dev);
 	}
 	rcu_read_unlock();
 }
@@ -370,15 +401,13 @@ int ifname_group_add(const unsigned char *ifname)
 	struct net_device *dev;
 
 	rcu_read_lock();
-	dev = first_net_device(&init_net);
-	while (dev) {
+	for_each_netdev_rcu(&init_net, dev) {
 		if (strncmp(dev->name, ifname, IFNAMSIZ) == 0) {
 			dev->flags |= IFF_IFNAME_GROUP;
 			NATFLOW_println("Success ifname_group_add %s", ifname);
 			ret = 0;
 			break;
 		}
-		dev = next_net_device(dev);
 	}
 	rcu_read_unlock();
 
@@ -390,12 +419,10 @@ void ifname_group_clear(void)
 	struct net_device *dev = NULL;
 
 	rcu_read_lock();
-	dev = first_net_device(&init_net);
-	while (dev) {
+	for_each_netdev_rcu(&init_net, dev) {
 		if ((dev->flags & IFF_IFNAME_GROUP)) {
 			dev->flags &= ~IFF_IFNAME_GROUP;
 		}
-		dev = next_net_device(dev);
 	}
 	rcu_read_unlock();
 }
@@ -406,8 +433,7 @@ struct net_device *ifname_group_get(int idx)
 	struct net_device *dev = NULL;
 
 	rcu_read_lock();
-	dev = first_net_device(&init_net);
-	while (dev) {
+	for_each_netdev_rcu(&init_net, dev) {
 		if ((dev->flags & IFF_IFNAME_GROUP)) {
 			idx_cnt++;
 			if (idx_cnt == idx + 1) {
@@ -415,7 +441,6 @@ struct net_device *ifname_group_get(int idx)
 				break;
 			}
 		}
-		dev = next_net_device(dev);
 	}
 	rcu_read_unlock();
 
@@ -715,6 +740,7 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 					}
 #endif
 					if (nf->rroute[!d].vlan_present) {
+						rcu_read_lock();
 						dev = vlan_lookup_dev(dev, nf->rroute[!d].vlan_tci);
 						if (dev) {
 							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
@@ -723,6 +749,7 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 							compat_u64_stats_add(&vpstats->tx_packets, packets);
 							u64_stats_update_end(&vpstats->syncp);
 						}
+						rcu_read_unlock();
 					}
 
 					dev = nf->rroute[d].outdev;
@@ -735,6 +762,7 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 					}
 #endif
 					if (nf->rroute[d].vlan_present) {
+						rcu_read_lock();
 						dev = vlan_lookup_dev(dev, nf->rroute[d].vlan_tci);
 						if (dev) {
 							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
@@ -743,6 +771,7 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 							compat_u64_stats_add(&vpstats->rx_packets, packets);
 							u64_stats_update_end(&vpstats->syncp);
 						}
+						rcu_read_unlock();
 					}
 				}
 			} while(0);
@@ -952,6 +981,7 @@ __keepalive_ipv6_main:
 					}
 #endif
 					if (nf->rroute[!d].vlan_present) {
+						rcu_read_lock();
 						dev = vlan_lookup_dev(dev, nf->rroute[!d].vlan_tci);
 						if (dev) {
 							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
@@ -960,6 +990,7 @@ __keepalive_ipv6_main:
 							compat_u64_stats_add(&vpstats->tx_packets, packets);
 							u64_stats_update_end(&vpstats->syncp);
 						}
+						rcu_read_unlock();
 					}
 
 					dev = nf->rroute[d].outdev;
@@ -972,6 +1003,7 @@ __keepalive_ipv6_main:
 					}
 #endif
 					if (nf->rroute[d].vlan_present) {
+						rcu_read_lock();
 						dev = vlan_lookup_dev(dev, nf->rroute[d].vlan_tci);
 						if (dev) {
 							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
@@ -980,6 +1012,7 @@ __keepalive_ipv6_main:
 							compat_u64_stats_add(&vpstats->rx_packets, packets);
 							u64_stats_update_end(&vpstats->syncp);
 						}
+						rcu_read_unlock();
 					}
 				}
 			} while(0);
@@ -3185,7 +3218,7 @@ out:
 		struct net_device *outdev;
 		int vline_filter = 0;
 
-		if (skb->protocol == __constant_htons(ETH_P_IP) && skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = vline_fwd_map[skb->dev->ifindex]) != NULL) {
+		if (skb->protocol == __constant_htons(ETH_P_IP) && skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = rcu_dereference(vline_fwd_map[skb->dev->ifindex])) != NULL) {
 			if (IP_SET_test_dst_netport(state, in, out, skb, "vline_filter_dst_netport") > 0 ||
 			        IP_SET_test_dst_ip(state, in, out, skb, "vline_filter_dst") > 0 ||
 			        IP_SET_test_src_ip(state, in, out, skb, "vline_filter_src") > 0 ||
@@ -3207,7 +3240,7 @@ out:
 			return ret;
 		}
 		//XXXXXXXX
-		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = vline_fwd_map[skb->dev->ifindex]) != NULL) {
+		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = rcu_dereference(vline_fwd_map[skb->dev->ifindex])) != NULL) {
 			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV6)) {
 				/* Note: handle relay logic */
 				if ((outdev->flags & IFF_VLINE_RELAY)) {
@@ -3320,11 +3353,7 @@ out:
 								simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
 							}
 							if (skb_dst(skb)) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
-								mtu = ip_skb_dst_mtu(skb);
-#else
-								mtu = ip_skb_dst_mtu(NULL, skb);
-#endif
+								mtu = natflow_skb_dst_mtu(skb, false);
 								if (nf->rroute[dir].mtu != mtu) {
 									nf->rroute[dir].mtu = mtu;
 								}
@@ -3383,11 +3412,7 @@ out:
 							simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
 						}
 						if (skb_dst(skb)) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
-							mtu = ip_skb_dst_mtu(skb);
-#else
-							mtu = ip_skb_dst_mtu(NULL, skb);
-#endif
+							mtu = natflow_skb_dst_mtu(skb, false);
 							if (nf->rroute[dir].mtu != mtu) {
 								nf->rroute[dir].mtu = mtu;
 							}
@@ -5053,7 +5078,7 @@ out6:
 		struct net_device *outdev;
 		int vline_filter = 0;
 
-		if (skb->protocol == __constant_htons(ETH_P_IPV6) && skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = vline_fwd_map[skb->dev->ifindex]) != NULL) {
+		if (skb->protocol == __constant_htons(ETH_P_IPV6) && skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = rcu_dereference(vline_fwd_map[skb->dev->ifindex])) != NULL) {
 			if (IP_SET_test_dst_netport(state, in, out, skb, "vline_filter6_dst_netport") > 0 ||
 			        IP_SET_test_dst_ip(state, in, out, skb, "vline_filter6_dst") > 0 ||
 			        IP_SET_test_src_ip(state, in, out, skb, "vline_filter6_src") > 0 ||
@@ -5074,7 +5099,7 @@ out6:
 			return ret;
 		}
 		//XXXXXXXX
-		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = vline_fwd_map[skb->dev->ifindex]) != NULL) {
+		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = rcu_dereference(vline_fwd_map[skb->dev->ifindex])) != NULL) {
 			if (!(skb->dev->flags & IFF_VLINE_FAMILY_IPV4) ||
 			        skb->protocol == __constant_htons(ETH_P_PPP_DISC) ||
 			        skb->protocol == __constant_htons(ETH_P_PPP_SES) ||
@@ -5222,11 +5247,7 @@ out6:
 								simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
 							}
 							if (skb_dst(skb)) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
-								mtu = ip_skb_dst_mtu(skb);
-#else
-								mtu = ip_skb_dst_mtu(NULL, skb);
-#endif
+								mtu = natflow_skb_dst_mtu(skb, true);
 								if (nf->rroute[dir].mtu != mtu) {
 									nf->rroute[dir].mtu = mtu;
 								}
@@ -5526,11 +5547,7 @@ out6:
 							simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
 						}
 						if (skb_dst(skb)) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
-							mtu = ip_skb_dst_mtu(skb);
-#else
-							mtu = ip_skb_dst_mtu(NULL, skb);
-#endif
+							mtu = natflow_skb_dst_mtu(skb, true);
 							if (nf->rroute[dir].mtu != mtu) {
 								nf->rroute[dir].mtu = mtu;
 							}
@@ -5750,11 +5767,7 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (!skb_dst(skb))
 		goto out;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
-	mtu = ip_skb_dst_mtu(skb);
-#else
-	mtu = ip_skb_dst_mtu(NULL, skb);
-#endif
+	mtu = natflow_skb_dst_mtu(skb, iph->version == 6);
 	if (nf->rroute[dir].mtu != mtu) {
 		if (iph->version == 4) {
 			switch (iph->protocol) {
