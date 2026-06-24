@@ -102,7 +102,7 @@ static inline int natflow_zone_match_update(struct net_device *dev)
 					return 1;
 				} else {
 					read_unlock_bh(&zone_match_lock);
-					NATFLOW_ERROR(DEBUG_FMT_PREFIX "natflow_zone_id_set fail dev=%s id=%u type=%u\n", DEBUG_ARG_PREFIX, dev->name, zm->id, zm->type);
+					NATFLOW_ERROR(DEBUG_FMT_PREFIX "natflow_zone_id_set failed for dev=%s id=%u type=%u\n", DEBUG_ARG_PREFIX, dev->name, zm->id, zm->type);
 					return -1;
 				}
 			}
@@ -116,7 +116,7 @@ static inline int natflow_zone_match_update(struct net_device *dev)
 			return 1;
 		} else {
 			read_unlock_bh(&zone_match_lock);
-			NATFLOW_ERROR(DEBUG_FMT_PREFIX "natflow_zone_id_set fail dev=%s id=%u type=%u\n", DEBUG_ARG_PREFIX, dev->name, INVALID_ZONE_ID, 0);
+			NATFLOW_ERROR(DEBUG_FMT_PREFIX "natflow_zone_id_set failed for dev=%s id=%u type=%u\n", DEBUG_ARG_PREFIX, dev->name, INVALID_ZONE_ID, 0);
 			return -1;
 		}
 	}

@@ -96,14 +96,14 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 		if (strncmp(dev->name, dst_ifname, IFNAMSIZ) == 0) {
 			if (netdev_master_upper_dev_get_rcu(dev)) {
 				rcu_read_unlock();
-				NATFLOW_println("vline config invalid dst %s,%s,%s",
+				NATFLOW_println("Invalid vline config for dst %s,%s,%s",
 				                src_ifname, dst_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
 			}
 			if ((dev->flags & IFF_NOARP) && family != VLINE_FAMILY_IPV6) {
 				rcu_read_unlock();
-				NATFLOW_println("vline config invalid dst %s,%s,%s should not be IFF_NOARP, or family should be ipv6 only",
+				NATFLOW_println("Invalid vline config for dst %s,%s,%s: should not be IFF_NOARP, or family should be ipv6 only",
 				                src_ifname, dst_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
@@ -112,14 +112,14 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 		} else if (strncmp(dev->name, src_ifname, IFNAMSIZ) == 0) {
 			if (netdev_master_upper_dev_get_rcu(dev)) {
 				rcu_read_unlock();
-				NATFLOW_println("vline config invalid src %s,%s,%s",
+				NATFLOW_println("Invalid vline config for src %s,%s,%s",
 				                src_ifname, dst_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
 			}
 			if ((dev->flags & IFF_NOARP) && family != VLINE_FAMILY_IPV6) {
 				rcu_read_unlock();
-				NATFLOW_println("vline config invalid src %s,%s,%s should not be IFF_NOARP, or family should be ipv6 only",
+				NATFLOW_println("Invalid vline config for src %s,%s,%s: should not be IFF_NOARP, or family should be ipv6 only",
 				                src_ifname, dst_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
@@ -137,7 +137,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 		dst_dev->flags &= ~IFF_IS_LAN;
 		if ((src_dev->flags & IFF_NOARP)) {
 			rcu_read_unlock();
-			NATFLOW_println("vline config invalid %s,%s,%s src_dev should not be IFF_NOARP",
+			NATFLOW_println("Invalid vline config for %s,%s,%s: src_dev should not be IFF_NOARP",
 			                src_ifname, dst_ifname,
 			                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 			return -EINVAL;
@@ -146,7 +146,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 		if (is_relay) {
 			if ((dst_dev->flags & IFF_NOARP)) {
 				rcu_read_unlock();
-				NATFLOW_println("vline relay config invalid %s,%s,%s dev should not be IFF_NOARP",
+				NATFLOW_println("Invalid vline relay config for %s,%s,%s: dev should not be IFF_NOARP",
 				                src_ifname, dst_ifname,
 				                family == VLINE_FAMILY_IPV4 ? "ipv4" : family == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
 				return -EINVAL;
@@ -886,7 +886,7 @@ __keepalive_ipv6_main:
 			if (d == 1) {
 				diff_jiffies = ulongmindiff(current_jiffies, nfn->keepalive_jiffies);
 				nfn->keepalive_jiffies = current_jiffies;
-				NATFLOW_INFO("keepalive[%u] nfn[%pI6.%u->%pI6.%u] ct%d diff_jiffies=%u HZ=%u bytes=%lu hw=%d\n",
+				NATFLOW_INFO("keepalive[%u] nfn[[%pI6c]:%u->[%pI6c]:%u] ct%d diff_jiffies=%u HZ=%u bytes=%lu hw=%d\n",
 				             hash, nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest), !d, (unsigned int)diff_jiffies, HZ, bytes, hw);
 				natflow_update_ct_timeout(ct, diff_jiffies);
 			}
@@ -923,7 +923,7 @@ __keepalive_ipv6_main:
 				if (d == 0) {
 					diff_jiffies = ulongmindiff(current_jiffies, nfn->keepalive_jiffies);
 					nfn->keepalive_jiffies = current_jiffies;
-					NATFLOW_INFO("keepalive[%u] nfn[%pI6.%u->%pI6.%u] ct%d diff_jiffies=%u HZ=%u bytes=%lu hw=%d\n",
+					NATFLOW_INFO("keepalive[%u] nfn[[%pI6c]:%u->[%pI6c]:%u] ct%d diff_jiffies=%u HZ=%u bytes=%lu hw=%d\n",
 					             hash, nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest), !d, (unsigned int)diff_jiffies, HZ, bytes, hw);
 					natflow_update_ct_timeout(ct, diff_jiffies);
 				}
@@ -1084,7 +1084,7 @@ __keepalive_ipv6_main:
 					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
 					nfn_i->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
 
-					NATFLOW_INFO("keepalive[%u] nfn[%pI6.%u->%pI6.%u] diff_jiffies=%u ct not found\n",
+					NATFLOW_INFO("keepalive[%u] nfn[[%pI6c]:%u->[%pI6c]:%u] diff_jiffies=%u ct not found\n",
 					             hash, nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest), (unsigned int)diff_jiffies);
 					nf_ct_put(ct);
 					return -1;
@@ -1100,7 +1100,7 @@ __keepalive_ipv6_main:
 	}
 
 	if (NFN_L3NUM_DEC(nfn->flags) == AF_INET6) {
-		NATFLOW_INFO("keepalive[%u] nfn[%pI6.%u->%pI6.%u] diff_jiffies=%u timeout\n",
+		NATFLOW_INFO("keepalive[%u] nfn[[%pI6c]:%u->[%pI6c]:%u] diff_jiffies=%u timeout\n",
 		             hash, nfn->saddr6, ntohs(nfn->source), nfn->daddr6, ntohs(nfn->dest), (unsigned int)diff_jiffies);
 	} else {
 		NATFLOW_INFO("keepalive[%u] nfn[%pI4:%u->%pI4:%u] diff_jiffies=%u timeout\n",
@@ -4567,8 +4567,8 @@ fastnat_check6:
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
 													NATFLOW_INFO("(PCO) dir%d set hwnat offload1 orig=[%s(vlan:%d pppoe:%d)"
-													             " %pI6:%u->%pI6:%u] reply=[%s(vlan:%d pppoe:%d)"
-													             " %pI6:%u->%pI6:%u]\n",
+													             " [%pI6c]:%u->[%pI6c]:%u] reply=[%s(vlan:%d pppoe:%d)"
+													             " [%pI6c]:%u->[%pI6c]:%u]\n",
 													             dir, nfn_i->outdev->name,
 													             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
 													             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
@@ -4683,8 +4683,8 @@ fastnat_check6:
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
 													NATFLOW_INFO("(PCO) dir%d set hwnat offload2 orig=[%s(vlan:%d pppoe:%d)"
-													             " %pI6:%u->%pI6:%u] reply=[%s(vlan:%d pppoe:%d)"
-													             " %pI6:%u->%pI6:%u]\n",
+													             " [%pI6c]:%u->[%pI6c]:%u] reply=[%s(vlan:%d pppoe:%d)"
+													             " [%pI6c]:%u->[%pI6c]:%u]\n",
 													             dir, nfn_i->outdev->name,
 													             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
 													             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
@@ -4803,8 +4803,8 @@ fastnat_check6:
 											if (reply_dev->netdev_ops->ndo_flow_offload(
 											            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
 												NATFLOW_INFO("(PCO) dir%d set hwnat offload3 orig=[%s(vlan:%d pppoe:%d)"
-												             " %pI6:%u->%pI6:%u] reply=[%s(vlan:%d pppoe:%d)"
-												             " %pI6:%u->%pI6:%u]\n",
+												             " [%pI6c]:%u->[%pI6c]:%u] reply=[%s(vlan:%d pppoe:%d)"
+												             " [%pI6c]:%u->[%pI6c]:%u]\n",
 												             dir, nfn_i->outdev->name,
 												             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
 												             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
@@ -4908,8 +4908,8 @@ fastnat_check6:
 												if (flow_offload_add_extdev && flow_offload_add_extdev(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
 													NATFLOW_INFO("(PCO) dir%d set hwnat offload4 orig=[%s(vlan:%d pppoe:%d)"
-													             " %pI6:%u->%pI6:%u] reply=[%s(vlan:%d pppoe:%d)"
-													             " %pI6:%u->%pI6:%u]\n",
+													             " [%pI6c]:%u->[%pI6c]:%u] reply=[%s(vlan:%d pppoe:%d)"
+													             " [%pI6c]:%u->[%pI6c]:%u]\n",
 													             dir, nfn_i->outdev->name,
 													             nfn_i->vlan_present ? (int)nfn_i->vlan_tci : -1,
 													             (nfn_i->flags & FASTNAT_PPPOE_FLAG) ?
@@ -5723,11 +5723,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 				simple_set_bit(NF_FF_BRIDGE_BIT, &nf->status);
 				switch (IPV6H->nexthdr) {
 				case IPPROTO_TCP:
-					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": dir=%d ttl %d -> %d no change, pf=%d\n",
+					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": dir=%d hoplimit %d -> %d no change, pf=%d\n",
 					              DEBUG_TCP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				case IPPROTO_UDP:
-					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": dir=%d ttl %d -> %d no change, pf=%d\n",
+					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": dir=%d hoplimit %d -> %d no change, pf=%d\n",
 					              DEBUG_UDP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				}
@@ -5735,11 +5735,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 				simple_set_bit(NF_FF_ROUTE_BIT, &nf->status);
 				switch (IPV6H->nexthdr) {
 				case IPPROTO_TCP:
-					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": dir=%d ttl %d -> %d, pf=%d\n",
+					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": dir=%d hoplimit %d -> %d, pf=%d\n",
 					              DEBUG_TCP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				case IPPROTO_UDP:
-					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": dir=%d ttl %d -> %d, pf=%d\n",
+					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": dir=%d hoplimit %d -> %d, pf=%d\n",
 					              DEBUG_UDP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				}

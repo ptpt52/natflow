@@ -185,7 +185,7 @@ extern const char *const hooknames[];
 #define TUPLE_FMT "%pI4:%u-%c"
 #define TUPLE_ARG(t) &((struct tuple *)(t))->ip, ntohs(((struct tuple *)(t))->port), ((struct tuple *)(t))->encryption ? 'e' : 'o'
 
-#define IPV6_TCPUDP_FMT	"%pI6.%u->%pI6.%u"
+#define IPV6_TCPUDP_FMT	"[%pI6c]:%u->[%pI6c]:%u"
 #define IPV6_TCPUDP_ARG(i,t)	&((struct ipv6hdr *)i)->saddr, ntohs(((struct tcphdr *)(t))->source), &((struct ipv6hdr *)i)->daddr, ntohs(((struct tcphdr *)(t))->dest)
 
 #define DEBUG_FMT6_TCP "[" IPV6_TCPUDP_FMT "|FL:%08X,HL:%u,PL:%u|" TCP_ST_FMT "]"

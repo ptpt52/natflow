@@ -1180,7 +1180,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			user = nf_ct_get(uskb, &ctinfo);
 
 			if (!user) {
-				NATFLOW_ERROR("fakeuser create for ct[%pI6:%u->%pI6:%u %pI6:%u<-%pI6:%u] failed, ctinfo=%x\n",
+				NATFLOW_ERROR("fakeuser create for ct[[%pI6c]:%u->[%pI6c]:%u [%pI6c]:%u<-[%pI6c]:%u] failed, ctinfo=%x\n",
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
 				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
@@ -1189,7 +1189,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			}
 
 			if (!user->ext) {
-				NATFLOW_ERROR("fakeuser create for ct[%pI6:%u->%pI6:%u %pI6:%u<-%pI6:%u] failed, user->ext is NULL\n",
+				NATFLOW_ERROR("fakeuser create for ct[[%pI6c]:%u->[%pI6c]:%u [%pI6c]:%u<-[%pI6c]:%u] failed, user->ext is NULL\n",
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
 				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
@@ -1206,7 +1206,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 				new = krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
 #endif
 				if (!new) {
-					NATFLOW_ERROR("fakeuser create for ct[%pI6:%u->%pI6:%u %pI6:%u<-%pI6:%u] failed, realloc user->ext failed\n",
+					NATFLOW_ERROR("fakeuser create for ct[[%pI6c]:%u->[%pI6c]:%u [%pI6c]:%u<-[%pI6c]:%u] failed, realloc user->ext failed\n",
 					              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
 					              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
 					              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
@@ -1301,12 +1301,12 @@ static inline void natflow_auth_reply_payload_fin(const char *payload, int paylo
 	header_len = offset < 0 ? 0 : offset;
 	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
 	if (!nskb) {
-		NATFLOW_ERROR("alloc_skb fail\n");
+		NATFLOW_ERROR("alloc_skb failed\n");
 		goto out;
 	}
 	if (offset <= 0) {
 		if (pskb_trim(nskb, nskb->len + offset)) {
-			NATFLOW_ERROR("pskb_trim fail: len=%d, offset=%d\n", nskb->len, offset);
+			NATFLOW_ERROR("pskb_trim failed: len=%d, offset=%d\n", nskb->len, offset);
 			consume_skb(nskb);
 			goto out;
 		}
@@ -1397,12 +1397,12 @@ static inline void natflow_auth_reply_payload_fin6(const char *payload, int payl
 	header_len = offset < 0 ? 0 : offset;
 	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
 	if (!nskb) {
-		NATFLOW_ERROR("alloc_skb fail\n");
+		NATFLOW_ERROR("alloc_skb failed\n");
 		goto out;
 	}
 	if (offset <= 0) {
 		if (pskb_trim(nskb, nskb->len + offset)) {
-			NATFLOW_ERROR("pskb_trim fail: len=%d, offset=%d\n", nskb->len, offset);
+			NATFLOW_ERROR("pskb_trim failed: len=%d, offset=%d\n", nskb->len, offset);
 			consume_skb(nskb);
 			goto out;
 		}
@@ -1589,12 +1589,12 @@ static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, s
 	header_len = offset < 0 ? 0 : offset;
 	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
 	if (!nskb) {
-		NATFLOW_ERROR("alloc_skb fail\n");
+		NATFLOW_ERROR("alloc_skb failed\n");
 		goto out;
 	}
 	if (offset <= 0) {
 		if (pskb_trim(nskb, nskb->len + offset)) {
-			NATFLOW_ERROR("pskb_trim fail: len=%d, offset=%d\n", nskb->len, offset);
+			NATFLOW_ERROR("pskb_trim failed: len=%d, offset=%d\n", nskb->len, offset);
 			consume_skb(nskb);
 			goto out;
 		}
@@ -1683,12 +1683,12 @@ static inline void natflow_auth_tcp_reply_finack6(const struct net_device *dev, 
 	header_len = offset < 0 ? 0 : offset;
 	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
 	if (!nskb) {
-		NATFLOW_ERROR("alloc_skb fail\n");
+		NATFLOW_ERROR("alloc_skb failed\n");
 		goto out;
 	}
 	if (offset <= 0) {
 		if (pskb_trim(nskb, nskb->len + offset)) {
-			NATFLOW_ERROR("pskb_trim fail: len=%d, offset=%d\n", nskb->len, offset);
+			NATFLOW_ERROR("pskb_trim failed: len=%d, offset=%d\n", nskb->len, offset);
 			consume_skb(nskb);
 			goto out;
 		}

@@ -216,7 +216,7 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 	if (l >= cnt) {
 		data_left += l;
 		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("err: too long a line");
+			NATFLOW_println("err: line is too long");
 			data_left = 0;
 			return -EINVAL;
 		}
@@ -427,7 +427,7 @@ static int __init natflow_init(void) {
 	natflow_class = class_create("natflow_class");
 #endif
 	if (IS_ERR(natflow_class)) {
-		NATFLOW_println("failed in creating class");
+		NATFLOW_println("failed to create class");
 		retval = -EINVAL;
 		goto class_create_failed;
 	}
@@ -440,26 +440,26 @@ static int __init natflow_init(void) {
 
 	retval = natflow_zone_init();
 	if (retval) {
-		NATFLOW_println("natflow_zone_init fail, error=%d", retval);
+		NATFLOW_println("natflow_zone_init failed, error=%d", retval);
 		goto natflow_zone_init_failed;
 	}
 
 	retval = natflow_user_init();
 	if (retval) {
-		NATFLOW_println("natflow_user_init fail, error=%d", retval);
+		NATFLOW_println("natflow_user_init failed, error=%d", retval);
 		goto natflow_user_init_failed;
 	}
 
 	retval = conntrackinfo_init();
 	if (retval) {
-		NATFLOW_println("conntrackinfo_init fail, error=%d", retval);
+		NATFLOW_println("conntrackinfo_init failed, error=%d", retval);
 		goto conntrackinfo_init_failed;
 	}
 
 #if defined(CONFIG_NATFLOW_PATH)
 	retval = natflow_path_init();
 	if (retval) {
-		NATFLOW_println("natflow_path_init fail, error=%d", retval);
+		NATFLOW_println("natflow_path_init failed, error=%d", retval);
 		goto natflow_path_init_failed;
 	}
 #endif
@@ -467,7 +467,7 @@ static int __init natflow_init(void) {
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 	retval = natflow_urllogger_init();
 	if (retval) {
-		NATFLOW_println("natflow_urllogger_init fail, error=%d", retval);
+		NATFLOW_println("natflow_urllogger_init failed, error=%d", retval);
 		goto natflow_urllogger_init_failed;
 	}
 #endif

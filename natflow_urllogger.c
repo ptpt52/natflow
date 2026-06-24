@@ -495,12 +495,12 @@ static inline void natflow_urllogger_tcp_reply_rstack(const struct net_device *d
 	header_len = offset < 0 ? 0 : offset;
 	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
 	if (!nskb) {
-		NATFLOW_ERROR("alloc_skb fail\n");
+		NATFLOW_ERROR("alloc_skb failed\n");
 		goto out;
 	}
 	if (offset <= 0) {
 		if (pskb_trim(nskb, nskb->len + offset)) {
-			NATFLOW_ERROR("pskb_trim fail: len=%d, offset=%d\n", nskb->len, offset);
+			NATFLOW_ERROR("pskb_trim failed: len=%d, offset=%d\n", nskb->len, offset);
 			consume_skb(nskb);
 			goto out;
 		}
@@ -589,12 +589,12 @@ static inline void natflow_urllogger_tcp_reply_rstack6(const struct net_device *
 	header_len = offset < 0 ? 0 : offset;
 	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
 	if (!nskb) {
-		NATFLOW_ERROR("alloc_skb fail\n");
+		NATFLOW_ERROR("alloc_skb failed\n");
 		goto out;
 	}
 	if (offset <= 0) {
 		if (pskb_trim(nskb, nskb->len + offset)) {
-			NATFLOW_ERROR("pskb_trim fail: len=%d, offset=%d\n", nskb->len, offset);
+			NATFLOW_ERROR("pskb_trim failed: len=%d, offset=%d\n", nskb->len, offset);
 			consume_skb(nskb);
 			goto out;
 		}

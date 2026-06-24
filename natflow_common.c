@@ -54,9 +54,9 @@ void natflow_probe_ct_ext(void)
 		i = ALIGN(ct.ext->len, __ALIGN_64BYTES);
 		kfree(ct.ext);
 		static_fixed_ext_off = i / NATCAP_FACTOR;
-		NATFLOW_println("probe static_fixed_ext_off = %u\n", static_fixed_ext_off);
+		NATFLOW_println("probe static_fixed_ext_off = %u", static_fixed_ext_off);
 	} else {
-		NATFLOW_println("default static_fixed_ext_off = %u\n", static_fixed_ext_off);
+		NATFLOW_println("default static_fixed_ext_off = %u", static_fixed_ext_off);
 	}
 }
 
@@ -105,7 +105,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 
 	if (test_and_set_bit(IPS_NATFLOW_SESSION_BIT, &ct->status)) {
 		/* someone else is already running in this progress */
-		NATFLOW_INFO(DEBUG_FMT_PREFIX "someone else is already running in this progress!\n", DEBUG_ARG_PREFIX);
+		NATFLOW_INFO(DEBUG_FMT_PREFIX "another process is already running!\n", DEBUG_ARG_PREFIX);
 		return -1;
 	}
 
@@ -164,7 +164,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 
 	if (nkoff > NATCAP_MAX_OFF) {
 		clear_bit(IPS_NATFLOW_SESSION_BIT, &ct->status);
-		NATFLOW_ERROR(DEBUG_FMT_PREFIX "realloc ct->ext->len > %u not supported!\n", DEBUG_ARG_PREFIX, NATCAP_MAX_OFF);
+		NATFLOW_ERROR(DEBUG_FMT_PREFIX "realloc: ct->ext->len > %u is not supported!\n", DEBUG_ARG_PREFIX, NATCAP_MAX_OFF);
 		return -1;
 	}
 

@@ -91,7 +91,7 @@ static ssize_t conntrackinfo_write(struct file *file, const char __user *buf, si
 	if (l >= cnt) {
 		data_left += l;
 		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("err: too long a line");
+			NATFLOW_println("Error: line is too long");
 			data_left = 0;
 			return -EINVAL;
 		}
@@ -644,7 +644,7 @@ int conntrackinfo_init(void)
 	conntrackinfo_class = class_create("conntrackinfo_class");
 #endif
 	if (IS_ERR(conntrackinfo_class)) {
-		NATFLOW_println("failed in creating class");
+		NATFLOW_println("failed to create class");
 		retval = -EINVAL;
 		goto class_create_failed;
 	}
