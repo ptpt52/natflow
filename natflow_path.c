@@ -112,6 +112,17 @@ static inline int vline_fwd_family_ipv6_enabled(const struct net_device *dev)
 	return !(dev->flags & IFF_VLINE_FAMILY_IPV4);
 }
 
+static inline int vline_fwd_prepare_noarp_to_ether6_head(struct sk_buff *skb)
+{
+	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr)))
+		return -EINVAL;
+
+	if (skb_cow_head(skb, ETH_HLEN))
+		return -ENOMEM;
+
+	return 0;
+}
+
 static inline int vline_fwd_is_local_ether_frame(struct sk_buff *skb)
 {
 	struct net_device *upper_dev;
@@ -5350,6 +5361,9 @@ out6:
 						if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
 							int dest_found = 0;
 							struct ethhdr *eth;
+
+							if (vline_fwd_prepare_noarp_to_ether6_head(skb))
+								return NF_DROP;
 
 							iph = (void *)ipv6_hdr(skb);
 							eth = (void *)((unsigned char *)iph - ETH_HLEN);
