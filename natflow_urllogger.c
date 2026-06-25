@@ -135,6 +135,19 @@ static unsigned int urllogger_store_count = 0;
 static LIST_HEAD(urllogger_store_list);
 static DEFINE_SPINLOCK(urllogger_store_lock);
 
+static inline int urllogger_store_addr_equal(const struct urlinfo *a, const struct urlinfo *b)
+{
+	if ((a->flags & URLINFO_IPV6) != (b->flags & URLINFO_IPV6))
+		return 0;
+
+	if ((a->flags & URLINFO_IPV6)) {
+		return memcmp(&a->sipv6, &b->sipv6, sizeof(a->sipv6)) == 0 &&
+		       memcmp(&a->dipv6, &b->dipv6, sizeof(a->dipv6)) == 0;
+	}
+
+	return a->sip == b->sip && a->dip == b->dip;
+}
+
 static void urllogger_store_record(struct urlinfo *url)
 {
 	struct urlinfo *url_i;
@@ -145,7 +158,7 @@ static void urllogger_store_record(struct urlinfo *url)
 		/* merge the duplicate url request in 10s */
 		if (uintmindiff(url_i->timestamp, url->timestamp) > urllogger_store_timestamp_freq)
 			break;
-		if (url_i->sip == url->sip && url_i->dip == url->dip && url_i->dport == url->dport &&
+		if (urllogger_store_addr_equal(url_i, url) && url_i->dport == url->dport &&
 		        url_i->data_len == url->data_len && memcmp(url_i->data, url->data, url_i->data_len) == 0 &&
 		        url_i->flags == url->flags &&
 		        url_i->http_method == url->http_method) {
