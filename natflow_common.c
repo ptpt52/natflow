@@ -138,9 +138,20 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		nk = (struct nat_key_t *)((void *)old + static_fixed_ext_off * NATCAP_FACTOR);
 		if (nk->magic == NATCAP_MAGIC && nk->ext_magic == (((unsigned long)ct) & 0xffffffff)) {
 			if (nk->natflow_off) {
-				NATFLOW_INFO(DEBUG_FMT_PREFIX "natflow exist! nk: len=%u natcap_off=%u natflow_off=%u\n",
-				             DEBUG_ARG_PREFIX, nk->len, nk->natcap_off, nk->natflow_off);
-				newoff = nk->natflow_off;
+				if (nk->natcap_off && (ct->status & IPS_NATCAP_SESSION)) {
+					NATFLOW_DEBUG(DEBUG_FMT_PREFIX "reuse natflow key: len=%u natcap_off=%u natflow_off=%u\n",
+					              DEBUG_ARG_PREFIX, nk->len, nk->natcap_off, nk->natflow_off);
+					newoff = nk->natflow_off;
+				} else {
+					/*
+					 * The session status bit is authoritative for natflow.
+					 * If it was clear but a natflow key (or a natcap key
+					 * without natcap being active) is still in the private ct
+					 * extension tail, this is most likely stale allocator data
+					 * from a recycled conntrack/ext object.
+					 */
+					nk = NULL;
+				}
 			} else {
 				newoff = ALIGN(nk->len, __ALIGN_64BITS);
 			}
