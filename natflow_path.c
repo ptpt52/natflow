@@ -437,13 +437,14 @@ struct net_device *ifname_group_get(int idx)
 			idx_cnt++;
 			if (idx_cnt == idx + 1) {
 				dev_hold(dev);
-				break;
+				rcu_read_unlock();
+				return dev;
 			}
 		}
 	}
 	rcu_read_unlock();
 
-	return dev;
+	return NULL;
 }
 
 #if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
