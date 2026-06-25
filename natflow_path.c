@@ -70,7 +70,7 @@ static inline unsigned int natflow_skb_dst_mtu(struct sk_buff *skb, bool is_ipv6
 
 static inline void vline_fwd_flags_clear(struct net_device *dev)
 {
-	dev->flags &= ~(IFF_IS_LAN | IFF_VLINE_L2_PORT | IFF_VLINE_FAMILY_IPV4 |
+	dev->flags &= ~(IFF_VLINE_IS_LAN | IFF_VLINE_L2_PORT | IFF_VLINE_FAMILY_IPV4 |
 	                IFF_VLINE_FAMILY_IPV6 | IFF_VLINE_RELAY);
 }
 
@@ -171,8 +171,8 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 	}
 
 	if (src_dev && dst_dev) {
-		src_dev->flags |= IFF_IS_LAN;
-		dst_dev->flags &= ~IFF_IS_LAN;
+		src_dev->flags |= IFF_VLINE_IS_LAN;
+		dst_dev->flags &= ~IFF_VLINE_IS_LAN;
 		if ((src_dev->flags & IFF_NOARP)) {
 			rcu_read_unlock();
 			NATFLOW_println("Invalid vline config for %s,%s,%s: src_dev should not be IFF_NOARP",
@@ -216,7 +216,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 			for_each_netdev_rcu(&init_net, dev) {
 				upper_dev = netdev_master_upper_dev_get_rcu(dev);
 				if (upper_dev == src_dev) {
-					dev->flags |= IFF_IS_LAN;
+					dev->flags |= IFF_VLINE_IS_LAN;
 					dev->flags |= IFF_VLINE_L2_PORT;
 					if (family == VLINE_FAMILY_IPV4) {
 						dev->flags &= ~IFF_VLINE_FAMILY_IPV6;
@@ -252,7 +252,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 			for_each_netdev_rcu(&init_net, dev) {
 				upper_dev = netdev_master_upper_dev_get_rcu(dev);
 				if (upper_dev == dst_dev) {
-					dev->flags &= ~IFF_IS_LAN;
+					dev->flags &= ~IFF_VLINE_IS_LAN;
 					dev->flags |= IFF_VLINE_L2_PORT;
 					if (family == VLINE_FAMILY_IPV4) {
 						dev->flags &= ~IFF_VLINE_FAMILY_IPV6;
@@ -3285,7 +3285,7 @@ out:
 								user = natflow_user_in_get(ipaddr, macaddr); //learn or update macaddr cache
 								if (user) {
 									struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-									if ((skb->dev->flags & IFF_IS_LAN)) {
+									if ((skb->dev->flags & IFF_VLINE_IS_LAN)) {
 										if (fud->vline_lan != 1) fud->vline_lan = 1;
 									} else {
 										if (fud->vline_lan != 0) fud->vline_lan = 0;
@@ -3329,8 +3329,8 @@ out:
 					user = natflow_user_find_get(iph->daddr);
 					if (user) {
 						struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-						if (((skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 0) ||
-						        (!(skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 1)) {
+						if (((skb->dev->flags & IFF_VLINE_IS_LAN) && fud->vline_lan == 0) ||
+						        (!(skb->dev->flags & IFF_VLINE_IS_LAN) && fud->vline_lan == 1)) {
 							struct ethhdr *eth = eth_hdr(skb);
 							ether_addr_copy(eth->h_dest, fud->macaddr);
 							natflow_user_release_put(user);
@@ -5120,8 +5120,8 @@ out6:
 							user = natflow_user_find_get6((const union nf_inet_addr *)&IPV6H->daddr);
 							if (user) {
 								struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-								if (((skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 0) ||
-								        (!(skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 1)) {
+								if (((skb->dev->flags & IFF_VLINE_IS_LAN) && fud->vline_lan == 0) ||
+								        (!(skb->dev->flags & IFF_VLINE_IS_LAN) && fud->vline_lan == 1)) {
 									eth = eth_hdr(skb);
 									ether_addr_copy(eth->h_dest, fud->macaddr);
 									natflow_user_release_put(user);
@@ -5155,7 +5155,7 @@ out6:
 								user = natflow_user_in_get6((const union nf_inet_addr *)&IPV6H->saddr, eth->h_source);
 								if (user) {
 									struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-									if ((skb->dev->flags & IFF_IS_LAN)) {
+									if ((skb->dev->flags & IFF_VLINE_IS_LAN)) {
 										if (fud->vline_lan != 1) fud->vline_lan = 1;
 									} else {
 										if (fud->vline_lan != 0) fud->vline_lan = 0;
@@ -5222,8 +5222,8 @@ out6:
 						user = natflow_user_find_get6((const union nf_inet_addr *)&IPV6H->daddr);
 						if (user) {
 							struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-							if (((skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 0) ||
-							        (!(skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 1)) {
+							if (((skb->dev->flags & IFF_VLINE_IS_LAN) && fud->vline_lan == 0) ||
+							        (!(skb->dev->flags & IFF_VLINE_IS_LAN) && fud->vline_lan == 1)) {
 								struct ethhdr *eth = eth_hdr(skb);
 								ether_addr_copy(eth->h_dest, fud->macaddr);
 								natflow_user_release_put(user);
@@ -5458,7 +5458,7 @@ out6:
 					iph = (void *)ipv6_hdr(skb);
 					l4 = (void *)iph + sizeof(struct ipv6hdr);
 
-					if ((skb->dev->flags & IFF_IS_LAN)) {
+					if ((skb->dev->flags & IFF_VLINE_IS_LAN)) {
 						struct inet6_dev *idev;
 						struct inet6_ifaddr *ifp;
 
@@ -5481,7 +5481,7 @@ out6:
 					user = natflow_user_find_get6((const union nf_inet_addr *)&IPV6H->saddr);
 					if (user) {
 						fud = natflow_fakeuser_data(user);
-						if ((skb->dev->flags & IFF_IS_LAN)) {
+						if ((skb->dev->flags & IFF_VLINE_IS_LAN)) {
 							if (fud->vline_lan != 1) fud->vline_lan = 1;
 						} else {
 							if (fud->vline_lan != 0) fud->vline_lan = 0;
@@ -5492,8 +5492,8 @@ out6:
 					user = natflow_user_find_get6((const union nf_inet_addr *)&IPV6H->daddr);
 					if (user) {
 						fud = natflow_fakeuser_data(user);
-						if (((skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 1)
-						        || (!(skb->dev->flags & IFF_IS_LAN) && fud->vline_lan == 0)) {
+						if (((skb->dev->flags & IFF_VLINE_IS_LAN) && fud->vline_lan == 1)
+						        || (!(skb->dev->flags & IFF_VLINE_IS_LAN) && fud->vline_lan == 0)) {
 							natflow_user_release_put(user);
 							return ret;
 						}
@@ -5553,7 +5553,7 @@ out6:
 							}
 						}
 					}
-					if ((skb->dev->flags & IFF_IS_LAN)) {
+					if ((skb->dev->flags & IFF_VLINE_IS_LAN)) {
 						natflow_fakeuser_t *user;
 						struct fakeuser_data_t *fud;
 
