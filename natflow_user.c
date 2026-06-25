@@ -1965,6 +1965,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 			}
 		}
 	} else {
+#ifdef NATFLOW_HAVE_NAT66
 		if (fud->auth_status == AUTH_REQ && fud->auth_type == AUTH_TYPE_WEB && https_redirect_en != 0) {
 			struct ipv6hdr *ip6h = ipv6_hdr(skb);
 			void *l4 = (void *)ip6h + sizeof(struct ipv6hdr);
@@ -1993,6 +1994,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 				}
 			}
 		}
+#endif
 	}
 out:
 	if (bridge) {

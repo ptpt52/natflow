@@ -40,6 +40,12 @@
 #error "CONFIG_NF_NAT and CONFIG_NF_NAT_MODULE not defined"
 #endif
 
+/* NAT66 is upstream since 3.7; older vendor trees may backport it. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0) || \
+    defined(CONFIG_NF_NAT_IPV6) || defined(CONFIG_NF_NAT_IPV6_MODULE)
+#define NATFLOW_HAVE_NAT66 1
+#endif
+
 extern unsigned int debug;
 
 #define IS_NATFLOW_FIXME() (debug & 0x10)
@@ -281,7 +287,9 @@ extern int ip_set_test_dst_netport(const struct net_device *in, const struct net
 #define IP_SET_test_dst_port IP_SET_test_dst_ip
 
 unsigned int natflow_dnat_setup(struct nf_conn *ct, __be32 addr, __be16 man_proto);
+#ifdef NATFLOW_HAVE_NAT66
 unsigned int natflow_dnat_setup6(struct nf_conn *ct, const struct in6_addr *addr, __be16 man_proto);
+#endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0)
 static inline unsigned int nf_conntrack_in_compat(struct net *net, u_int8_t pf, unsigned int hooknum, struct sk_buff *skb)

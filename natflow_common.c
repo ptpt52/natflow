@@ -822,11 +822,10 @@ unsigned int natflow_dnat_setup(struct nf_conn *ct, __be32 addr, __be16 man_prot
 #endif
 }
 
+#ifdef NATFLOW_HAVE_NAT66
 unsigned int natflow_dnat_setup6(struct nf_conn *ct, const struct in6_addr *addr, __be16 man_proto)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 7, 0)
-	return NF_ACCEPT;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
 	struct nf_nat_range range;
 	if (nf_nat_initialized(ct, NF_NAT_MANIP_DST)) {
 		return NF_ACCEPT;
@@ -855,3 +854,4 @@ unsigned int natflow_dnat_setup6(struct nf_conn *ct, const struct in6_addr *addr
 	return nf_nat_setup_info(ct, &range, NF_NAT_MANIP_DST);
 #endif
 }
+#endif
