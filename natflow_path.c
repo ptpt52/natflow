@@ -128,13 +128,39 @@ static inline int vline_fwd_is_local_ether_frame(struct sk_buff *skb)
 	return ether_addr_equal(skb->dev->dev_addr, eth_hdr(skb)->h_dest);
 }
 
-static inline int vline_fwd_is_ndisc6(unsigned char nexthdr, void *l4)
+static inline int vline_fwd_is_ndisc6(struct sk_buff *skb)
 {
-	return nexthdr == IPPROTO_ICMPV6 &&
-	       (ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION ||
-	        ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT ||
-	        ICMP6H(l4)->icmp6_type == NDISC_ROUTER_SOLICITATION ||
-	        ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT);
+	struct ipv6hdr *ipv6h;
+	struct icmp6hdr *icmp6h;
+
+	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr)))
+		return 0;
+
+	ipv6h = ipv6_hdr(skb);
+	if (ipv6h->nexthdr != IPPROTO_ICMPV6)
+		return 0;
+
+	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct icmp6hdr)))
+		return 0;
+
+	ipv6h = ipv6_hdr(skb);
+	icmp6h = (struct icmp6hdr *)((void *)ipv6h + sizeof(struct ipv6hdr));
+
+	return icmp6h->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION ||
+	       icmp6h->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT ||
+	       icmp6h->icmp6_type == NDISC_ROUTER_SOLICITATION ||
+	       icmp6h->icmp6_type == NDISC_ROUTER_ADVERTISEMENT;
+}
+
+static inline int vline_fwd_is_non_ndisc_icmpv6(struct sk_buff *skb)
+{
+	struct ipv6hdr *ipv6h;
+
+	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr)))
+		return 0;
+
+	ipv6h = ipv6_hdr(skb);
+	return ipv6h->nexthdr == IPPROTO_ICMPV6 && !vline_fwd_is_ndisc6(skb);
 }
 
 static inline int vline_fwd_map_update(struct net_device *in_dev,
@@ -5141,11 +5167,11 @@ out6:
 				if ((outdev->flags & IFF_VLINE_RELAY)) {
 					natflow_fakeuser_t *user;
 					if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
-						iph = (void *)ipv6_hdr(skb);
-						l4 = (void *)iph + sizeof(struct ipv6hdr);
-
-						if (vline_fwd_is_ndisc6(IPV6H->nexthdr, l4)) {
+						if (vline_fwd_is_ndisc6(skb)) {
 							struct ethhdr *eth;
+							iph = (void *)ipv6_hdr(skb);
+							l4 = (void *)iph + sizeof(struct ipv6hdr);
+
 							user = natflow_user_find_get6((const union nf_inet_addr *)&IPV6H->daddr);
 							if (user) {
 								struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
@@ -5388,6 +5414,12 @@ out6:
 							unsigned char *ta;
 							iph = (void *)ipv6_hdr(skb);
 							l4 = (void *)iph + sizeof(struct ipv6hdr);
+							if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) +
+							                   sizeof(struct icmp6hdr))) {
+								break;
+							}
+							iph = (void *)ipv6_hdr(skb);
+							l4 = (void *)iph + sizeof(struct ipv6hdr);
 							if (IPV6H->nexthdr != IPPROTO_ICMPV6 || ICMP6H(l4)->icmp6_type != NDISC_NEIGHBOUR_SOLICITATION) {
 								break;
 							}
@@ -5522,7 +5554,7 @@ out6:
 						natflow_user_release_put(user);
 					}
 
-					if (vline_fwd_is_ndisc6(IPV6H->nexthdr, l4)) {
+					if (vline_fwd_is_ndisc6(skb)) {
 						// flood NS/NA/RS/RA packets
 						skb = skb_clone(skb, GFP_ATOMIC);
 						if (!skb) {
@@ -5541,10 +5573,7 @@ out6:
 				ct = nf_ct_get(skb, &ctinfo);
 				if (!ct) {
 					if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
-						iph = (void *)ipv6_hdr(skb);
-						l4 = (void *)iph + sizeof(struct ipv6hdr);
-						if (IPV6H->nexthdr == IPPROTO_ICMPV6 &&
-						        !vline_fwd_is_ndisc6(IPV6H->nexthdr, l4)) {
+						if (vline_fwd_is_non_ndisc_icmpv6(skb)) {
 							ret = nf_conntrack_in_compat(dev_net(skb->dev), AF_INET6, NF_INET_PRE_ROUTING, skb);
 							if (ret != NF_ACCEPT) {
 								return ret;
