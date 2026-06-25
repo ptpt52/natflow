@@ -239,7 +239,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 		if (is_relay) {
 			if ((dst_dev->flags & IFF_NOARP)) {
 				rcu_read_unlock();
-				NATFLOW_println("Invalid vline relay config for %s,%s,%s: dev should not be IFF_NOARP",
+				NATFLOW_println("Invalid vline relay config for %s,%s,%s: dst_dev should not be IFF_NOARP",
 				                src_ifname, dst_ifname, vline_fwd_family_name(family));
 				return -EINVAL;
 			}
