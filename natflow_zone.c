@@ -17,7 +17,6 @@
 #include <linux/syscalls.h>
 #include <linux/uaccess.h>
 #include <linux/unistd.h>
-#include <linux/version.h>
 #include <linux/mman.h>
 #include <linux/spinlock.h>
 #include <linux/rcupdate.h>
@@ -401,11 +400,7 @@ int natflow_zone_init(void)
 		goto cdev_add_failed;
 	}
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
-	natflow_zone_class = class_create(THIS_MODULE, "natflow_zone_class");
-#else
-	natflow_zone_class = class_create("natflow_zone_class");
-#endif
+	natflow_zone_class = natflow_class_create("natflow_zone_class");
 	if (IS_ERR(natflow_zone_class)) {
 		NATFLOW_println("failed in creating class");
 		retval = -EINVAL;

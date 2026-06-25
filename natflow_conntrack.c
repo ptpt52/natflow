@@ -22,7 +22,6 @@
 #include <linux/string.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
-#include <linux/version.h>
 #include <linux/spinlock.h>
 #include <linux/seqlock.h>
 #include <linux/netdevice.h>
@@ -130,7 +129,7 @@ static const char *const sctp_conntrack_names[] = {
 	"HEARTBEAT_ACKED",
 };
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+#if NATFLOW_DCCP_STATES_ARE_LOCAL
 enum ct_dccp_states {
 	CT_DCCP_NONE,
 	CT_DCCP_REQUEST,
@@ -238,7 +237,7 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 		user->status = 1;
 		rcu_read_lock();
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+#if !NATFLOW_HAVE_NF_CONNTRACK_GLOBAL_HASH
 		ct_hash = init_net.ct.hash;
 		hashsz = init_net.ct.htable_size;
 #else
@@ -256,7 +255,7 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 					nf_ct_put(ct);
 					continue;
 				}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
+#if NATFLOW_HAVE_NF_CT_IS_EXPIRED
 				if (nf_ct_is_expired(ct)) {
 					nf_ct_put(ct);
 					continue;
@@ -280,9 +279,9 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 					user->count++;
 				}
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
+#if NATFLOW_NF_CT_L4PROTO_FIND_TAKES_L4NUM
 				l4proto = nf_ct_l4proto_find(nf_ct_protonum(ct));
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
+#elif NATFLOW_NF_CT_L4PROTO_FIND_TAKES_L4NUM_COMPAT
 				l4proto = __nf_ct_l4proto_find(nf_ct_protonum(ct));
 #else
 				l4proto = __nf_ct_l4proto_find(nf_ct_l3num(ct), nf_ct_protonum(ct));
@@ -638,11 +637,7 @@ int conntrackinfo_init(void)
 		goto cdev_add_failed;
 	}
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
-	conntrackinfo_class = class_create(THIS_MODULE, "conntrackinfo_class");
-#else
-	conntrackinfo_class = class_create("conntrackinfo_class");
-#endif
+	conntrackinfo_class = natflow_class_create("conntrackinfo_class");
 	if (IS_ERR(conntrackinfo_class)) {
 		NATFLOW_println("failed to create class");
 		retval = -EINVAL;

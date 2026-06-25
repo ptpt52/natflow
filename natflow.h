@@ -9,6 +9,7 @@
 #include <linux/if_ether.h>
 #include <linux/if_vlan.h>
 #include <linux/if_pppox.h>
+#include "natflow_compat.h"
 
 #define MAX_IOCTL_LEN 256
 
@@ -359,7 +360,7 @@ static inline int natflow_hash_skip(u32 hash)
 #endif
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)
+#if !NATFLOW_VLAN_HWACCEL_CLEAR_TAG_IS_EXPORTED
 static inline void __vlan_hwaccel_clear_tag(struct sk_buff *skb)
 {
 	skb->vlan_tci &= ~VLAN_TAG_PRESENT;

@@ -22,7 +22,6 @@
 #include <linux/string.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
-#include <linux/version.h>
 #include <linux/spinlock.h>
 #include <linux/seqlock.h>
 #include <linux/netdevice.h>
@@ -624,27 +623,47 @@ static inline struct sk_buff *uskb_of_this_cpu(void)
 void natflow_user_timeout_touch(natflow_fakeuser_t *nfu)
 {
 	struct fakeuser_data_t *fud;
+	unsigned long expires;
 
 	fud = natflow_fakeuser_data(nfu);
 	if (fud->auth_type != AUTH_TYPE_UNKNOWN) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
-		unsigned long newtimeout = jiffies + natflow_user_timeout * HZ;
-		if (newtimeout - nfu->timeout.expires > HZ) {
-			mod_timer_pending(&nfu->timeout, newtimeout);
-		}
-#else
-		nfu->timeout = jiffies + natflow_user_timeout * HZ;
-#endif
+		expires = jiffies + natflow_user_timeout * HZ;
 	} else {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
-		unsigned long newtimeout = jiffies + NATFLOW_USER_TIMEOUT * HZ;
-		if (newtimeout - nfu->timeout.expires > HZ) {
-			mod_timer_pending(&nfu->timeout, newtimeout);
-		}
-#else
-		nfu->timeout = jiffies + NATFLOW_USER_TIMEOUT * HZ;
-#endif
+		expires = jiffies + NATFLOW_USER_TIMEOUT * HZ;
 	}
+	natflow_ct_timeout_set(nfu, expires);
+}
+
+static inline int natflow_fakeuser_ext_init(natflow_fakeuser_t *user,
+        struct fakeuser_data_t **fud)
+{
+	struct nf_ct_ext *new;
+	unsigned int newoff;
+
+	if (nf_ct_is_confirmed(user) || (IPS_NATFLOW_USER & user->status) ||
+	        test_and_set_bit(IPS_NATFLOW_USER_BIT, &user->status)) {
+		return 0;
+	}
+
+	newoff = ALIGN(user->ext->len, __ALIGN_64BITS);
+	new = natflow_ct_ext_krealloc(user->ext,
+	                              newoff + sizeof(struct fakeuser_data_t),
+	                              GFP_ATOMIC);
+	if (!new) {
+		return -ENOMEM;
+	}
+
+	if (user->ext != new) {
+		natflow_ct_ext_replace(user, user->ext, new);
+	}
+
+	new->len = newoff;
+	memset((void *)new + newoff, 0, sizeof(struct fakeuser_data_t));
+	*fud = (struct fakeuser_data_t *)((void *)new + newoff);
+	spin_lock_init(&(*fud)->tc.rx.lock);
+	spin_lock_init(&(*fud)->tc.tx.lock);
+
+	return 0;
 }
 
 natflow_fakeuser_t *natflow_user_get(struct nf_conn *ct)
@@ -682,11 +701,7 @@ natflow_fakeuser_t *natflow_user_find_get(__be32 ip)
 	tuple.dst.u.udp.port = __constant_htons(65535);
 	tuple.src.l3num = PF_INET;
 	tuple.dst.protonum = IPPROTO_UDP;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
-	h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
-#else
-	h = nf_conntrack_find_get(&init_net, &nf_ct_zone_dflt, &tuple);
-#endif
+	h = natflow_nf_conntrack_find_get(&init_net, &tuple);
 	if (h) {
 		struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
 		if (!(IPS_NATFLOW_USER & ct->status) || NF_CT_DIRECTION(h) != IP_CT_DIR_ORIGINAL) {
@@ -714,11 +729,7 @@ natflow_fakeuser_t *natflow_user_find_get6(const union nf_inet_addr *u3)
 	tuple.dst.u.udp.port = __constant_htons(65535);
 	tuple.src.l3num = AF_INET6;
 	tuple.dst.protonum = IPPROTO_UDP;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
-	h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
-#else
-	h = nf_conntrack_find_get(&init_net, &nf_ct_zone_dflt, &tuple);
-#endif
+	h = natflow_nf_conntrack_find_get(&init_net, &tuple);
 	if (h) {
 		struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
 		if (!(IPS_NATFLOW_USER & ct->status) || NF_CT_DIRECTION(h) != IP_CT_DIR_ORIGINAL) {
@@ -783,8 +794,6 @@ static natflow_fakeuser_t *natflow_user_lookup_in(struct nf_conn *ct, int dir)
 natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 {
 	natflow_fakeuser_t *user = NULL;
-	struct nf_ct_ext *new = NULL;
-	unsigned int newoff = 0;
 	int ret;
 	struct sk_buff *uskb;
 	struct iphdr *iph;
@@ -840,33 +849,9 @@ natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 		skb_nfct_reset(uskb);
 		return NULL;
 	}
-	if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status) && !test_and_set_bit(IPS_NATFLOW_USER_BIT, &user->status)) {
-		newoff = ALIGN(user->ext->len, __ALIGN_64BITS);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-		new = __krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
-#else
-		new = krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
-#endif
-		if (!new) {
-			skb_nfct_reset(uskb);
-			return NULL;
-		}
-		if (user->ext != new) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
-			kfree_rcu(user->ext, rcu);
-			user->ext = new;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-			kfree_rcu(user->ext, rcu);
-			rcu_assign_pointer(user->ext, new);
-#else
-			user->ext = new;
-#endif
-		}
-		new->len = newoff;
-		memset((void *)new + newoff, 0, sizeof(struct fakeuser_data_t));
-		fud = (struct fakeuser_data_t *)((void *)new + newoff);
-		spin_lock_init(&fud->tc.rx.lock);
-		spin_lock_init(&fud->tc.tx.lock);
+	if (natflow_fakeuser_ext_init(user, &fud) != 0) {
+		skb_nfct_reset(uskb);
+		return NULL;
 	}
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
@@ -912,8 +897,6 @@ natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3, const uint8_t *macaddr)
 {
 	natflow_fakeuser_t *user = NULL;
-	struct nf_ct_ext *new = NULL;
-	unsigned int newoff = 0;
 	int ret;
 	struct sk_buff *uskb;
 	struct iphdr *iph;
@@ -966,33 +949,9 @@ natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3, const uin
 		skb_nfct_reset(uskb);
 		return NULL;
 	}
-	if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status) && !test_and_set_bit(IPS_NATFLOW_USER_BIT, &user->status)) {
-		newoff = ALIGN(user->ext->len, __ALIGN_64BITS);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-		new = __krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
-#else
-		new = krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
-#endif
-		if (!new) {
-			skb_nfct_reset(uskb);
-			return NULL;
-		}
-		if (user->ext != new) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
-			kfree_rcu(user->ext, rcu);
-			user->ext = new;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-			kfree_rcu(user->ext, rcu);
-			rcu_assign_pointer(user->ext, new);
-#else
-			user->ext = new;
-#endif
-		}
-		new->len = newoff;
-		memset((void *)new + newoff, 0, sizeof(struct fakeuser_data_t));
-		fud = (struct fakeuser_data_t *)((void *)new + newoff);
-		spin_lock_init(&fud->tc.rx.lock);
-		spin_lock_init(&fud->tc.tx.lock);
+	if (natflow_fakeuser_ext_init(user, &fud) != 0) {
+		skb_nfct_reset(uskb);
+		return NULL;
 	}
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
@@ -1048,8 +1007,6 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 	}
 
 	if (!nf_ct_is_confirmed(ct) && !user && (!ct->master || !ct->master->master)) {
-		struct nf_ct_ext *new = NULL;
-		unsigned int newoff = 0;
 		int ret;
 		struct sk_buff *uskb;
 		struct iphdr *iph;
@@ -1115,15 +1072,9 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 				skb_nfct_reset(uskb);
 				return NULL;
 			}
-			if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status) && !test_and_set_bit(IPS_NATFLOW_USER_BIT, &user->status)) {
+			if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status)) {
 				struct fakeuser_data_t *fud;
-				newoff = ALIGN(user->ext->len, __ALIGN_64BITS);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-				new = __krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
-#else
-				new = krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
-#endif
-				if (!new) {
+				if (natflow_fakeuser_ext_init(user, &fud) != 0) {
 					NATFLOW_ERROR("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] failed, realloc user->ext failed\n",
 					              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
 					              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
@@ -1132,22 +1083,6 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 					skb_nfct_reset(uskb);
 					return NULL;
 				}
-				if (user->ext != new) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
-					kfree_rcu(user->ext, rcu);
-					user->ext = new;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-					kfree_rcu(user->ext, rcu);
-					rcu_assign_pointer(user->ext, new);
-#else
-					user->ext = new;
-#endif
-				}
-				new->len = newoff;
-				memset((void *)new + newoff, 0, sizeof(struct fakeuser_data_t));
-				fud = (struct fakeuser_data_t *)((void *)new + newoff);
-				spin_lock_init(&fud->tc.rx.lock);
-				spin_lock_init(&fud->tc.tx.lock);
 			}
 		} else {
 			uskb->protocol = __constant_htons(ETH_P_IPV6);
@@ -1197,15 +1132,9 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 				skb_nfct_reset(uskb);
 				return NULL;
 			}
-			if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status) && !test_and_set_bit(IPS_NATFLOW_USER_BIT, &user->status)) {
+			if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status)) {
 				struct fakeuser_data_t *fud;
-				newoff = ALIGN(user->ext->len, __ALIGN_64BITS);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-				new = __krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
-#else
-				new = krealloc(user->ext, newoff + sizeof(struct fakeuser_data_t), GFP_ATOMIC);
-#endif
-				if (!new) {
+				if (natflow_fakeuser_ext_init(user, &fud) != 0) {
 					NATFLOW_ERROR("fakeuser create for ct[[%pI6c]:%u->[%pI6c]:%u [%pI6c]:%u<-[%pI6c]:%u] failed, realloc user->ext failed\n",
 					              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
 					              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
@@ -1214,22 +1143,6 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 					skb_nfct_reset(uskb);
 					return NULL;
 				}
-				if (user->ext != new) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
-					kfree_rcu(user->ext, rcu);
-					user->ext = new;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-					kfree_rcu(user->ext, rcu);
-					rcu_assign_pointer(user->ext, new);
-#else
-					user->ext = new;
-#endif
-				}
-				new->len = newoff;
-				memset((void *)new + newoff, 0, sizeof(struct fakeuser_data_t));
-				fud = (struct fakeuser_data_t *)((void *)new + newoff);
-				spin_lock_init(&fud->tc.rx.lock);
-				spin_lock_init(&fud->tc.tx.lock);
 			}
 		}
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
@@ -1745,7 +1658,7 @@ out:
 }
 
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_user_pre_hook(unsigned int hooknum,
         struct sk_buff *skb,
         const struct net_device *in,
@@ -1753,7 +1666,7 @@ static unsigned int natflow_user_pre_hook(unsigned int hooknum,
         int (*okfn)(struct sk_buff *))
 {
 	//u_int8_t pf = PF_INET;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 static unsigned int natflow_user_pre_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct net_device *in,
@@ -1762,7 +1675,7 @@ static unsigned int natflow_user_pre_hook(const struct nf_hook_ops *ops,
 {
 	//u_int8_t pf = ops->pf;
 	unsigned int hooknum = ops->hooknum;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 static unsigned int natflow_user_pre_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
@@ -1779,7 +1692,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	//u_int8_t pf = state->pf;
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
 	const struct net_device *out = state->out;
 #endif
 #endif
@@ -2007,7 +1920,7 @@ out:
 }
 
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_user_forward_hook(unsigned int hooknum,
         struct sk_buff *skb,
         const struct net_device *in,
@@ -2015,7 +1928,7 @@ static unsigned int natflow_user_forward_hook(unsigned int hooknum,
         int (*okfn)(struct sk_buff *))
 {
 	//u_int8_t pf = PF_INET;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 static unsigned int natflow_user_forward_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct net_device *in,
@@ -2024,7 +1937,7 @@ static unsigned int natflow_user_forward_hook(const struct nf_hook_ops *ops,
 {
 	//u_int8_t pf = ops->pf;
 	unsigned int hooknum = ops->hooknum;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 static unsigned int natflow_user_forward_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
@@ -2041,7 +1954,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	//u_int8_t pf = state->pf;
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
 	const struct net_device *out = state->out;
 #endif
 #endif
@@ -2659,7 +2572,7 @@ out:
 	return ret;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_user_post_hook(unsigned int hooknum,
         struct sk_buff *skb,
         const struct net_device *in,
@@ -2667,7 +2580,7 @@ static unsigned int natflow_user_post_hook(unsigned int hooknum,
         int (*okfn)(struct sk_buff *))
 {
 	u_int8_t pf = PF_INET;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 static unsigned int natflow_user_post_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct net_device *in,
@@ -2676,7 +2589,7 @@ static unsigned int natflow_user_post_hook(const struct nf_hook_ops *ops,
 {
 	u_int8_t pf = ops->pf;
 	//unsigned int hooknum = ops->hooknum;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 static unsigned int natflow_user_post_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
@@ -2858,7 +2771,7 @@ out:
 
 static struct nf_hook_ops user_hooks[] = {
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_user_pre_hook,
@@ -2867,7 +2780,7 @@ static struct nf_hook_ops user_hooks[] = {
 		.priority = NF_IP_PRI_NAT_DST - 10 + 1,
 	},
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_user_forward_hook,
@@ -2876,7 +2789,7 @@ static struct nf_hook_ops user_hooks[] = {
 		.priority = NF_IP_PRI_FILTER,
 	},
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_user_post_hook,
@@ -2885,7 +2798,7 @@ static struct nf_hook_ops user_hooks[] = {
 		.priority = NF_IP_PRI_NAT_SRC + 10,
 	},
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_user_pre_hook,
@@ -2894,7 +2807,7 @@ static struct nf_hook_ops user_hooks[] = {
 		.priority = NF_IP_PRI_NAT_DST - 10 + 1,
 	},
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_user_forward_hook,
@@ -2903,7 +2816,7 @@ static struct nf_hook_ops user_hooks[] = {
 		.priority = NF_IP_PRI_FILTER,
 	},
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_user_post_hook,
@@ -2912,7 +2825,7 @@ static struct nf_hook_ops user_hooks[] = {
 		.priority = NF_IP_PRI_NAT_SRC + 10,
 	},
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_user_pre_hook,
@@ -2921,7 +2834,7 @@ static struct nf_hook_ops user_hooks[] = {
 		.priority = NF_IP_PRI_NAT_DST - 10 + 1,
 	},
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_user_forward_hook,
@@ -2930,7 +2843,7 @@ static struct nf_hook_ops user_hooks[] = {
 		.priority = NF_IP_PRI_FILTER,
 	},
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_user_post_hook,
@@ -3369,7 +3282,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 			user->status = 1;
 			rcu_read_lock();
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+#if !NATFLOW_HAVE_NF_CONNTRACK_GLOBAL_HASH
 			ct_hash = init_net.ct.hash;
 			hashsz = init_net.ct.htable_size;
 #else
@@ -3387,7 +3300,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 						nf_ct_put(ct);
 						continue;
 					}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
+#if NATFLOW_HAVE_NF_CT_IS_EXPIRED
 					if (nf_ct_is_expired(ct)) {
 						nf_ct_put(ct);
 						continue;
@@ -3557,7 +3470,7 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 		user->status = 1;
 		rcu_read_lock();
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+#if !NATFLOW_HAVE_NF_CONNTRACK_GLOBAL_HASH
 		ct_hash = init_net.ct.hash;
 		hashsz = init_net.ct.htable_size;
 #else
@@ -3575,7 +3488,7 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 					nf_ct_put(ct);
 					continue;
 				}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
+#if NATFLOW_HAVE_NF_CT_IS_EXPIRED
 				if (nf_ct_is_expired(ct)) {
 					nf_ct_put(ct);
 					continue;
@@ -3783,11 +3696,7 @@ static int userinfo_init(void)
 		goto cdev_add_failed;
 	}
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
-	userinfo_class = class_create(THIS_MODULE, "userinfo_class");
-#else
-	userinfo_class = class_create("userinfo_class");
-#endif
+	userinfo_class = natflow_class_create("userinfo_class");
 	if (IS_ERR(userinfo_class)) {
 		NATFLOW_println("failed in creating class");
 		retval = -EINVAL;
@@ -3988,11 +3897,7 @@ static int userinfo_event_init(void)
 		goto cdev_add_failed;
 	}
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
-	userinfo_event_class = class_create(THIS_MODULE, "userinfo_event_class");
-#else
-	userinfo_event_class = class_create("userinfo_event_class");
-#endif
+	userinfo_event_class = natflow_class_create("userinfo_event_class");
 	if (IS_ERR(userinfo_event_class)) {
 		NATFLOW_println("failed in creating class");
 		retval = -EINVAL;
@@ -4469,11 +4374,7 @@ static int qos_init(void)
 		goto cdev_add_failed;
 	}
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
-	qos_class = class_create(THIS_MODULE, "qos_class");
-#else
-	qos_class = class_create("qos_class");
-#endif
+	qos_class = natflow_class_create("qos_class");
 	if (IS_ERR(qos_class)) {
 		NATFLOW_println("failed in creating class");
 		retval = -EINVAL;
@@ -4554,11 +4455,7 @@ int natflow_user_init(void)
 		goto cdev_add_failed;
 	}
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
-	natflow_user_class = class_create(THIS_MODULE, "natflow_user_class");
-#else
-	natflow_user_class = class_create("natflow_user_class");
-#endif
+	natflow_user_class = natflow_class_create("natflow_user_class");
 	if (IS_ERR(natflow_user_class)) {
 		NATFLOW_println("failed in creating class");
 		retval = -EINVAL;

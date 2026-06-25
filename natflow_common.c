@@ -3,7 +3,6 @@
  *  Date : Fri, 11 May 2018 14:20:56 +0800
  */
 #include <linux/module.h>
-#include <linux/version.h>
 #include <linux/mman.h>
 #include <linux/spinlock.h>
 #include <linux/rcupdate.h>
@@ -123,11 +122,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS);
 	alloc_size = ALIGN(newlen, __ALIGN_64BITS);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-	new = __krealloc(old, alloc_size, gfp);
-#else
-	new = krealloc(old, alloc_size, gfp);
-#endif
+	new = natflow_ct_ext_krealloc(old, alloc_size, gfp);
 	if (!new) {
 		clear_bit(IPS_NATFLOW_SESSION_BIT, &ct->status);
 		NATFLOW_ERROR(DEBUG_FMT_PREFIX "__krealloc size=%u failed!\n", DEBUG_ARG_PREFIX, (unsigned int)alloc_size);
@@ -135,15 +130,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	}
 
 	if (new != old) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
-		kfree_rcu(old, rcu);
-		ct->ext = new;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-		kfree_rcu(old, rcu);
-		rcu_assign_pointer(ct->ext, new);
-#else
-		ct->ext = new;
-#endif
+		natflow_ct_ext_replace(ct, old, new);
 		old = new;
 	}
 
@@ -171,11 +158,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS);
 	alloc_size = ALIGN(newlen, __ALIGN_64BITS);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-	new = __krealloc(old, alloc_size, gfp);
-#else
-	new = krealloc(old, alloc_size, gfp);
-#endif
+	new = natflow_ct_ext_krealloc(old, alloc_size, gfp);
 	if (!new) {
 		clear_bit(IPS_NATFLOW_SESSION_BIT, &ct->status);
 		NATFLOW_ERROR(DEBUG_FMT_PREFIX "__krealloc size=%u failed!\n", DEBUG_ARG_PREFIX, (unsigned int)alloc_size);
@@ -188,15 +171,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	}
 
 	if (new != old) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
-		kfree_rcu(old, rcu);
-		ct->ext = new;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
-		kfree_rcu(old, rcu);
-		rcu_assign_pointer(ct->ext, new);
-#else
-		ct->ext = new;
-#endif
+		natflow_ct_ext_replace(ct, old, new);
 	}
 
 	nk = (struct nat_key_t *)((void *)new + nkoff);
@@ -239,17 +214,7 @@ struct natflow_t *natflow_session_get(struct nf_conn *ct)
 	return nf;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0) || \
-    (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 22) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 19, 0)) || \
-    (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 81) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)) || \
-    (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 134) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0)) || \
-    (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 167) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0)) || \
-    (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 203) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0)) || \
-    (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 253) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0))
-#define HAVE_IP_SET_GET_BYNAME_NLATTR 1
-#endif
-
-#ifdef HAVE_IP_SET_GET_BYNAME_NLATTR
+#if NATFLOW_IP_SET_GET_BYNAME_TAKES_NLATTR
 static ip_set_id_t natflow_ip_set_get_byname(struct net *net, const char *ip_set_name, struct ip_set **set)
 {
 	struct {
@@ -266,7 +231,7 @@ static ip_set_id_t natflow_ip_set_get_byname(struct net *net, const char *ip_set
 
 	return ip_set_get_byname(net, &name_attr.nla, set);
 }
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#elif NATFLOW_HAVE_IP_SET_NET_API
 static inline ip_set_id_t natflow_ip_set_get_byname(struct net *net, const char *ip_set_name, struct ip_set **set)
 {
 	return ip_set_get_byname(net, ip_set_name, set);
@@ -286,7 +251,7 @@ const char *const hooknames[] = {
 	[NF_INET_POST_ROUTING] = "POST",
 };
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 int ip_set_test_src_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
 #else
 int ip_set_test_src_ip(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
@@ -297,9 +262,9 @@ int ip_set_test_src_ip(const struct net_device *in, const struct net_device *out
 	struct ip_set *set;
 	struct ip_set_adt_opt opt;
 	struct xt_action_param par;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	struct net *net = state->net;
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#elif NATFLOW_HAVE_IP_SET_NET_API
 	struct net *net = &init_net;
 	if (in)
 		net = dev_net(in);
@@ -315,17 +280,17 @@ int ip_set_test_src_ip(const struct net_device *in, const struct net_device *out
 	opt.ext.timeout = UINT_MAX;
 
 	memset(&par, 0, sizeof(par));
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	par.state = state;
 #else
 	par.in = in;
 	par.out = out;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_HAVE_XT_ACTION_PARAM_NET
 	par.net = net;
 #endif
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
@@ -336,7 +301,7 @@ int ip_set_test_src_ip(const struct net_device *in, const struct net_device *out
 
 	ret = ip_set_test(id, skb, &par, &opt);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
 #else
 	ip_set_put_byindex(id);
@@ -345,7 +310,7 @@ int ip_set_test_src_ip(const struct net_device *in, const struct net_device *out
 	return ret;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 int ip_set_test_dst_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
 #else
 int ip_set_test_dst_ip(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
@@ -356,9 +321,9 @@ int ip_set_test_dst_ip(const struct net_device *in, const struct net_device *out
 	struct ip_set *set;
 	struct ip_set_adt_opt opt;
 	struct xt_action_param par;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	struct net *net = state->net;
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#elif NATFLOW_HAVE_IP_SET_NET_API
 	struct net *net = &init_net;
 	if (in)
 		net = dev_net(in);
@@ -374,17 +339,17 @@ int ip_set_test_dst_ip(const struct net_device *in, const struct net_device *out
 	opt.ext.timeout = UINT_MAX;
 
 	memset(&par, 0, sizeof(par));
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	par.state = state;
 #else
 	par.in = in;
 	par.out = out;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_HAVE_XT_ACTION_PARAM_NET
 	par.net = net;
 #endif
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
@@ -396,7 +361,7 @@ int ip_set_test_dst_ip(const struct net_device *in, const struct net_device *out
 
 	ret = ip_set_test(id, skb, &par, &opt);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
 #else
 	ip_set_put_byindex(id);
@@ -405,7 +370,7 @@ int ip_set_test_dst_ip(const struct net_device *in, const struct net_device *out
 	return ret;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 int ip_set_test_dst_netport(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
 #else
 int ip_set_test_dst_netport(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
@@ -416,9 +381,9 @@ int ip_set_test_dst_netport(const struct net_device *in, const struct net_device
 	struct ip_set *set;
 	struct ip_set_adt_opt opt;
 	struct xt_action_param par;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	struct net *net = state->net;
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#elif NATFLOW_HAVE_IP_SET_NET_API
 	struct net *net = &init_net;
 	if (in)
 		net = dev_net(in);
@@ -434,17 +399,17 @@ int ip_set_test_dst_netport(const struct net_device *in, const struct net_device
 	opt.ext.timeout = UINT_MAX;
 
 	memset(&par, 0, sizeof(par));
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	par.state = state;
 #else
 	par.in = in;
 	par.out = out;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_HAVE_XT_ACTION_PARAM_NET
 	par.net = net;
 #endif
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
@@ -456,7 +421,7 @@ int ip_set_test_dst_netport(const struct net_device *in, const struct net_device
 
 	ret = ip_set_test(id, skb, &par, &opt);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
 #else
 	ip_set_put_byindex(id);
@@ -465,7 +430,7 @@ int ip_set_test_dst_netport(const struct net_device *in, const struct net_device
 	return ret;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 int ip_set_add_src_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
 #else
 int ip_set_add_src_ip(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
@@ -476,9 +441,9 @@ int ip_set_add_src_ip(const struct net_device *in, const struct net_device *out,
 	struct ip_set *set;
 	struct ip_set_adt_opt opt;
 	struct xt_action_param par;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	struct net *net = state->net;
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#elif NATFLOW_HAVE_IP_SET_NET_API
 	struct net *net = &init_net;
 	if (in)
 		net = dev_net(in);
@@ -494,17 +459,17 @@ int ip_set_add_src_ip(const struct net_device *in, const struct net_device *out,
 	opt.ext.timeout = UINT_MAX;
 
 	memset(&par, 0, sizeof(par));
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	par.state = state;
 #else
 	par.in = in;
 	par.out = out;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_HAVE_XT_ACTION_PARAM_NET
 	par.net = net;
 #endif
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
@@ -516,7 +481,7 @@ int ip_set_add_src_ip(const struct net_device *in, const struct net_device *out,
 
 	ret = ip_set_add(id, skb, &par, &opt);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
 #else
 	ip_set_put_byindex(id);
@@ -525,7 +490,7 @@ int ip_set_add_src_ip(const struct net_device *in, const struct net_device *out,
 	return ret;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 int ip_set_add_dst_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
 #else
 int ip_set_add_dst_ip(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
@@ -536,9 +501,9 @@ int ip_set_add_dst_ip(const struct net_device *in, const struct net_device *out,
 	struct ip_set *set;
 	struct ip_set_adt_opt opt;
 	struct xt_action_param par;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	struct net *net = state->net;
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#elif NATFLOW_HAVE_IP_SET_NET_API
 	struct net *net = &init_net;
 	if (in)
 		net = dev_net(in);
@@ -554,17 +519,17 @@ int ip_set_add_dst_ip(const struct net_device *in, const struct net_device *out,
 	opt.ext.timeout = UINT_MAX;
 
 	memset(&par, 0, sizeof(par));
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	par.state = state;
 #else
 	par.in = in;
 	par.out = out;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_HAVE_XT_ACTION_PARAM_NET
 	par.net = net;
 #endif
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
@@ -576,7 +541,7 @@ int ip_set_add_dst_ip(const struct net_device *in, const struct net_device *out,
 
 	ret = ip_set_add(id, skb, &par, &opt);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
 #else
 	ip_set_put_byindex(id);
@@ -585,7 +550,7 @@ int ip_set_add_dst_ip(const struct net_device *in, const struct net_device *out,
 	return ret;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 int ip_set_del_src_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
 #else
 int ip_set_del_src_ip(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
@@ -596,9 +561,9 @@ int ip_set_del_src_ip(const struct net_device *in, const struct net_device *out,
 	struct ip_set *set;
 	struct ip_set_adt_opt opt;
 	struct xt_action_param par;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	struct net *net = state->net;
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#elif NATFLOW_HAVE_IP_SET_NET_API
 	struct net *net = &init_net;
 	if (in)
 		net = dev_net(in);
@@ -614,17 +579,17 @@ int ip_set_del_src_ip(const struct net_device *in, const struct net_device *out,
 	opt.ext.timeout = UINT_MAX;
 
 	memset(&par, 0, sizeof(par));
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	par.state = state;
 #else
 	par.in = in;
 	par.out = out;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_HAVE_XT_ACTION_PARAM_NET
 	par.net = net;
 #endif
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
@@ -636,7 +601,7 @@ int ip_set_del_src_ip(const struct net_device *in, const struct net_device *out,
 
 	ret = ip_set_del(id, skb, &par, &opt);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
 #else
 	ip_set_put_byindex(id);
@@ -645,7 +610,7 @@ int ip_set_del_src_ip(const struct net_device *in, const struct net_device *out,
 	return ret;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 int ip_set_del_dst_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
 #else
 int ip_set_del_dst_ip(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
@@ -656,9 +621,9 @@ int ip_set_del_dst_ip(const struct net_device *in, const struct net_device *out,
 	struct ip_set *set;
 	struct ip_set_adt_opt opt;
 	struct xt_action_param par;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	struct net *net = state->net;
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#elif NATFLOW_HAVE_IP_SET_NET_API
 	struct net *net = &init_net;
 	if (in)
 		net = dev_net(in);
@@ -674,17 +639,17 @@ int ip_set_del_dst_ip(const struct net_device *in, const struct net_device *out,
 	opt.ext.timeout = UINT_MAX;
 
 	memset(&par, 0, sizeof(par));
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	par.state = state;
 #else
 	par.in = in;
 	par.out = out;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_HAVE_XT_ACTION_PARAM_NET
 	par.net = net;
 #endif
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
@@ -696,7 +661,7 @@ int ip_set_del_dst_ip(const struct net_device *in, const struct net_device *out,
 
 	ret = ip_set_del(id, skb, &par, &opt);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
 #else
 	ip_set_put_byindex(id);
@@ -705,7 +670,7 @@ int ip_set_del_dst_ip(const struct net_device *in, const struct net_device *out,
 	return ret;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 int ip_set_test_src_mac(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
 #else
 int ip_set_test_src_mac(const struct net_device *in, const struct net_device *out, struct sk_buff *skb, const char *ip_set_name)
@@ -716,9 +681,9 @@ int ip_set_test_src_mac(const struct net_device *in, const struct net_device *ou
 	struct ip_set *set;
 	struct ip_set_adt_opt opt;
 	struct xt_action_param par;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	struct net *net = state->net;
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#elif NATFLOW_HAVE_IP_SET_NET_API
 	struct net *net = &init_net;
 	if (in)
 		net = dev_net(in);
@@ -734,17 +699,17 @@ int ip_set_test_src_mac(const struct net_device *in, const struct net_device *ou
 	opt.ext.timeout = UINT_MAX;
 
 	memset(&par, 0, sizeof(par));
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	par.state = state;
 #else
 	par.in = in;
 	par.out = out;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_HAVE_XT_ACTION_PARAM_NET
 	par.net = net;
 #endif
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	id = natflow_ip_set_get_byname(net, ip_set_name, &set);
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
@@ -755,7 +720,7 @@ int ip_set_test_src_mac(const struct net_device *in, const struct net_device *ou
 
 	ret = ip_set_test(id, skb, &par, &opt);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
 #else
 	ip_set_put_byindex(id);
@@ -766,7 +731,7 @@ int ip_set_test_src_mac(const struct net_device *in, const struct net_device *ou
 
 unsigned int natflow_dnat_setup(struct nf_conn *ct, __be32 addr, __be16 man_proto)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 3, 0)
+#if NATFLOW_NAT_RANGE_USES_IP_NAT_MANIP
 	struct nf_nat_range range;
 	if (nf_nat_initialized(ct, IP_NAT_MANIP_DST)) {
 		return NF_ACCEPT;
@@ -779,7 +744,7 @@ unsigned int natflow_dnat_setup(struct nf_conn *ct, __be32 addr, __be16 man_prot
 	range.min.all = man_proto;
 	range.max.all = man_proto;
 	return nf_nat_setup_info(ct, &range, IP_NAT_MANIP_DST);
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(3, 7, 0)
+#elif NATFLOW_NAT_RANGE_USES_IPV4_RANGE
 	struct nf_nat_ipv4_range range;
 	if (nf_nat_initialized(ct, NF_NAT_MANIP_DST)) {
 		return NF_ACCEPT;
@@ -792,7 +757,7 @@ unsigned int natflow_dnat_setup(struct nf_conn *ct, __be32 addr, __be16 man_prot
 	range.min.all = man_proto;
 	range.max.all = man_proto;
 	return nf_nat_setup_info(ct, &range, NF_NAT_MANIP_DST);
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
+#elif !NATFLOW_NAT_RANGE_USES_RANGE2
 	struct nf_nat_range range;
 	if (nf_nat_initialized(ct, NF_NAT_MANIP_DST)) {
 		return NF_ACCEPT;
@@ -825,7 +790,7 @@ unsigned int natflow_dnat_setup(struct nf_conn *ct, __be32 addr, __be16 man_prot
 #ifdef NATFLOW_HAVE_NAT66
 unsigned int natflow_dnat_setup6(struct nf_conn *ct, const struct in6_addr *addr, __be16 man_proto)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
+#if !NATFLOW_NAT_RANGE_USES_RANGE2
 	struct nf_nat_range range;
 	if (nf_nat_initialized(ct, NF_NAT_MANIP_DST)) {
 		return NF_ACCEPT;

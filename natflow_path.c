@@ -25,7 +25,6 @@
 #include <linux/string.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
-#include <linux/version.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter_bridge.h>
 #include <net/ndisc.h>
@@ -61,7 +60,7 @@ static inline unsigned int natflow_skb_dst_mtu(struct sk_buff *skb, bool is_ipv6
 	if (is_ipv6)
 		return ip6_skb_dst_mtu(skb);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+#if !NATFLOW_IP_SKB_DST_MTU_TAKES_NET
 	return ip_skb_dst_mtu(skb);
 #else
 	return ip_skb_dst_mtu(NULL, skb);
@@ -487,15 +486,7 @@ static inline void natflow_update_ct_timeout(struct nf_conn *ct, unsigned long e
 	if (!nf_ct_is_confirmed(ct)) {
 		/* nothing to do */
 	} else {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0)
-		extra_jiffies += ct->timeout.expires;
-		if (extra_jiffies - ct->timeout.expires >= HZ) {
-			mod_timer_pending(&ct->timeout, extra_jiffies);
-		}
-#else
-		extra_jiffies += ct->timeout;
-		ct->timeout = extra_jiffies;
-#endif
+		natflow_ct_timeout_extend(ct, extra_jiffies);
 	}
 }
 
@@ -513,11 +504,7 @@ static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn
 	tuple.dst.u.all = nfn->dest;
 	tuple.src.l3num = PF_INET;
 	tuple.dst.protonum = NFN_PROTO_DEC(nfn->flags);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
-	h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
-#else
-	h = nf_conntrack_find_get(&init_net, &nf_ct_zone_dflt, &tuple);
-#endif
+	h = natflow_nf_conntrack_find_get(&init_net, &tuple);
 	if (h) {
 		struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
 		int d = !NF_CT_DIRECTION(h);
@@ -578,11 +565,7 @@ static inline natflow_fastnat_node_t *nfn_invert_get6(natflow_fastnat_node_t *nf
 	tuple.dst.u.all = nfn->dest;
 	tuple.src.l3num = AF_INET6;
 	tuple.dst.protonum = NFN_PROTO_DEC(nfn->flags);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
-	h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
-#else
-	h = nf_conntrack_find_get(&init_net, &nf_ct_zone_dflt, &tuple);
-#endif
+	h = natflow_nf_conntrack_find_get(&init_net, &tuple);
 	if (h) {
 		struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
 		int d = !NF_CT_DIRECTION(h);
@@ -657,11 +640,7 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 		tuple.dst.u.all = nfn->dest;
 		tuple.src.l3num = PF_INET;
 		tuple.dst.protonum = NFN_PROTO_DEC(nfn->flags);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
-		h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
-#else
-		h = nf_conntrack_find_get(&init_net, &nf_ct_zone_dflt, &tuple);
-#endif
+		h = natflow_nf_conntrack_find_get(&init_net, &tuple);
 		if (h) {
 			struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
 			int d = !NF_CT_DIRECTION(h);
@@ -898,11 +877,7 @@ __keepalive_ipv6_main:
 		tuple.dst.u.all = nfn->dest;
 		tuple.src.l3num = AF_INET6;
 		tuple.dst.protonum = NFN_PROTO_DEC(nfn->flags);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
-		h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
-#else
-		h = nf_conntrack_find_get(&init_net, &nf_ct_zone_dflt, &tuple);
-#endif
+		h = natflow_nf_conntrack_find_get(&init_net, &tuple);
 		if (h) {
 			struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
 			int d = !NF_CT_DIRECTION(h);
@@ -1455,7 +1430,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 	}
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_path_pre_ct_in_hook(unsigned int hooknum,
         struct sk_buff *skb,
         const struct net_device *in,
@@ -1465,7 +1440,7 @@ static unsigned int natflow_path_pre_ct_in_hook(unsigned int hooknum,
 #ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = PF_INET;
 #endif
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct net_device *in,
@@ -1476,7 +1451,7 @@ static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
 	u_int8_t pf = ops->pf;
 #endif
 	unsigned int hooknum = ops->hooknum;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
@@ -1497,7 +1472,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 #endif
 	unsigned int hooknum = state->hook;
 	//const struct net_device *in = state->in;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
 	//const struct net_device *out = state->out;
 #endif
 #endif
@@ -2642,7 +2617,7 @@ fastnat_check:
 										__be16 orig_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 										__be16 reply_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_REPLY].outdev);
 #endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0) /* no dsa support before kernel 5.4 in openwrt */
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD /* no dsa support before kernel 5.4 in openwrt */
 										/* hwnat ready to go */
 										u16 orig_dsa_port = 0xffff;
 										u16 reply_dsa_port = 0xffff;
@@ -2684,14 +2659,14 @@ fastnat_check:
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 													.dsa_port = orig_dsa_port,
 #endif
 												};
 												flow_offload_hw_path_t reply = {
 													.dev = reply_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 													.dsa_port = reply_dsa_port,
 #endif
 												};
@@ -2771,7 +2746,7 @@ fastnat_check:
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 													.dsa_port = orig_dsa_port,
 #endif
 												};
@@ -2784,7 +2759,7 @@ fastnat_check:
 													| FLOW_OFFLOAD_PATH_WED_DIS
 #endif
 													,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 													.dsa_port = reply_dsa_port,
 #endif
 												};
@@ -2897,14 +2872,14 @@ fastnat_check:
 												| FLOW_OFFLOAD_PATH_WED_DIS
 #endif
 												,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 												.dsa_port = orig_dsa_port,
 #endif
 											};
 											flow_offload_hw_path_t reply = {
 												.dev = reply_dev,
 												.flags = FLOW_OFFLOAD_PATH_ETHERNET,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 												.dsa_port = reply_dsa_port,
 #endif
 											};
@@ -3019,7 +2994,7 @@ fastnat_check:
 													| FLOW_OFFLOAD_PATH_WED_DIS
 #endif
 													,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 													.dsa_port = orig_dsa_port,
 #endif
 												};
@@ -3032,7 +3007,7 @@ fastnat_check:
 													| FLOW_OFFLOAD_PATH_WED_DIS
 #endif
 													,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 													.dsa_port = reply_dsa_port,
 #endif
 												};
@@ -4502,7 +4477,7 @@ fastnat_check6:
 										__be16 orig_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
 										__be16 reply_vid = get_vlan_vid(nf->rroute[NF_FF_DIR_REPLY].outdev);
 #endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0) /* no dsa support before kernel 5.4 in openwrt */
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD /* no dsa support before kernel 5.4 in openwrt */
 										/* hwnat ready to go */
 										u16 orig_dsa_port = 0xffff;
 										u16 reply_dsa_port = 0xffff;
@@ -4544,14 +4519,14 @@ fastnat_check6:
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 													.dsa_port = orig_dsa_port,
 #endif
 												};
 												flow_offload_hw_path_t reply = {
 													.dev = reply_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 													.dsa_port = reply_dsa_port,
 #endif
 												};
@@ -4631,7 +4606,7 @@ fastnat_check6:
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 													.dsa_port = orig_dsa_port,
 #endif
 												};
@@ -4644,7 +4619,7 @@ fastnat_check6:
 													| FLOW_OFFLOAD_PATH_WED_DIS
 #endif
 													,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 													.dsa_port = reply_dsa_port,
 #endif
 												};
@@ -4757,14 +4732,14 @@ fastnat_check6:
 												| FLOW_OFFLOAD_PATH_WED_DIS
 #endif
 												,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 												.dsa_port = orig_dsa_port,
 #endif
 											};
 											flow_offload_hw_path_t reply = {
 												.dev = reply_dev,
 												.flags = FLOW_OFFLOAD_PATH_ETHERNET,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 												.dsa_port = reply_dsa_port,
 #endif
 											};
@@ -4879,7 +4854,7 @@ fastnat_check6:
 													| FLOW_OFFLOAD_PATH_WED_DIS
 #endif
 													,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 													.dsa_port = orig_dsa_port,
 #endif
 												};
@@ -4892,7 +4867,7 @@ fastnat_check6:
 													| FLOW_OFFLOAD_PATH_WED_DIS
 #endif
 													,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_OPENWRT_DSA_FLOW_OFFLOAD
 													.dsa_port = reply_dsa_port,
 #endif
 												};
@@ -5596,7 +5571,7 @@ out6:
 	return ret;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_path_post_ct_out_hook(unsigned int hooknum,
         struct sk_buff *skb,
         const struct net_device *in,
@@ -5604,7 +5579,7 @@ static unsigned int natflow_path_post_ct_out_hook(unsigned int hooknum,
         int (*okfn)(struct sk_buff *))
 {
 	u_int8_t pf = PF_INET;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 static unsigned int natflow_path_post_ct_out_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct net_device *in,
@@ -5613,7 +5588,7 @@ static unsigned int natflow_path_post_ct_out_hook(const struct nf_hook_ops *ops,
 {
 	u_int8_t pf = ops->pf;
 	unsigned int hooknum = ops->hooknum;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 static unsigned int natflow_path_post_ct_out_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
@@ -5629,7 +5604,7 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 {
 	u_int8_t pf = state->pf;
 	unsigned int hooknum = state->hook;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
 	//const struct net_device *in = state->in;
 	//const struct net_device *out = state->out;
 #endif
@@ -5817,7 +5792,7 @@ static void natflow_hwnat_stop(struct net_device *dev)
 
 static struct nf_hook_ops path_hooks[] = {
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_path_post_ct_out_hook,
@@ -5826,7 +5801,7 @@ static struct nf_hook_ops path_hooks[] = {
 		.priority = NF_IP_PRI_LAST - 10 + 8,
 	},
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_path_post_ct_out_hook,
@@ -5835,7 +5810,7 @@ static struct nf_hook_ops path_hooks[] = {
 		.priority = NF_IP_PRI_LAST - 10 + 8,
 	},
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_path_post_ct_out_hook,
@@ -5844,7 +5819,7 @@ static struct nf_hook_ops path_hooks[] = {
 		.priority = NF_IP_PRI_LAST - 10 + 8,
 	},
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_path_pre_ct_in_hook,
@@ -5853,7 +5828,7 @@ static struct nf_hook_ops path_hooks[] = {
 		.priority = NF_IP_PRI_CONNTRACK + 1,
 	},
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_path_pre_ct_in_hook,
@@ -5863,7 +5838,7 @@ static struct nf_hook_ops path_hooks[] = {
 	},
 #ifndef CONFIG_NETFILTER_INGRESS
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_path_pre_ct_in_hook,

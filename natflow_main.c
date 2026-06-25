@@ -25,7 +25,6 @@
 #include <linux/tcp.h>
 #include <linux/uaccess.h>
 #include <linux/unistd.h>
-#include <linux/version.h>
 #include <linux/mman.h>
 #include <linux/spinlock.h>
 #include <linux/rcupdate.h>
@@ -421,11 +420,7 @@ static int __init natflow_init(void) {
 		goto cdev_add_failed;
 	}
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
-	natflow_class = class_create(THIS_MODULE, "natflow_class");
-#else
-	natflow_class = class_create("natflow_class");
-#endif
+	natflow_class = natflow_class_create("natflow_class");
 	if (IS_ERR(natflow_class)) {
 		NATFLOW_println("failed to create class");
 		retval = -EINVAL;

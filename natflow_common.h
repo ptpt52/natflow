@@ -4,10 +4,13 @@
  */
 #ifndef _NATFLOW_COMMON_H_
 #define _NATFLOW_COMMON_H_
-#include <linux/version.h>
 #include <linux/ctype.h>
 #include <linux/device.h>
+#include <linux/jiffies.h>
+#include <linux/rcupdate.h>
 #include <linux/skbuff.h>
+#include <linux/slab.h>
+#include <linux/timer.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/tcp.h>
@@ -21,13 +24,14 @@
 #include <net/icmp.h>
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_core.h>
+#include <net/netfilter/nf_conntrack_extend.h>
 #include <net/netfilter/nf_conntrack_zones.h>
 #include <net/netfilter/nf_nat.h>
 #include <linux/if_pppox.h>
 #include <linux/ppp_defs.h>
 #include "natflow.h"
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)
+#if NATFLOW_KERNEL_BEFORE(5, 1, 0)
 #include <net/netfilter/nf_nat_core.h>
 #endif
 
@@ -41,8 +45,7 @@
 #endif
 
 /* NAT66 is upstream since 3.7; older vendor trees may backport it. */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0) || \
-    defined(CONFIG_NF_NAT_IPV6) || defined(CONFIG_NF_NAT_IPV6_MODULE)
+#if NATFLOW_NAT66_AVAILABLE
 #define NATFLOW_HAVE_NAT66 1
 #endif
 
@@ -107,7 +110,7 @@ extern unsigned int debug;
 #define NATFLOW_ERROR(fmt, ...)
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
+#if NATFLOW_HAVE_NF_REGISTER_NET_HOOKS
 static inline int nf_register_hooks(struct nf_hook_ops *reg, unsigned int n)
 {
 	return nf_register_net_hooks(&init_net, reg, n);
@@ -221,8 +224,7 @@ extern const char *const hooknames[];
 #define PPPOEH(p) ((struct pppoe_hdr *)(p))
 #define ICMP6H(i) ((struct icmp6hdr *)(i))
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 6, 0)) || (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 15) && LINUX_VERSION_CODE <KERNEL_VERSION(4, 5, 0))
-#else
+#if !NATFLOW_HAVE_SKB_TRY_MAKE_WRITABLE
 static inline int skb_try_make_writable(struct sk_buff *skb,
                                         unsigned int write_len)
 {
@@ -240,14 +242,14 @@ static inline struct nf_conntrack *skb_nfct(const struct sk_buff *skb)
 
 static inline void skb_nfct_reset(struct sk_buff *skb)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if NATFLOW_HAVE_NF_RESET_CT
 	nf_reset_ct(skb);
 #else
 	nf_reset(skb);
 #endif
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_HAVE_IP_SET_STATE_API
 extern int ip_set_test_src_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name);
 #define IP_SET_test_src_ip(state, in, out, skb, name) ip_set_test_src_ip(state, skb, name)
 extern int ip_set_test_dst_ip(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name);
@@ -291,7 +293,7 @@ unsigned int natflow_dnat_setup(struct nf_conn *ct, __be32 addr, __be16 man_prot
 unsigned int natflow_dnat_setup6(struct nf_conn *ct, const struct in6_addr *addr, __be16 man_proto);
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0)
+#if !NATFLOW_NF_CONNTRACK_IN_TAKES_STATE
 static inline unsigned int nf_conntrack_in_compat(struct net *net, u_int8_t pf, unsigned int hooknum, struct sk_buff *skb)
 {
 	return nf_conntrack_in(net, pf, hooknum, skb);
@@ -311,7 +313,7 @@ static inline unsigned int nf_conntrack_in_compat(struct net *net, u_int8_t pf, 
 #define need_conntrack() do {} while (0)
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
+#if NATFLOW_SKB_MAKE_WRITABLE_IS_ENSURE_WRITABLE
 #define skb_make_writable !skb_ensure_writable
 #endif
 
@@ -373,7 +375,7 @@ static inline void get_byte6(const unsigned char *p, unsigned char *pv)
 }
 
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+#if !NATFLOW_HAVE_NF_CT_EXPIRES
 static inline unsigned long nf_ct_expires(const struct nf_conn *ct)
 {
 	long timeout = (long)ct->timeout.expires - (long)jiffies;
@@ -382,9 +384,7 @@ static inline unsigned long nf_ct_expires(const struct nf_conn *ct)
 }
 #endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 236) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0)) || \
-    (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 36) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0)) || \
-     LINUX_VERSION_CODE >= KERNEL_VERSION(5, 17, 0)
+#if NATFLOW_REFCOUNT_USES_REFCOUNT_T
 #define REFCOUNT_inc_not_zero refcount_inc_not_zero
 #define REFCOUNT_read refcount_read
 #else
@@ -392,7 +392,7 @@ static inline unsigned long nf_ct_expires(const struct nf_conn *ct)
 #define REFCOUNT_read atomic_read
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+#if NATFLOW_U64_STATS_HAS_ADD
 #define compat_u64_stats_add u64_stats_add
 #else
 static inline void compat_u64_stats_add(u64 *r, unsigned long v)
@@ -401,19 +401,89 @@ static inline void compat_u64_stats_add(u64 *r, unsigned long v)
 }
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 0)
+#if !NATFLOW_HAVE_GET_RANDOM_U32
 #define get_random_u32 prandom_u32
 #endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 75) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0) || \
-     LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 14) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0) || \
-     LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 2))
+#if NATFLOW_NF_BRIDGE_PHYSINDEV_TAKES_NET
 static inline struct net_device *nf_bridge_get_physindev_compat(const struct sk_buff *skb)
 {
 	return nf_bridge_get_physindev(skb, &init_net);
 }
 #else
 #define nf_bridge_get_physindev_compat nf_bridge_get_physindev
+#endif
+
+static inline void *natflow_ct_ext_krealloc(struct nf_ct_ext *ext, size_t size, gfp_t gfp)
+{
+#if NATFLOW_NF_CONNTRACK_EXT_REPLACE_NEEDS_RCU
+	return __krealloc(ext, size, gfp);
+#else
+	return krealloc(ext, size, gfp);
+#endif
+}
+
+static inline void natflow_ct_ext_replace(struct nf_conn *ct, struct nf_ct_ext *old,
+        struct nf_ct_ext *new)
+{
+#if NATFLOW_NF_CONNTRACK_EXT_REPLACE_NEEDS_RCU
+	kfree_rcu(old, rcu);
+#if NATFLOW_NF_CONNTRACK_EXT_ASSIGN_NEEDS_RCU
+	rcu_assign_pointer(ct->ext, new);
+#else
+	ct->ext = new;
+#endif
+#else
+	ct->ext = new;
+#endif
+}
+
+static inline struct nf_conntrack_tuple_hash *
+natflow_nf_conntrack_find_get(struct net *net, const struct nf_conntrack_tuple *tuple)
+{
+#if NATFLOW_NF_CONNTRACK_FIND_GET_USES_ZONE_PTR
+	return nf_conntrack_find_get(net, &nf_ct_zone_dflt, tuple);
+#else
+	return nf_conntrack_find_get(net, NF_CT_DEFAULT_ZONE, tuple);
+#endif
+}
+
+static inline void natflow_ct_timeout_extend(struct nf_conn *ct,
+        unsigned long extra_jiffies)
+{
+#if NATFLOW_NF_CONNTRACK_TIMEOUT_IS_TIMER
+	extra_jiffies += ct->timeout.expires;
+	if (extra_jiffies - ct->timeout.expires >= HZ) {
+		mod_timer_pending(&ct->timeout, extra_jiffies);
+	}
+#else
+	extra_jiffies += ct->timeout;
+	ct->timeout = extra_jiffies;
+#endif
+}
+
+static inline void natflow_ct_timeout_set(struct nf_conn *ct,
+        unsigned long expires)
+{
+#if NATFLOW_NF_CONNTRACK_TIMEOUT_IS_TIMER
+	if (expires - ct->timeout.expires > HZ) {
+		mod_timer_pending(&ct->timeout, expires);
+	}
+#else
+	ct->timeout = expires;
+#endif
+}
+
+#if NATFLOW_HAVE_NEW_CLASS_CREATE
+#define natflow_class_create(name) class_create(name)
+#else
+#define natflow_class_create(name) class_create(THIS_MODULE, name)
+#endif
+
+#if NATFLOW_HAVE_REGISTER_SYSCTL_PATH
+#define natflow_register_sysctl(path, root_table, table) register_sysctl(path, table)
+#else
+#define natflow_register_sysctl(path, root_table, table) register_sysctl_table(root_table)
 #endif
 
 #define IPV6H ((struct ipv6hdr *)iph)

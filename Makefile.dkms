@@ -11,6 +11,7 @@ src_install:
 	mkdir -p '$(DKMS_DEST)'
 	cp \
 		natflow_common.c \
+		natflow_compat.h \
 		natflow_common.h \
 		natflow_conntrack.c \
 		natflow_conntrack.h \

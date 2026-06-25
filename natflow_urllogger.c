@@ -26,7 +26,6 @@
 #include <linux/tcp.h>
 #include <linux/uaccess.h>
 #include <linux/unistd.h>
-#include <linux/version.h>
 #include <linux/mman.h>
 #include <linux/spinlock.h>
 #include <linux/rcupdate.h>
@@ -859,14 +858,14 @@ static inline struct sk_buff *urllogger_sni_cache_detach6(const struct in6_addr 
 	return skb;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_urllogger_hook_v1(unsigned int hooknum,
         struct sk_buff *skb,
         const struct net_device *in,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 static unsigned int natflow_urllogger_hook_v1(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct net_device *in,
@@ -874,7 +873,7 @@ static unsigned int natflow_urllogger_hook_v1(const struct nf_hook_ops *ops,
         int (*okfn)(struct sk_buff *))
 {
 	unsigned int hooknum = ops->hooknum;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 static unsigned int natflow_urllogger_hook_v1(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
@@ -889,7 +888,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 {
 	unsigned int hooknum = state->hook;
 	const struct net_device *in = state->in;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
 	const struct net_device *out = state->out;
 #endif
 #endif
@@ -1568,14 +1567,14 @@ out:
 
 #if defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_urllogger_local_in(unsigned int hooknum,
         struct sk_buff *skb,
         const struct net_device *in,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 static unsigned int natflow_urllogger_local_in(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct net_device *in,
@@ -1583,7 +1582,7 @@ static unsigned int natflow_urllogger_local_in(const struct nf_hook_ops *ops,
         int (*okfn)(struct sk_buff *))
 {
 	//unsigned int hooknum = ops->hooknum;
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 static unsigned int natflow_urllogger_local_in(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
@@ -1598,7 +1597,7 @@ static unsigned int natflow_urllogger_local_in(void *priv,
 {
 	//unsigned int hooknum = state->hook;
 	//const struct net_device *in = state->in;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
+#if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
 	//const struct net_device *out = state->out;
 #endif
 #endif
@@ -1625,11 +1624,11 @@ static unsigned int natflow_urllogger_local_in(void *priv,
 	if (iph->protocol != IPPROTO_TCP) {
 		goto out;
 	}
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 	return natflow_urllogger_hook_v1(hooknum, skb, in, out, okfn);
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 	return natflow_urllogger_hook_v1(ops, skb, in, out, okfn);
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 	return natflow_urllogger_hook_v1(ops, skb, state);
 #else
 	return natflow_urllogger_hook_v1(priv, skb, state);
@@ -1643,7 +1642,7 @@ out:
 static struct nf_hook_ops urllogger_hooks[] = {
 #if defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_urllogger_local_in,
@@ -1653,7 +1652,7 @@ static struct nf_hook_ops urllogger_hooks[] = {
 	},
 #else
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_urllogger_hook_v1,
@@ -1662,7 +1661,7 @@ static struct nf_hook_ops urllogger_hooks[] = {
 		.priority = NF_IP_PRI_FILTER + 5,
 	},
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_urllogger_hook_v1,
@@ -1671,7 +1670,7 @@ static struct nf_hook_ops urllogger_hooks[] = {
 		.priority = NF_IP_PRI_FILTER + 5,
 	},
 	{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
 		.hook = natflow_urllogger_hook_v1,
@@ -1897,12 +1896,12 @@ static struct ctl_table urllogger_table[] = {
 		.mode           = S_IRUGO|S_IWUSR,
 		.proc_handler   = proc_douintvec,
 	},
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
+#if NATFLOW_HAVE_REGISTER_SYSCTL_SENTINEL
 	{ }
 #endif
 };
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
+#if NATFLOW_HAVE_REGISTER_SYSCTL_SENTINEL
 static struct ctl_table urllogger_root_table[] = {
 	{
 		.procname       = "urllogger_store",
@@ -2185,11 +2184,7 @@ static int natflow_hostacl_init(void)
 		goto cdev_add_failed;
 	}
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
-	hostacl_class = class_create(THIS_MODULE, "hostacl_class");
-#else
-	hostacl_class = class_create("hostacl_class");
-#endif
+	hostacl_class = natflow_class_create("hostacl_class");
 	if (IS_ERR(hostacl_class)) {
 		NATFLOW_println("failed in creating class");
 		ret = -EINVAL;
@@ -2262,11 +2257,7 @@ int natflow_urllogger_init(void)
 		goto cdev_add_failed;
 	}
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
-	urllogger_class = class_create(THIS_MODULE, "urllogger_class");
-#else
-	urllogger_class = class_create("urllogger_class");
-#endif
+	urllogger_class = natflow_class_create("urllogger_class");
 	if (IS_ERR(urllogger_class)) {
 		NATFLOW_println("failed in creating class");
 		ret = -EINVAL;
@@ -2287,11 +2278,7 @@ int natflow_urllogger_init(void)
 	if (ret != 0)
 		goto natflow_hostacl_init_failed;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
-	urllogger_table_header = register_sysctl_table(urllogger_root_table);
-#else
-	urllogger_table_header = register_sysctl("urllogger_store", urllogger_table);
-#endif
+	urllogger_table_header = natflow_register_sysctl("urllogger_store", urllogger_root_table, urllogger_table);
 
 	return 0;
 

@@ -4,7 +4,6 @@
  */
 #ifndef _NATFLOW_PATH_H_
 #define _NATFLOW_PATH_H_
-#include <linux/version.h>
 #include <linux/ctype.h>
 #include <linux/device.h>
 #include <linux/skbuff.h>
