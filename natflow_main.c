@@ -144,7 +144,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 				             "%s_add=%s,%s,%s\n",
 				             (family & VLINE_RELAY_MASK) ? "relay" : "vline",
 				             (*ptr)[0], (*ptr)[1],
-				             (family & VLINE_FAMILY_MASK) == VLINE_FAMILY_IPV4 ? "ipv4" : (family & VLINE_FAMILY_MASK) == VLINE_FAMILY_IPV6 ? "ipv6" : "all");
+				             vline_fwd_family_name(family & VLINE_FAMILY_MASK));
 				natflow_ctl_buffer[n] = 0;
 				return natflow_ctl_buffer;
 			}
@@ -304,14 +304,7 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 		char str[2][16], family_str[8], tail;
 		n = sscanf(data, "vline_add=%15[^,],%15[^,],%7s%c", str[0], str[1], family_str, &tail);
 		if (n == 3) {
-			unsigned char family = VLINE_FAMILY_MASK;
-			if (strcmp(family_str, "ipv4") == 0) {
-				family = VLINE_FAMILY_IPV4;
-			} else if (strcmp(family_str, "ipv6") == 0) {
-				family = VLINE_FAMILY_IPV6;
-			} else if (strcmp(family_str, "all") == 0) {
-				family = VLINE_FAMILY_ALL;
-			}
+			unsigned char family = vline_fwd_family_parse(family_str);
 			if (family != VLINE_FAMILY_MASK) {
 				err = vline_fwd_map_config_add(str[1], str[0], family);
 				if (err == 0) {
@@ -324,14 +317,7 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 		char str[2][16], family_str[8], tail;
 		n = sscanf(data, "relay_add=%15[^,],%15[^,],%7s%c", str[0], str[1], family_str, &tail);
 		if (n == 3) {
-			unsigned char family = VLINE_FAMILY_MASK;
-			if (strcmp(family_str, "ipv4") == 0) {
-				family = VLINE_FAMILY_IPV4;
-			} else if (strcmp(family_str, "ipv6") == 0) {
-				family = VLINE_FAMILY_IPV6;
-			} else if (strcmp(family_str, "all") == 0) {
-				family = VLINE_FAMILY_ALL;
-			}
+			unsigned char family = vline_fwd_family_parse(family_str);
 			if (family != VLINE_FAMILY_MASK) {
 				err = vline_fwd_map_config_add(str[1], str[0], family | VLINE_RELAY_MASK);
 				if (err == 0) {

@@ -359,16 +359,19 @@ extern struct net_device *ifname_group_get(int idx);
 
 #define VLINE_L3_PORT 0
 #define VLINE_L2_PORT 1
-extern unsigned char (*vline_fwd_map_config_get(unsigned int idx, unsigned char *family))[2][IFNAMSIZ];
-extern int vline_fwd_map_config_add(const unsigned char *dst_ifname, const unsigned char *src_ifname, unsigned char family);
-extern void vline_fwd_map_config_clear(void);
-extern int vline_fwd_map_config_apply(void);
 
 #define VLINE_RELAY_MASK 0x80
 #define VLINE_FAMILY_MASK 0x7f
 #define VLINE_FAMILY_ALL 0
 #define VLINE_FAMILY_IPV4 1
 #define VLINE_FAMILY_IPV6 2
+
+extern unsigned char (*vline_fwd_map_config_get(unsigned int idx, unsigned char *family))[2][IFNAMSIZ];
+extern const char *vline_fwd_family_name(unsigned char family);
+extern unsigned char vline_fwd_family_parse(const char *family_str);
+extern int vline_fwd_map_config_add(const unsigned char *dst_ifname, const unsigned char *src_ifname, unsigned char family);
+extern void vline_fwd_map_config_clear(void);
+extern int vline_fwd_map_config_apply(void);
 
 extern void list_net_device_debug(void);
 

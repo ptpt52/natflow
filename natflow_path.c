@@ -73,13 +73,24 @@ static inline void vline_fwd_flags_clear(struct net_device *dev)
 	                IFF_VLINE_FAMILY_IPV6 | IFF_VLINE_RELAY);
 }
 
-static inline const char *vline_fwd_family_name(unsigned char family)
+const char *vline_fwd_family_name(unsigned char family)
 {
 	if (family == VLINE_FAMILY_IPV4)
 		return "ipv4";
 	if (family == VLINE_FAMILY_IPV6)
 		return "ipv6";
 	return "all";
+}
+
+unsigned char vline_fwd_family_parse(const char *family_str)
+{
+	if (strcmp(family_str, "ipv4") == 0)
+		return VLINE_FAMILY_IPV4;
+	if (strcmp(family_str, "ipv6") == 0)
+		return VLINE_FAMILY_IPV6;
+	if (strcmp(family_str, "all") == 0)
+		return VLINE_FAMILY_ALL;
+	return VLINE_FAMILY_MASK;
 }
 
 static inline void vline_fwd_family_flags_set(struct net_device *dev, unsigned char family)
@@ -113,6 +124,26 @@ static inline int vline_fwd_map_update(struct net_device *in_dev,
 		NATFLOW_println("update %s(%s)->%s", in_dev->name, master_name, out_dev->name);
 	else
 		NATFLOW_println("update %s->%s", in_dev->name, out_dev->name);
+
+	return 0;
+}
+
+static inline int vline_fwd_endpoint_validate(struct net_device *dev,
+                                              const char *role,
+                                              const unsigned char *src_ifname,
+                                              const unsigned char *dst_ifname,
+                                              unsigned char family)
+{
+	if (netdev_master_upper_dev_get_rcu(dev)) {
+		NATFLOW_println("Invalid vline config for %s %s,%s,%s",
+		                role, src_ifname, dst_ifname, vline_fwd_family_name(family));
+		return -EINVAL;
+	}
+	if ((dev->flags & IFF_NOARP) && family != VLINE_FAMILY_IPV6) {
+		NATFLOW_println("Invalid vline config for %s %s,%s,%s: should not be IFF_NOARP, or family should be ipv6 only",
+		                role, src_ifname, dst_ifname, vline_fwd_family_name(family));
+		return -EINVAL;
+	}
 
 	return 0;
 }
@@ -176,31 +207,17 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 	rcu_read_lock();
 	for_each_netdev_rcu(&init_net, dev) {
 		if (strncmp(dev->name, dst_ifname, IFNAMSIZ) == 0) {
-			if (netdev_master_upper_dev_get_rcu(dev)) {
+			ret = vline_fwd_endpoint_validate(dev, "dst", src_ifname, dst_ifname, family);
+			if (ret != 0) {
 				rcu_read_unlock();
-				NATFLOW_println("Invalid vline config for dst %s,%s,%s",
-				                src_ifname, dst_ifname, vline_fwd_family_name(family));
-				return -EINVAL;
-			}
-			if ((dev->flags & IFF_NOARP) && family != VLINE_FAMILY_IPV6) {
-				rcu_read_unlock();
-				NATFLOW_println("Invalid vline config for dst %s,%s,%s: should not be IFF_NOARP, or family should be ipv6 only",
-				                src_ifname, dst_ifname, vline_fwd_family_name(family));
-				return -EINVAL;
+				return ret;
 			}
 			dst_dev = dev;
 		} else if (strncmp(dev->name, src_ifname, IFNAMSIZ) == 0) {
-			if (netdev_master_upper_dev_get_rcu(dev)) {
+			ret = vline_fwd_endpoint_validate(dev, "src", src_ifname, dst_ifname, family);
+			if (ret != 0) {
 				rcu_read_unlock();
-				NATFLOW_println("Invalid vline config for src %s,%s,%s",
-				                src_ifname, dst_ifname, vline_fwd_family_name(family));
-				return -EINVAL;
-			}
-			if ((dev->flags & IFF_NOARP) && family != VLINE_FAMILY_IPV6) {
-				rcu_read_unlock();
-				NATFLOW_println("Invalid vline config for src %s,%s,%s: should not be IFF_NOARP, or family should be ipv6 only",
-				                src_ifname, dst_ifname, vline_fwd_family_name(family));
-				return -EINVAL;
+				return ret;
 			}
 			src_dev = dev;
 		}
@@ -359,21 +376,25 @@ static inline int vline_fwd_map_ifup_handle(struct net_device *dev)
 static inline int vline_fwd_map_unregister_handle(struct net_device *dev)
 {
 	int i;
+	int handled = 0;
 
 	vline_fwd_flags_clear(dev);
-	if (dev->ifindex >= VLINE_FWD_MAX_NUM) {
-		return 0;
-	}
-	if (rcu_access_pointer(vline_fwd_map[dev->ifindex]) != NULL) {
+	if (dev->ifindex < VLINE_FWD_MAX_NUM &&
+	        rcu_access_pointer(vline_fwd_map[dev->ifindex]) != NULL) {
 		RCU_INIT_POINTER(vline_fwd_map[dev->ifindex], NULL);
-		NATFLOW_println("handle event for dev=%s", dev->name);
+		handled = 1;
 	}
 
+	/* A device with a large ifindex can still be stored as an outdev value. */
 	for (i = 0; i < VLINE_FWD_MAX_NUM; i++) {
 		if (rcu_access_pointer(vline_fwd_map[i]) == dev) {
 			RCU_INIT_POINTER(vline_fwd_map[i], NULL);
+			handled = 1;
 		}
 	}
+
+	if (handled)
+		NATFLOW_println("handle event for dev=%s", dev->name);
 
 	return 0;
 }
