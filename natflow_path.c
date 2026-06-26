@@ -6096,6 +6096,8 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 			mutex_unlock(&ppe_dev_cache_lock);
 		}
 #endif
+	} else if (event == NETDEV_CHANGEUPPER) {
+		vline_fwd_map_ifup_handle(dev);
 	}
 
 #ifdef CONFIG_NETFILTER_INGRESS

@@ -137,12 +137,21 @@ family 标志语义：
 
 ## 6. netdev 事件处理
 
-`NETDEV_UP` 和 `NETDEV_CHANGE`：
+`NETDEV_UP`、`NETDEV_CHANGE` 和 `NETDEV_CHANGEUPPER`：
 
 - 对 PPPoE 设备尝试设置 `IFF_PPPOE`。
 - 调用 `vline_fwd_map_ifup_handle(dev)`。
 - 该函数只查找第一条匹配当前设备名或当前 master 名的 vline 配置，并只重建该
   单条配置。
+
+`NETDEV_CHANGEUPPER` 的处理范围是新增 lower dev 加入已配置 bridge 的场景：
+
+- 当新增设备加入 bridge 后，如果该 bridge 是 vline 配置中的端点，
+  `vline_fwd_map_ifup_handle(dev)` 会按当前 master 关系重建该条 vline 映射。
+- 设备离开 bridge 或迁移到其他 bridge 时，内核侧不保证自动清理旧的 map/flags，
+  也不会做完整 `vline_apply`。
+- 离开/迁移 bridge 的拓扑收敛由应用层保证：应用层需要自行感知 bridge 拓扑变化，
+  重新下发 vline 配置并触发 `vline_apply`。
 
 `NETDEV_UP` 还会在满足条件的设备上安装 ingress hook：
 
@@ -156,8 +165,8 @@ family 标志语义：
 - 如果该设备作为入接口 map key，清除对应表项。
 - 如果该设备作为任意 map value，也会扫描 64 个表项并清除引用。
 
-当前没有专门处理 `NETDEV_CHANGEUPPER`，桥端口加入/离开 bridge 不会触发完整
-vline 重建。
+`NETDEV_CHANGEUPPER` 不触发完整 vline 重建，只用于覆盖新增下挂口加入已配置
+bridge 的场景。
 
 ## 7. vline 过滤
 
@@ -368,8 +377,10 @@ relay 与 NOARP：
   可能保留前面规则设置后的状态。
 - `src_ifname == dst_ifname` 当前没有被显式拒绝。
 - `vline_apply` 不是事务式操作，失败时可能留下部分已安装的运行时表项。
-- netdev UP/CHANGE 事件只重建第一条匹配配置，不会完整重建全部 vline 状态。
-- 没有处理 bridge port 加入/离开的 `NETDEV_CHANGEUPPER` 事件。
+- netdev UP/CHANGE/CHANGEUPPER 事件只重建第一条匹配配置，不会完整重建全部
+  vline 状态。
+- `NETDEV_CHANGEUPPER` 只覆盖 bridge port 新增加入已配置 bridge 的场景。port
+  离开或迁移 bridge 时，应用层需要重新下发配置并触发 `vline_apply`。
 - ICMPv6/ND 识别不解析 IPv6 extension header。
 - 普通 vline 不是严格的“所有包都二层透传”：本机 MAC、同侧 fakeuser、对端
   前缀命中、过滤 ipset 命中等情况会回到原路径。
@@ -387,11 +398,11 @@ relay 与 NOARP：
 3. 配置缺少冲突检测。重复端点、同一接口参与多条 vline、`src == dst` 等组合
    可能导致 map 覆盖和 flags 不一致。
 
-4. netdev UP/CHANGE 事件只重建第一条匹配配置。多条规则或桥端口变化后，运行时
-   状态可能和配置表不一致。
+4. netdev UP/CHANGE/CHANGEUPPER 事件只重建第一条匹配配置。多条规则或桥端口
+   变化后，运行时状态可能和配置表不一致。
 
-5. 缺少 `NETDEV_CHANGEUPPER` 处理。桥下挂口新增、删除、迁移时，vline map 可能
-   不会随拓扑实时更新。
+5. `NETDEV_CHANGEUPPER` 只用于处理新增端口加入已配置 bridge。端口离开或迁移
+   bridge 时，内核侧不做自动完整收敛，需要应用层感知后重新下发并 apply 配置。
 
 6. 空 bridge master 配置可能返回成功但不安装任何入方向 map，用户侧不容易发现
    配置实际上无效。
