@@ -1791,6 +1791,11 @@ static ssize_t urllogger_read(struct file *file, char __user *buf,
 				              &url->sip, ntohs(url->sport), &url->dip, ntohs(url->dport), url->hits,
 				              NATFLOW_http_method[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->acl_idx, url->acl_action, url->data);
 			}
+			/*
+			 * FIXME: Returning -EINVAL when len > count breaks single-byte reads
+			 * (e.g. `while read` in shell scripts). It should be refactored to
+			 * handle partial reads like conntrackinfo_read() or use seq_file.
+			 */
 			if (len > count) {
 				ret = -EINVAL;
 				goto out;

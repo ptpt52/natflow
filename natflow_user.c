@@ -3590,6 +3590,11 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 			              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
 			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
 		}
+		/*
+		 * FIXME: Returning -EINVAL when len > count breaks single-byte reads
+		 * (e.g. `while read` in shell scripts). It should be refactored to
+		 * handle partial reads like conntrackinfo_read() or use seq_file.
+		 */
 		if (len > count) {
 			ret = -EINVAL;
 			goto out;
@@ -3788,6 +3793,11 @@ static ssize_t userinfo_event_read(struct file *file, char __user *buf,
 			              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
 			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
 		}
+		/*
+		 * FIXME: Returning -EINVAL when len > count breaks single-byte reads
+		 * (e.g. `while read` in shell scripts). It should be refactored to
+		 * handle partial reads like conntrackinfo_read() or use seq_file.
+		 */
 		if (len > count) {
 			ret = -EINVAL;
 			goto out;
