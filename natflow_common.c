@@ -125,7 +125,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	new = natflow_ct_ext_krealloc(old, alloc_size, gfp);
 	if (!new) {
 		clear_bit(IPS_NATFLOW_SESSION_BIT, &ct->status);
-		NATFLOW_ERROR(DEBUG_FMT_PREFIX "__krealloc size=%u failed!\n", DEBUG_ARG_PREFIX, (unsigned int)alloc_size);
+		NATFLOW_ERROR(DEBUG_FMT_PREFIX "failed to krealloc size=%u\n", DEBUG_ARG_PREFIX, (unsigned int)alloc_size);
 		return -1;
 	}
 
@@ -166,7 +166,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	new = natflow_ct_ext_krealloc(old, alloc_size, gfp);
 	if (!new) {
 		clear_bit(IPS_NATFLOW_SESSION_BIT, &ct->status);
-		NATFLOW_ERROR(DEBUG_FMT_PREFIX "__krealloc size=%u failed!\n", DEBUG_ARG_PREFIX, (unsigned int)alloc_size);
+		NATFLOW_ERROR(DEBUG_FMT_PREFIX "failed to krealloc size=%u\n", DEBUG_ARG_PREFIX, (unsigned int)alloc_size);
 		return -1;
 	}
 	memset((void *)new + newoff, 0, newlen - newoff);

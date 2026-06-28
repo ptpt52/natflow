@@ -180,11 +180,11 @@ static inline int vline_fwd_map_update(struct net_device *in_dev,
 {
 	if (in_dev->ifindex >= VLINE_FWD_MAX_NUM) {
 		if (master_name) {
-			NATFLOW_println("update %s(%s)->%s failed, ifindex(%u) >= %u",
+			NATFLOW_println("failed to update %s(%s)->%s, ifindex(%u) >= %u",
 			                in_dev->name, master_name, out_dev->name,
 			                in_dev->ifindex, VLINE_FWD_MAX_NUM);
 		} else {
-			NATFLOW_println("update %s->%s failed, ifindex(%u) >= %u",
+			NATFLOW_println("failed to update %s->%s, ifindex(%u) >= %u",
 			                in_dev->name, out_dev->name,
 			                in_dev->ifindex, VLINE_FWD_MAX_NUM);
 		}
@@ -207,12 +207,12 @@ static inline int vline_fwd_endpoint_validate(struct net_device *dev,
         unsigned char family)
 {
 	if (netdev_master_upper_dev_get_rcu(dev)) {
-		NATFLOW_println("Invalid vline config for %s %s,%s,%s",
+		NATFLOW_println("invalid vline config for %s %s,%s,%s",
 		                role, src_ifname, dst_ifname, vline_fwd_family_name(family));
 		return -EINVAL;
 	}
 	if ((dev->flags & IFF_NOARP) && family != VLINE_FAMILY_IPV6) {
-		NATFLOW_println("Invalid vline config for %s %s,%s,%s: should not be IFF_NOARP, or family should be ipv6 only",
+		NATFLOW_println("invalid vline config for %s %s,%s,%s: should not be IFF_NOARP, or family should be ipv6 only",
 		                role, src_ifname, dst_ifname, vline_fwd_family_name(family));
 		return -EINVAL;
 	}
@@ -304,7 +304,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 		dst_dev->flags &= ~IFF_VLINE_IS_LAN;
 		if ((src_dev->flags & IFF_NOARP)) {
 			rcu_read_unlock();
-			NATFLOW_println("Invalid vline config for %s,%s,%s: src_dev should not be IFF_NOARP",
+			NATFLOW_println("invalid vline config for %s,%s,%s: src_dev should not be IFF_NOARP",
 			                src_ifname, dst_ifname, vline_fwd_family_name(family));
 			return -EINVAL;
 		}
@@ -312,7 +312,7 @@ static inline int vline_fwd_map_add(const unsigned char *dst_ifname, const unsig
 		if (is_relay) {
 			if ((dst_dev->flags & IFF_NOARP)) {
 				rcu_read_unlock();
-				NATFLOW_println("Invalid vline relay config for %s,%s,%s: dst_dev should not be IFF_NOARP",
+				NATFLOW_println("invalid vline relay config for %s,%s,%s: dst_dev should not be IFF_NOARP",
 				                src_ifname, dst_ifname, vline_fwd_family_name(family));
 				return -EINVAL;
 			}
@@ -504,7 +504,7 @@ int ifname_group_add(const unsigned char *ifname)
 	for_each_netdev_rcu(&init_net, dev) {
 		if (strncmp(dev->name, ifname, IFNAMSIZ) == 0) {
 			dev->flags |= IFF_IFNAME_GROUP;
-			NATFLOW_println("Success ifname_group_add %s", ifname);
+			NATFLOW_println("successfully added ifname_group %s", ifname);
 			ret = 0;
 			break;
 		}
@@ -2808,7 +2808,7 @@ fastnat_check:
 												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-													NATFLOW_INFO("(PCO) dir%d set hwnat offload1 orig=[%s(vlan:%d pppoe:%d)"
+													NATFLOW_INFO("(PCO) set hwnat offload1 for dir%d orig=[%s(vlan:%d pppoe:%d)"
 													             " %pI4:%u->%pI4:%u] reply=[%s(vlan:%d pppoe:%d)"
 													             " %pI4:%u->%pI4:%u]\n",
 													             dir, nfn_i->outdev->name,
@@ -2828,12 +2828,12 @@ fastnat_check:
 													switch (iph->protocol) {
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT
-														             ": dir%d set hwnat offload1 failed\n",
+														             ": failed to set hwnat offload1 for dir%d\n",
 														             DEBUG_TCP_ARG(iph,l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT
-														             ": dir%d set hwnat offload1 failed\n",
+														             ": failed to set hwnat offload1 for dir%d\n",
 														             DEBUG_UDP_ARG(iph,l4), dir);
 														break;
 													}
@@ -2924,7 +2924,7 @@ fastnat_check:
 												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-													NATFLOW_INFO("(PCO) dir%d set hwnat offload2 orig=[%s(vlan:%d pppoe:%d)"
+													NATFLOW_INFO("(PCO) set hwnat offload2 for dir%d orig=[%s(vlan:%d pppoe:%d)"
 													             " %pI4:%u->%pI4:%u] reply=[%s(vlan:%d pppoe:%d)"
 													             " %pI4:%u->%pI4:%u]\n",
 													             dir, nfn_i->outdev->name,
@@ -2949,12 +2949,12 @@ fastnat_check:
 													switch (iph->protocol) {
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT
-														             ": dir%d set hwnat offload2 failed\n",
+														             ": failed to set hwnat offload2 for dir%d\n",
 														             DEBUG_TCP_ARG(iph,l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT
-														             ": dir%d set hwnat offload2 failed\n",
+														             ": failed to set hwnat offload2 for dir%d\n",
 														             DEBUG_UDP_ARG(iph,l4), dir);
 														break;
 													}
@@ -3044,7 +3044,7 @@ fastnat_check:
 											}
 											if (reply_dev->netdev_ops->ndo_flow_offload(
 											            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-												NATFLOW_INFO("(PCO) dir%d set hwnat offload3 orig=[%s(vlan:%d pppoe:%d)"
+												NATFLOW_INFO("(PCO) set hwnat offload3 for dir%d orig=[%s(vlan:%d pppoe:%d)"
 												             " %pI4:%u->%pI4:%u] reply=[%s(vlan:%d pppoe:%d)"
 												             " %pI4:%u->%pI4:%u]\n",
 												             dir, nfn_i->outdev->name,
@@ -3069,12 +3069,12 @@ fastnat_check:
 												switch (iph->protocol) {
 												case IPPROTO_TCP:
 													NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT
-													             ": dir%d set hwnat offload3 failed\n",
+													             ": failed to set hwnat offload3 for dir%d\n",
 													             DEBUG_TCP_ARG(iph,l4), dir);
 													break;
 												case IPPROTO_UDP:
 													NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT
-													             ": dir%d set hwnat offload3 failed\n",
+													             ": failed to set hwnat offload3 for dir%d\n",
 													             DEBUG_UDP_ARG(iph,l4), dir);
 													break;
 												}
@@ -3149,7 +3149,7 @@ fastnat_check:
 												}
 												if (flow_offload_add_extdev && flow_offload_add_extdev(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-													NATFLOW_INFO("(PCO) dir%d set hwnat offload4 orig=[%s(vlan:%d pppoe:%d)"
+													NATFLOW_INFO("(PCO) set hwnat offload4 for dir%d orig=[%s(vlan:%d pppoe:%d)"
 													             " %pI4:%u->%pI4:%u] reply=[%s(vlan:%d pppoe:%d)"
 													             " %pI4:%u->%pI4:%u]\n",
 													             dir, nfn_i->outdev->name,
@@ -3171,12 +3171,12 @@ fastnat_check:
 													switch (iph->protocol) {
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT
-														             ": dir%d set hwnat offload4 failed\n",
+														             ": failed to set hwnat offload4 for dir%d\n",
 														             DEBUG_TCP_ARG(iph,l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT
-														             ": dir%d set hwnat offload4 failed\n",
+														             ": failed to set hwnat offload4 for dir%d\n",
 														             DEBUG_UDP_ARG(iph,l4), dir);
 														break;
 													}
@@ -4661,7 +4661,7 @@ fastnat_check6:
 												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-													NATFLOW_INFO("(PCO) dir%d set hwnat offload1 orig=[%s(vlan:%d pppoe:%d)"
+													NATFLOW_INFO("(PCO) set hwnat offload1 for dir%d orig=[%s(vlan:%d pppoe:%d)"
 													             " [%pI6c]:%u->[%pI6c]:%u] reply=[%s(vlan:%d pppoe:%d)"
 													             " [%pI6c]:%u->[%pI6c]:%u]\n",
 													             dir, nfn_i->outdev->name,
@@ -4681,12 +4681,12 @@ fastnat_check6:
 													switch (IPV6H->nexthdr) {
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
-														             ": dir%d set hwnat offload1 failed\n",
+														             ": failed to set hwnat offload1 for dir%d\n",
 														             DEBUG_TCP_ARG6(iph,l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6
-														             ": dir%d set hwnat offload1 failed\n",
+														             ": failed to set hwnat offload1 for dir%d\n",
 														             DEBUG_UDP_ARG6(iph,l4), dir);
 														break;
 													}
@@ -4777,7 +4777,7 @@ fastnat_check6:
 												}
 												if (orig_dev->netdev_ops->ndo_flow_offload(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-													NATFLOW_INFO("(PCO) dir%d set hwnat offload2 orig=[%s(vlan:%d pppoe:%d)"
+													NATFLOW_INFO("(PCO) set hwnat offload2 for dir%d orig=[%s(vlan:%d pppoe:%d)"
 													             " [%pI6c]:%u->[%pI6c]:%u] reply=[%s(vlan:%d pppoe:%d)"
 													             " [%pI6c]:%u->[%pI6c]:%u]\n",
 													             dir, nfn_i->outdev->name,
@@ -4802,12 +4802,12 @@ fastnat_check6:
 													switch (IPV6H->nexthdr) {
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
-														             ": dir%d set hwnat offload2 failed\n",
+														             ": failed to set hwnat offload2 for dir%d\n",
 														             DEBUG_TCP_ARG6(iph,l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6
-														             ": dir%d set hwnat offload2 failed\n",
+														             ": failed to set hwnat offload2 for dir%d\n",
 														             DEBUG_UDP_ARG6(iph,l4), dir);
 														break;
 													}
@@ -4897,7 +4897,7 @@ fastnat_check6:
 											}
 											if (reply_dev->netdev_ops->ndo_flow_offload(
 											            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-												NATFLOW_INFO("(PCO) dir%d set hwnat offload3 orig=[%s(vlan:%d pppoe:%d)"
+												NATFLOW_INFO("(PCO) set hwnat offload3 for dir%d orig=[%s(vlan:%d pppoe:%d)"
 												             " [%pI6c]:%u->[%pI6c]:%u] reply=[%s(vlan:%d pppoe:%d)"
 												             " [%pI6c]:%u->[%pI6c]:%u]\n",
 												             dir, nfn_i->outdev->name,
@@ -4922,12 +4922,12 @@ fastnat_check6:
 												switch (IPV6H->nexthdr) {
 												case IPPROTO_TCP:
 													NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
-													             ": dir%d set hwnat offload3 failed\n",
+													             ": failed to set hwnat offload3 for dir%d\n",
 													             DEBUG_TCP_ARG6(iph,l4), dir);
 													break;
 												case IPPROTO_UDP:
 													NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6
-													             ": dir%d set hwnat offload3 failed\n",
+													             ": failed to set hwnat offload3 for dir%d\n",
 													             DEBUG_UDP_ARG6(iph,l4), dir);
 													break;
 												}
@@ -5002,7 +5002,7 @@ fastnat_check6:
 												}
 												if (flow_offload_add_extdev && flow_offload_add_extdev(
 												            FLOW_OFFLOAD_ADD, &natflow->flow, &reply, &orig) == 0) {
-													NATFLOW_INFO("(PCO) dir%d set hwnat offload4 orig=[%s(vlan:%d pppoe:%d)"
+													NATFLOW_INFO("(PCO) set hwnat offload4 for dir%d orig=[%s(vlan:%d pppoe:%d)"
 													             " [%pI6c]:%u->[%pI6c]:%u] reply=[%s(vlan:%d pppoe:%d)"
 													             " [%pI6c]:%u->[%pI6c]:%u]\n",
 													             dir, nfn_i->outdev->name,
@@ -5024,12 +5024,12 @@ fastnat_check6:
 													switch (IPV6H->nexthdr) {
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
-														             ": dir%d set hwnat offload4 failed\n",
+														             ": failed to set hwnat offload4 for dir%d\n",
 														             DEBUG_TCP_ARG6(iph,l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6
-														             ": dir%d set hwnat offload4 failed\n",
+														             ": failed to set hwnat offload4 for dir%d\n",
 														             DEBUG_UDP_ARG6(iph,l4), dir);
 														break;
 													}
@@ -6031,7 +6031,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 			dev->netdev_ops->ndo_flow_offload_check(&path);
 			if ((path.flags & FLOW_OFFLOAD_PATH_PPPOE)) {
 				dev->flags |= IFF_PPPOE;
-				NATFLOW_println("catch event %lu for dev=%s : set flags IFF_PPPOE", event, dev->name);
+				NATFLOW_println("caught event %lu for dev=%s: set flags IFF_PPPOE", event, dev->name);
 			}
 		}
 		if (dev->netdev_ops->ndo_flow_offload) {
@@ -6047,7 +6047,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 					}
 				}
 				rcu_assign_pointer(ppe_dev, ppe_dev_cache[0]);
-				NATFLOW_println("catch event %lu for dev=%s set ppe=%s", event, dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
+				NATFLOW_println("caught event %lu for dev=%s: set ppe=%s", event, dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
 				mutex_unlock(&ppe_dev_cache_lock);
 			} else {
 				mutex_lock(&ppe_dev_cache_lock);
@@ -6063,7 +6063,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 					++i;
 				}
 				rcu_assign_pointer(ppe_dev, ppe_dev_cache[0]);
-				NATFLOW_println("catch event %lu for dev=%s set ppe=%s", event, dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
+				NATFLOW_println("caught event %lu for dev=%s: set ppe=%s", event, dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
 				mutex_unlock(&ppe_dev_cache_lock);
 			}
 		}
@@ -6071,7 +6071,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 		if (dev->type == ARPHRD_PPP &&
 		        (dev->name[0] == 'p' && dev->name[1] == 'p' && dev->name[2] == 'p' && dev->name[3] == 'o' && dev->name[4] == 'e')) {
 			dev->flags |= IFF_PPPOE;
-			NATFLOW_println("catch event %lu for dev=%s : set flags IFF_PPPOE", event, dev->name);
+			NATFLOW_println("caught event %lu for dev=%s: set flags IFF_PPPOE", event, dev->name);
 		}
 #endif
 		vline_fwd_map_ifup_handle(dev);
@@ -6092,7 +6092,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 				++i;
 			}
 			rcu_assign_pointer(ppe_dev, ppe_dev_cache[0]);
-			NATFLOW_println("catch event %lu for dev=%s set ppe=%s", event, dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
+			NATFLOW_println("caught event %lu for dev=%s: set ppe=%s", event, dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
 			mutex_unlock(&ppe_dev_cache_lock);
 		}
 #endif
@@ -6105,7 +6105,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 		if ((dev->features & (NETIF_F_GRO | NETIF_F_GRO_FRAGLIST))) {
 			dev->wanted_features &= ~(NETIF_F_GRO | NETIF_F_GRO_FRAGLIST);
 			netdev_update_features(dev);
-			NATFLOW_println("remove NETIF_F_GRO/NETIF_F_GRO_FRAGLIST for dev=%s", dev->name);
+			NATFLOW_println("removed NETIF_F_GRO/NETIF_F_GRO_FRAGLIST for dev=%s", dev->name);
 		}
 		if (!((dev->flags & IFF_LOOPBACK) ||
 		        netif_is_bridge_master(dev) ||
@@ -6115,7 +6115,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 		        dev->type == ARPHRD_RAWIP) {
 			netdev_features_t features = dev->features;
 			netdev_features_t vlan_features = netdev_intersect_features(features, dev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
-			NATFLOW_println("catch NETDEV_UP event for dev=%s(tso=%d,%d,hw_csum=%d,%d), add ingress hook",
+			NATFLOW_println("caught NETDEV_UP event for dev=%s(tso=%d,%d,hw_csum=%d,%d), added ingress hook",
 			                dev->name,
 			                !!(features & NETIF_F_TSO),
 			                !!(vlan_features & NETIF_F_TSO),
@@ -6139,7 +6139,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 #endif
 	vline_fwd_map_unregister_handle(dev);
 
-	NATFLOW_println("catch NETDEV_UNREGISTER event for dev=%s", dev->name);
+	NATFLOW_println("caught NETDEV_UNREGISTER event for dev=%s", dev->name);
 
 	do {
 		struct netdev_hold_wq *wq = (struct netdev_hold_wq *)kzalloc(sizeof(struct netdev_hold_wq), GFP_KERNEL);
@@ -6150,7 +6150,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 			INIT_WORK(&wq->work, &netdev_hold_workfn);
 			queue_work(natflow_netdev_wq, &wq->work);
 		} else {
-			NATFLOW_println("Failed to alloc dev hold workqueue for dev=%s", dev->name);
+			NATFLOW_println("failed to allocate dev hold workqueue for dev=%s", dev->name);
 		}
 	} while (0);
 

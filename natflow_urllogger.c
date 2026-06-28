@@ -507,12 +507,12 @@ static inline void natflow_urllogger_tcp_reply_rstack(const struct net_device *d
 	header_len = offset < 0 ? 0 : offset;
 	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
 	if (!nskb) {
-		NATFLOW_ERROR("alloc_skb failed\n");
+		NATFLOW_ERROR("failed to allocate skb\n");
 		goto out;
 	}
 	if (offset <= 0) {
 		if (pskb_trim(nskb, nskb->len + offset)) {
-			NATFLOW_ERROR("pskb_trim failed: len=%d, offset=%d\n", nskb->len, offset);
+			NATFLOW_ERROR("failed to trim pskb: len=%d, offset=%d\n", nskb->len, offset);
 			consume_skb(nskb);
 			goto out;
 		}
@@ -601,12 +601,12 @@ static inline void natflow_urllogger_tcp_reply_rstack6(const struct net_device *
 	header_len = offset < 0 ? 0 : offset;
 	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
 	if (!nskb) {
-		NATFLOW_ERROR("alloc_skb failed\n");
+		NATFLOW_ERROR("failed to allocate skb\n");
 		goto out;
 	}
 	if (offset <= 0) {
 		if (pskb_trim(nskb, nskb->len + offset)) {
-			NATFLOW_ERROR("pskb_trim failed: len=%d, offset=%d\n", nskb->len, offset);
+			NATFLOW_ERROR("failed to trim pskb: len=%d, offset=%d\n", nskb->len, offset);
 			consume_skb(nskb);
 			goto out;
 		}
@@ -990,7 +990,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 				int needmore = 0;
 				if (skb_tailroom(prev_skb) < add_data_len + data_len &&
 				        pskb_expand_head(prev_skb, 0, add_data_len + data_len, GFP_ATOMIC)) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": pskb_expand_head failed\n", DEBUG_TCP_ARG(iph,l4));
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to expand pskb head\n", DEBUG_TCP_ARG(iph,l4));
 					consume_skb(prev_skb);
 					return NF_ACCEPT;
 				}
@@ -1007,7 +1007,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 					if (add_data_len >= 32 * 1024 ||
 					        urllogger_sni_cache_attach(prev_iph->saddr, TCPH(prev_l4)->source,
 					                                   prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
-						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": urllogger_sni_cache_attach failed with add_data_len=%u\n", DEBUG_TCP_ARG(iph,l4), add_data_len);
+						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach urllogger sni cache, add_data_len=%u\n", DEBUG_TCP_ARG(iph,l4), add_data_len);
 						consume_skb(prev_skb);
 						goto __urllogger_ip_skip;
 					}
@@ -1016,7 +1016,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			} else if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq)) {
 				if (urllogger_sni_cache_attach(prev_iph->saddr, TCPH(prev_l4)->source,
 				                               prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": urllogger_sni_cache_attach failed\n", DEBUG_TCP_ARG(iph,l4));
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach urllogger sni cache\n", DEBUG_TCP_ARG(iph,l4));
 					consume_skb(prev_skb);
 					goto __urllogger_ip_skip;
 				}
@@ -1034,7 +1034,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 				prev_skb = skb_copy(skb, GFP_ATOMIC);
 				if (prev_skb) {
 					if (urllogger_sni_cache_attach(iph->saddr, TCPH(l4)->source, iph->daddr, TCPH(l4)->dest, prev_skb, 0) != 0) {
-						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": urllogger_sni_cache_attach failed\n", DEBUG_TCP_ARG(iph,l4));
+						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach urllogger sni cache\n", DEBUG_TCP_ARG(iph,l4));
 						consume_skb(prev_skb);
 						goto __urllogger_ip_skip;
 					}
@@ -1305,7 +1305,7 @@ urllogger_hook_ipv6_main:
 				int needmore = 0;
 				if (skb_tailroom(prev_skb) < add_data_len + data_len &&
 				        pskb_expand_head(prev_skb, 0, add_data_len + data_len, GFP_ATOMIC)) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": pskb_expand_head failed\n", DEBUG_TCP_ARG6(iph,l4));
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to expand pskb head\n", DEBUG_TCP_ARG6(iph,l4));
 					consume_skb(prev_skb);
 					return NF_ACCEPT;
 				}
@@ -1322,7 +1322,7 @@ urllogger_hook_ipv6_main:
 					if (add_data_len >= 32 * 1024 ||
 					        urllogger_sni_cache_attach6(&prev_iph->saddr, TCPH(prev_l4)->source,
 					                                    &prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
-						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": urllogger_sni_cache_attach6 failed with add_data_len=%u\n", DEBUG_TCP_ARG6(iph,l4), add_data_len);
+						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach urllogger sni cache6, add_data_len=%u\n", DEBUG_TCP_ARG6(iph,l4), add_data_len);
 						consume_skb(prev_skb);
 						goto __urllogger_ipv6_skip;
 					}
@@ -1331,7 +1331,7 @@ urllogger_hook_ipv6_main:
 			} else if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq)) {
 				if (urllogger_sni_cache_attach6(&prev_iph->saddr, TCPH(prev_l4)->source,
 				                                &prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": urllogger_sni_cache_attach6 failed\n", DEBUG_TCP_ARG6(iph,l4));
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach urllogger sni cache6\n", DEBUG_TCP_ARG6(iph,l4));
 					consume_skb(prev_skb);
 					goto __urllogger_ipv6_skip;
 				}
@@ -1349,7 +1349,7 @@ urllogger_hook_ipv6_main:
 				prev_skb = skb_copy(skb, GFP_ATOMIC);
 				if (prev_skb) {
 					if (urllogger_sni_cache_attach6(&IPV6H->saddr, TCPH(l4)->source, &IPV6H->daddr, TCPH(l4)->dest, prev_skb, 0) != 0) {
-						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": urllogger_sni_cache_attach6 failed\n", DEBUG_TCP_ARG6(iph,l4));
+						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach urllogger sni cache6\n", DEBUG_TCP_ARG6(iph,l4));
 						consume_skb(prev_skb);
 						goto __urllogger_ipv6_skip;
 					}
@@ -1721,7 +1721,7 @@ static ssize_t urllogger_write(struct file *file, const char __user *buf, size_t
 	if (l >= cnt) {
 		data_left += l;
 		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("err: too long a line");
+			NATFLOW_println("error: line too long");
 			data_left = 0;
 			return -EINVAL;
 		}
@@ -1737,7 +1737,7 @@ static ssize_t urllogger_write(struct file *file, const char __user *buf, size_t
 		goto done;
 	}
 
-	NATFLOW_println("ignoring line[%s]", data);
+	NATFLOW_println("ignoring line: [%s]", data);
 	if (err != 0) {
 		return err;
 	}
@@ -2021,7 +2021,7 @@ static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t b
 	if (l >= cnt) {
 		data_left += l;
 		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("err: too long a line");
+			NATFLOW_println("error: line too long");
 			data_left = 0;
 			return -EINVAL;
 		}
@@ -2116,7 +2116,7 @@ static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t b
 		}
 	}
 
-	NATFLOW_println("ignoring line[%s]", data);
+	NATFLOW_println("ignoring line: [%s]", data);
 	if (err != 0) {
 		return err;
 	}
@@ -2172,7 +2172,7 @@ static int natflow_hostacl_init(void)
 		ret = alloc_chrdev_region(&devno, hostacl_minor, 1, hostacl_dev_name);
 	}
 	if (ret < 0) {
-		NATFLOW_println("alloc_chrdev_region failed!");
+		NATFLOW_println("failed to allocate chrdev region");
 		return ret;
 	}
 	hostacl_major = MAJOR(devno);
@@ -2185,13 +2185,13 @@ static int natflow_hostacl_init(void)
 
 	ret = cdev_add(&hostacl_cdev, devno, 1);
 	if (ret) {
-		NATFLOW_println("adding chardev, error=%d", ret);
+		NATFLOW_println("failed to add cdev, error=%d", ret);
 		goto cdev_add_failed;
 	}
 
 	hostacl_class = natflow_class_create("hostacl_class");
 	if (IS_ERR(hostacl_class)) {
-		NATFLOW_println("failed in creating class");
+		NATFLOW_println("failed to create class");
 		ret = -EINVAL;
 		goto class_create_failed;
 	}
@@ -2244,7 +2244,7 @@ int natflow_urllogger_init(void)
 		ret = alloc_chrdev_region(&devno, urllogger_minor, 1, urllogger_dev_name);
 	}
 	if (ret < 0) {
-		NATFLOW_println("alloc_chrdev_region failed!");
+		NATFLOW_println("failed to allocate chrdev region");
 		urllogger_sni_cache_cleanup();
 		return ret;
 	}
@@ -2258,13 +2258,13 @@ int natflow_urllogger_init(void)
 
 	ret = cdev_add(&urllogger_cdev, devno, 1);
 	if (ret) {
-		NATFLOW_println("adding chardev, error=%d", ret);
+		NATFLOW_println("failed to add cdev, error=%d", ret);
 		goto cdev_add_failed;
 	}
 
 	urllogger_class = natflow_class_create("urllogger_class");
 	if (IS_ERR(urllogger_class)) {
-		NATFLOW_println("failed in creating class");
+		NATFLOW_println("failed to create class");
 		ret = -EINVAL;
 		goto class_create_failed;
 	}

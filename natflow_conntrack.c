@@ -90,7 +90,7 @@ static ssize_t conntrackinfo_write(struct file *file, const char __user *buf, si
 	if (l >= cnt) {
 		data_left += l;
 		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("Error: line is too long");
+			NATFLOW_println("error: line too long");
 			data_left = 0;
 			return -EINVAL;
 		}
@@ -105,7 +105,7 @@ static ssize_t conntrackinfo_write(struct file *file, const char __user *buf, si
 		goto done;
 	}
 
-	NATFLOW_println("ignoring line[%s]", data);
+	NATFLOW_println("ignoring line: [%s]", data);
 	if (err != 0) {
 		return err;
 	}
@@ -620,7 +620,7 @@ int conntrackinfo_init(void)
 		retval = alloc_chrdev_region(&devno, conntrackinfo_minor, number_of_devices, conntrackinfo_dev_name);
 	}
 	if (retval < 0) {
-		NATFLOW_println("alloc_chrdev_region failed!");
+		NATFLOW_println("failed to allocate chrdev region");
 		goto chrdev_region_failed;
 	}
 	conntrackinfo_major = MAJOR(devno);
@@ -633,7 +633,7 @@ int conntrackinfo_init(void)
 
 	retval = cdev_add(&conntrackinfo_cdev, devno, 1);
 	if (retval) {
-		NATFLOW_println("adding chardev, error=%d", retval);
+		NATFLOW_println("failed to add cdev, error=%d", retval);
 		goto cdev_add_failed;
 	}
 

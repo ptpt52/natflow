@@ -215,7 +215,7 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 	if (l >= cnt) {
 		data_left += l;
 		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("err: line is too long");
+			NATFLOW_println("error: line too long");
 			data_left = 0;
 			return -EINVAL;
 		}
@@ -340,7 +340,7 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 #endif
 	}
 
-	NATFLOW_println("ignoring line[%s]", data);
+	NATFLOW_println("ignoring line: [%s]", data);
 	if (err != 0) {
 		return err;
 	}
@@ -389,7 +389,7 @@ static int __init natflow_init(void) {
 		retval = alloc_chrdev_region(&devno, natflow_minor, number_of_devices, natflow_dev_name);
 	}
 	if (retval < 0) {
-		NATFLOW_println("alloc_chrdev_region failed!");
+		NATFLOW_println("failed to allocate chrdev region");
 		return retval;
 	}
 	natflow_major = MAJOR(devno);
@@ -402,7 +402,7 @@ static int __init natflow_init(void) {
 
 	retval = cdev_add(&natflow_cdev, devno, 1);
 	if (retval) {
-		NATFLOW_println("adding chardev, error=%d", retval);
+		NATFLOW_println("failed to add cdev, error=%d", retval);
 		goto cdev_add_failed;
 	}
 
@@ -421,26 +421,26 @@ static int __init natflow_init(void) {
 
 	retval = natflow_zone_init();
 	if (retval) {
-		NATFLOW_println("natflow_zone_init failed, error=%d", retval);
+		NATFLOW_println("failed to initialize natflow zone, error=%d", retval);
 		goto natflow_zone_init_failed;
 	}
 
 	retval = natflow_user_init();
 	if (retval) {
-		NATFLOW_println("natflow_user_init failed, error=%d", retval);
+		NATFLOW_println("failed to initialize natflow user, error=%d", retval);
 		goto natflow_user_init_failed;
 	}
 
 	retval = conntrackinfo_init();
 	if (retval) {
-		NATFLOW_println("conntrackinfo_init failed, error=%d", retval);
+		NATFLOW_println("failed to initialize conntrackinfo, error=%d", retval);
 		goto conntrackinfo_init_failed;
 	}
 
 #if defined(CONFIG_NATFLOW_PATH)
 	retval = natflow_path_init();
 	if (retval) {
-		NATFLOW_println("natflow_path_init failed, error=%d", retval);
+		NATFLOW_println("failed to initialize natflow path, error=%d", retval);
 		goto natflow_path_init_failed;
 	}
 #endif
@@ -448,7 +448,7 @@ static int __init natflow_init(void) {
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 	retval = natflow_urllogger_init();
 	if (retval) {
-		NATFLOW_println("natflow_urllogger_init failed, error=%d", retval);
+		NATFLOW_println("failed to initialize natflow urllogger, error=%d", retval);
 		goto natflow_urllogger_init_failed;
 	}
 #endif

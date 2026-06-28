@@ -1055,7 +1055,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			user = nf_ct_get(uskb, &ctinfo);
 
 			if (!user) {
-				NATFLOW_ERROR("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] failed, ctinfo=%x\n",
+				NATFLOW_ERROR("failed to create fakeuser for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u], ctinfo=%x\n",
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
 				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
@@ -1064,7 +1064,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			}
 
 			if (!user->ext) {
-				NATFLOW_ERROR("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] failed, user->ext is NULL\n",
+				NATFLOW_ERROR("failed to create fakeuser for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u], user->ext is NULL\n",
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
 				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
@@ -1075,7 +1075,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status)) {
 				struct fakeuser_data_t *fud;
 				if (natflow_fakeuser_ext_init(user, &fud) != 0) {
-					NATFLOW_ERROR("fakeuser create for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u] failed, realloc user->ext failed\n",
+					NATFLOW_ERROR("failed to create fakeuser for ct[%pI4:%u->%pI4:%u %pI4:%u<-%pI4:%u], failed to realloc user->ext\n",
 					              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
 					              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
 					              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
@@ -1115,7 +1115,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			user = nf_ct_get(uskb, &ctinfo);
 
 			if (!user) {
-				NATFLOW_ERROR("fakeuser create for ct[[%pI6c]:%u->[%pI6c]:%u [%pI6c]:%u<-[%pI6c]:%u] failed, ctinfo=%x\n",
+				NATFLOW_ERROR("failed to create fakeuser for ct[[%pI6c]:%u->[%pI6c]:%u [%pI6c]:%u<-[%pI6c]:%u], ctinfo=%x\n",
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
 				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
@@ -1124,7 +1124,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			}
 
 			if (!user->ext) {
-				NATFLOW_ERROR("fakeuser create for ct[[%pI6c]:%u->[%pI6c]:%u [%pI6c]:%u<-[%pI6c]:%u] failed, user->ext is NULL\n",
+				NATFLOW_ERROR("failed to create fakeuser for ct[[%pI6c]:%u->[%pI6c]:%u [%pI6c]:%u<-[%pI6c]:%u], user->ext is NULL\n",
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
 				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
@@ -1135,7 +1135,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			if (!nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status)) {
 				struct fakeuser_data_t *fud;
 				if (natflow_fakeuser_ext_init(user, &fud) != 0) {
-					NATFLOW_ERROR("fakeuser create for ct[[%pI6c]:%u->[%pI6c]:%u [%pI6c]:%u<-[%pI6c]:%u] failed, realloc user->ext failed\n",
+					NATFLOW_ERROR("failed to create fakeuser for ct[[%pI6c]:%u->[%pI6c]:%u [%pI6c]:%u<-[%pI6c]:%u], failed to realloc user->ext\n",
 					              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all),
 					              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
 					              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
@@ -1214,12 +1214,12 @@ static inline void natflow_auth_reply_payload_fin(const char *payload, int paylo
 	header_len = offset < 0 ? 0 : offset;
 	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
 	if (!nskb) {
-		NATFLOW_ERROR("alloc_skb failed\n");
+		NATFLOW_ERROR("failed to allocate skb\n");
 		goto out;
 	}
 	if (offset <= 0) {
 		if (pskb_trim(nskb, nskb->len + offset)) {
-			NATFLOW_ERROR("pskb_trim failed: len=%d, offset=%d\n", nskb->len, offset);
+			NATFLOW_ERROR("failed to trim pskb: len=%d, offset=%d\n", nskb->len, offset);
 			consume_skb(nskb);
 			goto out;
 		}
@@ -1310,12 +1310,12 @@ static inline void natflow_auth_reply_payload_fin6(const char *payload, int payl
 	header_len = offset < 0 ? 0 : offset;
 	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
 	if (!nskb) {
-		NATFLOW_ERROR("alloc_skb failed\n");
+		NATFLOW_ERROR("failed to allocate skb\n");
 		goto out;
 	}
 	if (offset <= 0) {
 		if (pskb_trim(nskb, nskb->len + offset)) {
-			NATFLOW_ERROR("pskb_trim failed: len=%d, offset=%d\n", nskb->len, offset);
+			NATFLOW_ERROR("failed to trim pskb: len=%d, offset=%d\n", nskb->len, offset);
 			consume_skb(nskb);
 			goto out;
 		}
@@ -1502,12 +1502,12 @@ static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, s
 	header_len = offset < 0 ? 0 : offset;
 	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
 	if (!nskb) {
-		NATFLOW_ERROR("alloc_skb failed\n");
+		NATFLOW_ERROR("failed to allocate skb\n");
 		goto out;
 	}
 	if (offset <= 0) {
 		if (pskb_trim(nskb, nskb->len + offset)) {
-			NATFLOW_ERROR("pskb_trim failed: len=%d, offset=%d\n", nskb->len, offset);
+			NATFLOW_ERROR("failed to trim pskb: len=%d, offset=%d\n", nskb->len, offset);
 			consume_skb(nskb);
 			goto out;
 		}
@@ -1596,12 +1596,12 @@ static inline void natflow_auth_tcp_reply_finack6(const struct net_device *dev, 
 	header_len = offset < 0 ? 0 : offset;
 	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
 	if (!nskb) {
-		NATFLOW_ERROR("alloc_skb failed\n");
+		NATFLOW_ERROR("failed to allocate skb\n");
 		goto out;
 	}
 	if (offset <= 0) {
 		if (pskb_trim(nskb, nskb->len + offset)) {
-			NATFLOW_ERROR("pskb_trim failed: len=%d, offset=%d\n", nskb->len, offset);
+			NATFLOW_ERROR("failed to trim pskb: len=%d, offset=%d\n", nskb->len, offset);
 			consume_skb(nskb);
 			goto out;
 		}
@@ -3020,7 +3020,7 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 	if (l >= cnt) {
 		data_left += l;
 		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("err: too long a line");
+			NATFLOW_println("error: line too long");
 			data_left = 0;
 			return -EINVAL;
 		}
@@ -3127,7 +3127,7 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 						goto done;
 					}
 				}
-				NATFLOW_println("auth rule set fail err=%d", err);
+				NATFLOW_println("failed to set auth rule, error=%d", err);
 			}
 			kfree(rule);
 		}
@@ -3172,7 +3172,7 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 		}
 	}
 
-	NATFLOW_println("ignoring line[%s]", data);
+	NATFLOW_println("ignoring line: [%s]", data);
 	if (err != 0) {
 		return err;
 	}
@@ -3255,7 +3255,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 	if (l >= cnt) {
 		data_left += l;
 		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("err: too long a line");
+			NATFLOW_println("error: line too long");
 			data_left = 0;
 			return -EINVAL;
 		}
@@ -3430,7 +3430,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 		goto done;
 	}
 
-	NATFLOW_println("ignoring line[%s]", data);
+	NATFLOW_println("ignoring line: [%s]", data);
 	if (err != 0) {
 		return err;
 	}
@@ -3684,7 +3684,7 @@ static int userinfo_init(void)
 		retval = alloc_chrdev_region(&devno, userinfo_minor, 1, userinfo_dev_name);
 	}
 	if (retval < 0) {
-		NATFLOW_println("alloc_chrdev_region failed!");
+		NATFLOW_println("failed to allocate chrdev region");
 		goto chrdev_region_failed;
 	}
 	userinfo_major = MAJOR(devno);
@@ -3697,13 +3697,13 @@ static int userinfo_init(void)
 
 	retval = cdev_add(&userinfo_cdev, devno, 1);
 	if (retval) {
-		NATFLOW_println("adding chardev, error=%d", retval);
+		NATFLOW_println("failed to add cdev, error=%d", retval);
 		goto cdev_add_failed;
 	}
 
 	userinfo_class = natflow_class_create("userinfo_class");
 	if (IS_ERR(userinfo_class)) {
-		NATFLOW_println("failed in creating class");
+		NATFLOW_println("failed to create class");
 		retval = -EINVAL;
 		goto class_create_failed;
 	}
@@ -3890,7 +3890,7 @@ static int userinfo_event_init(void)
 		retval = alloc_chrdev_region(&devno, userinfo_event_minor, 1, userinfo_event_dev_name);
 	}
 	if (retval < 0) {
-		NATFLOW_println("alloc_chrdev_region failed!");
+		NATFLOW_println("failed to allocate chrdev region");
 		goto chrdev_region_failed;
 	}
 	userinfo_event_major = MAJOR(devno);
@@ -3903,13 +3903,13 @@ static int userinfo_event_init(void)
 
 	retval = cdev_add(&userinfo_event_cdev, devno, 1);
 	if (retval) {
-		NATFLOW_println("adding chardev, error=%d", retval);
+		NATFLOW_println("failed to add cdev, error=%d", retval);
 		goto cdev_add_failed;
 	}
 
 	userinfo_event_class = natflow_class_create("userinfo_event_class");
 	if (IS_ERR(userinfo_event_class)) {
-		NATFLOW_println("failed in creating class");
+		NATFLOW_println("failed to create class");
 		retval = -EINVAL;
 		goto class_create_failed;
 	}
@@ -4097,7 +4097,7 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 	if (l >= cnt) {
 		data_left += l;
 		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("err: too long a line");
+			NATFLOW_println("error: line too long");
 			data_left = 0;
 			return -EINVAL;
 		}
@@ -4138,13 +4138,13 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 						                     &qr->user, &qr->user_l3num, &qr->flag,
 						                     USER_TYPE_IP, USER_TYPE_IPCIDR);
 						if (err) {
-							NATFLOW_println("user=<ip> error ipcidr format");
+							NATFLOW_println("invalid user IP CIDR format");
 							break;
 						}
 					} else if (qos_token_has_char(p, '/') || qos_token_has_char(p, ':') ||
 					           sscanf(p, "%d.%d.%d.%d", &a, &b, &c, &d) == 4) {
 						err = -EINVAL;
-						NATFLOW_println("user=<ip> error ip format");
+						NATFLOW_println("invalid user IP format");
 						break;
 					} else {
 						int k = 0;
@@ -4154,7 +4154,7 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 						}
 						if (k >= sizeof(qr->user.name) - 1) {
 							err = -EINVAL;
-							NATFLOW_println("user=<name> too long");
+							NATFLOW_println("user name too long");
 							break;
 						}
 						qr->user.name[k] = 0;
@@ -4176,7 +4176,7 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 							qr->flag |= USER_PORT_TYPE_PORT;
 						} else {
 							err = -EINVAL;
-							NATFLOW_println("user_port=<port> error port format");
+							NATFLOW_println("invalid user port format");
 							break;
 						}
 					} else {
@@ -4187,7 +4187,7 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 						}
 						if (k >= sizeof(qr->user_port.name) - 1) {
 							err = -EINVAL;
-							NATFLOW_println("user_port=<name> too long");
+							NATFLOW_println("user port name too long");
 							break;
 						}
 						qr->user_port.name[k] = 0;
@@ -4211,13 +4211,13 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 						                     &qr->remote, &qr->remote_l3num, &qr->flag,
 						                     REMOTE_TYPE_IP, REMOTE_TYPE_IPCIDR);
 						if (err) {
-							NATFLOW_println("remote=<ip> error ipcidr format");
+							NATFLOW_println("invalid remote IP CIDR format");
 							break;
 						}
 					} else if (qos_token_has_char(p, '/') || qos_token_has_char(p, ':') ||
 					           sscanf(p, "%d.%d.%d.%d", &a, &b, &c, &d) == 4) {
 						err = -EINVAL;
-						NATFLOW_println("remote=<ip> error ip format");
+						NATFLOW_println("invalid remote IP format");
 						break;
 					} else {
 						int k = 0;
@@ -4227,7 +4227,7 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 						}
 						if (k >= sizeof(qr->remote.name) - 1) {
 							err = -EINVAL;
-							NATFLOW_println("remote=<name> too long");
+							NATFLOW_println("remote name too long");
 							break;
 						}
 						qr->remote.name[k] = 0;
@@ -4249,7 +4249,7 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 							qr->flag |= REMOTE_PORT_TYPE_PORT;
 						} else {
 							err = -EINVAL;
-							NATFLOW_println("remote_port=<port> error port format");
+							NATFLOW_println("invalid remote port format");
 							break;
 						}
 					} else {
@@ -4260,7 +4260,7 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 						}
 						if (k >= sizeof(qr->remote_port.name) - 1) {
 							err = -EINVAL;
-							NATFLOW_println("remote_port=<name> too long");
+							NATFLOW_println("remote port name too long");
 							break;
 						}
 						qr->remote_port.name[k] = 0;
@@ -4281,7 +4281,7 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 						qr->proto = 0;
 					} else {
 						err = -EINVAL;
-						NATFLOW_println("invalid proto=");
+						NATFLOW_println("invalid protocol=");
 						break;
 					}
 				}
@@ -4296,7 +4296,7 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 						qr->txbytes = txbytes;
 					} else {
 						err = -EINVAL;
-						NATFLOW_println("invalid rxbytes txbytes");
+						NATFLOW_println("invalid rxbytes or txbytes");
 						break;
 					}
 				}
@@ -4311,12 +4311,12 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 				kfree(qr);
 				goto done;
 			}
-			NATFLOW_println("qos add rule fail err=%d", err);
+			NATFLOW_println("failed to add qos rule, error=%d", err);
 			kfree(qr);
 		}
 	}
 
-	NATFLOW_println("ignoring line[%s]", data);
+	NATFLOW_println("ignoring line: [%s]", data);
 	if (err != 0) {
 		return err;
 	}
@@ -4367,7 +4367,7 @@ static int qos_init(void)
 		retval = alloc_chrdev_region(&devno, qos_minor, 1, qos_dev_name);
 	}
 	if (retval < 0) {
-		NATFLOW_println("alloc_chrdev_region failed!");
+		NATFLOW_println("failed to allocate chrdev region");
 		goto chrdev_region_failed;
 	}
 	qos_major = MAJOR(devno);
@@ -4380,13 +4380,13 @@ static int qos_init(void)
 
 	retval = cdev_add(&qos_cdev, devno, 1);
 	if (retval) {
-		NATFLOW_println("adding chardev, error=%d", retval);
+		NATFLOW_println("failed to add cdev, error=%d", retval);
 		goto cdev_add_failed;
 	}
 
 	qos_class = natflow_class_create("qos_class");
 	if (IS_ERR(qos_class)) {
-		NATFLOW_println("failed in creating class");
+		NATFLOW_println("failed to create class");
 		retval = -EINVAL;
 		goto class_create_failed;
 	}
@@ -4448,7 +4448,7 @@ int natflow_user_init(void)
 		retval = alloc_chrdev_region(&devno, natflow_user_minor, 1, natflow_user_dev_name);
 	}
 	if (retval < 0) {
-		NATFLOW_println("alloc_chrdev_region failed!");
+		NATFLOW_println("failed to allocate chrdev region");
 		goto chrdev_region_failed;
 	}
 	natflow_user_major = MAJOR(devno);
@@ -4461,13 +4461,13 @@ int natflow_user_init(void)
 
 	retval = cdev_add(&natflow_user_cdev, devno, 1);
 	if (retval) {
-		NATFLOW_println("adding chardev, error=%d", retval);
+		NATFLOW_println("failed to add cdev, error=%d", retval);
 		goto cdev_add_failed;
 	}
 
 	natflow_user_class = natflow_class_create("natflow_user_class");
 	if (IS_ERR(natflow_user_class)) {
-		NATFLOW_println("failed in creating class");
+		NATFLOW_println("failed to create class");
 		retval = -EINVAL;
 		goto class_create_failed;
 	}
