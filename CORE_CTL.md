@@ -24,6 +24,7 @@ cat /dev/natflow_ctl
 
 - **Set Debug Level:**
   `echo 'debug=<num>' > /dev/natflow_ctl`
+  Bits: `1=error`, `2=warn`, `4=info`, `8=debug`, `16=fixme`, `32=debug_ratelimited`.
 
 - **Hardware Acceleration:** (Available on supported MediaTek platforms)
   `echo 'hwnat=1' > /dev/natflow_ctl`

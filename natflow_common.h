@@ -18,6 +18,7 @@
 #include <linux/icmp.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter_bridge.h>
+#include <linux/printk.h>
 #include <net/ip.h>
 #include <net/tcp.h>
 #include <net/udp.h>
@@ -56,9 +57,12 @@ extern unsigned int debug;
 #define NATFLOW_LOG_INFO  0x04u
 #define NATFLOW_LOG_DEBUG 0x08u
 #define NATFLOW_LOG_FIXME 0x10u
+#define NATFLOW_LOG_DEBUG_LIMITED 0x20u
 
 #define IS_NATFLOW_FIXME() (debug & NATFLOW_LOG_FIXME)
 #define IS_NATFLOW_DEBUG() (debug & NATFLOW_LOG_DEBUG)
+#define IS_NATFLOW_DEBUG_LIMITED() (debug & NATFLOW_LOG_DEBUG_LIMITED)
+#define IS_NATFLOW_DEBUG_ANY() (debug & (NATFLOW_LOG_DEBUG | NATFLOW_LOG_DEBUG_LIMITED))
 #define IS_NATFLOW_INFO() (debug & NATFLOW_LOG_INFO)
 #define IS_NATFLOW_WARN() (debug & NATFLOW_LOG_WARN)
 #define IS_NATFLOW_ERROR() (debug & NATFLOW_LOG_ERROR)
@@ -75,6 +79,13 @@ extern unsigned int debug;
 		} \
 	} while (0)
 
+#define NATFLOW_LOG_RATELIMITED_IF(enabled, level, tag, fmt, ...) \
+	do { \
+		if (enabled) { \
+			printk_ratelimited(level tag NATFLOW_LOG_PREFIX pr_fmt(fmt), __func__, __LINE__, ##__VA_ARGS__); \
+		} \
+	} while (0)
+
 #define NATFLOW_println(fmt, ...) \
 	do { \
 		NATFLOW_LOG_EMIT(KERN_DEFAULT, fmt "\n", ##__VA_ARGS__); \
@@ -84,7 +95,13 @@ extern unsigned int debug;
 	NATFLOW_LOG_IF(IS_NATFLOW_FIXME(), KERN_ALERT, "fixme:", fmt, ##__VA_ARGS__)
 
 #define NATFLOW_DEBUG(fmt, ...) \
-	NATFLOW_LOG_IF(IS_NATFLOW_DEBUG(), KERN_DEBUG, "debug:", fmt, ##__VA_ARGS__)
+	do { \
+		if (IS_NATFLOW_DEBUG()) { \
+			NATFLOW_LOG_EMIT(KERN_DEBUG, "debug:" fmt, ##__VA_ARGS__); \
+		} else { \
+			NATFLOW_LOG_RATELIMITED_IF(IS_NATFLOW_DEBUG_LIMITED(), KERN_DEBUG, "debug:", fmt, ##__VA_ARGS__); \
+		} \
+	} while (0)
 
 #define NATFLOW_INFO(fmt, ...) \
 	NATFLOW_LOG_IF(IS_NATFLOW_INFO(), KERN_DEFAULT, "info:", fmt, ##__VA_ARGS__)

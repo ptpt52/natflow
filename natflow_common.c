@@ -23,7 +23,7 @@
 
 unsigned int debug = 0;
 module_param(debug, int, 0);
-MODULE_PARM_DESC(debug, "Debug level (0=none,1=error,2=warn,4=info,8=debug,16=fixme,...,31=all) default=0");
+MODULE_PARM_DESC(debug, "Debug level (0=none,1=error,2=warn,4=info,8=debug,16=fixme,32=debug_ratelimited,...,63=all) default=0");
 
 #if defined(nf_ct_ext_add)
 void *compat_nf_ct_ext_add(struct nf_conn *ct, int id, gfp_t gfp)
