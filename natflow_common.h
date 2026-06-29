@@ -97,7 +97,7 @@ extern unsigned int debug;
 #define NATFLOW_DEBUG(fmt, ...) \
 	do { \
 		if (IS_NATFLOW_DEBUG()) { \
-			NATFLOW_LOG_EMIT(KERN_DEBUG, "debug:" fmt, ##__VA_ARGS__); \
+			NATFLOW_LOG_IF(1, KERN_DEBUG, "debug:", fmt, ##__VA_ARGS__); \
 		} else { \
 			NATFLOW_LOG_RATELIMITED_IF(IS_NATFLOW_DEBUG_LIMITED(), KERN_DEBUG, "debug:", fmt, ##__VA_ARGS__); \
 		} \
