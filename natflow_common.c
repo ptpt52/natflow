@@ -104,7 +104,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 
 	if (test_and_set_bit(IPS_NATFLOW_SESSION_BIT, &ct->status)) {
 		/* someone else is already running in this progress */
-		NATFLOW_INFO(DEBUG_FMT_PREFIX "another process is already running!\n", DEBUG_ARG_PREFIX);
+		NATFLOW_INFO("another process is already running!\n");
 		return -1;
 	}
 
@@ -125,7 +125,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	new = natflow_ct_ext_krealloc(old, alloc_size, gfp);
 	if (!new) {
 		clear_bit(IPS_NATFLOW_SESSION_BIT, &ct->status);
-		NATFLOW_ERROR(DEBUG_FMT_PREFIX "failed to krealloc size=%u\n", DEBUG_ARG_PREFIX, (unsigned int)alloc_size);
+		NATFLOW_ERROR("failed to krealloc size=%u\n", (unsigned int)alloc_size);
 		return -1;
 	}
 
@@ -138,8 +138,8 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 		nk = (struct nat_key_t *)((void *)old + static_fixed_ext_off * NATCAP_FACTOR);
 		if (nk->magic == NATCAP_MAGIC && nk->ext_magic == (((unsigned long)ct) & 0xffffffff)) {
 			if (nk->natcap_off && (ct->status & IPS_NATCAP_SESSION)) {
-				NATFLOW_DEBUG(DEBUG_FMT_PREFIX "append natflow key after natcap: len=%u natcap_off=%u natflow_off=%u\n",
-				              DEBUG_ARG_PREFIX, nk->len, nk->natcap_off, nk->natflow_off);
+				NATFLOW_DEBUG("append natflow key after natcap: len=%u natcap_off=%u natflow_off=%u\n",
+				              nk->len, nk->natcap_off, nk->natflow_off);
 				newoff = ALIGN(nk->len, __ALIGN_64BITS);
 			} else {
 				/*
@@ -156,7 +156,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 
 	if (nkoff > NATCAP_MAX_OFF) {
 		clear_bit(IPS_NATFLOW_SESSION_BIT, &ct->status);
-		NATFLOW_ERROR(DEBUG_FMT_PREFIX "realloc: ct->ext->len > %u is not supported!\n", DEBUG_ARG_PREFIX, NATCAP_MAX_OFF);
+		NATFLOW_ERROR("realloc: ct->ext->len > %u is not supported!\n", NATCAP_MAX_OFF);
 		return -1;
 	}
 
@@ -166,7 +166,7 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	new = natflow_ct_ext_krealloc(old, alloc_size, gfp);
 	if (!new) {
 		clear_bit(IPS_NATFLOW_SESSION_BIT, &ct->status);
-		NATFLOW_ERROR(DEBUG_FMT_PREFIX "failed to krealloc size=%u\n", DEBUG_ARG_PREFIX, (unsigned int)alloc_size);
+		NATFLOW_ERROR("failed to krealloc size=%u\n", (unsigned int)alloc_size);
 		return -1;
 	}
 	memset((void *)new + newoff, 0, newlen - newoff);

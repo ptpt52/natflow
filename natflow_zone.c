@@ -101,7 +101,7 @@ static inline int natflow_zone_match_update(struct net_device *dev)
 					return 1;
 				} else {
 					read_unlock_bh(&zone_match_lock);
-					NATFLOW_ERROR(DEBUG_FMT_PREFIX "failed to set natflow zone id for dev=%s id=%u type=%u\n", DEBUG_ARG_PREFIX, dev->name, zm->id, zm->type);
+					NATFLOW_ERROR("failed to set natflow zone id for dev=%s id=%u type=%u\n", dev->name, zm->id, zm->type);
 					return -1;
 				}
 			}
@@ -115,7 +115,7 @@ static inline int natflow_zone_match_update(struct net_device *dev)
 			return 1;
 		} else {
 			read_unlock_bh(&zone_match_lock);
-			NATFLOW_ERROR(DEBUG_FMT_PREFIX "failed to set natflow zone id for dev=%s id=%u type=%u\n", DEBUG_ARG_PREFIX, dev->name, INVALID_ZONE_ID, 0);
+			NATFLOW_ERROR("failed to set natflow zone id for dev=%s id=%u type=%u\n", dev->name, INVALID_ZONE_ID, 0);
 			return -1;
 		}
 	}
@@ -130,7 +130,7 @@ static inline void natflow_zone_match_refresh(void)
 	rcu_read_lock();
 	for_each_netdev_rcu(&init_net, dev) {
 		if (natflow_zone_match_update(dev) == 1) {
-			NATFLOW_INFO(DEBUG_FMT_PREFIX "dev=%s set zone=%u type=%u\n", DEBUG_ARG_PREFIX,
+			NATFLOW_INFO("dev=%s set zone=%u type=%u\n",
 			             dev->name, natflow_zone_id_get(dev), natflow_zone_type_get(dev));
 		}
 	}
@@ -143,7 +143,7 @@ static inline void natflow_zone_print(void)
 
 	rcu_read_lock();
 	for_each_netdev_rcu(&init_net, dev) {
-		NATFLOW_WARN(DEBUG_FMT_PREFIX "dev=%s set zone=%u type=%u\n", DEBUG_ARG_PREFIX,
+		NATFLOW_WARN("dev=%s set zone=%u type=%u\n",
 		             dev->name, natflow_zone_id_get(dev), natflow_zone_type_get(dev));
 	}
 	rcu_read_unlock();
@@ -360,7 +360,7 @@ static int zone_netdev_event(struct notifier_block *this, unsigned long event, v
 	NATFLOW_DEBUG("caught NETDEV_UP event for dev=%s\n", dev ? dev->name : "(null)");
 
 	if (natflow_zone_match_update(dev) == 1) {
-		NATFLOW_WARN(DEBUG_FMT_PREFIX "dev=%s set zone=%u type=%u\n", DEBUG_ARG_PREFIX,
+		NATFLOW_WARN("dev=%s set zone=%u type=%u\n",
 		             dev->name, natflow_zone_id_get(dev), natflow_zone_type_get(dev));
 	}
 

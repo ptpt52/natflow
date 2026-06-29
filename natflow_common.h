@@ -51,51 +51,49 @@
 
 extern unsigned int debug;
 
-#define IS_NATFLOW_FIXME() (debug & 0x10)
-#define IS_NATFLOW_DEBUG() (debug & 0x8)
-#define IS_NATFLOW_INFO() (debug & 0x4)
-#define IS_NATFLOW_WARN() (debug & 0x2)
-#define IS_NATFLOW_ERROR() (debug & 0x1)
+#define NATFLOW_LOG_ERROR 0x01u
+#define NATFLOW_LOG_WARN  0x02u
+#define NATFLOW_LOG_INFO  0x04u
+#define NATFLOW_LOG_DEBUG 0x08u
+#define NATFLOW_LOG_FIXME 0x10u
+
+#define IS_NATFLOW_FIXME() (debug & NATFLOW_LOG_FIXME)
+#define IS_NATFLOW_DEBUG() (debug & NATFLOW_LOG_DEBUG)
+#define IS_NATFLOW_INFO() (debug & NATFLOW_LOG_INFO)
+#define IS_NATFLOW_WARN() (debug & NATFLOW_LOG_WARN)
+#define IS_NATFLOW_ERROR() (debug & NATFLOW_LOG_ERROR)
+
+#define NATFLOW_LOG_PREFIX "{" MODULE_NAME "}:%s():%d: "
+
+#define NATFLOW_LOG_EMIT(level, fmt, ...) \
+	printk(level NATFLOW_LOG_PREFIX pr_fmt(fmt), __func__, __LINE__, ##__VA_ARGS__)
+
+#define NATFLOW_LOG_IF(enabled, level, tag, fmt, ...) \
+	do { \
+		if (enabled) { \
+			printk(level tag NATFLOW_LOG_PREFIX pr_fmt(fmt), __func__, __LINE__, ##__VA_ARGS__); \
+		} \
+	} while (0)
 
 #define NATFLOW_println(fmt, ...) \
 	do { \
-		printk(KERN_DEFAULT "{" MODULE_NAME "}:%s(): " pr_fmt(fmt) "\n", __FUNCTION__, ##__VA_ARGS__); \
+		NATFLOW_LOG_EMIT(KERN_DEFAULT, fmt "\n", ##__VA_ARGS__); \
 	} while (0)
 
 #define NATFLOW_FIXME(fmt, ...) \
-	do { \
-		if (IS_NATFLOW_FIXME()) { \
-			printk(KERN_ALERT "fixme: " pr_fmt(fmt), ##__VA_ARGS__); \
-		} \
-	} while (0)
+	NATFLOW_LOG_IF(IS_NATFLOW_FIXME(), KERN_ALERT, "fixme:", fmt, ##__VA_ARGS__)
 
 #define NATFLOW_DEBUG(fmt, ...) \
-	do { \
-		if (IS_NATFLOW_DEBUG()) { \
-			printk(KERN_DEBUG "debug: " pr_fmt(fmt), ##__VA_ARGS__); \
-		} \
-	} while (0)
+	NATFLOW_LOG_IF(IS_NATFLOW_DEBUG(), KERN_DEBUG, "debug:", fmt, ##__VA_ARGS__)
 
 #define NATFLOW_INFO(fmt, ...) \
-	do { \
-		if (IS_NATFLOW_INFO()) { \
-			printk(KERN_DEFAULT "info: " pr_fmt(fmt), ##__VA_ARGS__); \
-		} \
-	} while (0)
+	NATFLOW_LOG_IF(IS_NATFLOW_INFO(), KERN_DEFAULT, "info:", fmt, ##__VA_ARGS__)
 
 #define NATFLOW_WARN(fmt, ...) \
-	do { \
-		if (IS_NATFLOW_WARN()) { \
-			printk(KERN_WARNING "warning: " pr_fmt(fmt), ##__VA_ARGS__); \
-		} \
-	} while (0)
+	NATFLOW_LOG_IF(IS_NATFLOW_WARN(), KERN_WARNING, "warning:", fmt, ##__VA_ARGS__)
 
 #define NATFLOW_ERROR(fmt, ...) \
-	do { \
-		if (IS_NATFLOW_ERROR()) { \
-			printk(KERN_ERR "error: " pr_fmt(fmt), ##__VA_ARGS__); \
-		} \
-	} while (0)
+	NATFLOW_LOG_IF(IS_NATFLOW_ERROR(), KERN_ERR, "error:", fmt, ##__VA_ARGS__)
 
 #ifdef NO_DEBUG
 #undef NATFLOW_FIXME
@@ -103,11 +101,11 @@ extern unsigned int debug;
 #undef NATFLOW_INFO
 #undef NATFLOW_WARN
 #undef NATFLOW_ERROR
-#define NATFLOW_FIXME(fmt, ...)
-#define NATFLOW_DEBUG(fmt, ...)
-#define NATFLOW_INFO(fmt, ...)
-#define NATFLOW_WARN(fmt, ...)
-#define NATFLOW_ERROR(fmt, ...)
+#define NATFLOW_FIXME(fmt, ...) do { } while (0)
+#define NATFLOW_DEBUG(fmt, ...) do { } while (0)
+#define NATFLOW_INFO(fmt, ...) do { } while (0)
+#define NATFLOW_WARN(fmt, ...) do { } while (0)
+#define NATFLOW_ERROR(fmt, ...) do { } while (0)
 #endif
 
 #if NATFLOW_HAVE_NF_REGISTER_NET_HOOKS
@@ -176,20 +174,17 @@ extern const char *const hooknames[];
 #define UDP_ST_FMT "UL:%u,UC:%04X"
 #define UDP_ST_ARG(u) ntohs(((struct udphdr *)(u))->len), ntohs(((struct udphdr *)(u))->check)
 
-#define DEBUG_FMT_PREFIX "(%s:%u)"
-#define DEBUG_ARG_PREFIX __FUNCTION__, __LINE__
-
 #define DEBUG_FMT_TCP "[" IP_TCPUDP_FMT "|ID:%04X,IL:%u|" TCP_ST_FMT "]"
 #define DEBUG_ARG_TCP(i, t) IP_TCPUDP_ARG(i,t), ntohs(((struct iphdr *)(i))->id), ntohs(((struct iphdr *)(i))->tot_len), TCP_ST_ARG(t)
 
 #define DEBUG_FMT_UDP "[" IP_TCPUDP_FMT "|ID:%04X,IL:%u|" UDP_ST_FMT "]"
 #define DEBUG_ARG_UDP(i, u) IP_TCPUDP_ARG(i,u), ntohs((i)->id), ntohs((i)->tot_len), UDP_ST_ARG(u)
 
-#define DEBUG_TCP_FMT "[%s]" DEBUG_FMT_PREFIX DEBUG_FMT_TCP
-#define DEBUG_TCP_ARG(i, t) hooknames[hooknum], DEBUG_ARG_PREFIX, DEBUG_ARG_TCP(i, t)
+#define DEBUG_TCP_FMT "[%s]" DEBUG_FMT_TCP
+#define DEBUG_TCP_ARG(i, t) hooknames[hooknum], DEBUG_ARG_TCP(i, t)
 
-#define DEBUG_UDP_FMT "[%s]" DEBUG_FMT_PREFIX DEBUG_FMT_UDP
-#define DEBUG_UDP_ARG(i, u) hooknames[hooknum], DEBUG_ARG_PREFIX, DEBUG_ARG_UDP(i, u)
+#define DEBUG_UDP_FMT "[%s]" DEBUG_FMT_UDP
+#define DEBUG_UDP_ARG(i, u) hooknames[hooknum], DEBUG_ARG_UDP(i, u)
 
 #define TUPLE_FMT "%pI4:%u-%c"
 #define TUPLE_ARG(t) &((struct tuple *)(t))->ip, ntohs(((struct tuple *)(t))->port), ((struct tuple *)(t))->encryption ? 'e' : 'o'
@@ -211,11 +206,11 @@ extern const char *const hooknames[];
 	ntohs(((struct ipv6hdr *)i)->payload_len), \
 	UDP_ST_ARG(u)
 
-#define DEBUG_TCP_FMT6 "[%s]" DEBUG_FMT_PREFIX DEBUG_FMT6_TCP
-#define DEBUG_TCP_ARG6(i, t) hooknames[hooknum], DEBUG_ARG_PREFIX, DEBUG_ARG6_TCP(i, t)
+#define DEBUG_TCP_FMT6 "[%s]" DEBUG_FMT6_TCP
+#define DEBUG_TCP_ARG6(i, t) hooknames[hooknum], DEBUG_ARG6_TCP(i, t)
 
-#define DEBUG_UDP_FMT6 "[%s]" DEBUG_FMT_PREFIX DEBUG_FMT6_UDP
-#define DEBUG_UDP_ARG6(i, u) hooknames[hooknum], DEBUG_ARG_PREFIX, DEBUG_ARG6_UDP(i, u)
+#define DEBUG_UDP_FMT6 "[%s]" DEBUG_FMT6_UDP
+#define DEBUG_UDP_ARG6(i, u) hooknames[hooknum], DEBUG_ARG6_UDP(i, u)
 
 #define ETH(e) ((struct ethhdr *)(e))
 #define TCPH(t) ((struct tcphdr *)(t))
