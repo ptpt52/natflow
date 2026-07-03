@@ -3906,6 +3906,8 @@ static int userinfo_event_init(void)
 	int retval = 0;
 	dev_t devno;
 
+	userinfo_event_store_init();
+
 	if (userinfo_event_major > 0) {
 		devno = MKDEV(userinfo_event_major, userinfo_event_minor);
 		retval = register_chrdev_region(devno, 1, userinfo_event_dev_name);
@@ -4510,8 +4512,6 @@ int natflow_user_init(void)
 	if (retval) {
 		goto userinfo_event_init_failed;
 	}
-
-	userinfo_event_store_init();
 
 	retval = qos_init();
 	if (retval) {
