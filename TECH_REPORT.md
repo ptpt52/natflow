@@ -98,7 +98,7 @@ NATflow 的关键思路是：
 - 速率/字节统计
 - keepalive/状态
 
-并通过 `natflow_hash_v4/v6` 计算桶位置，`NATFLOW_FASTNAT_TABLE_SIZE` 按平台设定（4096/8192/16384），兼顾内存与碰撞率。另有 `natflow_hash_skip()` 对特定平台桶位做规避。
+并通过 `natflow_hash_v4/v6` 计算桶位置，`NATFLOW_FASTNAT_TABLE_SIZE` 按平台设定（4096/8192/16384），`NATFLOW_FASTNAT_TABLE_WAYS` 控制 2-way 或 4-way 相邻槽探测。x86/x86_64 与 MT798x 硬件 offload 场景使用 16384/4-way；其他常见平台保持 8192/2-way 或 4096/2-way。另有 `natflow_hash_skip()` 对特定平台桶位做规避。
 
 > 算法特征：混合位运算（与/非/异或/旋转）+ 位移扩展 + 掩码取模，设计目标是低成本分布均衡。
 

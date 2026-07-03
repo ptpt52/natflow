@@ -269,15 +269,26 @@ struct natflow_fastnat_node_t {
 #define NATFLOW_FF_TIMEOUT_LOW (25 * HZ)
 #define NATFLOW_FF_SAMPLE_TIME 2
 
-/* MAX 65536 for now we use 4096 */
-#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+/* MAX 65536; table ways control adjacent-slot collision probing. */
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && \
+	(defined(CONFIG_NET_RALINK_OFFLOAD) || (defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC)))
+#define NATFLOW_FASTNAT_MTK_HWNAT_4WAY 1
+#else
+#define NATFLOW_FASTNAT_MTK_HWNAT_4WAY 0
+#endif
+
+#if NATFLOW_FASTNAT_MTK_HWNAT_4WAY || defined(CONFIG_X86) || defined(CONFIG_X86_64)
 #define NATFLOW_FASTNAT_TABLE_SIZE 16384
-#elif defined(CONFIG_64BIT) || defined(CONFIG_X86) || defined(CONFIG_X86_64) || defined(CONFIG_ARM) || defined(CONFIG_ARM64)
+#define NATFLOW_FASTNAT_TABLE_WAYS 4
+#elif defined(CONFIG_64BIT) || defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 #define NATFLOW_FASTNAT_TABLE_SIZE 8192
+#define NATFLOW_FASTNAT_TABLE_WAYS 2
 #elif defined(CONFIG_ATH79) || defined(CONFIG_SOC_MT7620)
 #define NATFLOW_FASTNAT_TABLE_SIZE 4096
+#define NATFLOW_FASTNAT_TABLE_WAYS 2
 #else
 #define NATFLOW_FASTNAT_TABLE_SIZE 8192
+#define NATFLOW_FASTNAT_TABLE_WAYS 2
 #endif
 
 static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __be16 dest)
@@ -293,7 +304,7 @@ static inline u32 natflow_hash_v4(__be32 saddr, __be32 daddr, __be16 source, __b
 	hash = (hash >> 24) | ((hash & 0xffffff) << 8);
 	hash ^= hv1 ^ hv2 ^ hv3;
 	hash ^= hash >> 16;
-#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_FASTNAT_TABLE_WAYS >= 4
 	hash <<= 2;
 #else
 	hash <<= 1;
@@ -321,7 +332,7 @@ static inline u32 natflow_hash_v6(__be32 saddr6[4], __be32 daddr6[4], __be16 sou
 	hash = (hash >> 24) | ((hash & 0xffffff) << 8);
 	hash ^= hv1 ^ hv2 ^ hv3;
 	hash ^= hash >> 16;
-#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_FASTNAT_TABLE_WAYS >= 4
 	hash <<= 2;
 #else
 	hash <<= 1;
