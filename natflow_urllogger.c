@@ -1261,12 +1261,11 @@ static int quic_hmac_sha256(struct urllogger_quic_crypto_ctx *ctx,
 		return ret;
 
 	desc_len = sizeof(*desc) + crypto_shash_descsize(ctx->hmac);
-	desc = kmalloc(desc_len, GFP_ATOMIC);
+	desc = kzalloc(desc_len, GFP_ATOMIC);
 	if (desc == NULL)
 		return -ENOMEM;
 
 	desc->tfm = ctx->hmac;
-	desc->flags = 0;
 	ret = crypto_shash_digest(desc, data, data_len, out);
 
 	memzero_explicit(desc, desc_len);
