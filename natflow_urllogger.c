@@ -292,25 +292,47 @@ __done:
 	return ret;
 }
 
+static inline int tls_sni_has_bytes(unsigned int offset, unsigned int bytes, unsigned int len)
+{
+	return offset <= len && bytes <= len - offset;
+}
+
+static inline void tls_sni_set_needmore(int *needmore)
+{
+	if (needmore)
+		*needmore = 1;
+}
+
 static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *needmore)
 {
 	unsigned char *p = data;
-	int p_len = *data_len;
-	int i_data_len = p_len;
+	unsigned int p_len;
+	unsigned int i_data_len;
 	unsigned int i = 0;
-	unsigned short len;
+	unsigned int len;
 
-	if (i + 1 > p_len) return NULL;
+	if (*data_len <= 0)
+		return NULL;
+
+	p_len = *data_len;
+	i_data_len = p_len;
+
+	if (!tls_sni_has_bytes(i, 1, i_data_len))
+		return NULL;
 	if (p[i + 0] != 0x16) { /* Content type is not handshake. */
 		return NULL;
 	}
 	i += 1 + 2;
-	if (i + 2 > p_len) return NULL;
+	if (!tls_sni_has_bytes(i, 2, i_data_len))
+		goto need_more;
 	len = ntohs(get_byte2(p + i + 0)); /* content_len */
 	i += 2;
-	if (i + len > p_len) {
-		if (needmore && i + 1 > p_len && p[i] == 0x01) /* Handshake type is ClientHello. */
-			*needmore = 1;
+	if (!tls_sni_has_bytes(i, len, i_data_len)) {
+		if (!tls_sni_has_bytes(i, 1, i_data_len))
+			goto need_more;
+		if (p[i] != 0x01) /* Handshake type is not ClientHello. */
+			return NULL;
+		/* Keep probing; the complete SNI may already be available. */
 	}
 
 	p = p + i;
@@ -318,33 +340,81 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 	i_data_len -= i;
 	i = 0;
 
-	if (i + 1 > p_len || i + 1 > i_data_len) return NULL;
+	if (!tls_sni_has_bytes(i, 1, p_len))
+		return NULL;
+	if (!tls_sni_has_bytes(i, 1, i_data_len))
+		goto need_more;
 	if (p[i + 0] != 0x01) { /* Handshake type is not ClientHello. */
 		return NULL;
 	}
 	i += 1;
-	if (i + 1 + 2 > p_len || i + 1 + 2 > i_data_len) return NULL;
-	len = (p[i + 0] << 8) + ntohs(get_byte2(p + i + 0 + 1)); /* handshake_len */
+	if (!tls_sni_has_bytes(i, 3, p_len))
+		return NULL;
+	if (!tls_sni_has_bytes(i, 3, i_data_len))
+		goto need_more;
+	len = ((unsigned int)p[i + 0] << 16) |
+	      ((unsigned int)p[i + 1] << 8) |
+	      ((unsigned int)p[i + 2]); /* handshake_len */
 	i += 1 + 2;
-	if (i + len > p_len) return NULL;
+	if (!tls_sni_has_bytes(i, len, p_len))
+		return NULL;
 
 	p = p + i;
 	p_len = len;
 	i_data_len -= i;
 	i = 0;
 
+	/* client_version + random */
+	if (!tls_sni_has_bytes(i, 2 + 32, p_len))
+		return NULL;
+	if (!tls_sni_has_bytes(i, 2 + 32, i_data_len))
+		goto need_more;
 	i += 2 + 32;
-	if (i + 1 > p_len || i + 1 > i_data_len) return NULL; /* tls_v, random */
-	i += 1 + p[i + 0];
-	if (i + 2 > p_len || i + 2 > i_data_len) return NULL; /* session id */
-	i += 2 + ntohs(get_byte2(p + i + 0));
-	if (i + 1 > p_len || i + 1 > i_data_len) return NULL; /* cipher suites */
-	i += 1 + p[i + 0];
 
-	if (i + 2 > p_len || i + 2 > i_data_len) return NULL; /* compression methods */
+	if (!tls_sni_has_bytes(i, 1, p_len))
+		return NULL;
+	if (!tls_sni_has_bytes(i, 1, i_data_len))
+		goto need_more;
+	len = p[i + 0]; /* session_id_len */
+	i += 1;
+	if (!tls_sni_has_bytes(i, len, p_len))
+		return NULL;
+	if (!tls_sni_has_bytes(i, len, i_data_len))
+		goto need_more;
+	i += len;
+
+	if (!tls_sni_has_bytes(i, 2, p_len))
+		return NULL;
+	if (!tls_sni_has_bytes(i, 2, i_data_len))
+		goto need_more;
+	len = ntohs(get_byte2(p + i + 0)); /* cipher_suites_len */
+	i += 2;
+	if (!tls_sni_has_bytes(i, len, p_len))
+		return NULL;
+	if (!tls_sni_has_bytes(i, len, i_data_len))
+		goto need_more;
+	i += len;
+
+	if (!tls_sni_has_bytes(i, 1, p_len))
+		return NULL;
+	if (!tls_sni_has_bytes(i, 1, i_data_len))
+		goto need_more;
+	len = p[i + 0]; /* compression_methods_len */
+	i += 1;
+	if (!tls_sni_has_bytes(i, len, p_len))
+		return NULL;
+	if (!tls_sni_has_bytes(i, len, i_data_len))
+		goto need_more;
+	i += len;
+
+	if (!tls_sni_has_bytes(i, 2, p_len))
+		return NULL;
+	if (!tls_sni_has_bytes(i, 2, i_data_len))
+		goto need_more;
 	len = ntohs(get_byte2(p + i + 0)); /* ext_len */
 	i += 2;
-	if (i + len > p_len) return NULL;
+	if (!tls_sni_has_bytes(i, len, p_len))
+		return NULL;
 
 	p = p + i;
 	p_len = len;
@@ -352,16 +422,22 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 	i = 0;
 
 	while (i < p_len && i < i_data_len) {
-		if (i + 2 > p_len || i + 2 > i_data_len) return NULL;
-		if (get_byte2(p + i + 0) != __constant_htons(0)) {
-			if (i + 2 + 2 > p_len || i + 2 + 2 > i_data_len) return NULL;
-			i += 2 + 2 + ntohs(get_byte2(p + i + 0 + 2));
+		if (!tls_sni_has_bytes(i, 4, p_len))
+			return NULL;
+		if (!tls_sni_has_bytes(i, 4, i_data_len))
+			goto need_more;
+		len = ntohs(get_byte2(p + i + 0 + 2)); /* extension_data_len */
+		if (ntohs(get_byte2(p + i + 0)) != 0) {
+			if (!tls_sni_has_bytes(i + 4, len, p_len))
+				return NULL;
+			if (!tls_sni_has_bytes(i + 4, len, i_data_len))
+				goto need_more;
+			i += 4 + len;
 			continue;
 		}
-		if (i + 2 + 2 > p_len || i + 2 + 2 > i_data_len) return NULL;
-		len = ntohs(get_byte2(p + i + 0 + 2)); /* sn_len */
-		i = i + 2 + 2;
-		if (i + len > p_len || i + len > i_data_len) return NULL;
+		i += 4;
+		if (!tls_sni_has_bytes(i, len, p_len))
+			return NULL;
 
 		p = p + i;
 		p_len = len;
@@ -369,11 +445,17 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 		i = 0;
 		break;
 	}
+	if (i >= i_data_len && i < p_len)
+		goto need_more;
 
-	if (i + 2 > p_len || i + 2 > i_data_len) return NULL;
+	if (!tls_sni_has_bytes(i, 2, p_len))
+		return NULL;
+	if (!tls_sni_has_bytes(i, 2, i_data_len))
+		goto need_more;
 	len = ntohs(get_byte2(p + i + 0)); /* snl_len */
 	i += 2;
-	if (i + len > p_len || i + len > i_data_len) return NULL;
+	if (!tls_sni_has_bytes(i, len, p_len))
+		return NULL;
 
 	p = p + i;
 	p_len = len;
@@ -381,21 +463,44 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 	i = 0;
 
 	while (i < p_len && i < i_data_len) {
-		if (i + 1 > p_len || i + 1 > i_data_len) return NULL;
+		if (!tls_sni_has_bytes(i, 1, p_len))
+			return NULL;
+		if (!tls_sni_has_bytes(i, 1, i_data_len))
+			goto need_more;
 		if (p[i + 0] != 0) {
-			if (i + 1 + 2 > p_len || i + 1 + 2 > i_data_len) return NULL;
-			i += 1 + 2 + ntohs(get_byte2(p + i + 0 + 1));
+			if (!tls_sni_has_bytes(i, 3, p_len))
+				return NULL;
+			if (!tls_sni_has_bytes(i, 3, i_data_len))
+				goto need_more;
+			len = ntohs(get_byte2(p + i + 0 + 1));
+			if (!tls_sni_has_bytes(i + 3, len, p_len))
+				return NULL;
+			if (!tls_sni_has_bytes(i + 3, len, i_data_len))
+				goto need_more;
+			i += 3 + len;
 			continue;
 		}
-		if (i + 1 + 2 > p_len || i + 1 + 2 > i_data_len) return NULL;
+		if (!tls_sni_has_bytes(i, 3, p_len))
+			return NULL;
+		if (!tls_sni_has_bytes(i, 3, i_data_len))
+			goto need_more;
 		len = ntohs(get_byte2(p + i + 0 + 1));
-		i += 1 + 2;
-		if (i + len > p_len || i + len > i_data_len) return NULL;
+		i += 3;
+		if (!tls_sni_has_bytes(i, len, p_len))
+			return NULL;
+		if (!tls_sni_has_bytes(i, len, i_data_len))
+			goto need_more;
 
 		*data_len = len;
 		return (p + i);
 	}
+	if (i >= i_data_len && i < p_len)
+		goto need_more;
 
+	return NULL;
+
+need_more:
+	tls_sni_set_needmore(needmore);
 	return NULL;
 }
 
