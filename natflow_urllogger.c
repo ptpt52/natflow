@@ -297,13 +297,15 @@ static inline int tls_sni_has_bytes(unsigned int offset, unsigned int bytes, uns
 	return offset <= len && bytes <= len - offset;
 }
 
-static inline void tls_sni_set_needmore(int *needmore)
-{
-	if (needmore)
-		*needmore = 1;
-}
+enum tls_sni_search_result {
+	TLS_SNI_SEARCH_FOUND,
+	TLS_SNI_SEARCH_NEED_MORE,
+	TLS_SNI_SEARCH_NOT_CLIENT_HELLO,
+	TLS_SNI_SEARCH_NO_SNI,
+	TLS_SNI_SEARCH_MALFORMED,
+};
 
-static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *needmore)
+static enum tls_sni_search_result tls_sni_search(unsigned char *data, int *data_len, unsigned char **host)
 {
 	unsigned char *p = data;
 	unsigned int p_len;
@@ -311,16 +313,18 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 	unsigned int i = 0;
 	unsigned int len;
 
+	*host = NULL;
+
 	if (*data_len <= 0)
-		return NULL;
+		return TLS_SNI_SEARCH_MALFORMED;
 
 	p_len = *data_len;
 	i_data_len = p_len;
 
 	if (!tls_sni_has_bytes(i, 1, i_data_len))
-		return NULL;
+		return TLS_SNI_SEARCH_NEED_MORE;
 	if (p[i + 0] != 0x16) { /* Content type is not handshake. */
-		return NULL;
+		return TLS_SNI_SEARCH_NOT_CLIENT_HELLO;
 	}
 	i += 1 + 2;
 	if (!tls_sni_has_bytes(i, 2, i_data_len))
@@ -331,7 +335,7 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 		if (!tls_sni_has_bytes(i, 1, i_data_len))
 			goto need_more;
 		if (p[i] != 0x01) /* Handshake type is not ClientHello. */
-			return NULL;
+			return TLS_SNI_SEARCH_NOT_CLIENT_HELLO;
 		/* Keep probing; the complete SNI may already be available. */
 	}
 
@@ -341,15 +345,15 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 	i = 0;
 
 	if (!tls_sni_has_bytes(i, 1, p_len))
-		return NULL;
+		return TLS_SNI_SEARCH_MALFORMED;
 	if (!tls_sni_has_bytes(i, 1, i_data_len))
 		goto need_more;
 	if (p[i + 0] != 0x01) { /* Handshake type is not ClientHello. */
-		return NULL;
+		return TLS_SNI_SEARCH_NOT_CLIENT_HELLO;
 	}
 	i += 1;
 	if (!tls_sni_has_bytes(i, 3, p_len))
-		return NULL;
+		return TLS_SNI_SEARCH_MALFORMED;
 	if (!tls_sni_has_bytes(i, 3, i_data_len))
 		goto need_more;
 	len = ((unsigned int)p[i + 0] << 16) |
@@ -357,7 +361,7 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 	      ((unsigned int)p[i + 2]); /* handshake_len */
 	i += 1 + 2;
 	if (!tls_sni_has_bytes(i, len, p_len))
-		return NULL;
+		return TLS_SNI_SEARCH_MALFORMED;
 
 	p = p + i;
 	p_len = len;
@@ -366,55 +370,55 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 
 	/* client_version + random */
 	if (!tls_sni_has_bytes(i, 2 + 32, p_len))
-		return NULL;
+		return TLS_SNI_SEARCH_MALFORMED;
 	if (!tls_sni_has_bytes(i, 2 + 32, i_data_len))
 		goto need_more;
 	i += 2 + 32;
 
 	if (!tls_sni_has_bytes(i, 1, p_len))
-		return NULL;
+		return TLS_SNI_SEARCH_MALFORMED;
 	if (!tls_sni_has_bytes(i, 1, i_data_len))
 		goto need_more;
 	len = p[i + 0]; /* session_id_len */
 	i += 1;
 	if (!tls_sni_has_bytes(i, len, p_len))
-		return NULL;
+		return TLS_SNI_SEARCH_MALFORMED;
 	if (!tls_sni_has_bytes(i, len, i_data_len))
 		goto need_more;
 	i += len;
 
 	if (!tls_sni_has_bytes(i, 2, p_len))
-		return NULL;
+		return TLS_SNI_SEARCH_MALFORMED;
 	if (!tls_sni_has_bytes(i, 2, i_data_len))
 		goto need_more;
 	len = ntohs(get_byte2(p + i + 0)); /* cipher_suites_len */
 	i += 2;
 	if (!tls_sni_has_bytes(i, len, p_len))
-		return NULL;
+		return TLS_SNI_SEARCH_MALFORMED;
 	if (!tls_sni_has_bytes(i, len, i_data_len))
 		goto need_more;
 	i += len;
 
 	if (!tls_sni_has_bytes(i, 1, p_len))
-		return NULL;
+		return TLS_SNI_SEARCH_MALFORMED;
 	if (!tls_sni_has_bytes(i, 1, i_data_len))
 		goto need_more;
 	len = p[i + 0]; /* compression_methods_len */
 	i += 1;
 	if (!tls_sni_has_bytes(i, len, p_len))
-		return NULL;
+		return TLS_SNI_SEARCH_MALFORMED;
 	if (!tls_sni_has_bytes(i, len, i_data_len))
 		goto need_more;
 	i += len;
 
 	if (!tls_sni_has_bytes(i, 2, p_len))
-		return NULL;
+		return TLS_SNI_SEARCH_NO_SNI;
 	if (!tls_sni_has_bytes(i, 2, i_data_len))
 		goto need_more;
 	len = ntohs(get_byte2(p + i + 0)); /* ext_len */
 	i += 2;
 	if (!tls_sni_has_bytes(i, len, p_len))
-		return NULL;
+		return TLS_SNI_SEARCH_MALFORMED;
 
 	p = p + i;
 	p_len = len;
@@ -423,13 +427,13 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 
 	while (i < p_len && i < i_data_len) {
 		if (!tls_sni_has_bytes(i, 4, p_len))
-			return NULL;
+			return TLS_SNI_SEARCH_MALFORMED;
 		if (!tls_sni_has_bytes(i, 4, i_data_len))
 			goto need_more;
 		len = ntohs(get_byte2(p + i + 0 + 2)); /* extension_data_len */
 		if (ntohs(get_byte2(p + i + 0)) != 0) {
 			if (!tls_sni_has_bytes(i + 4, len, p_len))
-				return NULL;
+				return TLS_SNI_SEARCH_MALFORMED;
 			if (!tls_sni_has_bytes(i + 4, len, i_data_len))
 				goto need_more;
 			i += 4 + len;
@@ -437,7 +441,7 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 		}
 		i += 4;
 		if (!tls_sni_has_bytes(i, len, p_len))
-			return NULL;
+			return TLS_SNI_SEARCH_MALFORMED;
 
 		p = p + i;
 		p_len = len;
@@ -447,15 +451,17 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 	}
 	if (i >= i_data_len && i < p_len)
 		goto need_more;
+	if (i >= p_len)
+		return TLS_SNI_SEARCH_NO_SNI;
 
 	if (!tls_sni_has_bytes(i, 2, p_len))
-		return NULL;
+		return TLS_SNI_SEARCH_MALFORMED;
 	if (!tls_sni_has_bytes(i, 2, i_data_len))
 		goto need_more;
 	len = ntohs(get_byte2(p + i + 0)); /* snl_len */
 	i += 2;
 	if (!tls_sni_has_bytes(i, len, p_len))
-		return NULL;
+		return TLS_SNI_SEARCH_MALFORMED;
 
 	p = p + i;
 	p_len = len;
@@ -464,44 +470,44 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 
 	while (i < p_len && i < i_data_len) {
 		if (!tls_sni_has_bytes(i, 1, p_len))
-			return NULL;
+			return TLS_SNI_SEARCH_MALFORMED;
 		if (!tls_sni_has_bytes(i, 1, i_data_len))
 			goto need_more;
 		if (p[i + 0] != 0) {
 			if (!tls_sni_has_bytes(i, 3, p_len))
-				return NULL;
+				return TLS_SNI_SEARCH_MALFORMED;
 			if (!tls_sni_has_bytes(i, 3, i_data_len))
 				goto need_more;
 			len = ntohs(get_byte2(p + i + 0 + 1));
 			if (!tls_sni_has_bytes(i + 3, len, p_len))
-				return NULL;
+				return TLS_SNI_SEARCH_MALFORMED;
 			if (!tls_sni_has_bytes(i + 3, len, i_data_len))
 				goto need_more;
 			i += 3 + len;
 			continue;
 		}
 		if (!tls_sni_has_bytes(i, 3, p_len))
-			return NULL;
+			return TLS_SNI_SEARCH_MALFORMED;
 		if (!tls_sni_has_bytes(i, 3, i_data_len))
 			goto need_more;
 		len = ntohs(get_byte2(p + i + 0 + 1));
 		i += 3;
 		if (!tls_sni_has_bytes(i, len, p_len))
-			return NULL;
+			return TLS_SNI_SEARCH_MALFORMED;
 		if (!tls_sni_has_bytes(i, len, i_data_len))
 			goto need_more;
 
 		*data_len = len;
-		return (p + i);
+		*host = p + i;
+		return TLS_SNI_SEARCH_FOUND;
 	}
 	if (i >= i_data_len && i < p_len)
 		goto need_more;
 
-	return NULL;
+	return TLS_SNI_SEARCH_NO_SNI;
 
 need_more:
-	tls_sni_set_needmore(needmore);
-	return NULL;
+	return TLS_SNI_SEARCH_NEED_MORE;
 }
 
 /* to do it simple:
@@ -781,12 +787,13 @@ struct urllogger_sni_cache_node {
 	};
 	__be16 src_port;
 	__be16 dst_port;
-	unsigned short add_data_len;
+	unsigned int add_data_len;
 	struct sk_buff *skb;
 };
 
 #define URLLOGGER_CACHE_TIMEOUT 4
 #define MAX_URLLOGGER_SNI_CACHE_NODE 64
+#define URLLOGGER_SNI_CACHE_DATA_LIMIT (32 * 1024)
 static struct urllogger_sni_cache_node (*urllogger_sni_cache)[MAX_URLLOGGER_SNI_CACHE_NODE];
 static unsigned int urllogger_sni_cache_cpu_num;
 
@@ -820,7 +827,7 @@ static inline void urllogger_sni_cache_cleanup(void)
 	urllogger_sni_cache_cpu_num = 0;
 }
 
-static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, struct sk_buff *skb, unsigned short add_data_len)
+static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, struct sk_buff *skb, unsigned int add_data_len)
 {
 	int i = smp_processor_id();
 	int j;
@@ -854,7 +861,7 @@ static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __b
 	return 0;
 }
 
-static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 src_port, struct in6_addr *dst_ip, __be16 dst_port, struct sk_buff *skb, unsigned short add_data_len)
+static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 src_port, struct in6_addr *dst_ip, __be16 dst_port, struct sk_buff *skb, unsigned int add_data_len)
 {
 	int i = smp_processor_id();
 	int j;
@@ -888,7 +895,7 @@ static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 sr
 	return 0;
 }
 
-static inline struct sk_buff *urllogger_sni_cache_detach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, unsigned short *add_data_len)
+static inline struct sk_buff *urllogger_sni_cache_detach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, unsigned int *add_data_len)
 {
 	int i = smp_processor_id();
 	int j = 0;
@@ -924,7 +931,7 @@ static inline struct sk_buff *urllogger_sni_cache_detach(__be32 src_ip, __be16 s
 	return skb;
 }
 
-static inline struct sk_buff *urllogger_sni_cache_detach6(const struct in6_addr *src_ip, __be16 src_port, const struct in6_addr *dst_ip, __be16 dst_port, unsigned short *add_data_len)
+static inline struct sk_buff *urllogger_sni_cache_detach6(const struct in6_addr *src_ip, __be16 src_port, const struct in6_addr *dst_ip, __be16 dst_port, unsigned int *add_data_len)
 {
 	int i = smp_processor_id();
 	int j = 0;
@@ -1072,7 +1079,8 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 		struct sk_buff *prev_skb = NULL;
 		unsigned char *host = NULL;
 		int host_len;
-		unsigned short add_data_len = 0;
+		unsigned int add_data_len = 0;
+		enum tls_sni_search_result sni_result;
 
 		if (skb_try_make_writable(skb, skb->len)) {
 			goto out;
@@ -1085,13 +1093,21 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			struct iphdr *prev_iph = ip_hdr(prev_skb);
 			void *prev_l4 = (void *)prev_iph + prev_iph->ihl * 4;
 			int prev_data_len = ntohs(prev_iph->tot_len) - (prev_iph->ihl * 4 + TCPH(prev_l4)->doff * 4);
+			unsigned int append_len = data_len;
+			unsigned int next_add_data_len;
 
 			data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
 
 			if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq) + prev_data_len + add_data_len) {
-				int needmore = 0;
-				if (skb_tailroom(prev_skb) < add_data_len + data_len &&
-				        pskb_expand_head(prev_skb, 0, add_data_len + data_len, GFP_ATOMIC)) {
+				if (add_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
+				        append_len > URLLOGGER_SNI_CACHE_DATA_LIMIT - add_data_len) {
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": sni cache data too large, add_data_len=%u, data_len=%u\n", DEBUG_TCP_ARG(iph,l4), add_data_len, append_len);
+					consume_skb(prev_skb);
+					goto __urllogger_ip_skip;
+				}
+				next_add_data_len = add_data_len + append_len;
+				if ((unsigned int)skb_tailroom(prev_skb) < next_add_data_len &&
+				        pskb_expand_head(prev_skb, 0, next_add_data_len, GFP_ATOMIC)) {
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to expand pskb head\n", DEBUG_TCP_ARG(iph,l4));
 					consume_skb(prev_skb);
 					return NF_ACCEPT;
@@ -1100,13 +1116,13 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 				prev_l4 = (void *)prev_iph + prev_iph->ihl * 4;
 
 				memcpy(prev_skb->data + prev_skb->len + add_data_len, data, data_len);
-				add_data_len += data_len;
+				add_data_len = next_add_data_len;
 
 				data = prev_skb->data + prev_iph->ihl * 4 + TCPH(prev_l4)->doff * 4;
 				host_len = prev_data_len + add_data_len;
-				host = tls_sni_search(data, &host_len, &needmore);
-				if (!host && needmore == 1) {
-					if (add_data_len >= 32 * 1024 ||
+				sni_result = tls_sni_search(data, &host_len, &host);
+				if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
+					if (add_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
 					        urllogger_sni_cache_attach(prev_iph->saddr, TCPH(prev_l4)->source,
 					                                   prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
 						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach urllogger sni cache, add_data_len=%u\n", DEBUG_TCP_ARG(iph,l4), add_data_len);
@@ -1128,11 +1144,10 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 				goto __urllogger_ip_skip;
 			}
 		} else {
-			int needmore = 0;
 			data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
 			host_len = data_len;
-			host = tls_sni_search(data, &host_len, &needmore);
-			if (!host && needmore == 1) {
+			sni_result = tls_sni_search(data, &host_len, &host);
+			if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
 				prev_skb = skb_copy(skb, GFP_ATOMIC);
 				if (prev_skb) {
 					if (urllogger_sni_cache_attach(iph->saddr, TCPH(l4)->source, iph->daddr, TCPH(l4)->dest, prev_skb, 0) != 0) {
@@ -1387,7 +1402,8 @@ urllogger_hook_ipv6_main:
 		struct sk_buff *prev_skb = NULL;
 		unsigned char *host = NULL;
 		int host_len;
-		unsigned short add_data_len = 0;
+		unsigned int add_data_len = 0;
+		enum tls_sni_search_result sni_result;
 
 		if (skb_try_make_writable(skb, skb->len)) {
 			goto out;
@@ -1400,13 +1416,21 @@ urllogger_hook_ipv6_main:
 			struct ipv6hdr *prev_iph = ipv6_hdr(prev_skb);
 			void *prev_l4 = (void *)prev_iph + sizeof(struct ipv6hdr);
 			int prev_data_len = ntohs(prev_iph->payload_len) - TCPH(prev_l4)->doff * 4;
+			unsigned int append_len = data_len;
+			unsigned int next_add_data_len;
 
 			data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
 
 			if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq) + prev_data_len + add_data_len) {
-				int needmore = 0;
-				if (skb_tailroom(prev_skb) < add_data_len + data_len &&
-				        pskb_expand_head(prev_skb, 0, add_data_len + data_len, GFP_ATOMIC)) {
+				if (add_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
+				        append_len > URLLOGGER_SNI_CACHE_DATA_LIMIT - add_data_len) {
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": sni cache data too large, add_data_len=%u, data_len=%u\n", DEBUG_TCP_ARG6(iph,l4), add_data_len, append_len);
+					consume_skb(prev_skb);
+					goto __urllogger_ipv6_skip;
+				}
+				next_add_data_len = add_data_len + append_len;
+				if ((unsigned int)skb_tailroom(prev_skb) < next_add_data_len &&
+				        pskb_expand_head(prev_skb, 0, next_add_data_len, GFP_ATOMIC)) {
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to expand pskb head\n", DEBUG_TCP_ARG6(iph,l4));
 					consume_skb(prev_skb);
 					return NF_ACCEPT;
@@ -1415,13 +1439,13 @@ urllogger_hook_ipv6_main:
 				prev_l4 = (void *)prev_iph + sizeof(struct ipv6hdr);
 
 				memcpy(prev_skb->data + prev_skb->len + add_data_len, data, data_len);
-				add_data_len += data_len;
+				add_data_len = next_add_data_len;
 
 				data = prev_skb->data + sizeof(struct ipv6hdr) + TCPH(prev_l4)->doff * 4;
 				host_len = prev_data_len + add_data_len;
-				host = tls_sni_search(data, &host_len, &needmore);
-				if (!host && needmore == 1) {
-					if (add_data_len >= 32 * 1024 ||
+				sni_result = tls_sni_search(data, &host_len, &host);
+				if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
+					if (add_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
 					        urllogger_sni_cache_attach6(&prev_iph->saddr, TCPH(prev_l4)->source,
 					                                    &prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
 						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach urllogger sni cache6, add_data_len=%u\n", DEBUG_TCP_ARG6(iph,l4), add_data_len);
@@ -1443,11 +1467,10 @@ urllogger_hook_ipv6_main:
 				goto __urllogger_ipv6_skip;
 			}
 		} else {
-			int needmore = 0;
 			data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
 			host_len = data_len;
-			host = tls_sni_search(data, &host_len, &needmore);
-			if (!host && needmore == 1) {
+			sni_result = tls_sni_search(data, &host_len, &host);
+			if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
 				prev_skb = skb_copy(skb, GFP_ATOMIC);
 				if (prev_skb) {
 					if (urllogger_sni_cache_attach6(&IPV6H->saddr, TCPH(l4)->source, &IPV6H->daddr, TCPH(l4)->dest, prev_skb, 0) != 0) {
