@@ -28,6 +28,7 @@
 #include <linux/unistd.h>
 #include <linux/mman.h>
 #include <linux/spinlock.h>
+#include <linux/mutex.h>
 #include <linux/rcupdate.h>
 #include <linux/highmem.h>
 #include <linux/crypto.h>
@@ -333,6 +334,7 @@ static const char * const acl_action_names[] = {"accept", "drop", "reset", "redi
 #define ACL_RULE_MAX 32
 static int acl_rule_max = 0;
 static struct acl_rule acl_rule_node[ACL_RULE_MAX];
+static DEFINE_MUTEX(acl_rule_lock);
 
 static void acl_rule_init(void)
 {
@@ -345,15 +347,66 @@ static void acl_rule_clear(void)
 {
 	void *tmp;
 	int rule_id;
+
+	mutex_lock(&acl_rule_lock);
 	for (rule_id = 0; rule_id < ACL_RULE_MAX; rule_id++) {
 		tmp = acl_rule_node[rule_id].acl_buffer;
 		if (tmp != NULL) {
-			acl_rule_node[rule_id].acl_buffer = NULL;
+			rcu_assign_pointer(acl_rule_node[rule_id].acl_buffer, NULL);
 			synchronize_rcu();
 			kfree(tmp);
 		}
 	}
 	acl_rule_max = 0;
+	mutex_unlock(&acl_rule_lock);
+}
+
+static int acl_rule_add(unsigned int idx, unsigned int act, const char *host, ssize_t host_len)
+{
+	unsigned char *old_buffer;
+	unsigned char *new_buffer;
+	ssize_t old_len;
+	ssize_t new_len;
+	ssize_t new_size;
+	int ret = 0;
+
+	mutex_lock(&acl_rule_lock);
+	old_buffer = acl_rule_node[idx].acl_buffer;
+	old_len = old_buffer ? acl_rule_node[idx].acl_buffer_len : 1;
+	new_len = old_len + host_len + 1;
+	new_size = old_buffer ? acl_rule_node[idx].acl_buffer_size : ACL_RULE_ALLOC_SIZE;
+	while (new_size < new_len)
+		new_size += ACL_RULE_ALLOC_SIZE;
+
+	new_buffer = kmalloc(new_size, GFP_KERNEL);
+	if (new_buffer == NULL) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	if (old_buffer)
+		memcpy(new_buffer, old_buffer, old_len);
+	else
+		new_buffer[0] = 0;
+
+	new_buffer[old_len + host_len] = 0;
+	new_buffer[old_len - 1] = (unsigned char)(0x80|act|idx);
+	memcpy(new_buffer + old_len, host, host_len);
+
+	rcu_assign_pointer(acl_rule_node[idx].acl_buffer, new_buffer);
+	acl_rule_node[idx].acl_buffer_size = new_size;
+	acl_rule_node[idx].acl_buffer_len = new_len;
+	if (old_buffer) {
+		synchronize_rcu();
+		kfree(old_buffer);
+	}
+	if (idx >= acl_rule_max) {
+		acl_rule_max = idx + 1;
+	}
+
+out:
+	mutex_unlock(&acl_rule_lock);
+	return ret;
 }
 
 /* return: 0 = no matched, 1 = matched */
@@ -363,10 +416,11 @@ static int urllogger_acl(struct urlinfo *url, int rule_id)
 	unsigned char backup_c;
 	unsigned char *acl_buffer;
 
-	acl_buffer = acl_rule_node[rule_id].acl_buffer;
-
 	backup_c = url->data[url->host_len];
 	url->data[url->host_len] = 0;
+
+	rcu_read_lock();
+	acl_buffer = rcu_dereference(acl_rule_node[rule_id].acl_buffer);
 
 	if (url->host_len >= 1 && acl_buffer != NULL) { /* at least a.b pattern */
 		int i = 0;
@@ -404,6 +458,7 @@ static int urllogger_acl(struct urlinfo *url, int rule_id)
 		}
 	}
 __done:
+	rcu_read_unlock();
 	url->data[url->host_len] = backup_c;
 	return ret;
 }
@@ -3359,7 +3414,7 @@ static struct ctl_table urllogger_root_table[] = {
 
 static struct ctl_table_header *urllogger_table_header = NULL;
 
-static void *hostacl_start(struct seq_file *m, loff_t *pos)
+static void *hostacl_seq_entry(struct seq_file *m, loff_t *pos)
 {
 	int n = 0;
 	char *hostacl_ctl_buffer = m->private;
@@ -3405,17 +3460,24 @@ static void *hostacl_start(struct seq_file *m, loff_t *pos)
 	return NULL;
 }
 
+static void *hostacl_start(struct seq_file *m, loff_t *pos)
+{
+	mutex_lock(&acl_rule_lock);
+	return hostacl_seq_entry(m, pos);
+}
+
 static void *hostacl_next(struct seq_file *m, void *v, loff_t *pos)
 {
 	(*pos)++;
 	if ((*pos) > 0) {
-		return hostacl_start(m, pos);
+		return hostacl_seq_entry(m, pos);
 	}
 	return NULL;
 }
 
 static void hostacl_stop(struct seq_file *m, void *v)
 {
+	mutex_unlock(&acl_rule_lock);
 }
 
 static int hostacl_show(struct seq_file *m, void *v)
@@ -3475,6 +3537,7 @@ static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t b
 		acl_rule_clear();
 		goto done;
 	} else if (strncmp(data, "acl_action_default=", 19) == 0) {
+		mutex_lock(&acl_rule_lock);
 		if (strncmp(data + 19, "accept", 6) == 0) {
 			acl_action_default = URLINFO_ACL_ACTION_RECORD;
 		} else if (strncmp(data + 19, "drop", 4) == 0) {
@@ -3486,6 +3549,7 @@ static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t b
 		} else {
 			err = -EINVAL;
 		}
+		mutex_unlock(&acl_rule_lock);
 		if (err == 0) {
 			goto done;
 		}
@@ -3513,41 +3577,10 @@ static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t b
 							n++;
 						}
 						if (data[i + n] == 0 && n >= 1) {
-							unsigned char *new_buffer;
-							ssize_t add_size = 0;
-							if (acl_rule_node[idx].acl_buffer == NULL) {
-								new_buffer = kmalloc(ACL_RULE_ALLOC_SIZE, GFP_KERNEL);
-								if (new_buffer == NULL) {
-									return -ENOMEM;
-								}
-								new_buffer[0] = 0;
-								acl_rule_node[idx].acl_buffer_size = ACL_RULE_ALLOC_SIZE;
-								acl_rule_node[idx].acl_buffer_len = 1;
-								acl_rule_node[idx].acl_buffer = new_buffer;
-							}
-							while (acl_rule_node[idx].acl_buffer_size + add_size < acl_rule_node[idx].acl_buffer_len + n + 1) {
-								add_size += ACL_RULE_ALLOC_SIZE;
-							}
-							new_buffer = acl_rule_node[idx].acl_buffer;
-							if (add_size > 0) {
-								unsigned char *old_buffer = acl_rule_node[idx].acl_buffer;
-								new_buffer = kmalloc(acl_rule_node[idx].acl_buffer_size + add_size, GFP_KERNEL);
-								if (new_buffer == NULL) {
-									return -ENOMEM;
-								}
-								memcpy(new_buffer, acl_rule_node[idx].acl_buffer, acl_rule_node[idx].acl_buffer_len);
-								acl_rule_node[idx].acl_buffer = new_buffer;
-								synchronize_rcu();
-								kfree(old_buffer);
-							}
-							new_buffer[acl_rule_node[idx].acl_buffer_len + n] = 0;
-							new_buffer[acl_rule_node[idx].acl_buffer_len - 1] = (unsigned char)(0x80|act|idx);
-							memcpy(new_buffer + acl_rule_node[idx].acl_buffer_len, data + i, n);
-							acl_rule_node[idx].acl_buffer_len += n + 1;
-							if (idx >= acl_rule_max) {
-								acl_rule_max =  idx + 1;
-							}
-							goto done;
+							err = acl_rule_add(idx, act, data + i, n);
+							if (err == 0)
+								goto done;
+							return err;
 						}
 					}
 				}
