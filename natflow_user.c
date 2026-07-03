@@ -3061,9 +3061,11 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 	} else if (strncmp(data, "dst_bypasslist_name=", 20) == 0) {
 		char buf[IPSET_MAXNAMELEN];
 		buf[0] = 0;
-		n = sscanf(data, "dst_bypasslist_name=%s\n", buf);
+		n = sscanf(data, "dst_bypasslist_name=%31s\n", buf);
+		buf[IPSET_MAXNAMELEN - 1] = 0;
 		if (n == 1) {
 			memcpy(auth_conf->dst_bypasslist_name, buf, sizeof(auth_conf->dst_bypasslist_name));
+			auth_conf->dst_bypasslist_name[IPSET_MAXNAMELEN - 1] = 0;
 		} else {
 			auth_conf->dst_bypasslist_name[0] = 0;
 		}
@@ -3071,10 +3073,11 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 	} else if (strncmp(data, "src_bypasslist_name=", 20) == 0) {
 		char buf[IPSET_MAXNAMELEN];
 		buf[0] = 0;
-		n = sscanf(data, "src_bypasslist_name=%s\n", buf);
+		n = sscanf(data, "src_bypasslist_name=%31s\n", buf);
 		buf[IPSET_MAXNAMELEN - 1] = 0;
 		if (n == 1) {
 			memcpy(auth_conf->src_bypasslist_name, buf, sizeof(auth_conf->src_bypasslist_name));
+			auth_conf->src_bypasslist_name[IPSET_MAXNAMELEN - 1] = 0;
 		} else {
 			auth_conf->src_bypasslist_name[0] = 0;
 		}
@@ -3103,7 +3106,7 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 					if (p) {
 						int k = 0;
 						p = p + 8;
-						while (p[k] && p[k] != ',') {
+						while (p[k] && p[k] != ',' && k < IPSET_MAXNAMELEN - 1) {
 							rule->src_ipgrp_name[k] = p[k];
 							k++;
 						}
@@ -3117,7 +3120,7 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 					if (p) {
 						int k = 0;
 						p = p + 9;
-						while (p[k] && p[k] != ',') {
+						while (p[k] && p[k] != ',' && k < IPSET_MAXNAMELEN - 1) {
 							rule->src_whitelist_name[k] = p[k];
 							k++;
 						}
@@ -3128,7 +3131,7 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 					if (p) {
 						int k = 0;
 						p = p + 10;
-						while (p[k] && p[k] != ',') {
+						while (p[k] && p[k] != ',' && k < IPSET_MAXNAMELEN - 1) {
 							rule->mac_whitelist_name[k] = p[k];
 							k++;
 						}

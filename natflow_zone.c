@@ -290,6 +290,10 @@ static ssize_t natflow_zone_write(struct file *file, const char __user *buf, siz
 	} else if (strncmp(data, "lan_zone ", 9) == 0) {
 		n = sscanf(data, "lan_zone %u=%14s\n", &zm.id, zm.if_name);
 		if (n == 2) {
+			if (zm.id > MAX_ZONE_ID) {
+				err = -EINVAL;
+				goto done;
+			}
 			zm.type = ZONE_TYPE_LAN;
 			if ((err = natflow_zone_add_tail(&zm)) == 0)
 				goto done;
@@ -298,6 +302,10 @@ static ssize_t natflow_zone_write(struct file *file, const char __user *buf, siz
 	} else if (strncmp(data, "wan_zone ", 9) == 0) {
 		n = sscanf(data, "wan_zone %u=%14s\n", &zm.id, zm.if_name);
 		if (n == 2) {
+			if (zm.id > MAX_ZONE_ID) {
+				err = -EINVAL;
+				goto done;
+			}
 			zm.type = ZONE_TYPE_WAN;
 			if ((err = natflow_zone_add_tail(&zm)) == 0)
 				goto done;
