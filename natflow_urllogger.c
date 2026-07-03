@@ -1968,7 +1968,8 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			        urllogger_quic_cache_attach(iph->saddr, UDPH(l4)->source,
 			                                    iph->daddr, UDPH(l4)->dest,
 			                                    &quic_info, crypto_data, crypto_len) == 0) {
-				return NF_ACCEPT;
+				ret = NF_ACCEPT;
+				goto out;
 			}
 			kfree(crypto_data);
 			crypto_data = NULL;
@@ -2121,7 +2122,8 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 				        pskb_expand_head(prev_skb, 0, next_add_data_len, GFP_ATOMIC)) {
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to expand pskb head\n", DEBUG_TCP_ARG(iph,l4));
 					consume_skb(prev_skb);
-					return NF_ACCEPT;
+					ret = NF_ACCEPT;
+					goto out;
 				}
 				prev_iph = ip_hdr(prev_skb);
 				prev_l4 = (void *)prev_iph + prev_iph->ihl * 4;
@@ -2140,7 +2142,8 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 						consume_skb(prev_skb);
 						goto __urllogger_ip_skip;
 					}
-					return NF_ACCEPT;
+					ret = NF_ACCEPT;
+					goto out;
 				}
 			} else if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq)) {
 				if (urllogger_sni_cache_attach(prev_iph->saddr, TCPH(prev_l4)->source,
@@ -2149,7 +2152,8 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 					consume_skb(prev_skb);
 					goto __urllogger_ip_skip;
 				}
-				return NF_ACCEPT;
+				ret = NF_ACCEPT;
+				goto out;
 			} else {
 				consume_skb(prev_skb);
 				goto __urllogger_ip_skip;
@@ -2167,7 +2171,8 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 						goto __urllogger_ip_skip;
 					}
 				}
-				return NF_ACCEPT;
+				ret = NF_ACCEPT;
+				goto out;
 			}
 		}
 
@@ -2444,7 +2449,8 @@ urllogger_hook_ipv6_main:
 			        urllogger_quic_cache_attach6(&IPV6H->saddr, UDPH(l4)->source,
 			                                     &IPV6H->daddr, UDPH(l4)->dest,
 			                                     &quic_info, crypto_data, crypto_len) == 0) {
-				return NF_ACCEPT;
+				ret = NF_ACCEPT;
+				goto out;
 			}
 			kfree(crypto_data);
 			crypto_data = NULL;
@@ -2589,7 +2595,8 @@ urllogger_hook_ipv6_main:
 				        pskb_expand_head(prev_skb, 0, next_add_data_len, GFP_ATOMIC)) {
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to expand pskb head\n", DEBUG_TCP_ARG6(iph,l4));
 					consume_skb(prev_skb);
-					return NF_ACCEPT;
+					ret = NF_ACCEPT;
+					goto out;
 				}
 				prev_iph = ipv6_hdr(prev_skb);
 				prev_l4 = (void *)prev_iph + sizeof(struct ipv6hdr);
@@ -2608,7 +2615,8 @@ urllogger_hook_ipv6_main:
 						consume_skb(prev_skb);
 						goto __urllogger_ipv6_skip;
 					}
-					return NF_ACCEPT;
+					ret = NF_ACCEPT;
+					goto out;
 				}
 			} else if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq)) {
 				if (urllogger_sni_cache_attach6(&prev_iph->saddr, TCPH(prev_l4)->source,
@@ -2617,7 +2625,8 @@ urllogger_hook_ipv6_main:
 					consume_skb(prev_skb);
 					goto __urllogger_ipv6_skip;
 				}
-				return NF_ACCEPT;
+				ret = NF_ACCEPT;
+				goto out;
 			} else {
 				consume_skb(prev_skb);
 				goto __urllogger_ipv6_skip;
@@ -2635,7 +2644,8 @@ urllogger_hook_ipv6_main:
 						goto __urllogger_ipv6_skip;
 					}
 				}
-				return NF_ACCEPT;
+				ret = NF_ACCEPT;
+				goto out;
 			}
 		}
 
