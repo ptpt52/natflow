@@ -1589,11 +1589,11 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	int d;
 #ifdef CONFIG_NETFILTER_INGRESS
 	unsigned int re_learn = 0;
+	int gso_direct_ok;
 #else
 	int bridge = 0;
 #endif
 	unsigned int ingress_pad_len = 0;
-	unsigned int ingress_trim_off = 0;
 	unsigned short path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)));
 
 	if (disabled)
@@ -1754,7 +1754,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			return NF_DROP;
 		}
 
-		ingress_trim_off = skb->len - _I;
 		if (pskb_trim_rcsum(skb, _I)) {
 			return NF_DROP;
 		}
@@ -1968,10 +1967,10 @@ fast_output:
 					if (nfn->vlan_present)
 						features = netdev_intersect_features(features,
 						                                     nfn->outdev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
-					ingress_trim_off = (NFN_PROTO_DEC(nfn->flags) == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
-					                   (features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)) && \
-					                   _I == ETH_HLEN;
-					if (!ingress_trim_off) {
+					gso_direct_ok = (NFN_PROTO_DEC(nfn->flags) == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
+					                (features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)) && \
+					                _I == ETH_HLEN;
+					if (!gso_direct_ok) {
 						struct sk_buff *segs;
 						skb->ip_summed = CHECKSUM_PARTIAL;
 						skb->dev = nfn->outdev;
@@ -3229,10 +3228,10 @@ fastnat_check:
 		if (nf->rroute[dir].vlan_present)
 			features = netdev_intersect_features(features,
 			                                     nf->rroute[dir].outdev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
-		ingress_trim_off = (iph->protocol == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
-		                   (features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)) && \
-		                   nf->rroute[dir].l2_head_len == ETH_HLEN;
-		if (!ingress_trim_off) {
+		gso_direct_ok = (iph->protocol == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
+		                (features & (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM)) && \
+		                nf->rroute[dir].l2_head_len == ETH_HLEN;
+		if (!gso_direct_ok) {
 			struct sk_buff *segs;
 			skb->ip_summed = CHECKSUM_PARTIAL;
 			segs = skb_gso_segment(skb, 0);
@@ -3309,10 +3308,6 @@ out:
 			skb_push_rcsum(skb, PPPOE_SES_HLEN);
 			skb->network_header -= PPPOE_SES_HLEN;
 		}
-		if (ingress_trim_off) {
-			skb->len += ingress_trim_off;
-		}
-
 		if (vline_filter) {
 			return ret;
 		}
@@ -3682,7 +3677,6 @@ __hook_ipv6_main:
 			goto out6;
 		}
 
-		ingress_trim_off = skb->len - _I;
 		if (pskb_trim_rcsum(skb, _I)) {
 			return NF_DROP;
 		}
@@ -3899,10 +3893,10 @@ fast_output6:
 					if (nfn->vlan_present)
 						features = netdev_intersect_features(features,
 						                                     nfn->outdev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
-					ingress_trim_off = (NFN_PROTO_DEC(nfn->flags) == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
-					                   (features & (NETIF_F_HW_CSUM | NETIF_F_IPV6_CSUM)) && \
-					                   _I == ETH_HLEN;
-					if (!ingress_trim_off) {
+					gso_direct_ok = (NFN_PROTO_DEC(nfn->flags) == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
+					                (features & (NETIF_F_HW_CSUM | NETIF_F_IPV6_CSUM)) && \
+					                _I == ETH_HLEN;
+					if (!gso_direct_ok) {
 						struct sk_buff *segs;
 						skb->ip_summed = CHECKSUM_PARTIAL;
 						skb->dev = nfn->outdev;
@@ -5121,10 +5115,10 @@ fastnat_check6:
 		if (nf->rroute[dir].vlan_present)
 			features = netdev_intersect_features(features,
 			                                     nf->rroute[dir].outdev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
-		ingress_trim_off = (IPV6H->nexthdr == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
-		                   (features & (NETIF_F_HW_CSUM | NETIF_F_IPV6_CSUM)) && \
-		                   nf->rroute[dir].l2_head_len == ETH_HLEN;
-		if (!ingress_trim_off) {
+		gso_direct_ok = (IPV6H->nexthdr == IPPROTO_TCP && (features & NETIF_F_TSO)) && \
+		                (features & (NETIF_F_HW_CSUM | NETIF_F_IPV6_CSUM)) && \
+		                nf->rroute[dir].l2_head_len == ETH_HLEN;
+		if (!gso_direct_ok) {
 			struct sk_buff *segs;
 			skb->ip_summed = CHECKSUM_PARTIAL;
 			segs = skb_gso_segment(skb, 0);
@@ -5200,9 +5194,6 @@ out6:
 			skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
 			skb_push_rcsum(skb, PPPOE_SES_HLEN);
 			skb->network_header -= PPPOE_SES_HLEN;
-		}
-		if (ingress_trim_off) {
-			skb->len += ingress_trim_off;
 		}
 		if (vline_filter) {
 			return ret;
