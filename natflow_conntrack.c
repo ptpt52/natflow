@@ -270,6 +270,9 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 					ct_i = kmalloc(CONNTRACKINFO_MEMSIZE, GFP_ATOMIC);
 					if (!ct_i) {
 						nf_ct_put(ct);
+						user->next_bucket = i;
+						user->status = 0;
+						rcu_read_unlock();
 						ret = -ENOMEM;
 						goto out;
 					}

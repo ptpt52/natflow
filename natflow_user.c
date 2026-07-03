@@ -3504,6 +3504,9 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 					user_i = kmalloc(sizeof(struct userinfo), GFP_ATOMIC);
 					if (!user_i) {
 						nf_ct_put(ct);
+						user->next_bucket = i;
+						user->status = 0;
+						rcu_read_unlock();
 						ret = -ENOMEM;
 						goto out;
 					}
