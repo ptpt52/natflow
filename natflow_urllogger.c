@@ -1990,15 +1990,6 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			INIT_LIST_HEAD(&url->list);
 			url->host_len = urlinfo_copy_host_tolower(url->data, host, host_len);
 			url->data[host_len] = 0;
-			if (strstr(url->data, "qq.com") ||
-			        strstr(url->data, "wechat.com") ||
-			        strstr(url->data, "jd.com") ||
-			        strstr(url->data, "taobao.com")) {
-				ip_hdr(skb)->daddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
-				IP_SET_add_dst_ip(state, in, out, skb, "wechat_iplist");
-				NATFLOW_INFO("(CPO)" DEBUG_UDP_FMT ": add to wechat_iplist\n", DEBUG_UDP_ARG(iph,l4));
-				ip_hdr(skb)->daddr = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
-			}
 			url->data_len = host_len + 1;
 			if (urllogger_store_tuple_type == 0) {
 				url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
@@ -2196,15 +2187,6 @@ __urllogger_ip_skip:
 			url->host_len = urlinfo_copy_host_tolower(url->data, host, host_len);
 			if (prev_skb) consume_skb(prev_skb);
 			url->data[host_len] = 0;
-			if (strstr(url->data, "qq.com") ||
-			        strstr(url->data, "wechat.com") ||
-			        strstr(url->data, "jd.com") ||
-			        strstr(url->data, "taobao.com")) {
-				ip_hdr(skb)->daddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
-				IP_SET_add_dst_ip(state, in, out, skb, "wechat_iplist");
-				NATFLOW_INFO("(CPO)" DEBUG_TCP_FMT ": add to wechat_iplist\n", DEBUG_TCP_ARG(iph,l4));
-				ip_hdr(skb)->daddr = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
-			}
 			url->data_len = host_len + 1;
 			if (urllogger_store_tuple_type == 0) {
 				/* 0: dir0-src dir0-dst */
@@ -2297,15 +2279,6 @@ __urllogger_ip_skip:
 				INIT_LIST_HEAD(&url->list);
 				url->host_len = urlinfo_copy_host_tolower(url->data, host, host_len);
 				url->data[host_len] = 0;
-				if (strstr(url->data, "qq.com") ||
-				        strstr(url->data, "wechat.com") ||
-				        strstr(url->data, "jd.com") ||
-				        strstr(url->data, "taobao.com")) {
-					ip_hdr(skb)->daddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
-					IP_SET_add_dst_ip(state, in, out, skb, "wechat_iplist");
-					NATFLOW_INFO("(CPO)" DEBUG_TCP_FMT ": add to wechat_iplist\n", DEBUG_TCP_ARG(iph,l4));
-					ip_hdr(skb)->daddr = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
-				}
 				memcpy(url->data + host_len, uri, uri_len);
 				url->data[host_len + uri_len] = 0;
 				url->data_len = host_len + uri_len + 1;
