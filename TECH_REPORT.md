@@ -177,7 +177,8 @@ ACL 规则表达式：`<id>,<act>,<host>`，其中：
 从实现和文档可见，urllogger 支持：
 
 - HTTP 方法与 Host 识别
-- TLS ClientHello SNI 解析（SSL 类型日志）
+- TCP TLS ClientHello SNI 解析（HTTPS 类型日志）
+- QUIC v1 Initial ClientHello SNI 解析（QUIC 类型日志）
 - 输出统一 CSV：`timestamp,mac,sip,...,acl_idx,acl_action,url`
 
 同时可在 FORWARD 或 LOCAL_IN 钩子模式运行（由编译宏决定）。

@@ -14,7 +14,7 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 - 可选硬件 NAT/WED 卸载：在 MTK/Ralink 相关内核配置存在时，将 fastnat 流继续下发到硬件 offload。
 - 用户识别和认证控制：用“fakeuser conntrack”表示用户，跟踪 IP/MAC、认证状态、认证规则、流量统计和事件。
 - QoS/限速：按用户、端口、远端地址、协议匹配 QoS 规则，并基于 token bucket 或 `skb->mark` 输出 classid。
-- URL/SNI 记录和主机访问控制：解析 HTTP Host/URI 和 TLS SNI，记录访问日志，按 host 规则和 ipset 执行动作。
+- URL/SNI 记录和主机访问控制：解析 HTTP Host/URI、TCP TLS SNI 和 QUIC Initial SNI，记录访问日志，按 host 规则和 ipset 执行动作。
 - Zone 标记：按接口名或接口名前缀把设备标记为 LAN/WAN zone，供认证和策略判断使用。
 - vline/relay：在 `CONFIG_NETFILTER_INGRESS` 场景下，把指定设备之间建立 L2/L3 直通或 relay 关系。
 - 观测接口：输出 conntrack、用户、URL、host ACL、zone、核心配置等状态。
@@ -413,7 +413,7 @@ timestamp,mac,sip,sport,dip,dport,hits,method,type,acl_idx,acl_action,url
 字段说明：
 
 - `method` 为 `NONE`、`GET`、`POST`、`HEAD`。
-- `type` 为 `HTTP` 或 `SSL`。
+- `type` 为 hostname 来源协议：`HTTP`、`HTTPS` 或 `QUIC`。
 - `acl_action` 数值：0 accept/record，1 drop，2 reset，3 redirect。
 - IPv6 地址使用 `%pI6` 输出。
 
@@ -626,11 +626,11 @@ fakeuser 不是普通用户态对象，而是特殊 conntrack：
 - `timestamp`：以 uptime 秒为基准。
 - 源/目标 IPv4 或 IPv6、端口。
 - MAC。
-- flags：HTTPS、IPv6。
+- flags：hostname 来源协议 HTTP/HTTPS/QUIC、IPv6。
 - HTTP method：NONE/GET/POST/HEAD。
 - `hits`：合并命中次数。
 - `acl_idx`、`acl_action`。
-- 可变长 `data`：HTTP host+URI 或 TLS SNI。
+- 可变长 `data`：HTTP host+URI、TCP TLS SNI 或 QUIC Initial SNI。
 
 同一时间窗口内相同 tuple/dport/data/flags/method 会合并，超过内存/数量限制时驱逐最老记录。
 `timestamp` 使用 `(jiffies - INITIAL_JIFFIES) / HZ`，不是 Unix epoch；用户态若要转换为墙钟时间，需要结合系统 uptime。
@@ -841,8 +841,13 @@ classid 模式：
    - 使用 per-CPU SNI cache 拼接跨包数据。
    - 单条追加数据小于 32KB。
    - cache 每 CPU 64 个节点，超时 4 秒。
-7. 命中后写 URL store，并设置 `IPS_NATFLOW_URLLOGGER_HANDLED`。
-8. 对部分 host 添加目标 IP 到 `wechat_iplist`。
+7. 解析 QUIC SNI：
+   - 只处理 UDP/443 QUIC v1 Initial。
+   - 解密 Initial payload 后解析 CRYPTO frame 中的 TLS ClientHello SNI。
+   - 使用 per-CPU QUIC cache 缓存连续 CRYPTO stream 数据。
+   - 不解析 HTTP/3 `:authority` 或 path，不支持 ECH 内层真实 SNI。
+8. 命中后写 URL store，并设置 `IPS_NATFLOW_URLLOGGER_HANDLED`。
+9. 对部分 host 添加目标 IP 到 `wechat_iplist`。
 
 ### 15.3 host ACL
 

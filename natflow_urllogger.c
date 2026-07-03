@@ -85,7 +85,12 @@ struct urlinfo {
 	__be16 sport;
 	__be16 dport;
 	unsigned char mac[ETH_ALEN];
-#define URLINFO_HTTPS 0x01
+#define URLINFO_SOURCE_MASK 0x03
+#define URLINFO_SOURCE_HTTP 0x00
+#define URLINFO_SOURCE_HTTPS 0x01
+#define URLINFO_SOURCE_QUIC 0x02
+#define URLINFO_HTTPS URLINFO_SOURCE_HTTPS
+#define URLINFO_QUIC URLINFO_SOURCE_QUIC
 #define URLINFO_IPV6 0x80
 	unsigned char flags;
 #define NATFLOW_HTTP_NONE 0
@@ -117,6 +122,19 @@ static const char * const natflow_http_method_names[] = {
 	[NATFLOW_HTTP_POST] = "POST",
 	[NATFLOW_HTTP_HEAD] = "HEAD",
 };
+
+static inline const char *urlinfo_source_name(const struct urlinfo *url)
+{
+	switch (url->flags & URLINFO_SOURCE_MASK) {
+	case URLINFO_SOURCE_HTTPS:
+		return "HTTPS";
+	case URLINFO_SOURCE_QUIC:
+		return "QUIC";
+	case URLINFO_SOURCE_HTTP:
+	default:
+		return "HTTP";
+	}
+}
 
 static inline void urlinfo_release(struct urlinfo *url)
 {
@@ -1998,7 +2016,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 				url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
 			}
 			url->timestamp = URLINFO_NOW;
-			url->flags = URLINFO_HTTPS;
+			url->flags = URLINFO_QUIC;
 			url->http_method = 0;
 			url->hits = 1;
 			memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
@@ -2465,7 +2483,7 @@ urllogger_hook_ipv6_main:
 				url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
 			}
 			url->timestamp = URLINFO_NOW;
-			url->flags = URLINFO_HTTPS;
+			url->flags = URLINFO_QUIC;
 			url->flags |= URLINFO_IPV6;
 			url->http_method = 0;
 			url->hits = 1;
@@ -3040,19 +3058,19 @@ static ssize_t urllogger_read(struct file *file, char __user *buf,
 	if (url) {
 		/* timestamp, mac,              sip,            sport,dip,            dport,hits, meth,type,acl_idx,acl_action, url\n
 		   4294967295,FF:AA:BB:CC:DD:EE,123.123.123.123,65535,111.111.111.111,65535,65535,POST,HTTP,64,1,url\n
-		   ----------------------------------------------------------------------------------------------94bytes + 48bytes(if ipv6)
+		   ------------------------------------------------------------------------------------------------96bytes + 48bytes(if ipv6)
 		 */
-		if (94 + 48 + url->data_len + 1 /* \n */ <= URLLOGGER_DATALEN) {
+		if (96 + 48 + url->data_len + 1 /* \n */ <= URLLOGGER_DATALEN) {
 			if ((url->flags & URLINFO_IPV6)) {
 				len = sprintf(user->data, "%u,%02X:%02X:%02X:%02X:%02X:%02X,%pI6,%u,%pI6,%u,%u,%s,%s,%u,%u,%s\n",
 				              url->timestamp, url->mac[0], url->mac[1], url->mac[2], url->mac[3], url->mac[4], url->mac[5],
 				              &url->sipv6, ntohs(url->sport), &url->dipv6, ntohs(url->dport), url->hits,
-				              natflow_http_method_names[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->acl_idx, url->acl_action, url->data);
+				              natflow_http_method_names[url->http_method], urlinfo_source_name(url), url->acl_idx, url->acl_action, url->data);
 			} else {
 				len = sprintf(user->data, "%u,%02X:%02X:%02X:%02X:%02X:%02X,%pI4,%u,%pI4,%u,%u,%s,%s,%u,%u,%s\n",
 				              url->timestamp, url->mac[0], url->mac[1], url->mac[2], url->mac[3], url->mac[4], url->mac[5],
 				              &url->sip, ntohs(url->sport), &url->dip, ntohs(url->dport), url->hits,
-				              natflow_http_method_names[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->acl_idx, url->acl_action, url->data);
+				              natflow_http_method_names[url->http_method], urlinfo_source_name(url), url->acl_idx, url->acl_action, url->data);
 			}
 			/*
 			 * FIXME: Returning -EINVAL when len > count breaks single-byte reads
