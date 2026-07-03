@@ -423,6 +423,8 @@ timestamp,mac,sip,sport,dip,dport,hits,method,type,acl_idx,acl_action,url
 - 如果输出行大于用户 buffer，返回 `-EINVAL`。
 - 如果编码后的 URL 记录超过内部 `URLLOGGER_DATALEN`，该记录会被取出并释放，但本次 read 返回 0；这会造成超长 URL 日志静默丢失。
 - 内部输出缓存大小约 `ALIGN(sizeof(struct urllogger_user), 2048) - sizeof(struct urllogger_user)`。
+- `url` 字段直接用 `%s` 写入 CSV，不做逗号、换行、NUL 或控制字符转义。当前实现假设解析到的 host/URI 是可打印且不破坏 CSV 的输入；若用户态把该输出作为安全日志或机器解析输入，必须自行做防御性解析。
+- HTTP 记录的 `url` 字段是 `host + uri` 拼接结果，中间没有额外分隔符；HTTPS/QUIC 记录只保存 SNI hostname。
 
 ### 7.9 `/dev/hostacl_ctl`
 
@@ -585,6 +587,15 @@ fastnat 哈希表节点，cacheline 对齐，保存：
 - 其他常见 64 位/ARM/ARM64：`8192`，`2-way` 相邻槽探测。
 - ATH79/MT7620 等资源较小平台：`4096`，`2-way` 相邻槽探测。
 
+hash 和冲突模型：
+
+- IPv4 hash 输入为源 IP、目的 IP、源端口、目的端口；IPv6 hash 输入为源/目的 IPv6 地址 4 个 32 位分片和端口。
+- hash 结果会左移 1 位或 2 位，使低位预留给相邻槽探测；因此逻辑 bucket 数量是 `NATFLOW_FASTNAT_TABLE_SIZE / NATFLOW_FASTNAT_TABLE_WAYS`。
+- 2-way 平台最多检查 `base`、`base + 1`；4-way 平台最多检查 `base` 到 `base + 3`。
+- 冲突处理不是链表、开放寻址全表探测或动态扩容；只能在固定相邻窗口中使用空槽、过期槽或同 tuple 槽。
+- 若固定窗口内都是未过期且不同 tuple 的节点，该方向不能写入 fastnat 表；双向流要求 original/reply 两个方向都获得可用节点。
+- `natflow_offload_keepalive()` 和硬件 offload 路径用保存的 hash 回查节点，因此 hash/way 语义是软件 fast path 与硬件 offload 的共享契约。
+
 超时：
 
 - `NATFLOW_FF_TIMEOUT_HIGH = 30s`。
@@ -723,6 +734,7 @@ AI 重建实现时必须显式处理 conntrack ext 内存布局，不能把 `nat
 hash 约束：
 
 - IPv4/IPv6 使用各自 inline hash。
+- hash 返回值是相邻探测窗口的 base slot；窗口宽度由 `NATFLOW_FASTNAT_TABLE_WAYS` 决定。
 - MT7621 平台 `natflow_hash_skip()` 会跳过特定 bucket：`12,25,38,51,76,89,102` modulo 128。
 - 发生冲突时最多使用有限备用 slot；不能动态扩容。
 
@@ -835,17 +847,37 @@ classid 模式：
    - URI 必须以 `/` 开头。
    - 查找 `Host:` 头。
    - 记录 host + URI。
+   - 不识别 absolute-form URI、CONNECT、HTTP/2 cleartext 或其他 HTTP 方法。
+   - 不剥离 Host 中的 `:port`，不规范化 IPv6 literal，不做 IDNA/punycode 转换。
 6. 解析 TLS SNI：
    - 解析 TLS ClientHello extension type 0。
    - 使用 per-CPU SNI cache 拼接跨包数据。
    - 单条追加数据小于 32KB。
    - cache 每 CPU 64 个节点，超时 4 秒。
+   - TLS record 长度不足但已确认 handshake type 是 ClientHello 时，会继续在已收到字节中探测；若可确认 handshake type 不是 ClientHello，则返回非 ClientHello。
+   - TCP SNI cache 只接受按 TCP sequence 连续追加的数据，不做乱序重组。
+   - 不支持一个 TLS ClientHello handshake message 横跨多个 TLS record 的完整语义重组。
 7. 解析 QUIC SNI：
    - 只处理 UDP/443 QUIC v1 Initial。
+   - 只识别 QUIC long header Initial，要求 fixed bit 置位，version 为 `0x00000001`，DCID 长度为 1..20。
+   - 使用 QUIC v1 Initial salt 派生 client initial secret，并依赖内核 crypto 的 `hmac(sha256)`、`ecb(aes)` header protection 和 `gcm(aes)` payload 解密。
    - 解密 Initial payload 后解析 CRYPTO frame 中的 TLS ClientHello SNI。
    - 使用 per-CPU QUIC cache 缓存连续 CRYPTO stream 数据。
+   - CRYPTO stream 只缓存从 offset 0 开始的连续前缀；offset 大于当前连续长度的片段不会作为稀疏片段保存。
+   - 只处理当前 UDP datagram 中解析出的第一个 QUIC packet，不遍历 coalesced datagram 中后续 packet。
+   - packet number reconstruction 简化为把解保护后的截断 packet number 当完整 packet number 使用，适合常见首包，不覆盖所有 Initial 重传/高 packet number 场景。
+   - QUIC frame parser 只跳过 PADDING、PING、ACK/ACK_ECN，并解析 CRYPTO；遇到其他 frame 会结束本次 SNI 探测。
    - 不解析 HTTP/3 `:authority` 或 path，不支持 ECH 内层真实 SNI。
+   - QUIC crypto 初始化失败时，URL logger 仍可加载，但 QUIC hostname parser 被禁用。
 8. 命中后写 URL store，并设置 `IPS_NATFLOW_URLLOGGER_HANDLED`。
+9. URL logger 不会因为固定域名命中而自动添加任何全局 ipset；host ACL 只测试 `host_acl_rule<id>_ipv4/ipv6/mac` 这类用户态配置的过滤集合。
+
+实现边界：
+
+- `urlinfo_copy_host_tolower()` 只对 hostname 开头到第一个 `/` 前的 ASCII 大写字母做小写转换；它不验证 label、长度、NUL、控制字符、逗号、空白或其他非法 hostname 字节。
+- TLS/QUIC SNI server_name type 0 的内容会按长度复制为 hostname 使用；当前没有强制 RFC hostname 校验。
+- HTTP Host、TLS SNI、QUIC SNI 的识别是审计和粗粒度 ACL 能力，不是不可绕过的 WAF/域名防火墙边界。
+- PPPoE bridge 场景下，等待更多 TLS/QUIC 数据的缓存成功路径必须通过统一 `out` 路径退出，以恢复临时剥离的 PPPoE header、`skb->protocol` 和 `network_header`。
 
 ### 15.3 host ACL
 
@@ -1040,6 +1072,10 @@ path notifier：
 - IPv6 fast path 不解析扩展头。
 - HTTP parser 只识别简单明文请求和 `Host:`。
 - TLS SNI parser 只覆盖普通 ClientHello SNI extension，不保证支持所有 TLS 变体、ECH 或分片异常。
+- hostname 复制路径不做 RFC hostname 校验，也不拒绝 NUL、逗号、CR/LF 或控制字符；这会影响 ACL 字符串匹配和 CSV 日志解析。
+- TLS ClientHello 跨多个 TLS record 的场景当前不能完整支持，恶意客户端可利用异常分片降低识别率。
+- QUIC 只覆盖 UDP/443 QUIC v1 Initial 中常见的 CRYPTO/ClientHello SNI；不覆盖 QUIC v2、version negotiation、Retry 后复杂路径、coalesced datagram 后续 packet、稀疏 CRYPTO fragment、HTTP/3 `:authority` 或 ECH 内层域名。
+- URL logger 输出不做 CSV escaping；把 `/dev/urllogger_queue` 作为机器输入时必须在用户态处理畸形字段、换行注入和过长记录丢失。
 
 ### 20.3 行为限制
 
@@ -1102,9 +1138,12 @@ path notifier：
 - MUST 在 URL store 关闭时完全旁路。
 - MUST 解析 HTTP GET/POST/HEAD 的 Host 和 URI。
 - MUST 解析 TLS ClientHello SNI，并支持短时间跨包缓存。
+- MUST 解析常见 UDP/443 QUIC v1 Initial 中 CRYPTO frame 的 TLS ClientHello SNI；如果目标内核缺少所需 crypto 算法，必须明确降级为无 QUIC hostname 识别。
 - MUST 合并时间窗口内重复 URL。
 - MUST 执行 host ACL 的 accept/drop/reset 语义。
 - MUST 输出指定 CSV 格式。
+- MUST 保证等待更多 TLS/QUIC 数据时不会让 fast path 提前接管该连接，并在 PPPoE bridge 路径恢复 skb 状态后再返回。
+- MUST NOT 重新引入固定域名到全局 ipset 的隐式自动添加逻辑；所有 host 相关策略应通过 host ACL 和显式配置的 `host_acl_rule<id>_*` ipset 表达。
 
 ### 21.5 SHOULD：工程质量
 
@@ -1113,6 +1152,7 @@ path notifier：
 - SHOULD 为 vline 配置提供事务/冲突检查，但若追求完全兼容，应保留当前非事务行为。
 - SHOULD 避免继续复用 `net_device->flags` 高位和 `dev->name` 隐藏字节；若改动，必须提供兼容适配层。
 - SHOULD 为 fastnat hash 冲突、URL parser、QoS CIDR、认证状态机、vline NOARP/ND 路径增加测试。
+- SHOULD 增加统一 hostname normalize/validate 层，并对 CSV 输出做 escaping 或结构化输出，但必须标注这会改变现有 ABI。
 
 ## 22. 推荐验证清单
 
