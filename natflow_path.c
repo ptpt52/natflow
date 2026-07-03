@@ -3322,26 +3322,65 @@ out:
 				/* Note: handle relay logic */
 				if ((outdev->flags & IFF_VLINE_RELAY)) {
 					natflow_fakeuser_t *user;
-					if (skb->protocol == __constant_htons(ETH_P_IP)) {
+					if (skb->protocol == __constant_htons(ETH_P_IP) &&
+					        pskb_may_pull(skb, sizeof(struct iphdr))) {
+						unsigned int ip_hdr_len;
+						unsigned int ip_len;
+						unsigned int udp_end;
+
 						iph = (void *)ip_hdr(skb);
-						l4 = (void *)iph + iph->ihl * 4;
-						/* DHCP Discover/Request: change unicast to broadcast. */
-						if (iph->protocol == IPPROTO_UDP && UDPH(l4)->dest == htons(67)) {
-							unsigned char *flags_ptr = l4 + sizeof(struct udphdr) + 10; /* BOOTP flags offset in DHCP payload. */
-							if (flags_ptr[0] == 0x00 && flags_ptr[1] == 0x00) {
-								flags_ptr[0] = 0x80; /* Set MSB to 1: 0x8000. */
-								/* Update UDP checksum. */
-								if (UDPH(l4)->check || skb->ip_summed == CHECKSUM_PARTIAL) {
-									inet_proto_csum_replace2(&UDPH(l4)->check, skb, htons(0x0000),
-									                         htons(0x8000), true);
-									if (!UDPH(l4)->check)
-										UDPH(l4)->check = CSUM_MANGLED_0;
+						if (iph->version == 4 && iph->ihl >= 5) {
+							ip_hdr_len = iph->ihl * 4;
+							ip_len = ntohs(iph->tot_len);
+							udp_end = ip_hdr_len + sizeof(struct udphdr);
+
+							if (ip_len >= udp_end && skb->len >= udp_end && pskb_may_pull(skb, udp_end)) {
+								iph = (void *)ip_hdr(skb);
+								l4 = (void *)iph + iph->ihl * 4;
+								/* DHCP Discover/Request: change unicast to broadcast. */
+								if (iph->protocol == IPPROTO_UDP && UDPH(l4)->dest == htons(67)) {
+									unsigned char *flags_ptr;
+									unsigned int flags_off = ip_hdr_len + sizeof(struct udphdr) + 10;
+									unsigned int flags_end = flags_off + sizeof(__be16);
+
+									if (ip_len >= flags_end && skb->len >= flags_end) {
+										if (!pskb_may_pull(skb, flags_end) || skb_try_make_writable(skb, flags_end)) {
+											return NF_DROP;
+										}
+										iph = (void *)ip_hdr(skb);
+										l4 = (void *)iph + iph->ihl * 4;
+										flags_ptr = l4 + sizeof(struct udphdr) + 10;
+										if (flags_ptr[0] == 0x00 && flags_ptr[1] == 0x00) {
+											flags_ptr[0] = 0x80; /* Set MSB to 1: 0x8000. */
+											/* Update UDP checksum. */
+											if (UDPH(l4)->check || skb->ip_summed == CHECKSUM_PARTIAL) {
+												inet_proto_csum_replace2(&UDPH(l4)->check, skb, htons(0x0000),
+												                         htons(0x8000), true);
+												if (!UDPH(l4)->check)
+													UDPH(l4)->check = CSUM_MANGLED_0;
+											}
+										}
+									}
 								}
 							}
 						}
 					}
 					if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST ||
 					        skb->protocol == __constant_htons(ETH_P_ARP)) {
+						if (skb->protocol == __constant_htons(ETH_P_ARP)) {
+							struct arphdr *arph;
+							unsigned int arp_len = sizeof(struct arphdr) + 2 * ETH_ALEN + 2 * sizeof(__be32);
+
+							if (!pskb_may_pull(skb, sizeof(struct arphdr))) {
+								return ret;
+							}
+							arph = arp_hdr(skb);
+							if (arph->ar_hrd != htons(ARPHRD_ETHER) || arph->ar_pro != htons(ETH_P_IP) ||
+							        arph->ar_hln != ETH_ALEN || arph->ar_pln != sizeof(__be32) ||
+							        skb->len < arp_len) {
+								return ret;
+							}
+						}
 						if (!pskb_may_pull(skb, skb->len) || skb_try_make_writable(skb, skb->len)) {
 							return NF_DROP;
 						}
