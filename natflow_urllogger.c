@@ -1181,6 +1181,11 @@ struct urllogger_quic_crypto_ctx {
 	struct crypto_shash *hmac;
 	struct crypto_skcipher *hp;
 	struct crypto_aead *aead;
+	unsigned char key[QUIC_INITIAL_KEY_LEN];
+	unsigned char iv[QUIC_INITIAL_IV_LEN];
+	unsigned char hp_key[QUIC_INITIAL_KEY_LEN];
+	unsigned char mask[QUIC_HP_SAMPLE_LEN];
+	unsigned char nonce[QUIC_INITIAL_IV_LEN];
 };
 
 struct quic_initial_info {
@@ -1449,7 +1454,6 @@ static int quic_initial_decrypt(struct urllogger_quic_crypto_ctx *ctx,
 {
 	struct aead_request *req;
 	struct scatterlist sg;
-	unsigned char nonce[QUIC_INITIAL_IV_LEN];
 	unsigned int crypt_len;
 	int i;
 	int ret;
@@ -1461,9 +1465,9 @@ static int quic_initial_decrypt(struct urllogger_quic_crypto_ctx *ctx,
 	if (crypt_len < QUIC_INITIAL_TAG_LEN)
 		return -EINVAL;
 
-	memcpy(nonce, iv, sizeof(nonce));
+	memcpy(ctx->nonce, iv, sizeof(ctx->nonce));
 	for (i = 0; i < 8; i++)
-		nonce[sizeof(nonce) - 1 - i] ^= (packet_number >> (i * 8)) & 0xff;
+		ctx->nonce[sizeof(ctx->nonce) - 1 - i] ^= (packet_number >> (i * 8)) & 0xff;
 
 	ret = crypto_aead_setauthsize(ctx->aead, QUIC_INITIAL_TAG_LEN);
 	if (ret != 0)
@@ -1481,7 +1485,7 @@ static int quic_initial_decrypt(struct urllogger_quic_crypto_ctx *ctx,
 	sg_init_one(&sg, packet, packet_len);
 	aead_request_set_callback(req, 0, NULL, NULL);
 	aead_request_set_ad(req, header_len);
-	aead_request_set_crypt(req, &sg, &sg, crypt_len, nonce);
+	aead_request_set_crypt(req, &sg, &sg, crypt_len, ctx->nonce);
 	ret = crypto_aead_decrypt(req);
 	aead_request_free(req);
 	if (ret == 0) {
@@ -1490,7 +1494,6 @@ static int quic_initial_decrypt(struct urllogger_quic_crypto_ctx *ctx,
 	}
 
 out:
-	memzero_explicit(nonce, sizeof(nonce));
 	return ret;
 }
 
@@ -1634,10 +1637,6 @@ static enum tls_sni_search_result quic_initial_sni_search(const unsigned char *d
         int *host_len)
 {
 	struct urllogger_quic_crypto_ctx *ctx;
-	unsigned char key[QUIC_INITIAL_KEY_LEN];
-	unsigned char iv[QUIC_INITIAL_IV_LEN];
-	unsigned char hp[QUIC_INITIAL_KEY_LEN];
-	unsigned char mask[QUIC_HP_SAMPLE_LEN];
 	unsigned char *packet;
 	unsigned char *payload = NULL;
 	unsigned int payload_len = 0;
@@ -1656,48 +1655,52 @@ static enum tls_sni_search_result quic_initial_sni_search(const unsigned char *d
 		return TLS_SNI_SEARCH_NOT_CLIENT_HELLO;
 
 	ctx = &urllogger_quic_crypto_ctx[cpu];
+
 	packet = kmemdup(data, info->packet_len, GFP_ATOMIC);
-	if (packet == NULL)
+	if (packet == NULL) {
 		return TLS_SNI_SEARCH_MALFORMED;
+	}
 
-	ret = quic_initial_keys(ctx, info->dcid, info->dcid_len, key, iv, hp);
+	ret = quic_initial_keys(ctx, info->dcid, info->dcid_len, ctx->key, ctx->iv, ctx->hp_key);
 	if (ret != 0)
 		goto malformed;
 
-	ret = quic_header_protection_mask(ctx, hp, packet + info->pn_offset + QUIC_MAX_PACKET_NUMBER_LEN, mask);
+	ret = quic_header_protection_mask(ctx, ctx->hp_key, packet + info->pn_offset + QUIC_MAX_PACKET_NUMBER_LEN, ctx->mask);
 	if (ret != 0)
 		goto malformed;
 
-	packet[0] ^= mask[0] & 0x0f;
+	packet[0] ^= ctx->mask[0] & 0x0f;
 	pn_len = (packet[0] & 0x03) + 1;
 	if (!quic_has_bytes(info->pn_offset, pn_len, info->packet_len))
 		goto malformed;
 
 	for (i = 0; i < pn_len; i++) {
-		packet[info->pn_offset + i] ^= mask[i + 1];
+		packet[info->pn_offset + i] ^= ctx->mask[i + 1];
 		packet_number = (packet_number << 8) | packet[info->pn_offset + i];
 	}
 
 	header_len = info->pn_offset + pn_len;
-	ret = quic_initial_decrypt(ctx, key, iv, packet, info->packet_len,
+	ret = quic_initial_decrypt(ctx, ctx->key, ctx->iv, packet, info->packet_len,
 	                           header_len, packet_number, &payload, &payload_len);
 	if (ret != 0)
 		goto malformed;
 
-	memzero_explicit(key, sizeof(key));
-	memzero_explicit(iv, sizeof(iv));
-	memzero_explicit(hp, sizeof(hp));
-	memzero_explicit(mask, sizeof(mask));
+	memzero_explicit(ctx->key, sizeof(ctx->key));
+	memzero_explicit(ctx->iv, sizeof(ctx->iv));
+	memzero_explicit(ctx->hp_key, sizeof(ctx->hp_key));
+	memzero_explicit(ctx->mask, sizeof(ctx->mask));
+	memzero_explicit(ctx->nonce, sizeof(ctx->nonce));
 
 	ret = quic_crypto_frames_search(payload, payload_len, crypto_data, crypto_len, host, host_len);
 	kfree(packet);
 	return ret;
 
 malformed:
-	memzero_explicit(key, sizeof(key));
-	memzero_explicit(iv, sizeof(iv));
-	memzero_explicit(hp, sizeof(hp));
-	memzero_explicit(mask, sizeof(mask));
+	memzero_explicit(ctx->key, sizeof(ctx->key));
+	memzero_explicit(ctx->iv, sizeof(ctx->iv));
+	memzero_explicit(ctx->hp_key, sizeof(ctx->hp_key));
+	memzero_explicit(ctx->mask, sizeof(ctx->mask));
+	memzero_explicit(ctx->nonce, sizeof(ctx->nonce));
 	kfree(packet);
 	return TLS_SNI_SEARCH_MALFORMED;
 }
