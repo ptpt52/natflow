@@ -47,9 +47,9 @@
 
 static int natflow_major = 0;
 static int natflow_minor = 0;
-static int number_of_devices = 1;
+static const int number_of_devices = 1;
 static struct cdev natflow_cdev;
-const char *natflow_dev_name = "natflow_ctl";
+static const char * const natflow_dev_name = "natflow_ctl";
 static struct class *natflow_class;
 static struct device *natflow_dev;
 
@@ -176,7 +176,7 @@ static int natflow_show(struct seq_file *m, void *v)
 	return 0;
 }
 
-const struct seq_operations natflow_seq_ops = {
+static const struct seq_operations natflow_seq_ops = {
 	.start = natflow_start,
 	.next = natflow_next,
 	.stop = natflow_stop,
@@ -204,14 +204,14 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 		return -EACCES;
 
 	n = 0;
-	while(n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
+	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
 	if (n) {
 		*offset += n;
 		data_left = 0;
 		return n;
 	}
 
-	//make sure line ended with '\n' and line len <= MAX_IOCTL_LEN
+	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
 	l = 0;
 	while (l < cnt && data[l + data_left] != '\n') l++;
 	if (l >= cnt) {
@@ -355,7 +355,7 @@ done:
 static int natflow_open(struct inode *inode, struct file *file)
 {
 	int ret;
-	//set nonseekable
+	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
 	ret = seq_open_private(file, &natflow_seq_ops, PAGE_SIZE);
@@ -371,7 +371,7 @@ static int natflow_release(struct inode *inode, struct file *file)
 	return ret;
 }
 
-static struct file_operations natflow_fops = {
+static const struct file_operations natflow_fops = {
 	.owner = THIS_MODULE,
 	.open = natflow_open,
 	.release = natflow_release,
@@ -380,7 +380,8 @@ static struct file_operations natflow_fops = {
 	.llseek  = seq_lseek,
 };
 
-static int __init natflow_init(void) {
+static int __init natflow_init(void)
+{
 	int retval = 0;
 	dev_t devno;
 
@@ -458,7 +459,7 @@ static int __init natflow_init(void) {
 	return 0;
 
 #if defined(CONFIG_NATFLOW_URLLOGGER)
-	//natflow_urllogger_exit();
+	/* natflow_urllogger_init() failed before registering urllogger resources. */
 natflow_urllogger_init_failed:
 #endif
 #if defined(CONFIG_NATFLOW_PATH)

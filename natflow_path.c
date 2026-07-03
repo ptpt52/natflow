@@ -490,10 +490,10 @@ static inline struct net_device *vlan_find_dev_rcu(struct net_device *real_dev,
 	return NULL;
 }
 
-#define fastnat_for_all 0
-#define fastnat_ifname_group_only 1
-#define fastnat_ifname_group_bypass 2
-int ifname_group_type = fastnat_for_all;
+#define FASTNAT_FOR_ALL 0
+#define FASTNAT_IFNAME_GROUP_ONLY 1
+#define FASTNAT_IFNAME_GROUP_BYPASS 2
+int ifname_group_type = FASTNAT_FOR_ALL;
 
 int ifname_group_add(const unsigned char *ifname)
 {
@@ -2333,13 +2333,13 @@ slow_fastpath:
 	}
 
 	if (!(nf->status & NF_FF_TOKEN_CTRL)) {
-		if (ifname_group_type != fastnat_for_all && !simple_test_and_set_bit(NF_FF_IFNAME_MATCH_BIT, &nf->status)) {
+		if (ifname_group_type != FASTNAT_FOR_ALL && !simple_test_and_set_bit(NF_FF_IFNAME_MATCH_BIT, &nf->status)) {
 			if (
-			    (ifname_group_type == fastnat_ifname_group_only &&
+			    (ifname_group_type == FASTNAT_IFNAME_GROUP_ONLY &&
 			     !(nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group == 1 &&
 			       nf->rroute[NF_FF_DIR_REPLY].ifname_group == 1))
 			    ||
-			    (ifname_group_type == fastnat_ifname_group_bypass &&
+			    (ifname_group_type == FASTNAT_IFNAME_GROUP_BYPASS &&
 			     (nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group == 1 &&
 			      nf->rroute[NF_FF_DIR_REPLY].ifname_group == 1))
 			) {
@@ -3316,7 +3316,7 @@ out:
 		if (vline_filter) {
 			return ret;
 		}
-		//XXXXXXXX
+		/* vline forwarding */
 		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = rcu_dereference(vline_fwd_map[skb->dev->ifindex])) != NULL) {
 			if (vline_fwd_family_ipv4_enabled(skb->dev)) {
 				/* Note: handle relay logic */
@@ -3325,12 +3325,12 @@ out:
 					if (skb->protocol == __constant_htons(ETH_P_IP)) {
 						iph = (void *)ip_hdr(skb);
 						l4 = (void *)iph + iph->ihl * 4;
-						//DHCP Discover,DHCP Request, change unicast to broadcast
+						/* DHCP Discover/Request: change unicast to broadcast. */
 						if (iph->protocol == IPPROTO_UDP && UDPH(l4)->dest == htons(67)) {
-							unsigned char *flags_ptr = l4 + sizeof(struct udphdr) + 10; //BOOTP Flags offset in DHCP payload
+							unsigned char *flags_ptr = l4 + sizeof(struct udphdr) + 10; /* BOOTP flags offset in DHCP payload. */
 							if (flags_ptr[0] == 0x00 && flags_ptr[1] == 0x00) {
-								flags_ptr[0] = 0x80;  // Set MSB to 1: 0x8000
-								//update UDP check
+								flags_ptr[0] = 0x80; /* Set MSB to 1: 0x8000. */
+								/* Update UDP checksum. */
 								if (UDPH(l4)->check || skb->ip_summed == CHECKSUM_PARTIAL) {
 									inet_proto_csum_replace2(&UDPH(l4)->check, skb, htons(0x0000),
 									                         htons(0x8000), true);
@@ -3357,9 +3357,9 @@ out:
 							ether_addr_copy(eth->h_source, outdev->dev_addr);
 							if (skb->protocol == __constant_htons(ETH_P_ARP)) {
 								struct arphdr *arph = arp_hdr(skb);
-								ipaddr = get_byte4((void *)arph + 8 + ETH_ALEN); //sip
-								get_byte6((void *)arph + 8, macaddr); //sha
-								user = natflow_user_in_get(ipaddr, macaddr); //learn or update macaddr cache
+								ipaddr = get_byte4((void *)arph + 8 + ETH_ALEN); /* sip */
+								get_byte6((void *)arph + 8, macaddr); /* sha */
+								user = natflow_user_in_get(ipaddr, macaddr); /* Learn or update MAC cache. */
 								if (user) {
 									struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 									if ((skb->dev->flags & IFF_VLINE_IS_LAN)) {
@@ -3370,17 +3370,17 @@ out:
 								}
 								natflow_user_release_put(user);
 								if (arph->ar_op == htons(ARPOP_REPLY)) {
-									ipaddr = get_byte4((void *)arph + 8 + ETH_ALEN + 4 + ETH_ALEN); //tip
+									ipaddr = get_byte4((void *)arph + 8 + ETH_ALEN + 4 + ETH_ALEN); /* tip */
 									user = natflow_user_find_get(ipaddr);
 									if (user) {
 										struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-										ether_addr_copy((void *)arph + 8 + ETH_ALEN + 4, fud->macaddr); //tha
+										ether_addr_copy((void *)arph + 8 + ETH_ALEN + 4, fud->macaddr); /* tha */
 										ether_addr_copy(eth->h_dest, fud->macaddr);
 										natflow_user_release_put(user);
 									}
 								} else if (arph->ar_op == htons(ARPOP_REQUEST)) {
 									if (skb->pkt_type != PACKET_BROADCAST) {
-										ipaddr = get_byte4((void *)arph + 8 + ETH_ALEN + 4 + ETH_ALEN); //tip
+										ipaddr = get_byte4((void *)arph + 8 + ETH_ALEN + 4 + ETH_ALEN); /* tip */
 										user = natflow_user_find_get(ipaddr);
 										if (user) {
 											struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
@@ -3412,11 +3412,11 @@ out:
 							ether_addr_copy(eth->h_dest, fud->macaddr);
 							natflow_user_release_put(user);
 						} else {
-							//go kernel route path
+							/* Go through kernel route path. */
 							return ret;
 						}
 					} else {
-						//go kernel route path
+						/* Go through kernel route path. */
 						return ret;
 					}
 
@@ -4192,13 +4192,13 @@ slow_fastpath6:
 	}
 
 	if (!(nf->status & NF_FF_TOKEN_CTRL)) {
-		if (ifname_group_type != fastnat_for_all && !simple_test_and_set_bit(NF_FF_IFNAME_MATCH_BIT, &nf->status)) {
+		if (ifname_group_type != FASTNAT_FOR_ALL && !simple_test_and_set_bit(NF_FF_IFNAME_MATCH_BIT, &nf->status)) {
 			if (
-			    (ifname_group_type == fastnat_ifname_group_only &&
+			    (ifname_group_type == FASTNAT_IFNAME_GROUP_ONLY &&
 			     !(nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group == 1 &&
 			       nf->rroute[NF_FF_DIR_REPLY].ifname_group == 1))
 			    ||
-			    (ifname_group_type == fastnat_ifname_group_bypass &&
+			    (ifname_group_type == FASTNAT_IFNAME_GROUP_BYPASS &&
 			     (nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group == 1 &&
 			      nf->rroute[NF_FF_DIR_REPLY].ifname_group == 1))
 			) {
@@ -5168,7 +5168,7 @@ out6:
 		if (vline_filter) {
 			return ret;
 		}
-		//XXXXXXXX
+		/* vline forwarding */
 		if (skb->dev->ifindex < VLINE_FWD_MAX_NUM && (outdev = rcu_dereference(vline_fwd_map[skb->dev->ifindex])) != NULL) {
 			if (vline_fwd_family_ipv6_enabled(skb->dev) ||
 			        skb->protocol == __constant_htons(ETH_P_PPP_DISC) ||
@@ -5230,7 +5230,7 @@ out6:
 								natflow_user_release_put(user);
 								ether_addr_copy(eth->h_source, outdev->dev_addr);
 
-								opt_ptr = (unsigned char *)(l4 + 8); //RS ptr options
+								opt_ptr = (unsigned char *)(l4 + 8); /* RS option pointer. */
 								if (ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT) {
 									opt_ptr = (unsigned char *)(l4 + 16);
 								} else if (ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION ||
@@ -5294,11 +5294,11 @@ out6:
 								ether_addr_copy(eth->h_dest, fud->macaddr);
 								natflow_user_release_put(user);
 							} else {
-								//go kernel route path
+								/* Go through kernel route path. */
 								return ret;
 							}
 						} else {
-							//go kernel route path
+							/* Go through kernel route path. */
 							return ret;
 						}
 					}
@@ -5370,8 +5370,8 @@ out6:
 
 							eth->h_proto = __constant_htons(ETH_P_IPV6);
 							if (IPV6H->saddr.s6_addr16[0] == __constant_htons(0xfe80)
-							        // && IPV6H->saddr.s6_addr[11] == 0xff
-							        // && IPV6H->saddr.s6_addr[12] == 0xfe // XXX: fake EUI-64 even it is not */
+							        /* && IPV6H->saddr.s6_addr[11] == 0xff */
+							        /* && IPV6H->saddr.s6_addr[12] == 0xfe -- fake EUI-64 even when it is not. */
 							   ) {
 								eth->h_source[0] = IPV6H->saddr.s6_addr[8] ^ 0x02;
 								eth->h_source[1] = IPV6H->saddr.s6_addr[9];
@@ -5422,8 +5422,8 @@ out6:
 
 				if ((outdev->flags & IFF_NOARP)) {
 					do {
-						//received Neighbor Solicitation
-						//fake and reply Neighbor Advertisement for link local address
+						/* Received Neighbor Solicitation. */
+						/* Fake and reply Neighbor Advertisement for link-local address. */
 						if (skb->protocol == __constant_htons(ETH_P_IPV6)) {
 							unsigned char *ta;
 							iph = (void *)ipv6_hdr(skb);
@@ -5483,8 +5483,8 @@ out6:
 								eth->h_source[4] = ta[14];
 								eth->h_source[5] = ta[15];
 
-								ta[16] = 1; //Type: Source link-layer address
-								ta[17] = 1; //Length: 8 bytes
+								ta[16] = 1; /* Type: Source link-layer address. */
+								ta[17] = 1; /* Length: 8 bytes. */
 								ether_addr_copy(ta + 18, eth->h_source);
 
 								ICMP6H(l4)->icmp6_cksum = csum_ipv6_magic(&IPV6H->saddr,
@@ -5569,7 +5569,7 @@ out6:
 					}
 
 					if (vline_fwd_is_ndisc6(skb)) {
-						// flood NS/NA/RS/RA packets
+						/* Flood NS/NA/RS/RA packets. */
 						skb = skb_clone(skb, GFP_ATOMIC);
 						if (!skb) {
 							return ret;

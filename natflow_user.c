@@ -175,7 +175,7 @@ static inline void userinfo_event_queue(natflow_fakeuser_t *user)
 static int natflow_user_major = 0;
 static int natflow_user_minor = 0;
 static struct cdev natflow_user_cdev;
-const char *natflow_user_dev_name = "natflow_user_ctl";
+static const char * const natflow_user_dev_name = "natflow_user_ctl";
 static struct class *natflow_user_class;
 static struct device *natflow_user_dev;
 
@@ -262,7 +262,7 @@ static inline natflow_fakeuser_t *natflow_user_find_addr_get(const union nf_inet
 static int qos_major = 0;
 static int qos_minor = 0;
 static struct cdev qos_cdev;
-const char *qos_dev_name = "qos_ctl";
+static const char * const qos_dev_name = "qos_ctl";
 static struct class *qos_class;
 static struct device *qos_dev;
 
@@ -725,7 +725,7 @@ natflow_fakeuser_t *natflow_user_find_get6(const union nf_inet_addr *u3)
 	tuple.src.u3 = *u3;
 	tuple.src.u.udp.port = __constant_htons(0);
 	memset(&tuple.dst.u3, 0, sizeof(tuple.dst.u3));
-	tuple.dst.u3.in6.s6_addr16[0] = 0xffff; //NATFLOW_FAKEUSER_DADDR=ffff::
+	tuple.dst.u3.in6.s6_addr16[0] = 0xffff; /* NATFLOW_FAKEUSER_DADDR=ffff:: */
 	tuple.dst.u.udp.port = __constant_htons(65535);
 	tuple.src.l3num = AF_INET6;
 	tuple.dst.protonum = IPPROTO_UDP;
@@ -790,7 +790,7 @@ static natflow_fakeuser_t *natflow_user_lookup_in(struct nf_conn *ct, int dir)
 	return natflow_user_get(ct);
 }
 
-//Must release via natflow_user_release_put()
+/* Must release via natflow_user_release_put(). */
 natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 {
 	natflow_fakeuser_t *user = NULL;
@@ -879,7 +879,7 @@ natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 
 	natflow_user_timeout_touch(user);
 
-	//update macaddr
+	/* Update MAC address. */
 	fud = natflow_fakeuser_data(user);
 	if (memcmp(macaddr, fud->macaddr, ETH_ALEN) != 0) {
 		memcpy(fud->macaddr, macaddr, ETH_ALEN);
@@ -893,7 +893,7 @@ natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 	return user;
 }
 
-//Must release via natflow_user_release_put()
+/* Must release via natflow_user_release_put(). */
 natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3, const uint8_t *macaddr)
 {
 	natflow_fakeuser_t *user = NULL;
@@ -927,7 +927,7 @@ natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3, const uin
 	IPV6H->hop_limit = 255;
 	IPV6H->saddr = u3->in6;
 	memset(&IPV6H->daddr, 0x0, sizeof(IPV6H->daddr));
-	IPV6H->daddr.s6_addr16[0] = 0xffff; //NATFLOW_FAKEUSER_DADDR=ffff::
+	IPV6H->daddr.s6_addr16[0] = 0xffff; /* NATFLOW_FAKEUSER_DADDR=ffff:: */
 
 	udph = (struct udphdr *)((char *)iph + sizeof(struct ipv6hdr));
 	udph->source = __constant_htons(0);
@@ -979,7 +979,7 @@ natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3, const uin
 
 	natflow_user_timeout_touch(user);
 
-	//update macaddr
+	/* Update MAC address. */
 	fud = natflow_fakeuser_data(user);
 	if (memcmp(macaddr, fud->macaddr, ETH_ALEN) != 0) {
 		memcpy(fud->macaddr, macaddr, ETH_ALEN);
@@ -1100,7 +1100,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 			IPV6H->hop_limit = 255;
 			IPV6H->saddr = ct->tuplehash[dir].tuple.src.u3.in6;
 			memset(&IPV6H->daddr, 0x0, sizeof(IPV6H->daddr));
-			IPV6H->daddr.s6_addr16[0] = 0xffff; //NATFLOW_FAKEUSER_DADDR=ffff::
+			IPV6H->daddr.s6_addr16[0] = 0xffff; /* NATFLOW_FAKEUSER_DADDR=ffff:: */
 
 			udph = (struct udphdr *)((char *)iph + sizeof(struct ipv6hdr));
 			udph->source = __constant_htons(0);
@@ -1228,15 +1228,15 @@ static inline void natflow_auth_reply_payload_fin(const char *payload, int paylo
 		nskb->tail += offset;
 	}
 
-	//setup mac header
+	/* Set up MAC header. */
 	neth = eth_hdr(nskb);
 	niph = ip_hdr(nskb);
 	if ((char *)niph - (char *)neth >= ETH_HLEN) {
 		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
 		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
-		//neth->h_proto = htons(ETH_P_IP);
+		/* neth->h_proto = htons(ETH_P_IP); */
 	}
-	//setup ip header
+	/* Set up IP header. */
 	memset(niph, 0, sizeof(struct iphdr));
 	niph->saddr = oiph->daddr;
 	niph->daddr = oiph->saddr;
@@ -1249,10 +1249,10 @@ static inline void natflow_auth_reply_payload_fin(const char *payload, int paylo
 	niph->id = __constant_htons(0xDEAD);
 	niph->frag_off = 0x0;
 	ip_send_check(niph);
-	//setup payload
+	/* Set up payload. */
 	data = (char *)ip_hdr(nskb) + sizeof(struct iphdr) + sizeof(struct tcphdr);
 	memcpy(data, payload, payload_len);
-	//setup tcp header
+	/* Set up TCP header. */
 	ntcph = (struct tcphdr *)((char *)ip_hdr(nskb) + sizeof(struct iphdr));
 	memset(ntcph, 0, sizeof(struct tcphdr));
 	ntcph->source = otcph->dest;
@@ -1264,11 +1264,11 @@ static inline void natflow_auth_reply_payload_fin(const char *payload, int paylo
 	ntcph->psh = 1;
 	ntcph->fin = 1;
 	ntcph->window = 65535;
-	//sum check
+	/* Checksum. */
 	len = ntohs(niph->tot_len) - (niph->ihl<<2);
 	csum = csum_partial((char*)ntcph, len, 0);
 	ntcph->check = tcp_v4_check(len, niph->saddr, niph->daddr, csum);
-	//ready to send out
+	/* Ready to send out. */
 	skb_push(nskb, (char *)niph - (char *)neth - pppoe_len);
 	if (pppoe_hdr) {
 		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(nskb) + ETH_HLEN);
@@ -1516,15 +1516,15 @@ static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, s
 		nskb->tail += offset;
 	}
 
-	//setup mac header
+	/* Set up MAC header. */
 	neth = eth_hdr(nskb);
 	niph = ip_hdr(nskb);
 	if ((char *)niph - (char *)neth >= ETH_HLEN) {
 		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
 		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
-		//neth->h_proto = htons(ETH_P_IP);
+		/* neth->h_proto = htons(ETH_P_IP); */
 	}
-	//setup ip header
+	/* Set up IP header. */
 	memset(niph, 0, sizeof(struct iphdr));
 	niph->saddr = oiph->daddr;
 	niph->daddr = oiph->saddr;
@@ -1537,7 +1537,7 @@ static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, s
 	niph->id = __constant_htons(0xDEAD);
 	niph->frag_off = 0x0;
 	ip_send_check(niph);
-	//setup tcp header
+	/* Set up TCP header. */
 	ntcph = (struct tcphdr *)((char *)ip_hdr(nskb) + sizeof(struct iphdr));
 	memset(ntcph, 0, sizeof(struct tcphdr));
 	ntcph->source = otcph->dest;
@@ -1550,11 +1550,11 @@ static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, s
 	ntcph->psh = 0;
 	ntcph->fin = 0;
 	ntcph->window = 0;
-	//sum check
+	/* Checksum. */
 	len = ntohs(niph->tot_len) - (niph->ihl<<2);
 	csum = csum_partial((char*)ntcph, len, 0);
 	ntcph->check = tcp_v4_check(len, niph->saddr, niph->daddr, csum);
-	//ready to send out
+	/* Ready to send out. */
 	skb_push(nskb, (char *)niph - (char *)neth - pppoe_len);
 	if (pppoe_hdr) {
 		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(nskb) + ETH_HLEN);
@@ -1797,9 +1797,9 @@ static unsigned int natflow_user_pre_hook(void *priv,
 			        || br_zid == auth_conf->auth[i].src_zone_id
 #endif
 			   ) {
-				//zone match ok
+				/* Zone matched. */
 				if (IP_SET_test_src_ip(state, in, out, skb, auth_conf->auth[i].src_ipgrp_name) > 0) {
-					//ipgrp match ok
+					/* IP group matched. */
 					fud->auth_rule_id = auth_conf->auth[i].id;
 
 					if (auth_conf->auth[i].auth_type == AUTH_TYPE_AUTO) {
@@ -1810,7 +1810,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 						fud->auth_type = AUTH_TYPE_WEB;
 						fud->auth_status = AUTH_REQ;
 
-						//check src_whitelist or mac_whitelist
+						/* Check source IP or MAC whitelist. */
 						if (auth_conf->auth[i].src_whitelist_name[0] != 0 &&
 						        IP_SET_test_src_ip(state, in, out, skb, auth_conf->auth[i].src_whitelist_name) > 0) {
 							fud->auth_status = AUTH_VIP;
@@ -2857,7 +2857,7 @@ static inline void auth_conf_cleanup(void)
 {
 	int i;
 
-	//auth_conf cannot be NULL, otherwise kmod not load.
+	/* auth_conf cannot be NULL, otherwise the module does not load. */
 	auth_conf->dst_bypasslist_name[0] = 0;
 	auth_conf->src_bypasslist_name[0] = 0;
 
@@ -2890,7 +2890,7 @@ static inline int auth_conf_init(void)
 	return 0;
 }
 
-//must lock by caller
+/* Caller must hold the lock. */
 static inline struct auth_rule_t *natflow_auth_rule_get(int idx)
 {
 	if (idx < auth_conf->num) {
@@ -2978,7 +2978,7 @@ static int natflow_user_show(struct seq_file *m, void *v)
 	return 0;
 }
 
-const struct seq_operations natflow_user_seq_ops = {
+static const struct seq_operations natflow_user_seq_ops = {
 	.start = natflow_user_start,
 	.next = natflow_user_next,
 	.stop = natflow_user_stop,
@@ -3007,14 +3007,14 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 		return -EACCES;
 
 	n = 0;
-	while(n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
+	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
 	if (n) {
 		*offset += n;
 		data_left = 0;
 		return n;
 	}
 
-	//make sure line ended with '\n' and line len <= MAX_IOCTL_LEN
+	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
 	l = 0;
 	while (l < cnt && data[l + data_left] != '\n') l++;
 	if (l >= cnt) {
@@ -3185,7 +3185,7 @@ done:
 static int natflow_user_open(struct inode *inode, struct file *file)
 {
 	int ret;
-	//set nonseekable
+	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
 	ret = seq_open_private(file, &natflow_user_seq_ops, PAGE_SIZE);
@@ -3200,7 +3200,7 @@ static int natflow_user_release(struct inode *inode, struct file *file)
 	return ret;
 }
 
-static struct file_operations natflow_user_fops = {
+static const struct file_operations natflow_user_fops = {
 	.owner = THIS_MODULE,
 	.open = natflow_user_open,
 	.release = natflow_user_release,
@@ -3242,14 +3242,14 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 		return -EACCES;
 
 	n = 0;
-	while(n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
+	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
 	if (n) {
 		*offset += n;
 		data_left = 0;
 		return n;
 	}
 
-	//make sure line ended with '\n' and line len <= MAX_IOCTL_LEN
+	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
 	l = 0;
 	while (l < cnt && data[l + data_left] != '\n') l++;
 	if (l >= cnt) {
@@ -3627,7 +3627,7 @@ static int userinfo_open(struct inode *inode, struct file *file)
 	if (!user)
 		return -ENOMEM;
 
-	//set nonseekable
+	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
 	mutex_init(&user->lock);
@@ -3658,7 +3658,7 @@ static int userinfo_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-const struct file_operations userinfo_fops = {
+static const struct file_operations userinfo_fops = {
 	.open = userinfo_open,
 	.read = userinfo_read,
 	.write = userinfo_write,
@@ -3668,7 +3668,7 @@ const struct file_operations userinfo_fops = {
 static int userinfo_major = 0;
 static int userinfo_minor = 0;
 static struct cdev userinfo_cdev;
-const char *userinfo_dev_name = "userinfo_ctl";
+static const char * const userinfo_dev_name = "userinfo_ctl";
 static struct class *userinfo_class;
 static struct device *userinfo_dev;
 
@@ -3716,7 +3716,7 @@ static int userinfo_init(void)
 
 	return 0;
 
-	//device_destroy(userinfo_class, devno);
+	/* device_create() failed before creating a device node. */
 device_create_failed:
 	class_destroy(userinfo_class);
 class_create_failed:
@@ -3764,7 +3764,7 @@ static ssize_t userinfo_event_read(struct file *file, char __user *buf,
 			userinfo_event_store.stage = USERINFO_EVENT_RUNNING;
 		}
 		if (list_empty(&userinfo_event_store.head)) {
-			//wait
+			/* Wait for queued events. */
 			ret = wait_event_interruptible(userinfo_event_store.wait, !list_empty(&userinfo_event_store.head));
 			if (ret != 0) {
 				userinfo_event_store.stage = USERINFO_EVENT_STOPPED;
@@ -3831,7 +3831,7 @@ static int userinfo_event_open(struct inode *inode, struct file *file)
 	if (!user)
 		return -ENOMEM;
 
-	//set nonseekable
+	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
 	mutex_init(&user->lock);
@@ -3864,7 +3864,7 @@ static int userinfo_event_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-const struct file_operations userinfo_event_fops = {
+static const struct file_operations userinfo_event_fops = {
 	.open = userinfo_event_open,
 	.read = userinfo_event_read,
 	.write = userinfo_event_write,
@@ -3874,7 +3874,7 @@ const struct file_operations userinfo_event_fops = {
 static int userinfo_event_major = 0;
 static int userinfo_event_minor = 0;
 static struct cdev userinfo_event_cdev;
-const char *userinfo_event_dev_name = "userinfo_event_ctl";
+static const char * const userinfo_event_dev_name = "userinfo_event_ctl";
 static struct class *userinfo_event_class;
 static struct device *userinfo_event_dev;
 
@@ -3922,7 +3922,7 @@ static int userinfo_event_init(void)
 
 	return 0;
 
-	//device_destroy(userinfo_event_class, devno);
+	/* device_create() failed before creating a device node. */
 device_create_failed:
 	class_destroy(userinfo_event_class);
 class_create_failed:
@@ -3946,7 +3946,7 @@ static void userinfo_event_exit(void)
 	unregister_chrdev_region(devno, 1);
 }
 
-//must lock by caller
+/* Caller must hold the lock. */
 static inline struct qos_rule *qos_rule_get(int idx)
 {
 	if (idx < qos_token_ctrl_num) {
@@ -4056,7 +4056,7 @@ static int qos_show(struct seq_file *m, void *v)
 	return 0;
 }
 
-const struct seq_operations qos_seq_ops = {
+static const struct seq_operations qos_seq_ops = {
 	.start = qos_start,
 	.next = qos_next,
 	.stop = qos_stop,
@@ -4084,14 +4084,14 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 		return -EACCES;
 
 	n = 0;
-	while(n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
+	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
 	if (n) {
 		*offset += n;
 		data_left = 0;
 		return n;
 	}
 
-	//make sure line ended with '\n' and line len <= MAX_IOCTL_LEN
+	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
 	l = 0;
 	while (l < cnt && data[l + data_left] != '\n') l++;
 	if (l >= cnt) {
@@ -4161,7 +4161,7 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 						if (k != 0) {
 							qr->flag |= USER_TYPE_SET;
 						}
-						//else empty user
+						/* Empty user means wildcard. */
 					}
 				}
 
@@ -4234,7 +4234,7 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 						if (k != 0) {
 							qr->flag |= REMOTE_TYPE_SET;
 						}
-						//else empty remote
+						/* Empty remote means wildcard. */
 					}
 				}
 
@@ -4329,7 +4329,7 @@ done:
 static int qos_open(struct inode *inode, struct file *file)
 {
 	int ret;
-	//set nonseekable
+	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
 	ret = seq_open_private(file, &qos_seq_ops, PAGE_SIZE);
@@ -4344,7 +4344,7 @@ static int qos_release(struct inode *inode, struct file *file)
 	return ret;
 }
 
-static struct file_operations qos_fops = {
+static const struct file_operations qos_fops = {
 	.owner = THIS_MODULE,
 	.open = qos_open,
 	.release = qos_release,
@@ -4497,7 +4497,7 @@ int natflow_user_init(void)
 
 	return 0;
 
-	//qos_exit();
+	/* qos_init() failed before registering resources that require qos_exit(). */
 qos_init_failed:
 	userinfo_event_exit();
 userinfo_event_init_failed:

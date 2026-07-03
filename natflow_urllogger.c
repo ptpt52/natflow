@@ -44,7 +44,7 @@
 static int urllogger_major = 0;
 static int urllogger_minor = 0;
 static struct cdev urllogger_cdev;
-const char *urllogger_dev_name = "urllogger_queue";
+static const char * const urllogger_dev_name = "urllogger_queue";
 static struct class *urllogger_class;
 static struct device *urllogger_dev;
 
@@ -106,7 +106,7 @@ struct urlinfo {
 
 #define __URLINFO_ALIGN 64
 
-static const char *NATFLOW_http_method[] = {
+static const char * const natflow_http_method_names[] = {
 	[NATFLOW_HTTP_NONE] = "NONE",
 	[NATFLOW_HTTP_GET] = "GET",
 	[NATFLOW_HTTP_POST] = "POST",
@@ -199,7 +199,7 @@ static void urllogger_store_clear(void)
 static int hostacl_major = 0;
 static int hostacl_minor = 0;
 static struct cdev hostacl_cdev;
-const char *hostacl_dev_name = "hostacl_ctl";
+static const char * const hostacl_dev_name = "hostacl_ctl";
 static struct class *hostacl_class;
 static struct device *hostacl_dev;
 
@@ -209,12 +209,9 @@ struct acl_rule {
 	ssize_t acl_buffer_len;
 };
 
-//#define URLINFO_ACL_ACTION_RECORD 0
-//#define URLINFO_ACL_ACTION_DROP 1
-//#define URLINFO_ACL_ACTION_RESET 2
-//#define URLINFO_ACL_ACTION_REDIRECT 3
-static int acl_action_default = URLINFO_ACL_ACTION_RECORD; //0: accept/record, 1: drop, 2: reset, 3: redirect
-const char *acl_action_str[] = {"accept", "drop", "reset", "redirect"};
+/* 0: accept/record, 1: drop, 2: reset, 3: redirect */
+static int acl_action_default = URLINFO_ACL_ACTION_RECORD;
+static const char * const acl_action_names[] = {"accept", "drop", "reset", "redirect"};
 
 #define ACL_RULE_ALLOC_SIZE 256
 #define ACL_RULE_MAX 32
@@ -265,7 +262,7 @@ static int urllogger_acl(struct urlinfo *url, int rule_id)
 			while (ptr != NULL) {
 				b = *(ptr - 1);
 				if (((ptr[url->host_len - i] & 0x80) != 0 || ptr[url->host_len - i] == 0) && (b & 0x80) != 0) {
-					//found
+					/* found */
 					url->acl_idx = (b & 0x1f);
 					ret = ((b & 0x60) >> 5);
 					url->acl_action = ret;
@@ -304,15 +301,15 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 	unsigned short len;
 
 	if (i + 1 > p_len) return NULL;
-	if (p[i + 0] != 0x16) {//Content Type NOT HandShake
+	if (p[i + 0] != 0x16) { /* Content type is not handshake. */
 		return NULL;
 	}
 	i += 1 + 2;
 	if (i + 2 > p_len) return NULL;
-	len = ntohs(get_byte2(p + i + 0)); //content_len
+	len = ntohs(get_byte2(p + i + 0)); /* content_len */
 	i += 2;
 	if (i + len > p_len) {
-		if (needmore && i + 1 > p_len && p[i] == 0x01) //HanShake Type is Client Hello
+		if (needmore && i + 1 > p_len && p[i] == 0x01) /* Handshake type is ClientHello. */
 			*needmore = 1;
 	}
 
@@ -322,12 +319,12 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 	i = 0;
 
 	if (i + 1 > p_len || i + 1 > i_data_len) return NULL;
-	if (p[i + 0] != 0x01) { //HanShake Type NOT Client Hello
+	if (p[i + 0] != 0x01) { /* Handshake type is not ClientHello. */
 		return NULL;
 	}
 	i += 1;
 	if (i + 1 + 2 > p_len || i + 1 + 2 > i_data_len) return NULL;
-	len = (p[i + 0] << 8) + ntohs(get_byte2(p + i + 0 + 1)); //hanshake_len
+	len = (p[i + 0] << 8) + ntohs(get_byte2(p + i + 0 + 1)); /* handshake_len */
 	i += 1 + 2;
 	if (i + len > p_len) return NULL;
 
@@ -337,15 +334,15 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 	i = 0;
 
 	i += 2 + 32;
-	if (i + 1 > p_len || i + 1 > i_data_len) return NULL; //tls_v, random
+	if (i + 1 > p_len || i + 1 > i_data_len) return NULL; /* tls_v, random */
 	i += 1 + p[i + 0];
-	if (i + 2 > p_len || i + 2 > i_data_len) return NULL; //session id
+	if (i + 2 > p_len || i + 2 > i_data_len) return NULL; /* session id */
 	i += 2 + ntohs(get_byte2(p + i + 0));
-	if (i + 1 > p_len || i + 1 > i_data_len) return NULL; //Cipher Suites
+	if (i + 1 > p_len || i + 1 > i_data_len) return NULL; /* cipher suites */
 	i += 1 + p[i + 0];
 
-	if (i + 2 > p_len || i + 2 > i_data_len) return NULL; //Compression Methods
-	len = ntohs(get_byte2(p + i + 0)); //ext_len
+	if (i + 2 > p_len || i + 2 > i_data_len) return NULL; /* compression methods */
+	len = ntohs(get_byte2(p + i + 0)); /* ext_len */
 	i += 2;
 	if (i + len > p_len) return NULL;
 
@@ -362,7 +359,7 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 			continue;
 		}
 		if (i + 2 + 2 > p_len || i + 2 + 2 > i_data_len) return NULL;
-		len = ntohs(get_byte2(p + i + 0 + 2)); //sn_len
+		len = ntohs(get_byte2(p + i + 0 + 2)); /* sn_len */
 		i = i + 2 + 2;
 		if (i + len > p_len || i + len > i_data_len) return NULL;
 
@@ -374,7 +371,7 @@ static unsigned char *tls_sni_search(unsigned char *data, int *data_len, int *ne
 	}
 
 	if (i + 2 > p_len || i + 2 > i_data_len) return NULL;
-	len = ntohs(get_byte2(p + i + 0)); //snl_len
+	len = ntohs(get_byte2(p + i + 0)); /* snl_len */
 	i += 2;
 	if (i + len > p_len || i + len > i_data_len) return NULL;
 
@@ -521,15 +518,15 @@ static inline void natflow_urllogger_tcp_reply_rstack(const struct net_device *d
 		nskb->tail += offset;
 	}
 
-	//setup mac header
+	/* Set up MAC header. */
 	neth = eth_hdr(nskb);
 	niph = ip_hdr(nskb);
 	if ((char *)niph - (char *)neth >= ETH_HLEN) {
 		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
 		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
-		//neth->h_proto = htons(ETH_P_IP);
+		/* neth->h_proto = htons(ETH_P_IP); */
 	}
-	//setup ip header
+	/* Set up IP header. */
 	memset(niph, 0, sizeof(struct iphdr));
 	niph->saddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
 	niph->daddr = oiph->saddr;
@@ -542,7 +539,7 @@ static inline void natflow_urllogger_tcp_reply_rstack(const struct net_device *d
 	niph->id = __constant_htons(0xDEAD);
 	niph->frag_off = 0x0;
 	ip_send_check(niph);
-	//setup tcp header
+	/* Set up TCP header. */
 	ntcph = (struct tcphdr *)((char *)ip_hdr(nskb) + sizeof(struct iphdr));
 	memset(ntcph, 0, sizeof(struct tcphdr));
 	ntcph->source = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
@@ -555,11 +552,11 @@ static inline void natflow_urllogger_tcp_reply_rstack(const struct net_device *d
 	ntcph->psh = 0;
 	ntcph->fin = 0;
 	ntcph->window = 0;
-	//sum check
+	/* Checksum. */
 	len = ntohs(niph->tot_len) - (niph->ihl<<2);
 	csum = csum_partial((char*)ntcph, len, 0);
 	ntcph->check = tcp_v4_check(len, niph->saddr, niph->daddr, csum);
-	//ready to send out
+	/* Ready to send out. */
 	skb_push(nskb, (char *)niph - (char *)neth - pppoe_len);
 	if (pppoe_hdr) {
 		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(nskb) + ETH_HLEN);
@@ -615,15 +612,15 @@ static inline void natflow_urllogger_tcp_reply_rstack6(const struct net_device *
 		nskb->tail += offset;
 	}
 
-	//setup mac header
+	/* Set up MAC header. */
 	neth = eth_hdr(nskb);
 	niph = ipv6_hdr(nskb);
 	if ((char *)niph - (char *)neth >= ETH_HLEN) {
 		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
 		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
-		//neth->h_proto = htons(ETH_P_IPV6);
+		/* neth->h_proto = htons(ETH_P_IPV6); */
 	}
-	//setup ip header
+	/* Set up IP header. */
 	memset(niph, 0, sizeof(struct ipv6hdr));
 	niph->version = oiph->version;
 	niph->priority = oiph->priority;
@@ -633,7 +630,7 @@ static inline void natflow_urllogger_tcp_reply_rstack6(const struct net_device *
 	niph->payload_len = htons(sizeof(struct tcphdr));
 	niph->nexthdr = IPPROTO_TCP;
 	niph->hop_limit = 255;
-	//setup tcp header
+	/* Set up TCP header. */
 	ntcph = (struct tcphdr *)((char *)niph + sizeof(struct ipv6hdr));
 	memset(ntcph, 0, sizeof(struct tcphdr));
 	ntcph->source = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
@@ -646,11 +643,11 @@ static inline void natflow_urllogger_tcp_reply_rstack6(const struct net_device *
 	ntcph->psh = 0;
 	ntcph->fin = 0;
 	ntcph->window = 0;
-	//sum check
+	/* Checksum. */
 	len = ntohs(niph->payload_len);
 	csum = csum_partial((char*)ntcph, len, 0);
 	ntcph->check = tcp_v6_check(len, &niph->saddr, &niph->daddr, csum);
-	//ready to send out
+	/* Ready to send out. */
 	skb_push(nskb, (char *)niph - (char *)neth - pppoe_len);
 	if (pppoe_hdr) {
 		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(nskb) + ETH_HLEN);
@@ -1708,14 +1705,14 @@ static ssize_t urllogger_write(struct file *file, const char __user *buf, size_t
 		return -EACCES;
 
 	n = 0;
-	while(n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
+	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
 	if (n) {
 		*offset += n;
 		data_left = 0;
 		return n;
 	}
 
-	//make sure line ended with '\n' and line len <= MAX_IOCTL_LEN
+	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
 	l = 0;
 	while (l < cnt && data[l + data_left] != '\n') l++;
 	if (l >= cnt) {
@@ -1784,12 +1781,12 @@ static ssize_t urllogger_read(struct file *file, char __user *buf,
 				len = sprintf(user->data, "%u,%02X:%02X:%02X:%02X:%02X:%02X,%pI6,%u,%pI6,%u,%u,%s,%s,%u,%u,%s\n",
 				              url->timestamp, url->mac[0], url->mac[1], url->mac[2], url->mac[3], url->mac[4], url->mac[5],
 				              &url->sipv6, ntohs(url->sport), &url->dipv6, ntohs(url->dport), url->hits,
-				              NATFLOW_http_method[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->acl_idx, url->acl_action, url->data);
+				              natflow_http_method_names[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->acl_idx, url->acl_action, url->data);
 			} else {
 				len = sprintf(user->data, "%u,%02X:%02X:%02X:%02X:%02X:%02X,%pI4,%u,%pI4,%u,%u,%s,%s,%u,%u,%s\n",
 				              url->timestamp, url->mac[0], url->mac[1], url->mac[2], url->mac[3], url->mac[4], url->mac[5],
 				              &url->sip, ntohs(url->sport), &url->dip, ntohs(url->dport), url->hits,
-				              NATFLOW_http_method[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->acl_idx, url->acl_action, url->data);
+				              natflow_http_method_names[url->http_method], (url->flags & URLINFO_HTTPS) ? "SSL" : "HTTP", url->acl_idx, url->acl_action, url->data);
 			}
 			/*
 			 * FIXME: Returning -EINVAL when len > count breaks single-byte reads
@@ -1823,7 +1820,7 @@ static int urllogger_open(struct inode *inode, struct file *file)
 	if (!user)
 		return -ENOMEM;
 
-	//set nonseekable
+	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
 	mutex_init(&user->lock);
@@ -1844,7 +1841,7 @@ static int urllogger_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-const struct file_operations urllogger_fops = {
+static const struct file_operations urllogger_fops = {
 	.open = urllogger_open,
 	.read = urllogger_read,
 	.write = urllogger_write,
@@ -1937,7 +1934,7 @@ static void *hostacl_start(struct seq_file *m, loff_t *pos)
 		             "#\n"
 		             "acl_action_default=%s\n"
 		             "\n",
-		             acl_action_str[acl_action_default]);
+		             acl_action_names[acl_action_default]);
 		hostacl_ctl_buffer[n] = 0;
 		return hostacl_ctl_buffer;
 	} else if ((*pos) % 2 == 1) {
@@ -1985,7 +1982,7 @@ static int hostacl_show(struct seq_file *m, void *v)
 	return 0;
 }
 
-const struct seq_operations hostacl_seq_ops = {
+static const struct seq_operations hostacl_seq_ops = {
 	.start = hostacl_start,
 	.next = hostacl_next,
 	.stop = hostacl_stop,
@@ -2008,14 +2005,14 @@ static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t b
 		return -EACCES;
 
 	n = 0;
-	while(n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
+	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
 	if (n) {
 		*offset += n;
 		data_left = 0;
 		return n;
 	}
 
-	//make sure line ended with '\n' and line len <= MAX_IOCTL_LEN
+	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
 	l = 0;
 	while (l < cnt && data[l + data_left] != '\n') l++;
 	if (l >= cnt) {
@@ -2134,7 +2131,7 @@ static ssize_t hostacl_read(struct file *file, char __user *buf, size_t buf_len,
 static int hostacl_open(struct inode *inode, struct file *file)
 {
 	int ret;
-	//set nonseekable
+	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
 	ret = seq_open_private(file, &hostacl_seq_ops, PAGE_SIZE);
@@ -2149,7 +2146,7 @@ static int hostacl_release(struct inode *inode, struct file *file)
 	return ret;
 }
 
-static struct file_operations hostacl_fops = {
+static const struct file_operations hostacl_fops = {
 	.owner = THIS_MODULE,
 	.open = hostacl_open,
 	.release = hostacl_release,
@@ -2204,7 +2201,7 @@ static int natflow_hostacl_init(void)
 
 	return 0;
 
-	//device_destroy(hostacl_class, devno);
+	/* device_create() failed before creating a device node. */
 device_create_failed:
 	class_destroy(hostacl_class);
 class_create_failed:
@@ -2287,7 +2284,7 @@ int natflow_urllogger_init(void)
 
 	return 0;
 
-	//natflow_hostacl_exit();
+	/* natflow_hostacl_init() failed before registering hostacl resources. */
 natflow_hostacl_init_failed:
 	nf_unregister_hooks(urllogger_hooks, ARRAY_SIZE(urllogger_hooks));
 nf_register_hooks_failed:

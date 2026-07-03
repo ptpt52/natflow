@@ -26,9 +26,9 @@
 
 static int natflow_zone_major = 0;
 static int natflow_zone_minor = 0;
-static int number_of_devices = 1;
+static const int number_of_devices = 1;
 static struct cdev natflow_zone_cdev;
-const char *natflow_zone_dev_name = "natflow_zone_ctl";
+static const char * const natflow_zone_dev_name = "natflow_zone_ctl";
 static struct class *natflow_zone_class;
 static struct device *natflow_zone_dev;
 
@@ -149,14 +149,12 @@ static inline void natflow_zone_print(void)
 	rcu_read_unlock();
 }
 
-
-//must lock by caller
+/* Caller must hold the zone match lock. */
 static inline struct zone_match_t *natflow_zone_match_get(int idx)
 {
 	int i = 0;
 	struct zone_match_t *zm;
 
-	//lock by caller
 	list_for_each_entry(zm, &zone_match_list, list) {
 		if (i == idx)
 			return zm;
@@ -233,7 +231,7 @@ static int natflow_zone_show(struct seq_file *m, void *v)
 	return 0;
 }
 
-const struct seq_operations natflow_zone_seq_ops = {
+static const struct seq_operations natflow_zone_seq_ops = {
 	.start = natflow_zone_start,
 	.next = natflow_zone_next,
 	.stop = natflow_zone_stop,
@@ -262,14 +260,14 @@ static ssize_t natflow_zone_write(struct file *file, const char __user *buf, siz
 		return -EACCES;
 
 	n = 0;
-	while(n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
+	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
 	if (n) {
 		*offset += n;
 		data_left = 0;
 		return n;
 	}
 
-	//make sure line ended with '\n' and line len <= MAX_IOCTL_LEN
+	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
 	l = 0;
 	while (l < cnt && data[l + data_left] != '\n') l++;
 	if (l >= cnt) {
@@ -326,7 +324,7 @@ done:
 static int natflow_zone_open(struct inode *inode, struct file *file)
 {
 	int ret;
-	//set nonseekable
+	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
 	ret = seq_open_private(file, &natflow_zone_seq_ops, PAGE_SIZE);
@@ -341,7 +339,7 @@ static int natflow_zone_release(struct inode *inode, struct file *file)
 	return ret;
 }
 
-static struct file_operations natflow_zone_fops = {
+static const struct file_operations natflow_zone_fops = {
 	.owner = THIS_MODULE,
 	.open = natflow_zone_open,
 	.release = natflow_zone_release,
@@ -418,7 +416,7 @@ int natflow_zone_init(void)
 
 	return 0;
 
-	//device_destroy(natflow_zone_class, devno);
+	/* device_create() failed before creating a device node. */
 device_create_failed:
 	class_destroy(natflow_zone_class);
 class_create_failed:

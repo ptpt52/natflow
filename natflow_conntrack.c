@@ -39,7 +39,7 @@
 #include "natflow_common.h"
 #include "natflow_conntrack.h"
 
-static int number_of_devices = 1;
+static const int number_of_devices = 1;
 
 struct conntrackinfo {
 	struct list_head list;
@@ -77,14 +77,14 @@ static ssize_t conntrackinfo_write(struct file *file, const char __user *buf, si
 		return -EACCES;
 
 	n = 0;
-	while(n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
+	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
 	if (n) {
 		*offset += n;
 		data_left = 0;
 		return n;
 	}
 
-	//make sure line ended with '\n' and line len <= MAX_IOCTL_LEN
+	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
 	l = 0;
 	while (l < cnt && data[l + data_left] != '\n') l++;
 	if (l >= cnt) {
@@ -563,7 +563,7 @@ static int conntrackinfo_open(struct inode *inode, struct file *file)
 	if (!user)
 		return -ENOMEM;
 
-	//set nonseekable
+	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
 	mutex_init(&user->lock);
@@ -594,7 +594,7 @@ static int conntrackinfo_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-const struct file_operations conntrackinfo_fops = {
+static const struct file_operations conntrackinfo_fops = {
 	.open = conntrackinfo_open,
 	.read = conntrackinfo_read,
 	.write = conntrackinfo_write,
@@ -604,7 +604,7 @@ const struct file_operations conntrackinfo_fops = {
 static int conntrackinfo_major = 0;
 static int conntrackinfo_minor = 0;
 static struct cdev conntrackinfo_cdev;
-const char *conntrackinfo_dev_name = "conntrackinfo_ctl";
+static const char * const conntrackinfo_dev_name = "conntrackinfo_ctl";
 static struct class *conntrackinfo_class;
 static struct device *conntrackinfo_dev;
 
@@ -652,7 +652,7 @@ int conntrackinfo_init(void)
 
 	return 0;
 
-	//device_destroy(conntrackinfo_class, devno);
+	/* device_create() failed before creating a device node. */
 device_create_failed:
 	class_destroy(conntrackinfo_class);
 class_create_failed:

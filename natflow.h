@@ -14,7 +14,7 @@
 #define MAX_IOCTL_LEN 256
 
 typedef struct natflow_route_t {
-	/* max L2 len supoorted
+	/* max L2 len supported
 	 * mac + pppoe (=14 + 8)
 	 */
 #define NF_L2_MAX_LEN (14 + 8)
