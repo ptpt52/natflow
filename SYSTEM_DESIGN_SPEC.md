@@ -423,7 +423,7 @@ timestamp,mac,sip,sport,dip,dport,hits,method,type,acl_idx,acl_action,url
 - 如果输出行大于用户 buffer，返回 `-EINVAL`。
 - 如果编码后的 URL 记录超过内部 `URLLOGGER_DATALEN`，该记录会被取出并释放，但本次 read 返回 0；这会造成超长 URL 日志静默丢失。
 - 内部输出缓存大小约 `ALIGN(sizeof(struct urllogger_user), 2048) - sizeof(struct urllogger_user)`。
-- `url` 字段直接用 `%s` 写入 CSV，不做逗号、换行、NUL 或控制字符转义。当前实现假设解析到的 host/URI 是可打印且不破坏 CSV 的输入；若用户态把该输出作为安全日志或机器解析输入，必须自行做防御性解析。
+- `url` 字段按 CSV 字段输出；若字段内出现逗号、双引号、CR 或 LF，会用双引号包裹并把内部双引号写成两个双引号。当前 hostname/URI 入口拒绝 NUL 和控制字符，CR/LF escaping 主要作为输出边界防御。
 - HTTP 记录的 `url` 字段是 `host + uri` 拼接结果，中间没有额外分隔符；HTTPS/QUIC 记录只保存 SNI hostname。
 
 ### 7.9 `/dev/hostacl_ctl`
@@ -874,8 +874,9 @@ classid 模式：
 
 实现边界：
 
-- `urlinfo_copy_host_tolower()` 只对 hostname 开头到第一个 `/` 前的 ASCII 大写字母做小写转换；它不验证 label、长度、NUL、控制字符、逗号、空白或其他非法 hostname 字节。
-- TLS/QUIC SNI server_name type 0 的内容会按长度复制为 hostname 使用；当前没有强制 RFC hostname 校验。
+- `urlinfo_copy_host_tolower()` 是 HTTP Host、TLS SNI、QUIC SNI 的统一 hostname normalize/validate 层：ASCII 大写转小写，去除末尾 root dot；HTTP Host 允许并剥离合法十进制 `:port`；总长度限制为 1..253，单 label 限制为 1..63，只允许 `[a-z0-9.-]`，拒绝空 label、label 开头或结尾的 `-`、NUL、控制字符、空白、逗号、冒号等非 DNS hostname 字节。
+- URL 记录创建前会先完成 hostname/URI 校验，并限制 `normalized_host + uri + NUL <= URLLOGGER_DATALEN`，避免按畸形输入长度做过大的 `GFP_ATOMIC` 分配。
+- TLS/QUIC SNI server_name type 0 的内容会按 DNS hostname 规则校验后使用；严格校验会拒绝包含 `_`、非 ASCII U-label、通配符、IPv6 literal 或其他非标准 DNS hostname 的输入。
 - HTTP Host、TLS SNI、QUIC SNI 的识别是审计和粗粒度 ACL 能力，不是不可绕过的 WAF/域名防火墙边界。
 - PPPoE bridge 场景下，等待更多 TLS/QUIC 数据的缓存成功路径必须通过统一 `out` 路径退出，以恢复临时剥离的 PPPoE header、`skb->protocol` 和 `network_header`。
 
@@ -1072,10 +1073,10 @@ path notifier：
 - IPv6 fast path 不解析扩展头。
 - HTTP parser 只识别简单明文请求和 `Host:`。
 - TLS SNI parser 只覆盖普通 ClientHello SNI extension，不保证支持所有 TLS 变体、ECH 或分片异常。
-- hostname 复制路径不做 RFC hostname 校验，也不拒绝 NUL、逗号、CR/LF 或控制字符；这会影响 ACL 字符串匹配和 CSV 日志解析。
+- hostname 统一入口会做严格 DNS hostname 校验；因此非标准但现实存在的 Host/SNI 值，例如 `foo_bar.example`、`[2001:db8::1]`、非 ASCII U-label，当前会被丢弃而不是记录或匹配 ACL。
 - TLS ClientHello 跨多个 TLS record 的场景当前不能完整支持，恶意客户端可利用异常分片降低识别率。
 - QUIC 只覆盖 UDP/443 QUIC v1 Initial 中常见的 CRYPTO/ClientHello SNI；不覆盖 QUIC v2、version negotiation、Retry 后复杂路径、coalesced datagram 后续 packet、稀疏 CRYPTO fragment、HTTP/3 `:authority` 或 ECH 内层域名。
-- URL logger 输出不做 CSV escaping；把 `/dev/urllogger_queue` 作为机器输入时必须在用户态处理畸形字段、换行注入和过长记录丢失。
+- URL logger 的 `url` 字段会做 CSV escaping；用户态仍必须按 RFC 4180 类 CSV 规则解析字段，并处理过长记录静默丢失、partial read 返回 `-EINVAL` 等兼容性限制。
 
 ### 20.3 行为限制
 
@@ -1152,7 +1153,7 @@ path notifier：
 - SHOULD 为 vline 配置提供事务/冲突检查，但若追求完全兼容，应保留当前非事务行为。
 - SHOULD 避免继续复用 `net_device->flags` 高位和 `dev->name` 隐藏字节；若改动，必须提供兼容适配层。
 - SHOULD 为 fastnat hash 冲突、URL parser、QoS CIDR、认证状态机、vline NOARP/ND 路径增加测试。
-- SHOULD 增加统一 hostname normalize/validate 层，并对 CSV 输出做 escaping 或结构化输出，但必须标注这会改变现有 ABI。
+- SHOULD 评估是否需要支持非 DNS Host 值、IDNA U-label 转换、IPv6 literal Host，或把 `/dev/urllogger_queue` 从 CSV 迁移到长度显式的结构化输出；这些都会改变现有行为或 ABI。
 
 ## 22. 推荐验证清单
 
