@@ -32,6 +32,11 @@ graph TB
 
 - [README.md](README.md): human-oriented user manual and external interface reference.
 - [SYSTEM_DESIGN_SPEC.md](SYSTEM_DESIGN_SPEC.md): implementation-oriented system design, internal state, constraints, and compatibility notes.
+- [AGENTS.md](AGENTS.md): startup instructions and guardrails for AI agents working in this repository.
+- [docs/agent/MEMORY.md](docs/agent/MEMORY.md): compressed long-term context for agent work.
+- [docs/agent/WORKFLOW.md](docs/agent/WORKFLOW.md): repository-as-agent-memory workflow and handoff protocol.
+- [docs/agent/DECISIONS.md](docs/agent/DECISIONS.md): durable AI/agent repository decisions.
+- [docs/agent/TASK_TEMPLATE.md](docs/agent/TASK_TEMPLATE.md): structured task template for future agent work.
 
 ## Notes
 

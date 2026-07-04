@@ -1,0 +1,95 @@
+# Natflow 智能体记忆
+
+更新时间：2026-07-04
+
+本文是给智能体快速恢复上下文的压缩记忆，不替代源码。遇到冲突时以源码为准，并修正文档。
+
+## 项目一句话
+
+Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信息，再用软件 fast path 或可选硬件 NAT/WED offload 加速后续包，同时提供用户认证、QoS、URL/SNI 记录、Host ACL、zone 标记和 conntrack 观测接口。
+
+## 当前仓库形态
+
+- 主要语言：C，Linux kernel module。
+- 构建入口：`Makefile`、`Makefile.dkms`、`dkms.conf`。
+- 公共用户文档：`README.md`。
+- 实现规格记忆：`SYSTEM_DESIGN_SPEC.md`。
+- 智能体入口：`AGENTS.md`。
+- 智能体流程和任务记忆：`docs/agent/`。
+
+当前仓库没有完整用户态 portal/authd/web server 实现，源码重点是内核模块接口与网络策略执行点。
+
+## 模块地图
+
+| 文件 | 主要职责 |
+| --- | --- |
+| `natflow_main.c` | 模块入口、`/dev/natflow_ctl`、子模块初始化和退出顺序。 |
+| `natflow_common.c/.h` | 日志、兼容封装、conntrack 扩展探测、NAT/ipset 包装。 |
+| `natflow.h` | 核心数据结构、fastnat 节点、状态位、哈希与超时常量。 |
+| `natflow_path.c/.h` | fast path、路由学习、vline/relay、设备 notifier、硬件 offload。 |
+| `natflow_user.c/.h` | fakeuser、认证、QoS、用户事件、用户信息控制设备。 |
+| `natflow_urllogger.c/.h` | HTTP Host/URI、TLS/QUIC SNI、URL store、Host ACL、sysctl。 |
+| `natflow_zone.c/.h` | LAN/WAN zone 规则、设备 zone 标记、zone notifier。 |
+| `natflow_conntrack.c/.h` | `/dev/conntrackinfo_ctl` conntrack dump。 |
+| `natflow_compat.h` | 跨内核版本 API 差异兼容。 |
+
+## 长期约束
+
+- 源码是最高优先级事实来源，`SYSTEM_DESIGN_SPEC.md` 是反向整理的长期规格。
+- 字符设备命令大多要求单行命令以 `\n` 结束，单条命令长度上限为 `MAX_IOCTL_LEN = 256`。
+- path 默认关闭，通常通过 `/dev/natflow_ctl` 的 `disabled=0` 开启。
+- `CONFIG_NATFLOW_PATH` 控制 fast path、vline/relay 和硬件 offload 相关能力。
+- `CONFIG_NATFLOW_URLLOGGER` 控制 URL logger、Host ACL 和相关 sysctl。
+- 慢路径依赖 Linux 原生 Netfilter、conntrack、NAT、路由和 bridge 行为，fast path 不能破坏慢路径回退。
+- 旧内核兼容是项目价值的一部分，修改 API 适配时要确认版本分支。
+- 热路径要优先考虑性能、RCU/锁语义、skb 可写性、校验和、MTU、TTL/hop-limit、VLAN/PPPoE 和设备生命周期。
+
+## 常用验证
+
+文档或格式检查：
+
+```sh
+git diff --check
+```
+
+基础构建：
+
+```sh
+make
+```
+
+启用常用能力构建：
+
+```sh
+make EXTRA_CFLAGS="-DCONFIG_NATFLOW_PATH -DCONFIG_NATFLOW_URLLOGGER"
+```
+
+关闭调试日志的构建：
+
+```sh
+make NO_DEBUG=1 EXTRA_CFLAGS="-DCONFIG_NATFLOW_PATH -DCONFIG_NATFLOW_URLLOGGER"
+```
+
+当前环境可能缺少目标内核头文件。无法构建时要记录失败原因，不要把未验证说成已验证。
+
+## 记忆维护协议
+
+智能体完成任务时按影响面维护记忆：
+
+- 改了用户可见行为：更新 `README.md`。
+- 改了内部流程、状态、兼容约束或数据结构：更新 `SYSTEM_DESIGN_SPEC.md`。
+- 改了智能体协作方式或后续任务入口：更新 `AGENTS.md` 或 `docs/agent/WORKFLOW.md`。
+- 做了长期架构取舍：更新 `docs/agent/DECISIONS.md`。
+- 发现关键事实可压缩成后续上下文：更新本文件。
+
+记忆应该短、准、可验证。不要把临时推测、未确认结论或长篇源码复述写成长期记忆。
+
+## 后续工作展开方式
+
+有了智能体仓库后，后续任务应从“补上下文”变成“执行闭环”：
+
+1. 用 `docs/agent/TASK_TEMPLATE.md` 描述目标、边界、验证标准和交付物。
+2. 智能体读取本文件、相关源码和规格。
+3. 智能体实施最小改动并运行验证。
+4. 智能体把新增事实写回对应记忆文件。
+5. 下一轮智能体从更新后的记忆继续工作，不从零开始。
