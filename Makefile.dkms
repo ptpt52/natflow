@@ -17,7 +17,6 @@ src_install:
 		natflow_conntrack.h \
 		natflow.h \
 		natflow_main.c \
-		natflow.mod.c \
 		natflow_path.c \
 		natflow_path.h \
 		natflow_urllogger.c \
