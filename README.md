@@ -275,6 +275,42 @@ echo 'vline_clear' >/dev/natflow_ctl
 - 实际 ingress 设备的 `ifindex` 必须小于 64。
 - `family` 只能是 `ipv4`、`ipv6` 或 `all`。
 
+### vline 使用案例：IPv6 虚拟桥接
+
+参考 [X-WRT IPv6 虚拟桥接配置指南](https://github.com/x-wrt/x-wrt/wiki/IPv6-%E8%99%9A%E6%8B%9F%E6%A1%A5%E6%8E%A5%E9%85%8D%E7%BD%AE%E6%8C%87%E5%8D%97)，vline 可以用于 WAN 侧只能拿到 IPv6 /64、没有 IPv6-PD 的场景。典型情况包括 4G/5G 上网卡、光猫拨号后下挂路由器、二级路由等：WAN 设备本身有公网 IPv6，但 LAN 侧无法通过前缀委派给下游设备分配公网 IPv6。
+
+示例拓扑：
+
+```text
+clients ---> br-lan (NATflow Router) usb0 ---> Internet
+```
+
+其中 `br-lan` 是 LAN bridge，`usb0` 是 WAN 侧网卡设备名。不同 4G/5G 模块或上联方式下，WAN 设备也可能叫 `eth1`、`wwan0` 等，应以系统实际 netdev 名称为准。
+
+配置命令：
+
+```sh
+echo 'vline_clear' >/dev/natflow_ctl
+echo 'vline_add=br-lan,usb0,ipv6' >/dev/natflow_ctl
+echo 'vline_apply' >/dev/natflow_ctl
+```
+
+如果 WAN 设备是 `eth1`：
+
+```sh
+echo 'vline_clear' >/dev/natflow_ctl
+echo 'vline_add=br-lan,eth1,ipv6' >/dev/natflow_ctl
+echo 'vline_apply' >/dev/natflow_ctl
+```
+
+开机自动启用时，可把上述命令加入 `/etc/rc.local` 或系统等价的启动脚本。虚拟机环境或部分网卡驱动下，WAN 侧设备可能需要开启混杂模式后才能正常转发。
+
+安全注意事项：
+
+- 启用 IPv6 虚拟桥接后，下游设备的 IPv6 流量可能绕过路由器原有 IPv6 防火墙策略；部署前应确认上游、防火墙和终端侧的安全边界。
+- `vline_add=br-lan,<wan-dev>,ipv6` 只处理 IPv6 虚拟桥接；IPv4 仍应按原 NAT/路由路径处理。
+- `vline_apply` 前两端设备必须已存在；WAN 设备名变化时需要重新下发配置。
+
 ## `/dev/natflow_zone_ctl`
 
 读取：
