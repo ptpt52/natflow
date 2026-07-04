@@ -1,7 +1,7 @@
 # Natflow 系统设计与规格限制文档
 
 生成日期：2026-07-04
-扫描范围：当前仓库的源码、头文件、Makefile、DKMS 配置、现有 Markdown 文档、`portal/` 文档和仓库实际文件清单。
+扫描范围：当前仓库的源码、头文件、Makefile、DKMS 配置、现有 Markdown 文档和仓库实际文件清单。
 目标读者：内核开发者、运维集成者、代码审查者，以及需要依据本规格重建实现的 AI/自动化工具。
 
 本文是根据仓库当前实现反向整理的系统规格。若本文和代码冲突，以当前源码为准；若要用 AI 生成对应实现，必须同时满足本文的接口、状态位、数据流和限制条件。
@@ -19,7 +19,7 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 - vline/relay：在 `CONFIG_NETFILTER_INGRESS` 场景下，把指定设备之间建立 L2/L3 直通或 relay 关系。
 - 观测接口：输出 conntrack、用户、URL、host ACL、zone、核心配置等状态。
 
-模块不是一个用户态守护进程。`portal/` 目录描述的是配套门户认证系统设计，当前仓库内没有完整的 authd/web server 实现；内核模块只提供底层用户态接口、事件和网络策略执行点。
+模块不是一个用户态守护进程。当前仓库没有完整的 authd/web server 实现；内核模块只提供底层用户态接口、事件和网络策略执行点。
 
 ## 2. 仓库结构
 
@@ -36,22 +36,17 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 | `natflow_compat.h` | 公共头 | 大量内核版本和 API 兼容宏。 |
 | `Makefile` | 构建入口 | 编译 `natflow.o`，对象始终包含所有 `.o`，功能由 C 宏决定。 |
 | `Makefile.dkms`、`dkms.conf` | DKMS 入口 | 安装到 `/usr/src/natflow-<version>` 并通过 DKMS build/install。 |
-| `README.md` | 文档 | 项目能力、构建示例、系统要求。 |
-| `CORE_CTL.md` | 文档 | 核心控制、zone、conntrack 控制接口说明。 |
-| `USER.md` | 文档 | 用户、认证、QoS、事件接口说明。 |
-| `HOSTACL.md` | 文档 | URL logger 和 host ACL 说明。 |
-| `vline.md` | 文档 | vline/relay 当前规格和限制。 |
-| `TECH_REPORT.md` | 文档 | 原有技术报告。 |
-| `portal/README.md`、`portal/AUTH_EXT.md` | 文档 | 外部门户认证系统设计草案。 |
+| `README.md` | 文档 | 面向人类的使用手册和对外接口说明。 |
+| `SYSTEM_DESIGN_SPEC.md` | 文档 | 面向开发、审查和自动化重建的系统设计规格。 |
 
 ### 2.1 当前扫描基线
 
 本次重新扫描基于当前工作区实际文件和 Git 跟踪文件：
 
-- Git 跟踪文件共 28 个，其中 C 源码 7 个、头文件 8 个、顶层/portal 文档 9 个，以及 Makefile、DKMS 配置和 `.gitignore`。
+- Git 跟踪文件共 21 个，其中 C 源码 7 个、头文件 8 个、Markdown 文档 2 个，以及 Makefile、DKMS 配置和 `.gitignore`。
 - 当前实际目录中没有 `natflow_path.c.orig`、`cscope.files`、`cscope.out`、`natflow.mod.c` 等历史备份、索引或构建生成文件；`.gitignore` 仍会忽略 `*.orig`、`cscope.*` 和 `*.mod.c`，因此未来若这些文件重新出现，应先判断是否为生成物或临时备份，不能加入 DKMS 源码复制清单。
 - `SYSTEM_DESIGN_SPEC.md` 本身是规格产物，参与 Git 跟踪，但不是内核模块构建输入。
-- `portal/` 只有文档，没有 authd/web server 源码。
+- 仓库中不再保留 `portal/` 设计草案文档；当前源码仍只提供内核模块接口，没有 authd/web server 实现。
 
 ## 3. 构建规格
 
@@ -1202,5 +1197,5 @@ path notifier：
 
 ## 23. 当前仓库状态提示
 
-- 现有 Markdown 文档互相补充：`README.md` 是概览，`CORE_CTL.md`/`USER.md`/`HOSTACL.md` 是接口说明，`vline.md` 是 vline 专项规格，`TECH_REPORT.md` 是较早技术报告。本文合并并补充了源码中未显式写入原文档的限制。
+- 当前只保留两份 Markdown 文档：`README.md` 面向使用者和外部接口对接，本文面向实现、审查和自动化重建。
 - 当前 Git 工作区的源码和文档清单不包含历史 `.orig`、cscope 索引或 `natflow.mod.c`；后续审阅时若看到这类文件，应按生成物/备份文件处理，不能自动纳入构建规格或 DKMS 源码复制清单。
