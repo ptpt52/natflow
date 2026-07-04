@@ -37,6 +37,7 @@ static LIST_HEAD(zone_match_list);
 
 static inline int natflow_zone_add_tail(const struct zone_match_t *zm)
 {
+	struct zone_match_t *old;
 	struct zone_match_t *new;
 
 	new = kmalloc(sizeof(struct zone_match_t), GFP_KERNEL);
@@ -47,6 +48,13 @@ static inline int natflow_zone_add_tail(const struct zone_match_t *zm)
 	INIT_LIST_HEAD(&new->list);
 
 	write_lock_bh(&zone_match_lock);
+	list_for_each_entry(old, &zone_match_list, list) {
+		if (old->id == zm->id && old->type != zm->type) {
+			write_unlock_bh(&zone_match_lock);
+			kfree(new);
+			return -EINVAL;
+		}
+	}
 	list_add_tail(&new->list, &zone_match_list);
 	write_unlock_bh(&zone_match_lock);
 

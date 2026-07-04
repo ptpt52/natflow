@@ -194,7 +194,7 @@ cat /dev/natflow_ctl
 
 # 2. 设置 zone
 echo 'lan_zone 1=br-lan' >/dev/natflow_zone_ctl
-echo 'wan_zone 1=pppoe-wan' >/dev/natflow_zone_ctl
+echo 'wan_zone 2=pppoe-wan' >/dev/natflow_zone_ctl
 echo 'update_match' >/dev/natflow_zone_ctl
 
 # 3. 开启 fast path
@@ -296,6 +296,7 @@ echo 'clean' >/dev/natflow_zone_ctl
 说明：
 
 - zone id 有效范围是 `0..126`。
+- 同一个 zone id 只能属于一种类型；如果某个 id 已经用于 `lan_zone`，不能再用于 `wan_zone`，反之亦然。
 - `<if_name>` 支持用 `+` 做前缀匹配，例如 `eth+`。
 - `update_match` 会刷新当前所有 netdev 的 zone 标记。
 - 当前实现中 `clean` 只清规则；为了让已有设备的缓存标记失效，清理后应执行一次 `update_match`。
