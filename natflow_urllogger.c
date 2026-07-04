@@ -3771,10 +3771,15 @@ int natflow_urllogger_init(void)
 		goto natflow_hostacl_init_failed;
 
 	urllogger_table_header = natflow_register_sysctl("urllogger_store", urllogger_root_table, urllogger_table);
+	if (urllogger_table_header == NULL) {
+		ret = -ENOMEM;
+		goto register_sysctl_failed;
+	}
 
 	return 0;
 
-	/* natflow_hostacl_init() failed before registering hostacl resources. */
+register_sysctl_failed:
+	natflow_hostacl_exit();
 natflow_hostacl_init_failed:
 	nf_unregister_hooks(urllogger_hooks, ARRAY_SIZE(urllogger_hooks));
 nf_register_hooks_failed:
@@ -3807,7 +3812,10 @@ void natflow_urllogger_exit(void)
 	nf_unregister_hooks(urllogger_hooks, ARRAY_SIZE(urllogger_hooks));
 	urllogger_store_clear();
 
-	unregister_sysctl_table(urllogger_table_header);
+	if (urllogger_table_header) {
+		unregister_sysctl_table(urllogger_table_header);
+		urllogger_table_header = NULL;
+	}
 
 	urllogger_quic_crypto_cleanup();
 	urllogger_quic_cache_cleanup();
