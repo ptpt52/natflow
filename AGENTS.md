@@ -28,6 +28,7 @@ Natflow 是一个 Linux 内核模块，围绕 Netfilter、conntrack、NAT、ipse
 | `SYSTEM_DESIGN_SPEC.md` | 面向开发、审查和自动化重建的长期技术记忆。 |
 | `README.md` | 面向部署和对接人员的公开使用手册。 |
 | `docs/agent/MEMORY.md` | 智能体快速恢复上下文的压缩记忆。 |
+| `docs/agent/ROADMAP.md` | 当前开发目标、优先级和后续任务入口。 |
 | `docs/agent/WORKFLOW.md` | 智能体在本仓库中的工作方法。 |
 | `docs/agent/DECISIONS.md` | 需要长期保留的设计决策。 |
 | `docs/agent/TASK_TEMPLATE.md` | 交给智能体执行任务时的结构化模板。 |
