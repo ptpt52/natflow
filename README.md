@@ -362,6 +362,7 @@ cat /dev/natflow_user_ctl
 | `src_bypasslist_name=<ipset>` | 设置源地址 bypass ipset；空值清除。 |
 | `auth id=<id>,szone=<zone>,type=<web|auto>,sipgrp=<ipset>[,ipwhite=<ipset>][,macwhite=<ipset>]` | 添加认证规则。 |
 | `redirect_ip=<a.b.c.d>` | 设置 portal/redirect 目的 IPv4。 |
+| `redirect_ip6=<ipv6_addr>` | 设置 portal/redirect 目的 IPv6。如果未设置（默认为 `::`），IPv6 重定向请求将回滚使用 `redirect_ip` 提供的 IPv4 地址作为目标。 |
 | `no_flow_timeout=<seconds>` | 设置无流量用户超时。 |
 | `https_redirect_en=0/1` | 开启或关闭 HTTPS redirect。 |
 | `https_redirect_port=<port>` | 设置 HTTPS redirect 端口。 |

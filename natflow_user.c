@@ -591,6 +591,8 @@ static unsigned int https_redirect_en = 0;
 
 /* Note: default redirect_ip is 10.10.10.10 */
 unsigned int redirect_ip = __constant_htonl((10<<24)|(10<<16)|(10<<8)|(10<<0));
+/* Note: default redirect_ip6 is empty (::) */
+struct in6_addr redirect_ip6;
 
 static inline int natflow_auth_dev_addr6(const struct net_device *dev, struct in6_addr *addr)
 {
@@ -1619,16 +1621,28 @@ static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *
 	                              "\r\n";
 
 	if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6) {
-		struct in6_addr redirect_addr6;
+		const char *http_302_fmt_v6_fallback = ""
+		                           "HTTP/1.1 302 Moved Temporarily\r\n"
+		                           "Connection: close\r\n"
+		                           "Cache-Control: no-cache\r\n"
+		                           "Location: http://%pI4/index.html?ip=%pI6c&mac=%02X-%02X-%02X-%02X-%02X-%02X&rid=%u&_t=%lu\r\n"
+		                           "Content-Length: 0\r\n"
+		                           "\r\n";
 
-		if (natflow_auth_dev_addr6(dev, &redirect_addr6) != 0) {
-			redirect_addr6 = ipv6_hdr(skb)->daddr;
+		if (!ipv6_addr_any(&redirect_ip6)) {
+			natflow_auth_reply_fmt_fin6(384, skb, dev, pppoe_hdr, http_302_fmt_v6,
+			         &redirect_ip6, &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6,
+			         fud->macaddr[0], fud->macaddr[1], fud->macaddr[2],
+			         fud->macaddr[3], fud->macaddr[4], fud->macaddr[5],
+			         fud->auth_rule_id, jiffies);
+		} else {
+			unsigned int local_ip = READ_ONCE(redirect_ip);
+			natflow_auth_reply_fmt_fin6(384, skb, dev, pppoe_hdr, http_302_fmt_v6_fallback,
+			         &local_ip, &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6,
+			         fud->macaddr[0], fud->macaddr[1], fud->macaddr[2],
+			         fud->macaddr[3], fud->macaddr[4], fud->macaddr[5],
+			         fud->auth_rule_id, jiffies);
 		}
-		natflow_auth_reply_fmt_fin6(384, skb, dev, pppoe_hdr, http_302_fmt_v6,
-		         &redirect_addr6, &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6,
-		         fud->macaddr[0], fud->macaddr[1], fud->macaddr[2],
-		         fud->macaddr[3], fud->macaddr[4], fud->macaddr[5],
-		         fud->auth_rule_id, jiffies);
 	} else {
 		natflow_auth_reply_fmt_fin(384, skb, dev, pppoe_hdr, http_302_fmt,
 		         &redirect_ip, &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip,
@@ -2652,7 +2666,12 @@ static unsigned int natflow_user_forward_hook(void *priv,
 				void *l4 = (void *)ip6h + sizeof(struct ipv6hdr);
 				struct in6_addr redirect_addr6;
 
-				if (natflow_auth_dev_addr6(in, &redirect_addr6) == 0 &&
+				if (!ipv6_addr_any(&redirect_ip6)) {
+					if (ipv6_addr_equal(&ip6h->daddr, &redirect_ip6)) {
+						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						goto out;
+					}
+				} else if (natflow_auth_dev_addr6(in, &redirect_addr6) == 0 &&
 				        ipv6_addr_equal(&ip6h->daddr, &redirect_addr6)) {
 					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 					goto out;
@@ -3111,6 +3130,7 @@ static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 		             "#    disabled=%u\n"
 		             "#    auth_conf_magic=%u\n"
 		             "#    redirect_ip=%pI4\n"
+		             "#    redirect_ip6=%pI6c\n"
 		             "#    no_flow_timeout=%u\n"
 		             "#    auth_open_weixin_reply=%u\n"
 		             "#    https_redirect_en=%u\n"
@@ -3126,6 +3146,7 @@ static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 		             disabled,
 		             auth_conf_magic,
 		             &redirect_ip,
+		             &redirect_ip6,
 		             natflow_user_timeout,
 		             auth_open_weixin_reply,
 		             https_redirect_en,
@@ -3327,6 +3348,13 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 				NATFLOW_println("failed to set auth rule, error=%d", err);
 			}
 			kfree(rule);
+		}
+	} else if (strncmp(data, "redirect_ip6=", 13) == 0) {
+		struct in6_addr tmp_ip6;
+		if (in6_pton(data + 13, -1, tmp_ip6.s6_addr, '\n', NULL) > 0 ||
+		    in6_pton(data + 13, -1, tmp_ip6.s6_addr, '\0', NULL) > 0) {
+			redirect_ip6 = tmp_ip6;
+			goto done;
 		}
 	} else if (strncmp(data, "redirect_ip=", 12) == 0) {
 		unsigned int a, b, c,d;
