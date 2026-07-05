@@ -1202,6 +1202,216 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 	return natflow_user_get(ct);
 }
 
+static inline void natflow_auth_reply_fmt_fin(int max_payload_len, struct sk_buff *oskb, const struct net_device *dev, int pppoe_hdr, const char *fmt, ...)
+{
+	struct sk_buff *nskb;
+	struct ethhdr *neth, *oeth;
+	struct iphdr *niph, *oiph;
+	struct tcphdr *otcph, *ntcph;
+	int len;
+	unsigned int csum;
+	int offset, header_len;
+	char *data;
+	va_list args;
+	int payload_len;
+	int pppoe_len = 0;
+
+	if (pppoe_hdr) {
+		pppoe_len = PPPOE_SES_HLEN;
+		skb_push(oskb, PPPOE_SES_HLEN);
+		oskb->protocol = __constant_htons(ETH_P_PPP_SES);
+	}
+
+	oeth = (struct ethhdr *)skb_mac_header(oskb);
+	oiph = ip_hdr(oskb);
+	otcph = (struct tcphdr *)((void *)oiph + oiph->ihl*4);
+
+	offset = pppoe_len + sizeof(struct iphdr) + sizeof(struct tcphdr) + max_payload_len - oskb->len;
+	header_len = offset < 0 ? 0 : offset;
+	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
+	if (!nskb) {
+		NATFLOW_ERROR("failed to allocate skb\n");
+		goto out;
+	}
+	if (offset <= 0) {
+		if (pskb_trim(nskb, nskb->len + offset)) {
+			NATFLOW_ERROR("failed to trim pskb: len=%d, offset=%d\n", nskb->len, offset);
+			consume_skb(nskb);
+			goto out;
+		}
+	} else {
+		nskb->len += offset;
+		nskb->tail += offset;
+	}
+
+	/* Set up MAC header. */
+	neth = eth_hdr(nskb);
+	niph = ip_hdr(nskb);
+	if ((char *)niph - (char *)neth >= ETH_HLEN) {
+		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
+		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
+		/* neth->h_proto = htons(ETH_P_IP); */
+	}
+	/* Set up IP header. */
+	memset(niph, 0, sizeof(struct iphdr));
+	niph->saddr = oiph->daddr;
+	niph->daddr = oiph->saddr;
+	niph->version = oiph->version;
+	niph->ihl = 5;
+	niph->tos = 0;
+	niph->ttl = 0x80;
+	niph->protocol = oiph->protocol;
+	niph->id = __constant_htons(0xDEAD);
+	niph->frag_off = 0x0;
+	/* Set up payload. */
+	data = (char *)ip_hdr(nskb) + sizeof(struct iphdr) + sizeof(struct tcphdr);
+	va_start(args, fmt);
+	vsnprintf(data, max_payload_len, fmt, args);
+	va_end(args);
+	payload_len = strnlen(data, max_payload_len);
+
+	if (payload_len < max_payload_len) {
+		int diff = max_payload_len - payload_len;
+		nskb->len -= diff;
+		nskb->tail -= diff;
+	}
+	niph->tot_len = htons(nskb->len - pppoe_len);
+	ip_send_check(niph);
+
+	/* Set up TCP header. */
+	ntcph = (struct tcphdr *)((char *)ip_hdr(nskb) + sizeof(struct iphdr));
+	memset(ntcph, 0, sizeof(struct tcphdr));
+	ntcph->source = otcph->dest;
+	ntcph->dest = otcph->source;
+	ntcph->seq = otcph->ack_seq;
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->tot_len) - (oiph->ihl<<2) - (otcph->doff<<2));
+	ntcph->doff = 5;
+	ntcph->ack = 1;
+	ntcph->psh = 1;
+	ntcph->fin = 1;
+	ntcph->window = 65535;
+	/* Checksum. */
+	len = ntohs(niph->tot_len) - (niph->ihl<<2);
+	csum = csum_partial((char*)ntcph, len, 0);
+	ntcph->check = tcp_v4_check(len, niph->saddr, niph->daddr, csum);
+	/* Ready to send out. */
+	skb_push(nskb, (char *)niph - (char *)neth - pppoe_len);
+	if (pppoe_hdr) {
+		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(nskb) + ETH_HLEN);
+		ph->length = htons(ntohs(ip_hdr(nskb)->tot_len) + 2);
+	}
+	nskb->dev = (struct net_device *)dev;
+	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+	dev_queue_xmit(nskb);
+out:
+	if (pppoe_hdr) {
+		oskb->protocol = __constant_htons(ETH_P_IP);
+		skb_pull(oskb, PPPOE_SES_HLEN);
+	}
+}
+
+static inline void natflow_auth_reply_fmt_fin6(int max_payload_len, struct sk_buff *oskb, const struct net_device *dev, int pppoe_hdr, const char *fmt, ...)
+{
+	struct sk_buff *nskb;
+	struct ethhdr *neth, *oeth;
+	struct ipv6hdr *niph, *oiph;
+	struct tcphdr *otcph, *ntcph;
+	int len;
+	unsigned int csum;
+	int offset, header_len;
+	char *data;
+	va_list args;
+	int payload_len;
+	int pppoe_len = 0;
+
+	if (pppoe_hdr) {
+		pppoe_len = PPPOE_SES_HLEN;
+		skb_push(oskb, PPPOE_SES_HLEN);
+		oskb->protocol = __constant_htons(ETH_P_PPP_SES);
+	}
+
+	oeth = (struct ethhdr *)skb_mac_header(oskb);
+	oiph = ipv6_hdr(oskb);
+	otcph = (struct tcphdr *)((void *)oiph + sizeof(struct ipv6hdr));
+
+	offset = pppoe_len + sizeof(struct ipv6hdr) + sizeof(struct tcphdr) + max_payload_len - oskb->len;
+	header_len = offset < 0 ? 0 : offset;
+	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
+	if (!nskb) {
+		NATFLOW_ERROR("failed to allocate skb\n");
+		goto out;
+	}
+	if (offset <= 0) {
+		if (pskb_trim(nskb, nskb->len + offset)) {
+			NATFLOW_ERROR("failed to trim pskb: len=%d, offset=%d\n", nskb->len, offset);
+			consume_skb(nskb);
+			goto out;
+		}
+	} else {
+		nskb->len += offset;
+		nskb->tail += offset;
+	}
+
+	neth = eth_hdr(nskb);
+	niph = ipv6_hdr(nskb);
+	if ((char *)niph - (char *)neth >= ETH_HLEN) {
+		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
+		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
+	}
+
+	memset(niph, 0, sizeof(struct ipv6hdr));
+	niph->version = 6;
+	niph->priority = oiph->priority;
+	niph->saddr = oiph->daddr;
+	niph->daddr = oiph->saddr;
+	niph->nexthdr = IPPROTO_TCP;
+	niph->hop_limit = 255;
+
+	data = (char *)niph + sizeof(struct ipv6hdr) + sizeof(struct tcphdr);
+	va_start(args, fmt);
+	vsnprintf(data, max_payload_len, fmt, args);
+	va_end(args);
+	payload_len = strnlen(data, max_payload_len);
+
+	if (payload_len < max_payload_len) {
+		int diff = max_payload_len - payload_len;
+		nskb->len -= diff;
+		nskb->tail -= diff;
+	}
+	niph->payload_len = htons(sizeof(struct tcphdr) + payload_len);
+
+
+	ntcph = (struct tcphdr *)((char *)niph + sizeof(struct ipv6hdr));
+	memset(ntcph, 0, sizeof(struct tcphdr));
+	ntcph->source = otcph->dest;
+	ntcph->dest = otcph->source;
+	ntcph->seq = otcph->ack_seq;
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff<<2));
+	ntcph->doff = 5;
+	ntcph->ack = 1;
+	ntcph->psh = 1;
+	ntcph->fin = 1;
+	ntcph->window = 65535;
+
+	len = ntohs(niph->payload_len);
+	csum = csum_partial((char*)ntcph, len, 0);
+	ntcph->check = tcp_v6_check(len, &niph->saddr, &niph->daddr, csum);
+
+	skb_push(nskb, (char *)niph - (char *)neth - pppoe_len);
+	if (pppoe_hdr) {
+		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(nskb) + ETH_HLEN);
+		ph->length = htons(ntohs(ipv6_hdr(nskb)->payload_len) + sizeof(struct ipv6hdr) + 2);
+	}
+	nskb->dev = (struct net_device *)dev;
+	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+	dev_queue_xmit(nskb);
+out:
+	if (pppoe_hdr) {
+		oskb->protocol = __constant_htons(ETH_P_IPV6);
+		skb_pull(oskb, PPPOE_SES_HLEN);
+	}
+}
+
 static inline void natflow_auth_reply_payload_fin(const char *payload, int payload_len, struct sk_buff *oskb, const struct net_device *dev, int pppoe_hdr)
 {
 	struct sk_buff *nskb;
@@ -1388,37 +1598,25 @@ out:
 	}
 }
 
+
+
 static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *skb, natflow_fakeuser_t *user, int pppoe_hdr)
 {
 	struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-	const char *http_header_fmt = ""
+	const char *http_302_fmt = ""
+	                           "HTTP/1.1 302 Moved Temporarily\r\n"
+	                           "Connection: close\r\n"
+	                           "Cache-Control: no-cache\r\n"
+	                           "Location: http://%pI4/index.html?ip=%pI4&mac=%02X-%02X-%02X-%02X-%02X-%02X&rid=%u&_t=%lu\r\n"
+	                           "Content-Length: 0\r\n"
+	                           "\r\n";
+	const char *http_302_fmt_v6 = ""
 	                              "HTTP/1.1 302 Moved Temporarily\r\n"
 	                              "Connection: close\r\n"
 	                              "Cache-Control: no-cache\r\n"
-	                              "Content-Type: text/html; charset=UTF-8\r\n"
-	                              "Location: %s\r\n"
-	                              "Content-Length: %u\r\n"
+	                              "Location: http://[%pI6c]/index.html?ip=%pI6c&mac=%02X-%02X-%02X-%02X-%02X-%02X&rid=%u&_t=%lu\r\n"
+	                              "Content-Length: 0\r\n"
 	                              "\r\n";
-	const char *http_data_fmt = ""
-	                            "<HTML><HEAD><meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\">\r\n"
-	                            "<TITLE>302 Moved</TITLE></HEAD><BODY>\r\n"
-	                            "<H1>302 Moved</H1>\r\n"
-	                            "The document has moved\r\n"
-	                            "<A HREF=\"%s\">here</A>.\r\n"
-	                            "</BODY></HTML>\r\n";
-	int n = 0;
-	struct {
-		char location[256];
-		char data[384];
-		char header[384];
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
-		char payload[];
-#else
-		char payload[0];
-#endif
-	} *http = kmalloc(2048, GFP_ATOMIC);
-	if (!http)
-		return;
 
 	if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6) {
 		struct in6_addr redirect_addr6;
@@ -1426,69 +1624,51 @@ static void natflow_auth_http_302(const struct net_device *dev, struct sk_buff *
 		if (natflow_auth_dev_addr6(dev, &redirect_addr6) != 0) {
 			redirect_addr6 = ipv6_hdr(skb)->daddr;
 		}
-		snprintf(http->location, sizeof(http->location), "http://[%pI6c]/index.html?ip=%pI6c&mac=%02X-%02X-%02X-%02X-%02X-%02X&rid=%u&_t=%lu",
+		natflow_auth_reply_fmt_fin6(384, skb, dev, pppoe_hdr, http_302_fmt_v6,
 		         &redirect_addr6, &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6,
 		         fud->macaddr[0], fud->macaddr[1], fud->macaddr[2],
 		         fud->macaddr[3], fud->macaddr[4], fud->macaddr[5],
 		         fud->auth_rule_id, jiffies);
 	} else {
-		snprintf(http->location, sizeof(http->location), "http://%pI4/index.html?ip=%pI4&mac=%02X-%02X-%02X-%02X-%02X-%02X&rid=%u&_t=%lu",
+		natflow_auth_reply_fmt_fin(384, skb, dev, pppoe_hdr, http_302_fmt,
 		         &redirect_ip, &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip,
 		         fud->macaddr[0], fud->macaddr[1], fud->macaddr[2],
 		         fud->macaddr[3], fud->macaddr[4], fud->macaddr[5],
 		         fud->auth_rule_id, jiffies);
 	}
-	n = snprintf(http->data, sizeof(http->data), http_data_fmt, http->location);
-	snprintf(http->header, sizeof(http->header), http_header_fmt, http->location, n);
-	n = sprintf(http->payload, "%s%s", http->header, http->data);
-
-	if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6) {
-		natflow_auth_reply_payload_fin6(http->payload, n, skb, dev, pppoe_hdr);
-	} else {
-		natflow_auth_reply_payload_fin(http->payload, n, skb, dev, pppoe_hdr);
-	}
-	kfree(http);
 }
+
+
+
+
+#define WEIXIN_BODY_FMT \
+	"<!DOCTYPE html>\r\n" \
+	"<html class='no-js'>\r\n" \
+	"<head>\r\n" \
+	"<meta charset='utf-8'>\r\n" \
+	"<meta name='viewport' content='initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>\r\n" \
+	"<script type='text/javascript' src='http://%pI4/admin/js/guanzhu.js?%010u'></script>\r\n" \
+	"</head>\r\n" \
+	"<body>\r\n" \
+	"</body>\r\n" \
+	"</html>\r\n"
 
 static inline void natflow_auth_open_weixin_reply(const struct net_device *dev, struct sk_buff *skb, int pppoe_hdr)
 {
-	const char *http_header_fmt = ""
+	const char *http_weixin_fmt = ""
 	                              "HTTP/1.1 200 OK\r\n"
 	                              "Connection: close\r\n"
 	                              "Cache-Control: no-cache\r\n"
 	                              "Content-Type: text/html; charset=UTF-8\r\n"
 	                              "Content-Length: %u\r\n"
-	                              "\r\n";
-	const char *http_data_fmt = ""
-	                            "<!DOCTYPE html>\r\n"
-	                            "<html class='no-js'>\r\n"
-	                            "<head>\r\n"
-	                            "<meta charset='utf-8'>\r\n"
-	                            "<meta name='viewport' content='initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>\r\n"
-	                            "<script type='text/javascript' src='http://%pI4/admin/js/guanzhu.js?%u'></script>\r\n"
-	                            "</head>\r\n"
-	                            "<body>\r\n"
-	                            "</body>\r\n"
-	                            "</html>\r\n";
-	int n = 0;
-	struct {
-		char data[384];
-		char header[384];
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
-		char payload[];
-#else
-		char payload[0];
-#endif
-	} *http = kmalloc(2048, GFP_ATOMIC);
-	if (!http)
-		return;
+	                              "\r\n"
+	                              WEIXIN_BODY_FMT;
+	unsigned int local_ip = READ_ONCE(redirect_ip);
+	int body_len;
 
-	n = snprintf(http->data, sizeof(http->data), http_data_fmt, &redirect_ip, jiffies);
-	snprintf(http->header, sizeof(http->header), http_header_fmt, n);
-	n = sprintf(http->payload, "%s%s", http->header, http->data);
+	body_len = snprintf(NULL, 0, WEIXIN_BODY_FMT, &local_ip, 0);
 
-	natflow_auth_reply_payload_fin(http->payload, n, skb, dev, pppoe_hdr);
-	kfree(http);
+	natflow_auth_reply_fmt_fin(384, skb, dev, pppoe_hdr, http_weixin_fmt, body_len, &local_ip, (unsigned int)jiffies);
 }
 
 static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, struct sk_buff *oskb, int pppoe_hdr)
