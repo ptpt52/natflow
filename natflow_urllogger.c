@@ -329,6 +329,31 @@ struct acl_rule {
 /* 0: accept/record, 1: drop, 2: reset, 3: redirect */
 static int acl_action_default = URLINFO_ACL_ACTION_RECORD;
 static const char * const acl_action_names[] = {"accept", "drop", "reset", "redirect"};
+struct acl_redirect_config {
+	char url[256];
+	char payload[512];
+	int payload_len;
+};
+static struct acl_redirect_config acl_redirect_default = {
+	.url = "http://1.1.1.1/blocked.html",
+	.payload =
+		"HTTP/1.1 302 Moved Temporarily\r\n"
+		"Connection: close\r\n"
+		"Cache-Control: no-cache\r\n"
+		"Content-Type: text/html; charset=UTF-8\r\n"
+		"Location: http://1.1.1.1/blocked.html\r\n"
+		"Content-Length: 0\r\n"
+		"\r\n",
+	.payload_len = sizeof(
+		"HTTP/1.1 302 Moved Temporarily\r\n"
+		"Connection: close\r\n"
+		"Cache-Control: no-cache\r\n"
+		"Content-Type: text/html; charset=UTF-8\r\n"
+		"Location: http://1.1.1.1/blocked.html\r\n"
+		"Content-Length: 0\r\n"
+		"\r\n") - 1,
+};
+static struct acl_redirect_config *acl_redirect_config = &acl_redirect_default;
 
 #define ACL_RULE_ALLOC_SIZE 256
 #define ACL_RULE_MAX 32
@@ -359,6 +384,55 @@ static void acl_rule_clear(void)
 	}
 	acl_rule_max = 0;
 	mutex_unlock(&acl_rule_lock);
+}
+
+static int acl_redirect_config_update(const char *url)
+{
+	static const char http_fmt[] =
+		"HTTP/1.1 302 Moved Temporarily\r\n"
+		"Connection: close\r\n"
+		"Cache-Control: no-cache\r\n"
+		"Content-Type: text/html; charset=UTF-8\r\n"
+		"Location: %s\r\n"
+		"Content-Length: 0\r\n"
+		"\r\n";
+	struct acl_redirect_config *new_config;
+	struct acl_redirect_config *old_config;
+
+	new_config = kmalloc(sizeof(*new_config), GFP_KERNEL);
+	if (!new_config)
+		return -ENOMEM;
+
+	snprintf(new_config->url, sizeof(new_config->url), "%s", url);
+	snprintf(new_config->payload, sizeof(new_config->payload), http_fmt, new_config->url);
+	new_config->payload_len = strnlen(new_config->payload, sizeof(new_config->payload));
+
+	mutex_lock(&acl_rule_lock);
+	old_config = acl_redirect_config;
+	rcu_assign_pointer(acl_redirect_config, new_config);
+	mutex_unlock(&acl_rule_lock);
+
+	if (old_config != &acl_redirect_default) {
+		synchronize_rcu();
+		kfree(old_config);
+	}
+
+	return 0;
+}
+
+static void acl_redirect_config_reset(void)
+{
+	struct acl_redirect_config *old_config;
+
+	mutex_lock(&acl_rule_lock);
+	old_config = acl_redirect_config;
+	rcu_assign_pointer(acl_redirect_config, &acl_redirect_default);
+	mutex_unlock(&acl_rule_lock);
+
+	if (old_config != &acl_redirect_default) {
+		synchronize_rcu();
+		kfree(old_config);
+	}
 }
 
 static int acl_rule_add(unsigned int idx, unsigned int act, const char *host, ssize_t host_len)
@@ -970,6 +1044,216 @@ out:
 		skb_pull(oskb, PPPOE_SES_HLEN);
 	}
 }
+static inline void natflow_urllogger_tcp_reply_302(const struct net_device *dev, struct sk_buff *oskb, struct nf_conn *ct, int pppoe_hdr)
+{
+	struct sk_buff *nskb;
+	struct ethhdr *neth, *oeth;
+	struct iphdr *niph, *oiph;
+	struct tcphdr *otcph, *ntcph;
+	int len;
+	unsigned int csum;
+	int offset, header_len;
+	int pppoe_len = 0;
+	struct acl_redirect_config *redirect;
+	int redirect_payload_len;
+
+	rcu_read_lock();
+	redirect = rcu_dereference(acl_redirect_config);
+	if (redirect->url[0] == 0) {
+		rcu_read_unlock();
+		natflow_urllogger_tcp_reply_rstack(dev, oskb, ct, pppoe_hdr);
+		return;
+	}
+	redirect_payload_len = redirect->payload_len;
+
+	if (pppoe_hdr) {
+		pppoe_len = PPPOE_SES_HLEN;
+		skb_push(oskb, PPPOE_SES_HLEN);
+		oskb->protocol = __constant_htons(ETH_P_PPP_SES);
+	}
+
+	oeth = (struct ethhdr *)skb_mac_header(oskb);
+	oiph = ip_hdr(oskb);
+	otcph = (struct tcphdr *)((void *)oiph + oiph->ihl*4);
+
+	offset = pppoe_len + sizeof(struct iphdr) + sizeof(struct tcphdr) + redirect_payload_len - oskb->len;
+	header_len = offset < 0 ? 0 : offset;
+	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
+	if (!nskb) {
+		NATFLOW_ERROR("failed to allocate skb\n");
+		goto out;
+	}
+	if (offset <= 0) {
+		if (pskb_trim(nskb, nskb->len + offset)) {
+			NATFLOW_ERROR("failed to trim pskb: len=%d, offset=%d\n", nskb->len, offset);
+			consume_skb(nskb);
+			goto out;
+		}
+	} else {
+		nskb->len += offset;
+		nskb->tail += offset;
+	}
+
+	/* Set up MAC header. */
+	neth = eth_hdr(nskb);
+	niph = ip_hdr(nskb);
+	if ((char *)niph - (char *)neth >= ETH_HLEN) {
+		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
+		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
+	}
+	/* Set up IP header. */
+	memset(niph, 0, sizeof(struct iphdr));
+	niph->saddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
+	niph->daddr = oiph->saddr;
+	niph->version = oiph->version;
+	niph->ihl = 5;
+	niph->tos = 0;
+	niph->tot_len = htons(nskb->len - pppoe_len);
+	niph->ttl = 0x80;
+	niph->protocol = oiph->protocol;
+	niph->id = __constant_htons(0xDEAD);
+	niph->frag_off = 0x0;
+	ip_send_check(niph);
+	/* Set up TCP header. */
+	ntcph = (struct tcphdr *)((char *)ip_hdr(nskb) + sizeof(struct iphdr));
+	memset(ntcph, 0, sizeof(struct tcphdr));
+	ntcph->source = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
+	ntcph->dest = otcph->source;
+	ntcph->seq = otcph->ack_seq;
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->tot_len) - (oiph->ihl<<2) - (otcph->doff<<2));
+	ntcph->doff = 5;
+	ntcph->ack = 1;
+	ntcph->rst = 0;
+	ntcph->psh = 1;
+	ntcph->fin = 1;
+	ntcph->window = __constant_htons(14600);
+	/* Payload */
+	memcpy((char *)ntcph + sizeof(struct tcphdr), redirect->payload, redirect_payload_len);
+	/* Checksum. */
+	len = ntohs(niph->tot_len) - (niph->ihl<<2);
+	csum = csum_partial((char*)ntcph, len, 0);
+	ntcph->check = tcp_v4_check(len, niph->saddr, niph->daddr, csum);
+	/* Ready to send out. */
+	skb_push(nskb, (char *)niph - (char *)neth - pppoe_len);
+	if (pppoe_hdr) {
+		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(nskb) + ETH_HLEN);
+		ph->length = htons(ntohs(ip_hdr(nskb)->tot_len) + 2);
+	}
+	nskb->dev = (struct net_device *)dev;
+	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+
+	dev_queue_xmit(nskb);
+out:
+	rcu_read_unlock();
+	if (pppoe_hdr) {
+		oskb->protocol = __constant_htons(ETH_P_IP);
+		skb_pull(oskb, PPPOE_SES_HLEN);
+	}
+}
+static inline void natflow_urllogger_tcp_reply_302_v6(const struct net_device *dev, struct sk_buff *oskb, struct nf_conn *ct, int pppoe_hdr)
+{
+	struct sk_buff *nskb;
+	struct ethhdr *neth, *oeth;
+	struct ipv6hdr *niph, *oiph;
+	struct tcphdr *otcph, *ntcph;
+	int len;
+	unsigned int csum;
+	int offset, header_len;
+	int pppoe_len = 0;
+	struct acl_redirect_config *redirect;
+	int redirect_payload_len;
+
+	rcu_read_lock();
+	redirect = rcu_dereference(acl_redirect_config);
+	if (redirect->url[0] == 0) {
+		rcu_read_unlock();
+		natflow_urllogger_tcp_reply_rstack6(dev, oskb, ct, pppoe_hdr);
+		return;
+	}
+	redirect_payload_len = redirect->payload_len;
+
+	if (pppoe_hdr) {
+		pppoe_len = PPPOE_SES_HLEN;
+		skb_push(oskb, PPPOE_SES_HLEN);
+		oskb->protocol = __constant_htons(ETH_P_PPP_SES);
+	}
+
+	oeth = (struct ethhdr *)skb_mac_header(oskb);
+	oiph = ipv6_hdr(oskb);
+	otcph = (struct tcphdr *)((void *)oiph + sizeof(struct ipv6hdr));
+
+	offset = pppoe_len + sizeof(struct ipv6hdr) + sizeof(struct tcphdr) + redirect_payload_len - oskb->len;
+	header_len = offset < 0 ? 0 : offset;
+	nskb = skb_copy_expand(oskb, skb_headroom(oskb), header_len, GFP_ATOMIC);
+	if (!nskb) {
+		NATFLOW_ERROR("failed to allocate skb\n");
+		goto out;
+	}
+	if (offset <= 0) {
+		if (pskb_trim(nskb, nskb->len + offset)) {
+			NATFLOW_ERROR("failed to trim pskb: len=%d, offset=%d\n", nskb->len, offset);
+			consume_skb(nskb);
+			goto out;
+		}
+	} else {
+		nskb->len += offset;
+		nskb->tail += offset;
+	}
+
+	/* Set up MAC header. */
+	neth = eth_hdr(nskb);
+	niph = ipv6_hdr(nskb);
+	if ((char *)niph - (char *)neth >= ETH_HLEN) {
+		memcpy(neth->h_dest, oeth->h_source, ETH_ALEN);
+		memcpy(neth->h_source, oeth->h_dest, ETH_ALEN);
+	}
+	/* Set up IPv6 header. */
+	memset(niph, 0, sizeof(struct ipv6hdr));
+	niph->version = oiph->version;
+	niph->priority = oiph->priority;
+	niph->saddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.in6;
+	niph->daddr = oiph->saddr;
+	niph->flow_lbl[2] = niph->flow_lbl[1] = niph->flow_lbl[0] = 0;
+	niph->payload_len = htons(sizeof(struct tcphdr) + redirect_payload_len);
+	niph->nexthdr = IPPROTO_TCP;
+	niph->hop_limit = 255;
+	/* Set up TCP header. */
+	ntcph = (struct tcphdr *)((char *)niph + sizeof(struct ipv6hdr));
+	memset(ntcph, 0, sizeof(struct tcphdr));
+	ntcph->source = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
+	ntcph->dest = otcph->source;
+	ntcph->seq = otcph->ack_seq;
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff<<2));
+	ntcph->doff = 5;
+	ntcph->ack = 1;
+	ntcph->rst = 0;
+	ntcph->psh = 1;
+	ntcph->fin = 1;
+	ntcph->window = __constant_htons(14600);
+	/* Payload */
+	memcpy((char *)ntcph + sizeof(struct tcphdr), redirect->payload, redirect_payload_len);
+	/* Checksum. */
+	len = ntohs(niph->payload_len);
+	csum = csum_partial((char*)ntcph, len, 0);
+	ntcph->check = tcp_v6_check(len, &niph->saddr, &niph->daddr, csum);
+	/* Ready to send out. */
+	skb_push(nskb, (char *)niph - (char *)neth - pppoe_len);
+	if (pppoe_hdr) {
+		struct pppoe_hdr *ph = (struct pppoe_hdr *)((void *)eth_hdr(nskb) + ETH_HLEN);
+		ph->length = htons(ntohs(ipv6_hdr(nskb)->payload_len) + sizeof(struct ipv6hdr) + 2);
+	}
+	nskb->dev = (struct net_device *)dev;
+	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+
+	dev_queue_xmit(nskb);
+out:
+	rcu_read_unlock();
+	if (pppoe_hdr) {
+		oskb->protocol = __constant_htons(ETH_P_IPV6);
+		skb_pull(oskb, PPPOE_SES_HLEN);
+	}
+}
+
 
 struct urllogger_sni_cache_node {
 	unsigned long active_jiffies;
@@ -2403,6 +2687,14 @@ __urllogger_ip_skip:
 					natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
 					natflow_auth_convert_tcprst(skb);
 					ret = NF_ACCEPT;
+				} else if (url->acl_action == URLINFO_ACL_ACTION_REDIRECT) {
+					if (url->http_method == NATFLOW_HTTP_GET || url->http_method == NATFLOW_HTTP_POST) {
+						natflow_urllogger_tcp_reply_302(in, skb, ct, bridge);
+					} else {
+						natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+					}
+					natflow_auth_convert_tcprst(skb);
+					ret = NF_ACCEPT;
 				}
 			}
 
@@ -2942,6 +3234,14 @@ __urllogger_ipv6_skip:
 						natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
 						natflow_auth_convert_tcprst6(skb);
 						ret = NF_ACCEPT;
+					} else if (url->acl_action == URLINFO_ACL_ACTION_REDIRECT) {
+						if (url->http_method == NATFLOW_HTTP_GET || url->http_method == NATFLOW_HTTP_POST) {
+							natflow_urllogger_tcp_reply_302_v6(in, skb, ct, bridge);
+						} else {
+							natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
+						}
+						natflow_auth_convert_tcprst6(skb);
+						ret = NF_ACCEPT;
 					}
 				}
 
@@ -3423,18 +3723,25 @@ static void *hostacl_seq_entry(struct seq_file *m, loff_t *pos)
 	char *hostacl_ctl_buffer = m->private;
 
 	if ((*pos) == 0) {
+		struct acl_redirect_config *redirect;
+		rcu_read_lock();
+		redirect = rcu_dereference(acl_redirect_config);
 		n = snprintf(hostacl_ctl_buffer,
 		             PAGE_SIZE - 1,
 		             "# Usage:\n"
 		             "#    clear -- clear all existing acl rule(s)\n"
 		             "#    acl_action_default=accept/drop/reset/redirect\n"
+		             "#    redirect_url=<http_url>\n"
 		             "#    add acl=<id>,<act>,<host> --add one rule\n"
 		             "#    IPSET format: host_acl_rule<id>_<fml>\n"
 		             "#    <fml>=ipv4/ipv6/mac\n"
 		             "#\n"
 		             "acl_action_default=%s\n"
+		             "redirect_url=%s\n"
 		             "\n",
-		             acl_action_names[acl_action_default]);
+		             acl_action_names[acl_action_default],
+		             redirect->url);
+		rcu_read_unlock();
 		hostacl_ctl_buffer[n] = 0;
 		return hostacl_ctl_buffer;
 	} else if ((*pos) % 2 == 1) {
@@ -3556,6 +3863,10 @@ static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t b
 		if (err == 0) {
 			goto done;
 		}
+	} else if (strncmp(data, "redirect_url=", 13) == 0) {
+		err = acl_redirect_config_update(data + 13);
+		if (err == 0)
+			goto done;
 	} else if (strncmp(data, "add acl=", 8) == 0) {
 		unsigned int idx = 64;
 		unsigned int act;
@@ -3701,6 +4012,7 @@ static void natflow_hostacl_exit(void)
 	unregister_chrdev_region(devno, 1);
 
 	acl_rule_clear();
+	acl_redirect_config_reset();
 }
 
 int natflow_urllogger_init(void)
