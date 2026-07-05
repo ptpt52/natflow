@@ -45,9 +45,12 @@
 #include "natflow_user.h"
 #include "natflow_zone.h"
 
+/* user timeout 1800s */
+static unsigned int natflow_user_timeout = 1800;
+
 struct userinfo {
 	struct list_head list;
-	unsigned int timeout;
+	unsigned int idle_time;
 	union {
 		__be32 ip;
 		union nf_inet_addr ipv6;
@@ -104,6 +107,16 @@ static inline void userinfo_event_store_exit(void)
 	userinfo_event_store_purge();
 }
 
+static inline unsigned int natflow_user_idle_time(const struct fakeuser_data_t *fud)
+{
+	uint32_t timestamp = READ_ONCE(fud->timestamp);
+
+	if (timestamp == 0)
+		return 0;
+
+	return (uint32_t)((uint32_t)jiffies - timestamp) / HZ;
+}
+
 static inline void userinfo_event_queue(natflow_fakeuser_t *user)
 {
 	struct nf_conn_acct *acct;
@@ -123,7 +136,7 @@ static inline void userinfo_event_queue(natflow_fakeuser_t *user)
 
 	fud = natflow_fakeuser_data(user);
 	INIT_LIST_HEAD(&user_i->list);
-	user_i->timeout = nf_ct_expires(user) / HZ;
+	user_i->idle_time = natflow_user_idle_time(fud);
 	if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
 		user_i->l2num = 0;
 		user_i->ip = user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
@@ -619,8 +632,6 @@ static inline int natflow_auth_dev_addr6(const struct net_device *dev, struct in
 	return ret;
 }
 
-/* user timeout 1800s */
-static unsigned int natflow_user_timeout = 1800;
 #define NATFLOW_USER_TIMEOUT 300
 
 static DEFINE_PER_CPU(struct sk_buff *, natflow_user_uskbs);
@@ -3736,7 +3747,7 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 						goto out;
 					}
 					INIT_LIST_HEAD(&user_i->list);
-					user_i->timeout = nf_ct_expires(ct)  / HZ;
+					user_i->idle_time = natflow_user_idle_time(fud);
 					if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
 						user_i->l2num = 0;
 						user_i->ip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
@@ -3808,13 +3819,13 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 		if (user_i->l2num == 0) {
 			len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
 			              &user_i->ip, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
-			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
+			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->idle_time,
 			              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
 			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
 		} else {
 			len = sprintf(user->data, "%pI6,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
 			              &user_i->ipv6, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
-			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
+			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->idle_time,
 			              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
 			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
 		}
@@ -4009,13 +4020,13 @@ static ssize_t userinfo_event_read(struct file *file, char __user *buf,
 		if (user_i->l2num == 0) {
 			len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
 			              &user_i->ip, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
-			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
+			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->idle_time,
 			              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
 			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
 		} else {
 			len = sprintf(user->data, "%pI6,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
 			              &user_i->ipv6, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
-			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->timeout,
+			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->idle_time,
 			              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
 			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
 		}
