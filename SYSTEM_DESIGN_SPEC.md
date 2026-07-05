@@ -901,7 +901,7 @@ classid 模式：
 - `accept`/0：记录并放行。
 - `drop`/1：设置 `IPS_NATFLOW_CT_DROP` 并 drop。
 - `reset`/2：TCP 路径发送/改写 RST 并设置 drop 状态；UDP/QUIC 路径没有 RST 等价实现，按非 record 动作丢弃。
-- `redirect`/3：当前实现按非 record 动作处理，未发现完整 redirect 目标重写逻辑；集成层不要假设它会跳转到特定页面。
+- `redirect`/3：若为 HTTP GET/POST 请求则返回 302 重定向到配置的 `acl_redirect_url`（可通过 `redirect_url=...` 写入 /dev/hostacl_ctl）；对于 HTTPS 或 QUIC 则退化为 TCP Reset 或 Drop 丢弃。
 
 ## 16. Zone 设计
 
@@ -1090,7 +1090,7 @@ path notifier：
 ### 20.3 行为限制
 
 - URL logger 只有 `enable=1` 时才处理 host ACL。
-- host ACL 的 redirect action 没有完整重定向实现。
+- host ACL 的 redirect action 支持配置 `redirect_url` 并通过 HTTP 302 重定向。
 - `conntrackinfo_ctl` 的 `kickall` 没有实际清理。
 - `userinfo_ctl`、`userinfo_event_ctl`、`urllogger_queue` 对小 buffer 不支持 partial read。
 - vline 配置非事务、无冲突检测、运行 ifindex key 小于 64。

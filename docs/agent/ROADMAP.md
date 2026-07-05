@@ -31,7 +31,7 @@
 
 当前必须覆盖：
 
-- Host ACL 的 `redirect` action 当前没有完整重定向实现。
+- [x] Host ACL 的 `redirect` action 当前没有完整重定向实现。（已实现基于 302 的拦截与配置）
 - `conntrackinfo_ctl` 的 `kickall` 当前没有实际清理行为。
 - `/dev/userinfo_event_ctl` 写接口当前返回 `-ENOSYS`。
 - `userinfo_ctl`、`userinfo_event_ctl`、`urllogger_queue` 小 buffer read 当前返回 `-EINVAL`，不是 partial read。

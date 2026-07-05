@@ -485,6 +485,7 @@ cat /dev/hostacl_ctl
 ```sh
 echo 'clear' >/dev/hostacl_ctl
 echo 'acl_action_default=accept' >/dev/hostacl_ctl
+echo 'redirect_url=http://1.1.1.1/blocked.html' >/dev/hostacl_ctl
 echo 'add acl=<id>,<act>,<host>' >/dev/hostacl_ctl
 ```
 
@@ -495,7 +496,7 @@ echo 'add acl=<id>,<act>,<host>' >/dev/hostacl_ctl
 | 0 | `accept` / record | 记录并放行。 |
 | 1 | `drop` | 丢弃。 |
 | 2 | `reset` | 对 TCP 尝试 reset。 |
-| 3 | `redirect` | 重定向。 |
+| 3 | `redirect` | HTTP 请求（GET/POST）返回 302 重定向；HTTPS/QUIC 则退化为 TCP reset 或丢弃。 |
 
 说明：
 
