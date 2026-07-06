@@ -875,7 +875,7 @@ classid 模式：
    - 只处理当前 UDP datagram 中解析出的第一个 QUIC packet，不遍历 coalesced datagram 中后续 packet。
    - packet number reconstruction 简化为把解保护后的截断 packet number 当完整 packet number 使用，适合常见首包，不覆盖所有 Initial 重传/高 packet number 场景。
    - QUIC frame parser 只跳过 PADDING、PING、ACK/ACK_ECN，并解析 CRYPTO；遇到其他 frame 会结束本次 SNI 探测。
-   - QUIC crypto 上下文按 CPU 分配，并把 key/iv/header-protection key/mask/nonce 缓冲放在 `urllogger_quic_crypto_ctx` 中，避免在 `CONFIG_VMAP_STACK` 内核上把栈地址传给 scatterlist/crypto API。
+   - QUIC crypto 上下文按 CPU 分配，并把 key/iv/header-protection key/mask/nonce、HKDF scratch 和 shash desc 缓冲放在 `urllogger_quic_crypto_ctx` 中，避免在 `CONFIG_VMAP_STACK` 内核上把栈地址传给 scatterlist/crypto API，同时降低包处理路径栈占用。
    - 不解析 HTTP/3 `:authority` 或 path，不支持 ECH 内层真实 SNI。
    - QUIC crypto 初始化失败时，URL logger 仍可加载，但 QUIC hostname parser 被禁用。
 8. 命中后写 URL store，并设置 `IPS_NATFLOW_URLLOGGER_HANDLED`。
@@ -1157,7 +1157,7 @@ path notifier：
 - MUST 执行 host ACL 的 accept/drop 语义，并在 TCP 路径实现 reset/RST 语义。
 - MUST 输出指定 CSV 格式。
 - MUST 保证等待更多 TLS/QUIC 数据时不会让 fast path 提前接管该连接，并在 PPPoE bridge 路径恢复 skb 状态后再返回。
-- MUST 在 QUIC crypto 路径避免把栈缓冲直接传给 scatterlist/crypto API；当前实现使用 per-CPU ctx 中的动态分配缓冲以兼容 `CONFIG_VMAP_STACK`。
+- MUST 在 QUIC crypto 路径避免把栈缓冲直接传给 scatterlist/crypto API；当前实现使用 per-CPU ctx 中的 crypto scratch 缓冲以兼容 `CONFIG_VMAP_STACK` 并控制栈占用。
 - MUST NOT 重新引入固定域名到全局 ipset 的隐式自动添加逻辑；所有 host 相关策略应通过 host ACL 和显式配置的 `host_acl_rule<id>_*` ipset 表达。
 
 ### 21.5 SHOULD：工程质量
