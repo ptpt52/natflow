@@ -1470,6 +1470,7 @@ struct urllogger_quic_crypto_ctx {
 	unsigned char hp_key[QUIC_INITIAL_KEY_LEN];
 	unsigned char mask[QUIC_HP_SAMPLE_LEN];
 	unsigned char nonce[QUIC_INITIAL_IV_LEN];
+	char desc_buf[sizeof(struct shash_desc) + HASH_MAX_DESCSIZE] __aligned(__alignof__(struct shash_desc));
 };
 
 struct quic_initial_info {
@@ -1596,24 +1597,17 @@ static int quic_hmac_sha256(struct urllogger_quic_crypto_ctx *ctx,
                             const unsigned char *data, unsigned int data_len,
                             unsigned char *out)
 {
-	struct shash_desc *desc;
-	unsigned int desc_len;
+	struct shash_desc *desc = (struct shash_desc *)ctx->desc_buf;
 	int ret;
 
 	ret = crypto_shash_setkey(ctx->hmac, key, key_len);
 	if (ret != 0)
 		return ret;
 
-	desc_len = sizeof(*desc) + crypto_shash_descsize(ctx->hmac);
-	desc = kzalloc(desc_len, GFP_ATOMIC);
-	if (desc == NULL)
-		return -ENOMEM;
-
 	desc->tfm = ctx->hmac;
 	ret = crypto_shash_digest(desc, data, data_len, out);
 
-	memzero_explicit(desc, desc_len);
-	kfree(desc);
+	shash_desc_zero(desc);
 	return ret;
 }
 
