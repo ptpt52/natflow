@@ -1378,13 +1378,19 @@ static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __b
 		return -ENOMEM;
 
 	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-		if (urllogger_sni_cache[i][j].data != NULL &&
-		        urllogger_sni_cache[i][j].src_ip == src_ip &&
-		        urllogger_sni_cache[i][j].src_port == src_port &&
-		        urllogger_sni_cache[i][j].dst_ip == dst_ip &&
-		        urllogger_sni_cache[i][j].dst_port == dst_port) {
-			return -EEXIST;
-		} else if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE && urllogger_sni_cache[i][j].data == NULL) {
+		if (urllogger_sni_cache[i][j].data != NULL) {
+			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
+				kfree(urllogger_sni_cache[i][j].data);
+				urllogger_sni_cache[i][j].data = NULL;
+			} else if (urllogger_sni_cache[i][j].src_ip == src_ip &&
+			           urllogger_sni_cache[i][j].src_port == src_port &&
+			           urllogger_sni_cache[i][j].dst_ip == dst_ip &&
+			           urllogger_sni_cache[i][j].dst_port == dst_port) {
+				return -EEXIST;
+			}
+		}
+
+		if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE && urllogger_sni_cache[i][j].data == NULL) {
 			next_to_use = j;
 		}
 	}
@@ -1413,13 +1419,19 @@ static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 sr
 		return -ENOMEM;
 
 	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-		if (urllogger_sni_cache[i][j].data != NULL &&
-		        memcmp(&urllogger_sni_cache[i][j].src_ipv6, src_ip, 16) == 0 &&
-		        urllogger_sni_cache[i][j].src_port == src_port &&
-		        memcmp(&urllogger_sni_cache[i][j].dst_ipv6, dst_ip, 16) == 0 &&
-		        urllogger_sni_cache[i][j].dst_port == dst_port) {
-			return -EEXIST;
-		} else if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE && urllogger_sni_cache[i][j].data == NULL) {
+		if (urllogger_sni_cache[i][j].data != NULL) {
+			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
+				kfree(urllogger_sni_cache[i][j].data);
+				urllogger_sni_cache[i][j].data = NULL;
+			} else if (memcmp(&urllogger_sni_cache[i][j].src_ipv6, src_ip, 16) == 0 &&
+			           urllogger_sni_cache[i][j].src_port == src_port &&
+			           memcmp(&urllogger_sni_cache[i][j].dst_ipv6, dst_ip, 16) == 0 &&
+			           urllogger_sni_cache[i][j].dst_port == dst_port) {
+				return -EEXIST;
+			}
+		}
+
+		if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE && urllogger_sni_cache[i][j].data == NULL) {
 			next_to_use = j;
 		}
 	}
