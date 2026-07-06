@@ -1525,7 +1525,9 @@ static const unsigned char quic_v1_initial_salt[20] = {
 struct urllogger_quic_crypto_ctx {
 	struct crypto_shash *hmac;
 	struct crypto_skcipher *hp;
+	struct skcipher_request *hp_req;
 	struct crypto_aead *aead;
+	struct aead_request *aead_req;
 	unsigned char key[QUIC_INITIAL_KEY_LEN];
 	unsigned char iv[QUIC_INITIAL_IV_LEN];
 	unsigned char hp_key[QUIC_INITIAL_KEY_LEN];
@@ -1536,6 +1538,7 @@ struct urllogger_quic_crypto_ctx {
 	unsigned char hkdf_info[80];
 	unsigned char initial_secret[QUIC_INITIAL_SECRET_LEN];
 	unsigned char client_secret[QUIC_INITIAL_SECRET_LEN];
+	unsigned char scratch_packet[2048];
 	char desc_buf[sizeof(struct shash_desc) + HASH_MAX_DESCSIZE] __aligned(__alignof__(struct shash_desc));
 };
 
@@ -1767,7 +1770,7 @@ static int quic_header_protection_mask(struct urllogger_quic_crypto_ctx *ctx,
                                        const unsigned char *sample,
                                        unsigned char *mask)
 {
-	struct skcipher_request *req;
+	struct skcipher_request *req = ctx->hp_req;
 	struct scatterlist src;
 	struct scatterlist dst;
 	int ret;
@@ -1776,16 +1779,11 @@ static int quic_header_protection_mask(struct urllogger_quic_crypto_ctx *ctx,
 	if (ret != 0)
 		return ret;
 
-	req = skcipher_request_alloc(ctx->hp, GFP_ATOMIC);
-	if (req == NULL)
-		return -ENOMEM;
-
 	sg_init_one(&src, sample, QUIC_HP_SAMPLE_LEN);
 	sg_init_one(&dst, mask, QUIC_HP_SAMPLE_LEN);
 	skcipher_request_set_callback(req, 0, NULL, NULL);
 	skcipher_request_set_crypt(req, &src, &dst, QUIC_HP_SAMPLE_LEN, NULL);
 	ret = crypto_skcipher_encrypt(req);
-	skcipher_request_free(req);
 	return ret;
 }
 
@@ -1799,7 +1797,7 @@ static int quic_initial_decrypt(struct urllogger_quic_crypto_ctx *ctx,
                                 unsigned char **payload,
                                 unsigned int *payload_len)
 {
-	struct aead_request *req;
+	struct aead_request *req = ctx->aead_req;
 	struct scatterlist sg;
 	unsigned int crypt_len;
 	int i;
@@ -1823,18 +1821,11 @@ static int quic_initial_decrypt(struct urllogger_quic_crypto_ctx *ctx,
 	if (ret != 0)
 		goto out;
 
-	req = aead_request_alloc(ctx->aead, GFP_ATOMIC);
-	if (req == NULL) {
-		ret = -ENOMEM;
-		goto out;
-	}
-
 	sg_init_one(&sg, packet, packet_len);
 	aead_request_set_callback(req, 0, NULL, NULL);
 	aead_request_set_ad(req, header_len);
 	aead_request_set_crypt(req, &sg, &sg, crypt_len, ctx->nonce);
 	ret = crypto_aead_decrypt(req);
-	aead_request_free(req);
 	if (ret == 0) {
 		*payload = packet + header_len;
 		*payload_len = crypt_len - QUIC_INITIAL_TAG_LEN;
@@ -2003,10 +1994,12 @@ static enum tls_sni_search_result quic_initial_sni_search(const unsigned char *d
 
 	ctx = &urllogger_quic_crypto_ctx[cpu];
 
-	packet = kmemdup(data, info->packet_len, GFP_ATOMIC);
-	if (packet == NULL) {
+	if (info->packet_len > sizeof(ctx->scratch_packet)) {
 		return TLS_SNI_SEARCH_MALFORMED;
 	}
+
+	packet = ctx->scratch_packet;
+	memcpy(packet, data, info->packet_len);
 
 	ret = quic_initial_keys(ctx, info->dcid, info->dcid_len, ctx->key, ctx->iv, ctx->hp_key);
 	if (ret != 0)
@@ -2039,7 +2032,6 @@ static enum tls_sni_search_result quic_initial_sni_search(const unsigned char *d
 	memzero_explicit(ctx->nonce, sizeof(ctx->nonce));
 
 	ret = quic_crypto_frames_search(payload, payload_len, crypto_data, crypto_len, host, host_len);
-	kfree(packet);
 	return ret;
 
 malformed:
@@ -2048,7 +2040,6 @@ malformed:
 	memzero_explicit(ctx->hp_key, sizeof(ctx->hp_key));
 	memzero_explicit(ctx->mask, sizeof(ctx->mask));
 	memzero_explicit(ctx->nonce, sizeof(ctx->nonce));
-	kfree(packet);
 	return TLS_SNI_SEARCH_MALFORMED;
 }
 
@@ -2501,10 +2492,22 @@ static int urllogger_quic_crypto_init(void)
 			goto failed;
 		}
 
+		urllogger_quic_crypto_ctx[i].hp_req = skcipher_request_alloc(urllogger_quic_crypto_ctx[i].hp, GFP_KERNEL);
+		if (urllogger_quic_crypto_ctx[i].hp_req == NULL) {
+			ret = -ENOMEM;
+			goto failed;
+		}
+
 		urllogger_quic_crypto_ctx[i].aead = crypto_alloc_aead("gcm(aes)", 0, CRYPTO_ALG_ASYNC);
 		if (IS_ERR(urllogger_quic_crypto_ctx[i].aead)) {
 			ret = PTR_ERR(urllogger_quic_crypto_ctx[i].aead);
 			urllogger_quic_crypto_ctx[i].aead = NULL;
+			goto failed;
+		}
+
+		urllogger_quic_crypto_ctx[i].aead_req = aead_request_alloc(urllogger_quic_crypto_ctx[i].aead, GFP_KERNEL);
+		if (urllogger_quic_crypto_ctx[i].aead_req == NULL) {
+			ret = -ENOMEM;
 			goto failed;
 		}
 	}
@@ -2515,8 +2518,12 @@ static int urllogger_quic_crypto_init(void)
 failed:
 	urllogger_quic_crypto_ready = 0;
 	for (i = 0; i < urllogger_quic_crypto_cpu_num; i++) {
+		if (urllogger_quic_crypto_ctx[i].aead_req != NULL)
+			aead_request_free(urllogger_quic_crypto_ctx[i].aead_req);
 		if (urllogger_quic_crypto_ctx[i].aead != NULL)
 			crypto_free_aead(urllogger_quic_crypto_ctx[i].aead);
+		if (urllogger_quic_crypto_ctx[i].hp_req != NULL)
+			skcipher_request_free(urllogger_quic_crypto_ctx[i].hp_req);
 		if (urllogger_quic_crypto_ctx[i].hp != NULL)
 			crypto_free_skcipher(urllogger_quic_crypto_ctx[i].hp);
 		if (urllogger_quic_crypto_ctx[i].hmac != NULL)
@@ -2537,8 +2544,12 @@ static void urllogger_quic_crypto_cleanup(void)
 		return;
 
 	for (i = 0; i < urllogger_quic_crypto_cpu_num; i++) {
+		if (urllogger_quic_crypto_ctx[i].aead_req != NULL)
+			aead_request_free(urllogger_quic_crypto_ctx[i].aead_req);
 		if (urllogger_quic_crypto_ctx[i].aead != NULL)
 			crypto_free_aead(urllogger_quic_crypto_ctx[i].aead);
+		if (urllogger_quic_crypto_ctx[i].hp_req != NULL)
+			skcipher_request_free(urllogger_quic_crypto_ctx[i].hp_req);
 		if (urllogger_quic_crypto_ctx[i].hp != NULL)
 			crypto_free_skcipher(urllogger_quic_crypto_ctx[i].hp);
 		if (urllogger_quic_crypto_ctx[i].hmac != NULL)
