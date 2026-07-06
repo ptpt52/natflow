@@ -2529,13 +2529,10 @@ __urllogger_quic_ip_done:
 			unsigned int append_len = data_len;
 			unsigned int next_add_data_len;
 
-			data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
-
 			if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq) + prev_data_len + add_data_len) {
 				if (add_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
 				        append_len > URLLOGGER_SNI_CACHE_DATA_LIMIT - add_data_len) {
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": sni cache data too large, add_data_len=%u, data_len=%u\n", DEBUG_TCP_ARG(iph,l4), add_data_len, append_len);
-					consume_skb(prev_skb);
 					goto __urllogger_ip_skip;
 				}
 				next_add_data_len = add_data_len + append_len;
@@ -2549,6 +2546,7 @@ __urllogger_quic_ip_done:
 				prev_iph = ip_hdr(prev_skb);
 				prev_l4 = (void *)prev_iph + prev_iph->ihl * 4;
 
+				data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
 				memcpy(prev_skb->data + prev_skb->len + add_data_len, data, data_len);
 				add_data_len = next_add_data_len;
 
@@ -2560,7 +2558,6 @@ __urllogger_quic_ip_done:
 					        urllogger_sni_cache_attach(prev_iph->saddr, TCPH(prev_l4)->source,
 					                                   prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
 						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach urllogger sni cache, add_data_len=%u\n", DEBUG_TCP_ARG(iph,l4), add_data_len);
-						consume_skb(prev_skb);
 						goto __urllogger_ip_skip;
 					}
 					ret = NF_ACCEPT;
@@ -2570,13 +2567,11 @@ __urllogger_quic_ip_done:
 				if (urllogger_sni_cache_attach(prev_iph->saddr, TCPH(prev_l4)->source,
 				                               prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach urllogger sni cache\n", DEBUG_TCP_ARG(iph,l4));
-					consume_skb(prev_skb);
 					goto __urllogger_ip_skip;
 				}
 				ret = NF_ACCEPT;
 				goto out;
 			} else {
-				consume_skb(prev_skb);
 				goto __urllogger_ip_skip;
 			}
 		} else {
@@ -2588,7 +2583,6 @@ __urllogger_quic_ip_done:
 				if (prev_skb) {
 					if (urllogger_sni_cache_attach(iph->saddr, TCPH(l4)->source, iph->daddr, TCPH(l4)->dest, prev_skb, 0) != 0) {
 						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach urllogger sni cache\n", DEBUG_TCP_ARG(iph,l4));
-						consume_skb(prev_skb);
 						goto __urllogger_ip_skip;
 					}
 				}
@@ -2597,7 +2591,6 @@ __urllogger_quic_ip_done:
 			}
 		}
 
-		data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
 __urllogger_ip_skip:
 		/* check one packet only */
 		set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
@@ -2709,6 +2702,7 @@ __urllogger_ip_skip:
 				consume_skb(prev_skb);
 				prev_skb = NULL;
 			}
+			data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
 			host_len = data_len;
 			if (http_url_search(data, &host_len, &host, &uri_len, &uri, &http_method) > 0) {
 				struct urlinfo *url = urlinfo_alloc_record(host, host_len, URLINFO_HOST_ALLOW_PORT, uri, uri_len);
@@ -2990,13 +2984,10 @@ __urllogger_quic_ipv6_done:
 			unsigned int append_len = data_len;
 			unsigned int next_add_data_len;
 
-			data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
-
 			if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq) + prev_data_len + add_data_len) {
 				if (add_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
 				        append_len > URLLOGGER_SNI_CACHE_DATA_LIMIT - add_data_len) {
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": sni cache data too large, add_data_len=%u, data_len=%u\n", DEBUG_TCP_ARG6(iph,l4), add_data_len, append_len);
-					consume_skb(prev_skb);
 					goto __urllogger_ipv6_skip;
 				}
 				next_add_data_len = add_data_len + append_len;
@@ -3010,6 +3001,7 @@ __urllogger_quic_ipv6_done:
 				prev_iph = ipv6_hdr(prev_skb);
 				prev_l4 = (void *)prev_iph + sizeof(struct ipv6hdr);
 
+				data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
 				memcpy(prev_skb->data + prev_skb->len + add_data_len, data, data_len);
 				add_data_len = next_add_data_len;
 
@@ -3021,7 +3013,6 @@ __urllogger_quic_ipv6_done:
 					        urllogger_sni_cache_attach6(&prev_iph->saddr, TCPH(prev_l4)->source,
 					                                    &prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
 						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach urllogger sni cache6, add_data_len=%u\n", DEBUG_TCP_ARG6(iph,l4), add_data_len);
-						consume_skb(prev_skb);
 						goto __urllogger_ipv6_skip;
 					}
 					ret = NF_ACCEPT;
@@ -3031,13 +3022,11 @@ __urllogger_quic_ipv6_done:
 				if (urllogger_sni_cache_attach6(&prev_iph->saddr, TCPH(prev_l4)->source,
 				                                &prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach urllogger sni cache6\n", DEBUG_TCP_ARG6(iph,l4));
-					consume_skb(prev_skb);
 					goto __urllogger_ipv6_skip;
 				}
 				ret = NF_ACCEPT;
 				goto out;
 			} else {
-				consume_skb(prev_skb);
 				goto __urllogger_ipv6_skip;
 			}
 		} else {
@@ -3049,7 +3038,6 @@ __urllogger_quic_ipv6_done:
 				if (prev_skb) {
 					if (urllogger_sni_cache_attach6(&IPV6H->saddr, TCPH(l4)->source, &IPV6H->daddr, TCPH(l4)->dest, prev_skb, 0) != 0) {
 						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach urllogger sni cache6\n", DEBUG_TCP_ARG6(iph,l4));
-						consume_skb(prev_skb);
 						goto __urllogger_ipv6_skip;
 					}
 				}
@@ -3058,7 +3046,6 @@ __urllogger_quic_ipv6_done:
 			}
 		}
 
-		data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
 __urllogger_ipv6_skip:
 		/* check one packet only */
 		set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
@@ -3163,6 +3150,7 @@ __urllogger_ipv6_skip:
 				consume_skb(prev_skb);
 				prev_skb = NULL;
 			}
+			data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
 			host_len = data_len;
 			if (http_url_search(data, &host_len, &host, &uri_len, &uri, &http_method) > 0) {
 				struct urlinfo *url = urlinfo_alloc_record(host, host_len, URLINFO_HOST_ALLOW_PORT, uri, uri_len);
