@@ -1328,8 +1328,9 @@ struct urllogger_sni_cache_node {
 	};
 	__be16 src_port;
 	__be16 dst_port;
-	unsigned int add_data_len;
-	struct sk_buff *skb;
+	__u32 seq;
+	unsigned int data_len;
+	unsigned char *data;
 };
 
 #define URLLOGGER_CACHE_TIMEOUT 4
@@ -1356,9 +1357,9 @@ static inline void urllogger_sni_cache_cleanup(void)
 
 	for (i = 0; i < urllogger_sni_cache_cpu_num; i++) {
 		for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-			if (urllogger_sni_cache[i][j].skb != NULL) {
-				consume_skb(urllogger_sni_cache[i][j].skb);
-				urllogger_sni_cache[i][j].skb = NULL;
+			if (urllogger_sni_cache[i][j].data != NULL) {
+				kfree(urllogger_sni_cache[i][j].data);
+				urllogger_sni_cache[i][j].data = NULL;
 			}
 		}
 	}
@@ -1368,7 +1369,7 @@ static inline void urllogger_sni_cache_cleanup(void)
 	urllogger_sni_cache_cpu_num = 0;
 }
 
-static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, struct sk_buff *skb, unsigned int add_data_len)
+static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, __u32 seq, unsigned char *data, unsigned int data_len)
 {
 	int i = smp_processor_id();
 	int j;
@@ -1377,13 +1378,13 @@ static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __b
 		return -ENOMEM;
 
 	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-		if (urllogger_sni_cache[i][j].skb != NULL &&
+		if (urllogger_sni_cache[i][j].data != NULL &&
 		        urllogger_sni_cache[i][j].src_ip == src_ip &&
 		        urllogger_sni_cache[i][j].src_port == src_port &&
 		        urllogger_sni_cache[i][j].dst_ip == dst_ip &&
 		        urllogger_sni_cache[i][j].dst_port == dst_port) {
 			return -EEXIST;
-		} else if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE && urllogger_sni_cache[i][j].skb == NULL) {
+		} else if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE && urllogger_sni_cache[i][j].data == NULL) {
 			next_to_use = j;
 		}
 	}
@@ -1395,14 +1396,15 @@ static inline int urllogger_sni_cache_attach(__be32 src_ip, __be16 src_port, __b
 	urllogger_sni_cache[i][next_to_use].src_port = src_port;
 	urllogger_sni_cache[i][next_to_use].dst_ip = dst_ip;
 	urllogger_sni_cache[i][next_to_use].dst_port = dst_port;
-	urllogger_sni_cache[i][next_to_use].add_data_len = add_data_len;
-	urllogger_sni_cache[i][next_to_use].skb = skb;
+	urllogger_sni_cache[i][next_to_use].seq = seq;
+	urllogger_sni_cache[i][next_to_use].data_len = data_len;
+	urllogger_sni_cache[i][next_to_use].data = data;
 	urllogger_sni_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
 
 	return 0;
 }
 
-static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 src_port, struct in6_addr *dst_ip, __be16 dst_port, struct sk_buff *skb, unsigned int add_data_len)
+static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 src_port, struct in6_addr *dst_ip, __be16 dst_port, __u32 seq, unsigned char *data, unsigned int data_len)
 {
 	int i = smp_processor_id();
 	int j;
@@ -1411,13 +1413,13 @@ static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 sr
 		return -ENOMEM;
 
 	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-		if (urllogger_sni_cache[i][j].skb != NULL &&
+		if (urllogger_sni_cache[i][j].data != NULL &&
 		        memcmp(&urllogger_sni_cache[i][j].src_ipv6, src_ip, 16) == 0 &&
 		        urllogger_sni_cache[i][j].src_port == src_port &&
 		        memcmp(&urllogger_sni_cache[i][j].dst_ipv6, dst_ip, 16) == 0 &&
 		        urllogger_sni_cache[i][j].dst_port == dst_port) {
 			return -EEXIST;
-		} else if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE && urllogger_sni_cache[i][j].skb == NULL) {
+		} else if (next_to_use == MAX_URLLOGGER_SNI_CACHE_NODE && urllogger_sni_cache[i][j].data == NULL) {
 			next_to_use = j;
 		}
 	}
@@ -1429,83 +1431,74 @@ static inline int urllogger_sni_cache_attach6(struct in6_addr *src_ip, __be16 sr
 	urllogger_sni_cache[i][next_to_use].src_port = src_port;
 	memcpy(&urllogger_sni_cache[i][next_to_use].dst_ipv6, dst_ip, 16);
 	urllogger_sni_cache[i][next_to_use].dst_port = dst_port;
-	urllogger_sni_cache[i][next_to_use].add_data_len = add_data_len;
-	urllogger_sni_cache[i][next_to_use].skb = skb;
+	urllogger_sni_cache[i][next_to_use].seq = seq;
+	urllogger_sni_cache[i][next_to_use].data_len = data_len;
+	urllogger_sni_cache[i][next_to_use].data = data;
 	urllogger_sni_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
 
 	return 0;
 }
 
-static inline struct sk_buff *urllogger_sni_cache_detach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, unsigned int *add_data_len)
+static inline unsigned char *urllogger_sni_cache_detach(__be32 src_ip, __be16 src_port, __be32 dst_ip, __be16 dst_port, __u32 *seq, unsigned int *data_len)
 {
 	int i = smp_processor_id();
-	int j = 0;
-	struct sk_buff *skb = NULL;
+	int j;
+	unsigned char *data = NULL;
+
 	if (urllogger_sni_cache == NULL || i >= urllogger_sni_cache_cpu_num)
 		return NULL;
 
 	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-		if (urllogger_sni_cache[i][j].skb != NULL) {
+		if (urllogger_sni_cache[i][j].data != NULL) {
 			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
-				consume_skb(urllogger_sni_cache[i][j].skb);
-				urllogger_sni_cache[i][j].skb = NULL;
+				kfree(urllogger_sni_cache[i][j].data);
+				urllogger_sni_cache[i][j].data = NULL;
 			} else if (urllogger_sni_cache[i][j].src_ip == src_ip &&
 			           urllogger_sni_cache[i][j].src_port == src_port &&
 			           urllogger_sni_cache[i][j].dst_ip == dst_ip &&
 			           urllogger_sni_cache[i][j].dst_port == dst_port) {
-				skb = urllogger_sni_cache[i][j].skb;
-				*add_data_len = urllogger_sni_cache[i][j].add_data_len;
-				urllogger_sni_cache[i][j].skb = NULL;
-				break;
-			}
-		}
-	}
-	for (; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-		if (urllogger_sni_cache[i][j].skb != NULL) {
-			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
-				consume_skb(urllogger_sni_cache[i][j].skb);
-				urllogger_sni_cache[i][j].skb = NULL;
+				/* XXX: actually dst_ip and dst_port could be not matching on reply-path */
+				/* but we are only support origin-path right now, so check dst match also */
+				data = urllogger_sni_cache[i][j].data;
+				*seq = urllogger_sni_cache[i][j].seq;
+				*data_len = urllogger_sni_cache[i][j].data_len;
+				urllogger_sni_cache[i][j].data = NULL;
 			}
 		}
 	}
 
-	return skb;
+	return data;
 }
 
-static inline struct sk_buff *urllogger_sni_cache_detach6(const struct in6_addr *src_ip, __be16 src_port, const struct in6_addr *dst_ip, __be16 dst_port, unsigned int *add_data_len)
+static inline unsigned char *urllogger_sni_cache_detach6(struct in6_addr *src_ip, __be16 src_port, struct in6_addr *dst_ip, __be16 dst_port, __u32 *seq, unsigned int *data_len)
 {
 	int i = smp_processor_id();
-	int j = 0;
-	struct sk_buff *skb = NULL;
+	int j;
+	unsigned char *data = NULL;
+
 	if (urllogger_sni_cache == NULL || i >= urllogger_sni_cache_cpu_num)
 		return NULL;
 
 	for (j = 0; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-		if (urllogger_sni_cache[i][j].skb != NULL) {
+		if (urllogger_sni_cache[i][j].data != NULL) {
 			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
-				consume_skb(urllogger_sni_cache[i][j].skb);
-				urllogger_sni_cache[i][j].skb = NULL;
+				kfree(urllogger_sni_cache[i][j].data);
+				urllogger_sni_cache[i][j].data = NULL;
 			} else if (memcmp(&urllogger_sni_cache[i][j].src_ipv6, src_ip, 16) == 0 &&
 			           urllogger_sni_cache[i][j].src_port == src_port &&
 			           memcmp(&urllogger_sni_cache[i][j].dst_ipv6, dst_ip, 16) == 0 &&
 			           urllogger_sni_cache[i][j].dst_port == dst_port) {
-				skb = urllogger_sni_cache[i][j].skb;
-				*add_data_len = urllogger_sni_cache[i][j].add_data_len;
-				urllogger_sni_cache[i][j].skb = NULL;
-				break;
-			}
-		}
-	}
-	for (; j < MAX_URLLOGGER_SNI_CACHE_NODE; j++) {
-		if (urllogger_sni_cache[i][j].skb != NULL) {
-			if (time_after(jiffies, urllogger_sni_cache[i][j].active_jiffies + URLLOGGER_CACHE_TIMEOUT * HZ)) {
-				consume_skb(urllogger_sni_cache[i][j].skb);
-				urllogger_sni_cache[i][j].skb = NULL;
+				/* XXX: actually dst_ipv6 and dst_port could be not matching on reply-path */
+				/* but we are only support origin-path right now, so check dst match also */
+				data = urllogger_sni_cache[i][j].data;
+				*seq = urllogger_sni_cache[i][j].seq;
+				*data_len = urllogger_sni_cache[i][j].data_len;
+				urllogger_sni_cache[i][j].data = NULL;
 			}
 		}
 	}
 
-	return skb;
+	return data;
 }
 
 #define QUIC_V1_VERSION 0x00000001u
@@ -1516,6 +1509,7 @@ static inline struct sk_buff *urllogger_sni_cache_detach6(const struct in6_addr 
 #define QUIC_INITIAL_TAG_LEN 16
 #define QUIC_HP_SAMPLE_LEN 16
 #define QUIC_MAX_PACKET_NUMBER_LEN 4
+#define QUIC_INITIAL_SCRATCH_PACKET_LEN 2048
 
 static const unsigned char quic_v1_initial_salt[20] = {
 	0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17,
@@ -1538,7 +1532,7 @@ struct urllogger_quic_crypto_ctx {
 	unsigned char hkdf_info[80];
 	unsigned char initial_secret[QUIC_INITIAL_SECRET_LEN];
 	unsigned char client_secret[QUIC_INITIAL_SECRET_LEN];
-	unsigned char scratch_packet[2048];
+	unsigned char scratch_packet[QUIC_INITIAL_SCRATCH_PACKET_LEN];
 	char desc_buf[sizeof(struct shash_desc) + HASH_MAX_DESCSIZE] __aligned(__alignof__(struct shash_desc));
 };
 
@@ -1994,6 +1988,7 @@ static enum tls_sni_search_result quic_initial_sni_search(const unsigned char *d
 
 	ctx = &urllogger_quic_crypto_ctx[cpu];
 
+	/* Fits regular MTU-sized skb UDP payloads; larger Initial packets are not parsed. */
 	if (info->packet_len > sizeof(ctx->scratch_packet)) {
 		return TLS_SNI_SEARCH_MALFORMED;
 	}
@@ -2674,10 +2669,11 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 
 	data_len = ntohs(iph->tot_len) - (iph->ihl * 4 + TCPH(l4)->doff * 4);
 	if (data_len > 0) {
-		struct sk_buff *prev_skb = NULL;
+		unsigned char *prev_data = NULL;
+		__u32 prev_seq = 0;
+		unsigned int prev_data_len = 0;
 		unsigned char *host = NULL;
 		int host_len;
-		unsigned int add_data_len = 0;
 		enum tls_sni_search_result sni_result;
 
 		if (skb_try_make_writable(skb, skb->len)) {
@@ -2685,52 +2681,50 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 		}
 		iph = ip_hdr(skb);
 		l4 = (void *)iph + iph->ihl * 4;
+		data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
 
-		prev_skb = urllogger_sni_cache_detach(iph->saddr, TCPH(l4)->source, iph->daddr, TCPH(l4)->dest, &add_data_len);
-		if (prev_skb) {
-			struct iphdr *prev_iph = ip_hdr(prev_skb);
-			void *prev_l4 = (void *)prev_iph + prev_iph->ihl * 4;
-			int prev_data_len = ntohs(prev_iph->tot_len) - (prev_iph->ihl * 4 + TCPH(prev_l4)->doff * 4);
+		prev_data = urllogger_sni_cache_detach(iph->saddr, TCPH(l4)->source, iph->daddr, TCPH(l4)->dest, &prev_seq, &prev_data_len);
+		if (prev_data) {
 			unsigned int append_len = data_len;
-			unsigned int next_add_data_len;
+			unsigned int next_data_len;
 
-			if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq) + prev_data_len + add_data_len) {
-				if (add_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
-				        append_len > URLLOGGER_SNI_CACHE_DATA_LIMIT - add_data_len) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": sni cache data too large, add_data_len=%u, data_len=%u\n", DEBUG_TCP_ARG(iph,l4), add_data_len, append_len);
+			if (ntohl(TCPH(l4)->seq) == ntohl(prev_seq) + prev_data_len) {
+				unsigned char *new_data;
+
+				if (prev_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
+				        append_len > URLLOGGER_SNI_CACHE_DATA_LIMIT - prev_data_len) {
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": sni cache data too large, prev_data_len=%u, data_len=%u\n", DEBUG_TCP_ARG(iph,l4), prev_data_len, append_len);
 					goto __urllogger_ip_skip;
 				}
-				next_add_data_len = add_data_len + append_len;
-				if ((unsigned int)skb_tailroom(prev_skb) < next_add_data_len &&
-				        pskb_expand_head(prev_skb, 0, next_add_data_len, GFP_ATOMIC)) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to expand pskb head\n", DEBUG_TCP_ARG(iph,l4));
-					consume_skb(prev_skb);
+				next_data_len = prev_data_len + append_len;
+
+				new_data = krealloc(prev_data, next_data_len, GFP_ATOMIC);
+				if (!new_data) {
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to krealloc data\n", DEBUG_TCP_ARG(iph,l4));
+					kfree(prev_data);
 					ret = NF_ACCEPT;
 					goto out;
 				}
-				prev_iph = ip_hdr(prev_skb);
-				prev_l4 = (void *)prev_iph + prev_iph->ihl * 4;
+				prev_data = new_data;
 
-				data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
-				memcpy(prev_skb->data + prev_skb->len + add_data_len, data, data_len);
-				add_data_len = next_add_data_len;
+				memcpy(prev_data + prev_data_len, data, data_len);
+				prev_data_len = next_data_len;
 
-				data = prev_skb->data + prev_iph->ihl * 4 + TCPH(prev_l4)->doff * 4;
-				host_len = prev_data_len + add_data_len;
-				sni_result = tls_sni_search(data, &host_len, &host);
+				host_len = prev_data_len;
+				sni_result = tls_sni_search(prev_data, &host_len, &host);
 				if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
-					if (add_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
-					        urllogger_sni_cache_attach(prev_iph->saddr, TCPH(prev_l4)->source,
-					                                   prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
-						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach urllogger sni cache, add_data_len=%u\n", DEBUG_TCP_ARG(iph,l4), add_data_len);
+					if (prev_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
+					        urllogger_sni_cache_attach(iph->saddr, TCPH(l4)->source,
+					                                   iph->daddr, TCPH(l4)->dest, prev_seq, prev_data, prev_data_len) != 0) {
+						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach urllogger sni cache, prev_data_len=%u\n", DEBUG_TCP_ARG(iph,l4), prev_data_len);
 						goto __urllogger_ip_skip;
 					}
 					ret = NF_ACCEPT;
 					goto out;
 				}
-			} else if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq)) {
-				if (urllogger_sni_cache_attach(prev_iph->saddr, TCPH(prev_l4)->source,
-				                               prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
+			} else if (ntohl(TCPH(l4)->seq) == ntohl(prev_seq)) {
+				if (urllogger_sni_cache_attach(iph->saddr, TCPH(l4)->source,
+				                               iph->daddr, TCPH(l4)->dest, prev_seq, prev_data, prev_data_len) != 0) {
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach urllogger sni cache\n", DEBUG_TCP_ARG(iph,l4));
 					goto __urllogger_ip_skip;
 				}
@@ -2740,13 +2734,12 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 				goto __urllogger_ip_skip;
 			}
 		} else {
-			data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
 			host_len = data_len;
 			sni_result = tls_sni_search(data, &host_len, &host);
 			if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
-				prev_skb = skb_copy(skb, GFP_ATOMIC);
-				if (prev_skb) {
-					if (urllogger_sni_cache_attach(iph->saddr, TCPH(l4)->source, iph->daddr, TCPH(l4)->dest, prev_skb, 0) != 0) {
+				prev_data = kmemdup(data, data_len, GFP_ATOMIC);
+				if (prev_data) {
+					if (urllogger_sni_cache_attach(iph->saddr, TCPH(l4)->source, iph->daddr, TCPH(l4)->dest, TCPH(l4)->seq, prev_data, data_len) != 0) {
 						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach urllogger sni cache\n", DEBUG_TCP_ARG(iph,l4));
 						goto __urllogger_ip_skip;
 					}
@@ -2767,10 +2760,10 @@ __urllogger_ip_skip:
 		if (host) {
 			struct urlinfo *url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
 			if (!url) {
-				if (prev_skb) consume_skb(prev_skb);
+				if (prev_data) kfree(prev_data);
 				goto out;
 			}
-			if (prev_skb) consume_skb(prev_skb);
+			if (prev_data) kfree(prev_data);
 			if (urllogger_store_tuple_type == 0) {
 				/* 0: dir0-src dir0-dst */
 				url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
@@ -2828,9 +2821,9 @@ __urllogger_ip_skip:
 			int uri_len = 0;
 			int http_method = 0;
 
-			if (prev_skb) {
-				consume_skb(prev_skb);
-				prev_skb = NULL;
+			if (prev_data) {
+				kfree(prev_data);
+				prev_data = NULL;
 			}
 			data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
 			host_len = data_len;
@@ -2926,10 +2919,11 @@ urllogger_hook_ipv6_main:
 
 	data_len = ntohs(IPV6H->payload_len) - TCPH(l4)->doff * 4;
 	if (data_len > 0) {
-		struct sk_buff *prev_skb = NULL;
+		unsigned char *prev_data = NULL;
+		__u32 prev_seq = 0;
+		unsigned int prev_data_len = 0;
 		unsigned char *host = NULL;
 		int host_len;
-		unsigned int add_data_len = 0;
 		enum tls_sni_search_result sni_result;
 
 		if (skb_try_make_writable(skb, skb->len)) {
@@ -2937,52 +2931,50 @@ urllogger_hook_ipv6_main:
 		}
 		iph = (void *)ipv6_hdr(skb);
 		l4 = (void *)iph + sizeof(struct ipv6hdr);
+		data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
 
-		prev_skb = urllogger_sni_cache_detach6(&IPV6H->saddr, TCPH(l4)->source, &IPV6H->daddr, TCPH(l4)->dest, &add_data_len);
-		if (prev_skb) {
-			struct ipv6hdr *prev_iph = ipv6_hdr(prev_skb);
-			void *prev_l4 = (void *)prev_iph + sizeof(struct ipv6hdr);
-			int prev_data_len = ntohs(prev_iph->payload_len) - TCPH(prev_l4)->doff * 4;
+		prev_data = urllogger_sni_cache_detach6(&IPV6H->saddr, TCPH(l4)->source, &IPV6H->daddr, TCPH(l4)->dest, &prev_seq, &prev_data_len);
+		if (prev_data) {
 			unsigned int append_len = data_len;
-			unsigned int next_add_data_len;
+			unsigned int next_data_len;
 
-			if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq) + prev_data_len + add_data_len) {
-				if (add_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
-				        append_len > URLLOGGER_SNI_CACHE_DATA_LIMIT - add_data_len) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": sni cache data too large, add_data_len=%u, data_len=%u\n", DEBUG_TCP_ARG6(iph,l4), add_data_len, append_len);
+			if (ntohl(TCPH(l4)->seq) == ntohl(prev_seq) + prev_data_len) {
+				unsigned char *new_data;
+
+				if (prev_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
+				        append_len > URLLOGGER_SNI_CACHE_DATA_LIMIT - prev_data_len) {
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": sni cache data too large, prev_data_len=%u, data_len=%u\n", DEBUG_TCP_ARG6(iph,l4), prev_data_len, append_len);
 					goto __urllogger_ipv6_skip;
 				}
-				next_add_data_len = add_data_len + append_len;
-				if ((unsigned int)skb_tailroom(prev_skb) < next_add_data_len &&
-				        pskb_expand_head(prev_skb, 0, next_add_data_len, GFP_ATOMIC)) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to expand pskb head\n", DEBUG_TCP_ARG6(iph,l4));
-					consume_skb(prev_skb);
+				next_data_len = prev_data_len + append_len;
+
+				new_data = krealloc(prev_data, next_data_len, GFP_ATOMIC);
+				if (!new_data) {
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to krealloc data\n", DEBUG_TCP_ARG6(iph,l4));
+					kfree(prev_data);
 					ret = NF_ACCEPT;
 					goto out;
 				}
-				prev_iph = ipv6_hdr(prev_skb);
-				prev_l4 = (void *)prev_iph + sizeof(struct ipv6hdr);
+				prev_data = new_data;
 
-				data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
-				memcpy(prev_skb->data + prev_skb->len + add_data_len, data, data_len);
-				add_data_len = next_add_data_len;
+				memcpy(prev_data + prev_data_len, data, data_len);
+				prev_data_len = next_data_len;
 
-				data = prev_skb->data + sizeof(struct ipv6hdr) + TCPH(prev_l4)->doff * 4;
-				host_len = prev_data_len + add_data_len;
-				sni_result = tls_sni_search(data, &host_len, &host);
+				host_len = prev_data_len;
+				sni_result = tls_sni_search(prev_data, &host_len, &host);
 				if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
-					if (add_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
-					        urllogger_sni_cache_attach6(&prev_iph->saddr, TCPH(prev_l4)->source,
-					                                    &prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
-						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach urllogger sni cache6, add_data_len=%u\n", DEBUG_TCP_ARG6(iph,l4), add_data_len);
+					if (prev_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
+					        urllogger_sni_cache_attach6(&IPV6H->saddr, TCPH(l4)->source,
+					                                    &IPV6H->daddr, TCPH(l4)->dest, prev_seq, prev_data, prev_data_len) != 0) {
+						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach urllogger sni cache6, prev_data_len=%u\n", DEBUG_TCP_ARG6(iph,l4), prev_data_len);
 						goto __urllogger_ipv6_skip;
 					}
 					ret = NF_ACCEPT;
 					goto out;
 				}
-			} else if (ntohl(TCPH(l4)->seq) == ntohl(TCPH(prev_l4)->seq)) {
-				if (urllogger_sni_cache_attach6(&prev_iph->saddr, TCPH(prev_l4)->source,
-				                                &prev_iph->daddr, TCPH(prev_l4)->dest, prev_skb, add_data_len) != 0) {
+			} else if (ntohl(TCPH(l4)->seq) == ntohl(prev_seq)) {
+				if (urllogger_sni_cache_attach6(&IPV6H->saddr, TCPH(l4)->source,
+				                                &IPV6H->daddr, TCPH(l4)->dest, prev_seq, prev_data, prev_data_len) != 0) {
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach urllogger sni cache6\n", DEBUG_TCP_ARG6(iph,l4));
 					goto __urllogger_ipv6_skip;
 				}
@@ -2992,13 +2984,12 @@ urllogger_hook_ipv6_main:
 				goto __urllogger_ipv6_skip;
 			}
 		} else {
-			data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
 			host_len = data_len;
 			sni_result = tls_sni_search(data, &host_len, &host);
 			if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
-				prev_skb = skb_copy(skb, GFP_ATOMIC);
-				if (prev_skb) {
-					if (urllogger_sni_cache_attach6(&IPV6H->saddr, TCPH(l4)->source, &IPV6H->daddr, TCPH(l4)->dest, prev_skb, 0) != 0) {
+				prev_data = kmemdup(data, data_len, GFP_ATOMIC);
+				if (prev_data) {
+					if (urllogger_sni_cache_attach6(&IPV6H->saddr, TCPH(l4)->source, &IPV6H->daddr, TCPH(l4)->dest, TCPH(l4)->seq, prev_data, data_len) != 0) {
 						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach urllogger sni cache6\n", DEBUG_TCP_ARG6(iph,l4));
 						goto __urllogger_ipv6_skip;
 					}
@@ -3019,10 +3010,10 @@ __urllogger_ipv6_skip:
 		if (host) {
 			struct urlinfo *url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
 			if (!url) {
-				if (prev_skb) consume_skb(prev_skb);
+				if (prev_data) kfree(prev_data);
 				goto out;
 			}
-			if (prev_skb) consume_skb(prev_skb);
+			if (prev_data) kfree(prev_data);
 			if (urllogger_store_tuple_type == 0) {
 				/* 0: dir0-src dir0-dst */
 				url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
@@ -3073,9 +3064,9 @@ __urllogger_ipv6_skip:
 			int uri_len = 0;
 			int http_method = 0;
 
-			if (prev_skb) {
-				consume_skb(prev_skb);
-				prev_skb = NULL;
+			if (prev_data) {
+				kfree(prev_data);
+				prev_data = NULL;
 			}
 			data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
 			host_len = data_len;
