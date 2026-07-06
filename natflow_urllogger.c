@@ -2787,6 +2787,14 @@ __urllogger_ip_skip:
 						natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
 						natflow_auth_convert_tcprst(skb);
 						ret = NF_ACCEPT;
+					} else if (url->acl_action == URLINFO_ACL_ACTION_REDIRECT) {
+						if (url->http_method == NATFLOW_HTTP_GET || url->http_method == NATFLOW_HTTP_POST) {
+							natflow_urllogger_tcp_reply_302(in, skb, ct, bridge);
+						} else {
+							natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+						}
+						natflow_auth_convert_tcprst(skb);
+						ret = NF_ACCEPT;
 					}
 				}
 

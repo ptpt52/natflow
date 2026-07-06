@@ -1279,9 +1279,14 @@ static inline void natflow_auth_reply_fmt_fin(int max_payload_len, struct sk_buf
 	/* Set up payload. */
 	data = (char *)ip_hdr(nskb) + sizeof(struct iphdr) + sizeof(struct tcphdr);
 	va_start(args, fmt);
-	vsnprintf(data, max_payload_len, fmt, args);
+	payload_len = vsnprintf(data, max_payload_len, fmt, args);
 	va_end(args);
-	payload_len = strnlen(data, max_payload_len);
+	if (payload_len < 0 || payload_len >= max_payload_len) {
+		NATFLOW_ERROR("failed to format auth reply: payload_len=%d, max_payload_len=%d\n",
+		              payload_len, max_payload_len);
+		consume_skb(nskb);
+		goto out;
+	}
 
 	if (payload_len < max_payload_len) {
 		int diff = max_payload_len - payload_len;
@@ -1382,9 +1387,14 @@ static inline void natflow_auth_reply_fmt_fin6(int max_payload_len, struct sk_bu
 
 	data = (char *)niph + sizeof(struct ipv6hdr) + sizeof(struct tcphdr);
 	va_start(args, fmt);
-	vsnprintf(data, max_payload_len, fmt, args);
+	payload_len = vsnprintf(data, max_payload_len, fmt, args);
 	va_end(args);
-	payload_len = strnlen(data, max_payload_len);
+	if (payload_len < 0 || payload_len >= max_payload_len) {
+		NATFLOW_ERROR("failed to format auth reply6: payload_len=%d, max_payload_len=%d\n",
+		              payload_len, max_payload_len);
+		consume_skb(nskb);
+		goto out;
+	}
 
 	if (payload_len < max_payload_len) {
 		int diff = max_payload_len - payload_len;
@@ -1693,7 +1703,7 @@ static inline void natflow_auth_open_weixin_reply(const struct net_device *dev, 
 
 	body_len = snprintf(NULL, 0, WEIXIN_BODY_FMT, &local_ip, 0);
 
-	natflow_auth_reply_fmt_fin(384, skb, dev, pppoe_hdr, http_weixin_fmt, body_len, &local_ip, (unsigned int)jiffies);
+	natflow_auth_reply_fmt_fin(512, skb, dev, pppoe_hdr, http_weixin_fmt, body_len, &local_ip, (unsigned int)jiffies);
 }
 
 static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, struct sk_buff *oskb, int pppoe_hdr)

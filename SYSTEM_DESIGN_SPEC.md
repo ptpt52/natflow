@@ -442,6 +442,7 @@ timestamp,mac,sip,sport,dip,dport,hits,method,type,acl_idx,acl_action,url
 | --- | --- |
 | `clear` | 清空所有 ACL 规则。 |
 | `acl_action_default=accept/drop/reset/redirect` | 设置默认动作。 |
+| `redirect_url=<http_url>` | 设置 Host ACL redirect 动作使用的 HTTP 302 Location URL。 |
 | `add acl=<id>,<act>,<host>` | 添加 host ACL。 |
 
 限制：
@@ -904,7 +905,7 @@ classid 模式：
 - `accept`/0：记录并放行。
 - `drop`/1：设置 `IPS_NATFLOW_CT_DROP` 并 drop。
 - `reset`/2：TCP 路径发送/改写 RST 并设置 drop 状态；UDP/QUIC 路径没有 RST 等价实现，按非 record 动作丢弃。
-- `redirect`/3：若为 HTTP GET/POST 请求则返回 302 重定向到配置的 `acl_redirect_url`（可通过 `redirect_url=...` 写入 /dev/hostacl_ctl）；对于 HTTPS 或 QUIC 则退化为 TCP Reset 或 Drop 丢弃。
+- `redirect`/3：若为 HTTP GET/POST 请求则返回 302 重定向到配置的 `redirect_url`（可通过 `redirect_url=...` 写入 /dev/hostacl_ctl）；对于 HTTPS 或 QUIC 则退化为 TCP Reset 或 Drop 丢弃。
 
 ## 16. Zone 设计
 
