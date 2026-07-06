@@ -337,21 +337,21 @@ struct acl_redirect_config {
 static struct acl_redirect_config acl_redirect_default = {
 	.url = "http://1.1.1.1/blocked.html",
 	.payload =
-		"HTTP/1.1 302 Moved Temporarily\r\n"
-		"Connection: close\r\n"
-		"Cache-Control: no-cache\r\n"
-		"Content-Type: text/html; charset=UTF-8\r\n"
-		"Location: http://1.1.1.1/blocked.html\r\n"
-		"Content-Length: 0\r\n"
-		"\r\n",
+	"HTTP/1.1 302 Moved Temporarily\r\n"
+	"Connection: close\r\n"
+	"Cache-Control: no-cache\r\n"
+	"Content-Type: text/html; charset=UTF-8\r\n"
+	"Location: http://1.1.1.1/blocked.html\r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
 	.payload_len = sizeof(
-		"HTTP/1.1 302 Moved Temporarily\r\n"
-		"Connection: close\r\n"
-		"Cache-Control: no-cache\r\n"
-		"Content-Type: text/html; charset=UTF-8\r\n"
-		"Location: http://1.1.1.1/blocked.html\r\n"
-		"Content-Length: 0\r\n"
-		"\r\n") - 1,
+	    "HTTP/1.1 302 Moved Temporarily\r\n"
+	    "Connection: close\r\n"
+	    "Cache-Control: no-cache\r\n"
+	    "Content-Type: text/html; charset=UTF-8\r\n"
+	    "Location: http://1.1.1.1/blocked.html\r\n"
+	    "Content-Length: 0\r\n"
+	    "\r\n") - 1,
 };
 static struct acl_redirect_config *acl_redirect_config = &acl_redirect_default;
 
@@ -389,13 +389,13 @@ static void acl_rule_clear(void)
 static int acl_redirect_config_update(const char *url)
 {
 	static const char http_fmt[] =
-		"HTTP/1.1 302 Moved Temporarily\r\n"
-		"Connection: close\r\n"
-		"Cache-Control: no-cache\r\n"
-		"Content-Type: text/html; charset=UTF-8\r\n"
-		"Location: %s\r\n"
-		"Content-Length: 0\r\n"
-		"\r\n";
+	    "HTTP/1.1 302 Moved Temporarily\r\n"
+	    "Connection: close\r\n"
+	    "Cache-Control: no-cache\r\n"
+	    "Content-Type: text/html; charset=UTF-8\r\n"
+	    "Location: %s\r\n"
+	    "Content-Length: 0\r\n"
+	    "\r\n";
 	struct acl_redirect_config *new_config;
 	struct acl_redirect_config *old_config;
 

@@ -319,8 +319,8 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 					break;
 				case IPPROTO_TCP:
 					ct_i->len += sprintf(ct_i->data + ct_i->len, "%s ",
-				                     ct->proto.tcp.state < ARRAY_SIZE(tcp_conntrack_names) ?
-				                     tcp_conntrack_names[ct->proto.tcp.state] : "UNKNOWN");
+					                     ct->proto.tcp.state < ARRAY_SIZE(tcp_conntrack_names) ?
+					                     tcp_conntrack_names[ct->proto.tcp.state] : "UNKNOWN");
 					switch (tuple->src.l3num) {
 					case NFPROTO_IPV4:
 						ct_i->len += sprintf(ct_i->data + ct_i->len, "src=%pI4 dst=%pI4 ",
