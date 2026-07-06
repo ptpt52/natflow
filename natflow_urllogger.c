@@ -76,6 +76,7 @@ static inline ssize_t urlinfo_copy_host_tolower(unsigned char *dst, const unsign
 	ssize_t end = n;
 	ssize_t out = 0;
 	ssize_t label_len = 0;
+	unsigned char last = 0;
 
 	if (n <= 0)
 		return -EINVAL;
@@ -123,9 +124,12 @@ static inline ssize_t urlinfo_copy_host_tolower(unsigned char *dst, const unsign
 			return -EINVAL;
 
 		if (c == '.') {
-			if (label_len == 0 || label_len > 63 || (out > 0 && dst[out - 1] == '-'))
+			if (label_len == 0 || label_len > 63 || (out > 0 && last == '-'))
 				return -EINVAL;
-			dst[out++] = c;
+			if (dst)
+				dst[out] = c;
+			out++;
+			last = c;
 			label_len = 0;
 			continue;
 		}
@@ -135,10 +139,13 @@ static inline ssize_t urlinfo_copy_host_tolower(unsigned char *dst, const unsign
 		label_len++;
 		if (label_len > 63)
 			return -EINVAL;
-		dst[out++] = c;
+		if (dst)
+			dst[out] = c;
+		out++;
+		last = c;
 	}
 
-	if (label_len == 0 || (out > 0 && dst[out - 1] == '-'))
+	if (label_len == 0 || (out > 0 && last == '-'))
 		return -EINVAL;
 
 	return out;
@@ -535,6 +542,60 @@ __done:
 	rcu_read_unlock();
 	url->data[url->host_len] = backup_c;
 	return ret;
+}
+
+#if NATFLOW_HAVE_IP_SET_STATE_API
+#define URLLOGGER_HOOK_CTX_ARGS const struct nf_hook_state *state
+#define URLLOGGER_HOOK_CTX_PASS state
+#else
+#define URLLOGGER_HOOK_CTX_ARGS const struct net_device *in, const struct net_device *out
+#define URLLOGGER_HOOK_CTX_PASS in, out
+#endif
+
+static noinline void urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_ARGS,
+        struct sk_buff *skb, struct urlinfo *url, int l3num)
+{
+	const char *ipset_family = l3num == AF_INET6 ? "ipv6" : "ipv4";
+	int rule_id = 0;
+	char ipset_name[IPSET_MAXNAMELEN];
+
+	do {
+		int ret_ip;
+		int ret_mac;
+
+		for (; rule_id < acl_rule_max; ) {
+			snprintf(ipset_name, sizeof(ipset_name), "host_acl_rule%u_%s", rule_id, ipset_family);
+#if NATFLOW_HAVE_IP_SET_STATE_API
+			ret_ip = IP_SET_test_src_ip(state, NULL, NULL, skb, ipset_name);
+#else
+			ret_ip = IP_SET_test_src_ip(state, in, out, skb, ipset_name);
+#endif
+			if (ret_ip > 0)
+				break;
+
+			snprintf(ipset_name, sizeof(ipset_name), "host_acl_rule%u_mac", rule_id);
+#if NATFLOW_HAVE_IP_SET_STATE_API
+			ret_mac = IP_SET_test_src_mac(state, NULL, NULL, skb, ipset_name);
+#else
+			ret_mac = IP_SET_test_src_mac(state, in, out, skb, ipset_name);
+#endif
+			if (ret_mac > 0)
+				break;
+
+			if (ret_ip == -EINVAL && ret_mac == -EINVAL)
+				break;
+
+			rule_id++;
+		}
+		if (rule_id < acl_rule_max) {
+			if (urllogger_acl(url, rule_id) == 1)
+				break;
+		} else {
+			break;
+		}
+
+		rule_id++;
+	} while (1);
 }
 
 static inline int tls_sni_has_bytes(unsigned int offset, unsigned int bytes, unsigned int len)
@@ -1470,6 +1531,11 @@ struct urllogger_quic_crypto_ctx {
 	unsigned char hp_key[QUIC_INITIAL_KEY_LEN];
 	unsigned char mask[QUIC_HP_SAMPLE_LEN];
 	unsigned char nonce[QUIC_INITIAL_IV_LEN];
+	unsigned char hkdf_input[128];
+	unsigned char hkdf_digest[QUIC_INITIAL_SECRET_LEN];
+	unsigned char hkdf_info[80];
+	unsigned char initial_secret[QUIC_INITIAL_SECRET_LEN];
+	unsigned char client_secret[QUIC_INITIAL_SECRET_LEN];
 	char desc_buf[sizeof(struct shash_desc) + HASH_MAX_DESCSIZE] __aligned(__alignof__(struct shash_desc));
 };
 
@@ -1616,11 +1682,11 @@ static int quic_hkdf_expand(struct urllogger_quic_crypto_ctx *ctx,
                             const unsigned char *info, unsigned int info_len,
                             unsigned char *out, unsigned int out_len)
 {
-	unsigned char input[128];
-	unsigned char digest[QUIC_INITIAL_SECRET_LEN];
+	unsigned char *input = ctx->hkdf_input;
+	unsigned char *digest = ctx->hkdf_digest;
 	int ret;
 
-	if (out_len > QUIC_INITIAL_SECRET_LEN || info_len + 1 > sizeof(input))
+	if (out_len > QUIC_INITIAL_SECRET_LEN || info_len + 1 > sizeof(ctx->hkdf_input))
 		return -EINVAL;
 
 	memcpy(input, info, info_len);
@@ -1629,8 +1695,8 @@ static int quic_hkdf_expand(struct urllogger_quic_crypto_ctx *ctx,
 	if (ret == 0)
 		memcpy(out, digest, out_len);
 
-	memzero_explicit(input, sizeof(input));
-	memzero_explicit(digest, sizeof(digest));
+	memzero_explicit(input, sizeof(ctx->hkdf_input));
+	memzero_explicit(digest, sizeof(ctx->hkdf_digest));
 	return ret;
 }
 
@@ -1639,11 +1705,12 @@ static int quic_hkdf_expand_label(struct urllogger_quic_crypto_ctx *ctx,
                                   const char *label,
                                   unsigned char *out, unsigned int out_len)
 {
-	unsigned char info[80];
+	unsigned char *info = ctx->hkdf_info;
 	unsigned int label_len = strlen(label);
 	unsigned int full_label_len = strlen("tls13 ") + label_len;
+	int ret;
 
-	if (full_label_len > 255 || 4 + full_label_len > sizeof(info))
+	if (full_label_len > 255 || 4 + full_label_len > sizeof(ctx->hkdf_info))
 		return -EINVAL;
 
 	info[0] = (out_len >> 8) & 0xff;
@@ -1653,15 +1720,17 @@ static int quic_hkdf_expand_label(struct urllogger_quic_crypto_ctx *ctx,
 	memcpy(info + 3 + strlen("tls13 "), label, label_len);
 	info[3 + full_label_len] = 0;
 
-	return quic_hkdf_expand(ctx, secret, secret_len, info, 4 + full_label_len, out, out_len);
+	ret = quic_hkdf_expand(ctx, secret, secret_len, info, 4 + full_label_len, out, out_len);
+	memzero_explicit(info, sizeof(ctx->hkdf_info));
+	return ret;
 }
 
 static int quic_initial_keys(struct urllogger_quic_crypto_ctx *ctx,
                              const unsigned char *dcid, unsigned int dcid_len,
                              unsigned char *key, unsigned char *iv, unsigned char *hp)
 {
-	unsigned char initial_secret[QUIC_INITIAL_SECRET_LEN];
-	unsigned char client_secret[QUIC_INITIAL_SECRET_LEN];
+	unsigned char *initial_secret = ctx->initial_secret;
+	unsigned char *client_secret = ctx->client_secret;
 	int ret;
 
 	ret = quic_hmac_sha256(ctx, quic_v1_initial_salt, sizeof(quic_v1_initial_salt),
@@ -1669,27 +1738,27 @@ static int quic_initial_keys(struct urllogger_quic_crypto_ctx *ctx,
 	if (ret != 0)
 		goto out;
 
-	ret = quic_hkdf_expand_label(ctx, initial_secret, sizeof(initial_secret),
-	                             "client in", client_secret, sizeof(client_secret));
+	ret = quic_hkdf_expand_label(ctx, initial_secret, QUIC_INITIAL_SECRET_LEN,
+	                             "client in", client_secret, QUIC_INITIAL_SECRET_LEN);
 	if (ret != 0)
 		goto out;
 
-	ret = quic_hkdf_expand_label(ctx, client_secret, sizeof(client_secret),
+	ret = quic_hkdf_expand_label(ctx, client_secret, QUIC_INITIAL_SECRET_LEN,
 	                             "quic key", key, QUIC_INITIAL_KEY_LEN);
 	if (ret != 0)
 		goto out;
 
-	ret = quic_hkdf_expand_label(ctx, client_secret, sizeof(client_secret),
+	ret = quic_hkdf_expand_label(ctx, client_secret, QUIC_INITIAL_SECRET_LEN,
 	                             "quic iv", iv, QUIC_INITIAL_IV_LEN);
 	if (ret != 0)
 		goto out;
 
-	ret = quic_hkdf_expand_label(ctx, client_secret, sizeof(client_secret),
+	ret = quic_hkdf_expand_label(ctx, client_secret, QUIC_INITIAL_SECRET_LEN,
 	                             "quic hp", hp, QUIC_INITIAL_KEY_LEN);
 
 out:
-	memzero_explicit(initial_secret, sizeof(initial_secret));
-	memzero_explicit(client_secret, sizeof(client_secret));
+	memzero_explicit(initial_secret, sizeof(ctx->initial_secret));
+	memzero_explicit(client_secret, sizeof(ctx->client_secret));
 	return ret;
 }
 
@@ -2182,6 +2251,231 @@ static inline unsigned char *urllogger_quic_cache_detach6(const struct in6_addr 
 	return crypto_data;
 }
 
+static noinline unsigned int urllogger_quic4(URLLOGGER_HOOK_CTX_ARGS,
+        struct sk_buff *skb, struct nf_conn *ct)
+{
+	struct quic_initial_info quic_info;
+	enum tls_sni_search_result sni_result;
+	unsigned char *host = NULL;
+	unsigned char *crypto_data = NULL;
+	natflow_t *nf = NULL;
+	struct iphdr *iph;
+	void *l4;
+	unsigned int crypto_len = 0;
+	unsigned int udp_len;
+	int host_len = 0;
+	int data_len;
+	int quic_ret;
+	unsigned char *data;
+	unsigned int ret = NF_ACCEPT;
+
+	if (skb_try_make_writable(skb, ip_hdr(skb)->ihl * 4 + sizeof(struct udphdr)))
+		return ret;
+	iph = ip_hdr(skb);
+	l4 = (void *)iph + iph->ihl * 4;
+	if (UDPH(l4)->dest != __constant_htons(443))
+		return ret;
+
+	udp_len = ntohs(UDPH(l4)->len);
+	if (udp_len <= sizeof(struct udphdr))
+		goto skip;
+
+	data_len = udp_len - sizeof(struct udphdr);
+	if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr) + data_len))
+		return ret;
+
+	iph = ip_hdr(skb);
+	l4 = (void *)iph + iph->ihl * 4;
+	data = skb->data + iph->ihl * 4 + sizeof(struct udphdr);
+
+	quic_ret = quic_initial_parse_info(data, data_len, &quic_info);
+	if (quic_ret != 0)
+		goto skip;
+
+	nf = natflow_session_get(ct);
+	if (nf && !(nf->status & NF_FF_URLLOGGER_USE))
+		simple_set_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+
+	crypto_data = urllogger_quic_cache_detach(iph->saddr, UDPH(l4)->source,
+	              iph->daddr, UDPH(l4)->dest, &quic_info, &crypto_len);
+	sni_result = quic_initial_sni_search(data, &quic_info,
+	                                     &crypto_data, &crypto_len,
+	                                     &host, &host_len);
+	if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
+		if (crypto_data != NULL && crypto_len > 0 &&
+		        urllogger_quic_cache_attach(iph->saddr, UDPH(l4)->source,
+		                                    iph->daddr, UDPH(l4)->dest,
+		                                    &quic_info, crypto_data, crypto_len) == 0) {
+			crypto_data = NULL;
+			goto done;
+		}
+		kfree(crypto_data);
+		crypto_data = NULL;
+	}
+
+skip:
+	set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
+	if (nf && (nf->status & NF_FF_URLLOGGER_USE))
+		simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+
+	if (host) {
+		struct urlinfo *url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
+		if (!url)
+			goto done;
+
+		if (urllogger_store_tuple_type == 0) {
+			url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+			url->dip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
+			url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+			url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
+		} else if (urllogger_store_tuple_type == 1) {
+			url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+			url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
+			url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+			url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+		} else {
+			url->sip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip;
+			url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
+			url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
+			url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+		}
+		url->timestamp = URLINFO_NOW;
+		url->flags = URLINFO_QUIC;
+		url->http_method = 0;
+		url->hits = 1;
+		memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
+
+		url->acl_idx = 64;
+		url->acl_action = acl_action_default;
+		urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET);
+		if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
+			set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+			ret = NF_DROP;
+			if (nf && !(nf->status & NF_FF_USER_USE))
+				simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+		}
+
+		urllogger_store_record(url);
+	}
+
+done:
+	kfree(crypto_data);
+	return ret;
+}
+
+static noinline unsigned int urllogger_quic6(URLLOGGER_HOOK_CTX_ARGS,
+        struct sk_buff *skb, struct nf_conn *ct)
+{
+	struct quic_initial_info quic_info;
+	enum tls_sni_search_result sni_result;
+	unsigned char *host = NULL;
+	unsigned char *crypto_data = NULL;
+	natflow_t *nf = NULL;
+	struct ipv6hdr *ip6h;
+	void *l4;
+	unsigned int crypto_len = 0;
+	unsigned int udp_len;
+	int host_len = 0;
+	int data_len;
+	int quic_ret;
+	unsigned char *data;
+	unsigned int ret = NF_ACCEPT;
+
+	if (skb_try_make_writable(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr)))
+		return ret;
+	ip6h = ipv6_hdr(skb);
+	l4 = (void *)ip6h + sizeof(struct ipv6hdr);
+	if (UDPH(l4)->dest != __constant_htons(443))
+		return ret;
+
+	udp_len = ntohs(UDPH(l4)->len);
+	if (udp_len <= sizeof(struct udphdr))
+		goto skip;
+
+	data_len = udp_len - sizeof(struct udphdr);
+	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr) + data_len))
+		return ret;
+
+	ip6h = ipv6_hdr(skb);
+	l4 = (void *)ip6h + sizeof(struct ipv6hdr);
+	data = skb->data + sizeof(struct ipv6hdr) + sizeof(struct udphdr);
+
+	quic_ret = quic_initial_parse_info(data, data_len, &quic_info);
+	if (quic_ret != 0)
+		goto skip;
+
+	nf = natflow_session_get(ct);
+	if (nf && !(nf->status & NF_FF_URLLOGGER_USE))
+		simple_set_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+
+	crypto_data = urllogger_quic_cache_detach6(&ip6h->saddr, UDPH(l4)->source,
+	              &ip6h->daddr, UDPH(l4)->dest, &quic_info, &crypto_len);
+	sni_result = quic_initial_sni_search(data, &quic_info,
+	                                     &crypto_data, &crypto_len,
+	                                     &host, &host_len);
+	if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
+		if (crypto_data != NULL && crypto_len > 0 &&
+		        urllogger_quic_cache_attach6(&ip6h->saddr, UDPH(l4)->source,
+		                                     &ip6h->daddr, UDPH(l4)->dest,
+		                                     &quic_info, crypto_data, crypto_len) == 0) {
+			crypto_data = NULL;
+			goto done;
+		}
+		kfree(crypto_data);
+		crypto_data = NULL;
+	}
+
+skip:
+	set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
+	if (nf && (nf->status & NF_FF_URLLOGGER_USE))
+		simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+
+	if (host) {
+		struct urlinfo *url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
+		if (!url)
+			goto done;
+
+		if (urllogger_store_tuple_type == 0) {
+			url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
+			url->dipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3;
+			url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+			url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
+		} else if (urllogger_store_tuple_type == 1) {
+			url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
+			url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
+			url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+			url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+		} else {
+			url->sipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3;
+			url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
+			url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
+			url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+		}
+		url->timestamp = URLINFO_NOW;
+		url->flags = URLINFO_QUIC;
+		url->flags |= URLINFO_IPV6;
+		url->http_method = 0;
+		url->hits = 1;
+		memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
+
+		url->acl_idx = 64;
+		url->acl_action = acl_action_default;
+		urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET6);
+		if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
+			set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+			ret = NF_DROP;
+			if (nf && !(nf->status & NF_FF_USER_USE))
+				simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+		}
+
+		urllogger_store_record(url);
+	}
+
+done:
+	kfree(crypto_data);
+	return ret;
+}
+
 static int urllogger_quic_crypto_init(void)
 {
 	int i;
@@ -2347,141 +2641,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 	}
 	iph = ip_hdr(skb);
 	if (iph->protocol == IPPROTO_UDP) {
-		struct quic_initial_info quic_info;
-		enum tls_sni_search_result sni_result;
-		unsigned char *host = NULL;
-		unsigned char *crypto_data = NULL;
-		unsigned int crypto_len = 0;
-		unsigned int udp_len;
-		int host_len = 0;
-		int quic_ret;
-
-		if (skb_try_make_writable(skb, iph->ihl * 4 + sizeof(struct udphdr))) {
-			goto out;
-		}
-		iph = ip_hdr(skb);
-		l4 = (void *)iph + iph->ihl * 4;
-		if (UDPH(l4)->dest != __constant_htons(443))
-			goto out;
-
-		udp_len = ntohs(UDPH(l4)->len);
-		if (udp_len <= sizeof(struct udphdr))
-			goto __urllogger_quic_ip_skip;
-
-		data_len = udp_len - sizeof(struct udphdr);
-		if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr) + data_len))
-			goto out;
-
-		iph = ip_hdr(skb);
-		l4 = (void *)iph + iph->ihl * 4;
-		data = skb->data + iph->ihl * 4 + sizeof(struct udphdr);
-
-		quic_ret = quic_initial_parse_info(data, data_len, &quic_info);
-		if (quic_ret != 0)
-			goto __urllogger_quic_ip_skip;
-
-		nf = natflow_session_get(ct);
-		if (nf && !(nf->status & NF_FF_URLLOGGER_USE)) {
-			simple_set_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
-		}
-
-		crypto_data = urllogger_quic_cache_detach(iph->saddr, UDPH(l4)->source,
-		              iph->daddr, UDPH(l4)->dest,
-		              &quic_info, &crypto_len);
-		sni_result = quic_initial_sni_search(data, &quic_info,
-		                                     &crypto_data, &crypto_len,
-		                                     &host, &host_len);
-		if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
-			if (crypto_data != NULL && crypto_len > 0 &&
-			        urllogger_quic_cache_attach(iph->saddr, UDPH(l4)->source,
-			                                    iph->daddr, UDPH(l4)->dest,
-			                                    &quic_info, crypto_data, crypto_len) == 0) {
-				ret = NF_ACCEPT;
-				goto out;
-			}
-			kfree(crypto_data);
-			crypto_data = NULL;
-		}
-
-__urllogger_quic_ip_skip:
-		set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
-		if (nf && (nf->status & NF_FF_URLLOGGER_USE)) {
-			simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
-		}
-
-		if (host) {
-			int rule_id = 0;
-			struct urlinfo *url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
-			if (!url)
-				goto __urllogger_quic_ip_done;
-
-			if (urllogger_store_tuple_type == 0) {
-				url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
-				url->dip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
-				url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-				url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
-			} else if (urllogger_store_tuple_type == 1) {
-				url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
-				url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
-				url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-				url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-			} else {
-				url->sip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip;
-				url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
-				url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
-				url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-			}
-			url->timestamp = URLINFO_NOW;
-			url->flags = URLINFO_QUIC;
-			url->http_method = 0;
-			url->hits = 1;
-			memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
-
-			url->acl_idx = 64;
-			url->acl_action = acl_action_default;
-			do {
-				int ret_ip;
-				int ret_mac;
-				for (; rule_id < acl_rule_max; ) {
-					char ipset_name[32];
-
-					snprintf(ipset_name, 32, "host_acl_rule%u_ipv4", rule_id);
-					ret_ip = IP_SET_test_src_ip(state, in, out, skb, ipset_name);
-					if (ret_ip > 0)
-						break;
-
-					snprintf(ipset_name, 32, "host_acl_rule%u_mac", rule_id);
-					ret_mac = IP_SET_test_src_mac(state, in, out, skb, ipset_name);
-					if (ret_mac > 0)
-						break;
-
-					if (ret_ip == -EINVAL && ret_mac == -EINVAL)
-						break;
-
-					rule_id++;
-				}
-				if (rule_id < acl_rule_max) {
-					if (urllogger_acl(url, rule_id) == 1)
-						break;
-				} else {
-					break;
-				}
-
-				rule_id++;
-			} while (1);
-			if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
-				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-				ret = NF_DROP;
-				if (nf && !(nf->status & NF_FF_USER_USE)) {
-					simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-				}
-			}
-
-			urllogger_store_record(url);
-		}
-
-__urllogger_quic_ip_done:
-		kfree(crypto_data);
+		ret = urllogger_quic4(URLLOGGER_HOOK_CTX_PASS, skb, ct);
 		goto out;
 	}
 	if (iph->protocol != IPPROTO_TCP) {
@@ -2594,7 +2754,6 @@ __urllogger_ip_skip:
 		}
 
 		if (host) {
-			int rule_id = 0;
 			struct urlinfo *url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
 			if (!url) {
 				if (prev_skb) consume_skb(prev_skb);
@@ -2628,40 +2787,7 @@ __urllogger_ip_skip:
 
 			url->acl_idx = 64; /* 64 = before acl matching */
 			url->acl_action = acl_action_default;
-			do {
-				int ret_ip;
-				int ret_mac;
-				for (; rule_id < acl_rule_max; ) {
-					char ipset_name[32];
-
-					snprintf(ipset_name, 32, "host_acl_rule%u_ipv4", rule_id);
-					ret_ip = IP_SET_test_src_ip(state, in, out, skb, ipset_name);
-					if (ret_ip > 0) {
-						break;
-					}
-
-					snprintf(ipset_name, 32, "host_acl_rule%u_mac", rule_id);
-					ret_mac = IP_SET_test_src_mac(state, in, out, skb, ipset_name);
-					if (ret_mac > 0) {
-						break;
-					}
-
-					if (ret_ip == -EINVAL && ret_mac == -EINVAL) {
-						break;
-					}
-
-					rule_id++;
-				}
-				if (rule_id < acl_rule_max) {
-					if (urllogger_acl(url, rule_id) == 1) {
-						break;
-					}
-				} else {
-					break;
-				}
-
-				rule_id++;
-			} while (1);
+			urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET);
 			if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
 				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 				ret = NF_DROP;
@@ -2688,7 +2814,6 @@ __urllogger_ip_skip:
 			urllogger_store_record(url);
 		} else {
 			unsigned char *uri = NULL;
-			int rule_id = 0;
 			int uri_len = 0;
 			int http_method = 0;
 
@@ -2729,40 +2854,7 @@ __urllogger_ip_skip:
 
 				url->acl_idx = 64; /* 64 = before acl matching */
 				url->acl_action = acl_action_default;
-				do {
-					int ret_ip;
-					int ret_mac;
-					for (; rule_id < acl_rule_max; ) {
-						char ipset_name[32];
-
-						snprintf(ipset_name, 32, "host_acl_rule%u_ipv4", rule_id);
-						ret_ip = IP_SET_test_src_ip(state, in, out, skb, ipset_name);
-						if (ret_ip > 0) {
-							break;
-						}
-
-						snprintf(ipset_name, 32, "host_acl_rule%u_mac", rule_id);
-						ret_mac = IP_SET_test_src_mac(state, in, out, skb, ipset_name);
-						if (ret_mac > 0) {
-							break;
-						}
-
-						if (ret_ip == -EINVAL && ret_mac == -EINVAL) {
-							break;
-						}
-
-						rule_id++;
-					}
-					if (rule_id < acl_rule_max) {
-						if (urllogger_acl(url, rule_id) == 1) {
-							break;
-						}
-					} else {
-						break;
-					}
-
-					rule_id++;
-				} while (1);
+				urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET);
 				if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
 					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 					ret = NF_DROP;
@@ -2801,142 +2893,7 @@ urllogger_hook_ipv6_main:
 		goto out;
 	}
 	if (IPV6H->nexthdr == IPPROTO_UDP) {
-		struct quic_initial_info quic_info;
-		enum tls_sni_search_result sni_result;
-		unsigned char *host = NULL;
-		unsigned char *crypto_data = NULL;
-		unsigned int crypto_len = 0;
-		unsigned int udp_len;
-		int host_len = 0;
-		int quic_ret;
-
-		if (skb_try_make_writable(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr))) {
-			goto out;
-		}
-		iph = (void *)ipv6_hdr(skb);
-		l4 = (void *)iph + sizeof(struct ipv6hdr);
-		if (UDPH(l4)->dest != __constant_htons(443))
-			goto out;
-
-		udp_len = ntohs(UDPH(l4)->len);
-		if (udp_len <= sizeof(struct udphdr))
-			goto __urllogger_quic_ipv6_skip;
-
-		data_len = udp_len - sizeof(struct udphdr);
-		if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr) + data_len))
-			goto out;
-
-		iph = (void *)ipv6_hdr(skb);
-		l4 = (void *)iph + sizeof(struct ipv6hdr);
-		data = skb->data + sizeof(struct ipv6hdr) + sizeof(struct udphdr);
-
-		quic_ret = quic_initial_parse_info(data, data_len, &quic_info);
-		if (quic_ret != 0)
-			goto __urllogger_quic_ipv6_skip;
-
-		nf = natflow_session_get(ct);
-		if (nf && !(nf->status & NF_FF_URLLOGGER_USE)) {
-			simple_set_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
-		}
-
-		crypto_data = urllogger_quic_cache_detach6(&IPV6H->saddr, UDPH(l4)->source,
-		              &IPV6H->daddr, UDPH(l4)->dest,
-		              &quic_info, &crypto_len);
-		sni_result = quic_initial_sni_search(data, &quic_info,
-		                                     &crypto_data, &crypto_len,
-		                                     &host, &host_len);
-		if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
-			if (crypto_data != NULL && crypto_len > 0 &&
-			        urllogger_quic_cache_attach6(&IPV6H->saddr, UDPH(l4)->source,
-			                                     &IPV6H->daddr, UDPH(l4)->dest,
-			                                     &quic_info, crypto_data, crypto_len) == 0) {
-				ret = NF_ACCEPT;
-				goto out;
-			}
-			kfree(crypto_data);
-			crypto_data = NULL;
-		}
-
-__urllogger_quic_ipv6_skip:
-		set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
-		if (nf && (nf->status & NF_FF_URLLOGGER_USE)) {
-			simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
-		}
-
-		if (host) {
-			int rule_id = 0;
-			struct urlinfo *url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
-			if (!url)
-				goto __urllogger_quic_ipv6_done;
-
-			if (urllogger_store_tuple_type == 0) {
-				url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
-				url->dipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3;
-				url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-				url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
-			} else if (urllogger_store_tuple_type == 1) {
-				url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
-				url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
-				url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-				url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-			} else {
-				url->sipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3;
-				url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
-				url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
-				url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-			}
-			url->timestamp = URLINFO_NOW;
-			url->flags = URLINFO_QUIC;
-			url->flags |= URLINFO_IPV6;
-			url->http_method = 0;
-			url->hits = 1;
-			memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
-
-			url->acl_idx = 64;
-			url->acl_action = acl_action_default;
-			do {
-				int ret_ip;
-				int ret_mac;
-				for (; rule_id < acl_rule_max; ) {
-					char ipset_name[32];
-
-					snprintf(ipset_name, 32, "host_acl_rule%u_ipv6", rule_id);
-					ret_ip = IP_SET_test_src_ip(state, in, out, skb, ipset_name);
-					if (ret_ip > 0)
-						break;
-
-					snprintf(ipset_name, 32, "host_acl_rule%u_mac", rule_id);
-					ret_mac = IP_SET_test_src_mac(state, in, out, skb, ipset_name);
-					if (ret_mac > 0)
-						break;
-
-					if (ret_ip == -EINVAL && ret_mac == -EINVAL)
-						break;
-
-					rule_id++;
-				}
-				if (rule_id < acl_rule_max) {
-					if (urllogger_acl(url, rule_id) == 1)
-						break;
-				} else {
-					break;
-				}
-
-				rule_id++;
-			} while (1);
-			if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
-				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-				ret = NF_DROP;
-				if (nf && !(nf->status & NF_FF_USER_USE)) {
-					simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-				}
-			}
-
-			urllogger_store_record(url);
-		}
-
-__urllogger_quic_ipv6_done:
-		kfree(crypto_data);
+		ret = urllogger_quic6(URLLOGGER_HOOK_CTX_PASS, skb, ct);
 		goto out;
 	}
 	if (IPV6H->nexthdr != IPPROTO_TCP) {
@@ -3049,7 +3006,6 @@ __urllogger_ipv6_skip:
 		}
 
 		if (host) {
-			int rule_id = 0;
 			struct urlinfo *url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
 			if (!url) {
 				if (prev_skb) consume_skb(prev_skb);
@@ -3084,40 +3040,7 @@ __urllogger_ipv6_skip:
 
 			url->acl_idx = 64; /* 64 = before acl matching */
 			url->acl_action = acl_action_default;
-			do {
-				int ret_ip;
-				int ret_mac;
-				for (; rule_id < acl_rule_max; ) {
-					char ipset_name[32];
-
-					snprintf(ipset_name, 32, "host_acl_rule%u_ipv6", rule_id);
-					ret_ip = IP_SET_test_src_ip(state, in, out, skb, ipset_name);
-					if (ret_ip > 0) {
-						break;
-					}
-
-					snprintf(ipset_name, 32, "host_acl_rule%u_mac", rule_id);
-					ret_mac = IP_SET_test_src_mac(state, in, out, skb, ipset_name);
-					if (ret_mac > 0) {
-						break;
-					}
-
-					if (ret_ip == -EINVAL && ret_mac == -EINVAL) {
-						break;
-					}
-
-					rule_id++;
-				}
-				if (rule_id < acl_rule_max) {
-					if (urllogger_acl(url, rule_id) == 1) {
-						break;
-					}
-				} else {
-					break;
-				}
-
-				rule_id++;
-			} while (1);
+			urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET6);
 			if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
 				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 				ret = NF_DROP;
@@ -3136,7 +3059,6 @@ __urllogger_ipv6_skip:
 			urllogger_store_record(url);
 		} else {
 			unsigned char *uri = NULL;
-			int rule_id = 0;
 			int uri_len = 0;
 			int http_method = 0;
 
@@ -3178,40 +3100,7 @@ __urllogger_ipv6_skip:
 
 				url->acl_idx = 64; /* 64 = before acl matching */
 				url->acl_action = acl_action_default;
-				do {
-					int ret_ip;
-					int ret_mac;
-					for (; rule_id < acl_rule_max; ) {
-						char ipset_name[32];
-
-						snprintf(ipset_name, 32, "host_acl_rule%u_ipv6", rule_id);
-						ret_ip = IP_SET_test_src_ip(state, in, out, skb, ipset_name);
-						if (ret_ip > 0) {
-							break;
-						}
-
-						snprintf(ipset_name, 32, "host_acl_rule%u_mac", rule_id);
-						ret_mac = IP_SET_test_src_mac(state, in, out, skb, ipset_name);
-						if (ret_mac > 0) {
-							break;
-						}
-
-						if (ret_ip == -EINVAL && ret_mac == -EINVAL) {
-							break;
-						}
-
-						rule_id++;
-					}
-					if (rule_id < acl_rule_max) {
-						if (urllogger_acl(url, rule_id) == 1) {
-							break;
-						}
-					} else {
-						break;
-					}
-
-					rule_id++;
-				} while (1);
+				urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET6);
 				if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
 					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 					ret = NF_DROP;
@@ -3381,7 +3270,6 @@ static struct urlinfo *urlinfo_alloc_record(const unsigned char *host, int host_
         unsigned int host_flags,
         const unsigned char *uri, int uri_len)
 {
-	unsigned char normalized_host[URLINFO_HOST_MAX_LEN];
 	ssize_t copied_host_len;
 	unsigned int copied_len;
 	unsigned int data_len;
@@ -3394,7 +3282,7 @@ static struct urlinfo *urlinfo_alloc_record(const unsigned char *host, int host_
 	if (uri && urlinfo_uri_validate(uri, uri_len) < 0)
 		return NULL;
 
-	copied_host_len = urlinfo_copy_host_tolower(normalized_host, host, host_len, host_flags);
+	copied_host_len = urlinfo_copy_host_tolower(NULL, host, host_len, host_flags);
 	if (copied_host_len < 0)
 		return NULL;
 	copied_len = copied_host_len;
@@ -3410,7 +3298,10 @@ static struct urlinfo *urlinfo_alloc_record(const unsigned char *host, int host_
 
 	INIT_LIST_HEAD(&url->list);
 	url->host_len = copied_len;
-	memcpy(url->data, normalized_host, copied_len);
+	if (urlinfo_copy_host_tolower(url->data, host, host_len, host_flags) != copied_host_len) {
+		kfree(url);
+		return NULL;
+	}
 	if (uri_len > 0)
 		memcpy(url->data + copied_len, uri, uri_len);
 	url->data[data_len - 1] = 0;
