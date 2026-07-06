@@ -363,7 +363,7 @@ ip_or_ipv6,mac,auth_type_hex,auth_status_hex,rule_id,idle_time,rx_pkts:rx_bytes,
 
 - 单次 read 如果生成行长度大于用户提供 buffer，会返回 `-EINVAL`，这会破坏 shell 中按 1 字节读的用法。代码中已有 FIXME，重建实现若追求兼容应保留，若修复需在变更记录说明。
 - fakeuser 是特殊 conntrack，不是独立用户态表。
-- `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数，不再从当前 `no_flow_timeout` 反推。
+- `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数，不再从当前 `no_flow_timeout` 反推；该 timestamp 在 fakeuser 创建/获取时写入，user pre hook 中普通活动最多每 32 秒刷新一次，`IP_CT_NEW` 新连接包距离上次刷新超过 2 秒也会刷新。
 - 每个打开实例缓存最多 4096 条用户快照；扫描 conntrack hash 超过时间片或缓存上限时会保存 `next_bucket` 并返回 `-EAGAIN`。
 - 速度字段来自 4 个 2 秒窗口；如果超过 8 秒无更新，速度输出为 0。
 
@@ -773,7 +773,7 @@ hash 约束：
    - 源 IP 必须命中 `sipgrp` ipset。
    - `auto` 类型直接进入 `AUTH_OK`。
    - `web` 类型默认 `AUTH_REQ`，若 IP/MAC 白名单命中则 `AUTH_VIP`。
-5. 创建/更新 fakeuser，记录 MAC、规则、认证状态。
+5. 创建/更新 fakeuser，记录 MAC、规则、认证状态；普通活动 timestamp 最多每 32 秒刷新一次，`IP_CT_NEW` 新连接包距离上次刷新超过 2 秒也会刷新。
 6. 触发 userinfo event。
 7. 若开启 `https_redirect_en`，对 TCP 443 且未命中旁路名单的连接 DNAT 到本机地址和 `https_redirect_port`，并设置 bypass bit。
 

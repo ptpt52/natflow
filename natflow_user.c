@@ -47,6 +47,8 @@
 
 /* user timeout 1800s */
 static unsigned int natflow_user_timeout = 1800;
+#define NATFLOW_USER_TIMESTAMP_REFRESH (32 * HZ)
+#define NATFLOW_USER_TIMESTAMP_NEW_REFRESH (2 * HZ)
 
 struct userinfo {
 	struct list_head list;
@@ -2058,14 +2060,20 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		}
 	}
 
-	if (timestamp_offset(fud->timestamp, jiffies) >= 32 * HZ) {
+	do {
+		unsigned int idle_jiffies = timestamp_offset(fud->timestamp, jiffies);
+
+		if (idle_jiffies < NATFLOW_USER_TIMESTAMP_REFRESH &&
+		    (ctinfo != IP_CT_NEW || idle_jiffies < NATFLOW_USER_TIMESTAMP_NEW_REFRESH)) {
+			break;
+		}
 		if (memcmp(eth_hdr(skb)->h_source, fud->macaddr, ETH_ALEN) != 0) {
 			memcpy(fud->macaddr, eth_hdr(skb)->h_source, ETH_ALEN);
 		}
 		fud->timestamp = jiffies;
 		natflow_user_timeout_touch(user);
 		userinfo_event_queue(user);
-	}
+	} while (0);
 
 	if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
 		if (fud->auth_status == AUTH_REQ && fud->auth_type == AUTH_TYPE_WEB && https_redirect_en != 0) {

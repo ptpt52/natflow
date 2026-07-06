@@ -421,7 +421,7 @@ echo 'set-token-ctrl <ip_or_ipv6> <rxbytes> <txbytes>' >/dev/userinfo_ctl
 
 说明：
 
-- `idle_time` 是该 fakeuser 内部活动时间戳至今经过的秒数。
+- `idle_time` 是该 fakeuser 内部活动时间戳至今经过的秒数；该时间戳在 fakeuser 创建/获取时写入，普通活动最多每 32 秒刷新一次，新连接包距离上次刷新超过 2 秒也会刷新。
 - `kickall` 清理所有用户认证状态和统计。
 - `kick`、`set-status`、`set-token-ctrl` 找不到用户时返回 `-ENOENT`。
 - `set-token-ctrl` 单位是 Bytes/s；rx 或 tx 非 0 时启用该用户 token control，两者都为 0 时关闭。
