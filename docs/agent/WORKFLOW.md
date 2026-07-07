@@ -45,6 +45,21 @@ Bug 修复任务要优先形成可验证假设：
 4. 修复后补充回归说明或验证命令。
 5. 如果 bug 暴露了规格缺口，更新 `SYSTEM_DESIGN_SPEC.md` 或本记忆层。
 
+## 代码修改检查清单
+
+修改内核数据面或控制面时，按下面清单过一遍：
+
+- 热路径：不能睡眠，避免无界循环和大栈对象；包处理路径使用 `GFP_ATOMIC`，控制面初始化/配置路径才使用 `GFP_KERNEL`。
+- skb 读写：访问 IP/TCP/UDP/ICMP/QUIC/TLS 字段前先确认线性可读；写入前确认 skb 可写；任何 pull、trim、cow、copy、expand 后重新获取 header 和 payload 指针。
+- fast path 协作：user/auth、URL logger、Host ACL 等策略未完成前必须设置 `NF_FF_USER_USE` 或 `NF_FF_URLLOGGER_USE`，完成或确定放弃后再清理状态。
+- 资源归属：跨包 cache、skb/data buffer、crypto scratch、RCU buffer 都要明确 owner；attach/发布成功后调用方不再释放，失败路径必须释放或恢复。
+- 并发模型：控制面写共享规则时优先构造新对象，再用锁和 RCU 发布；读侧在 RCU 临界区内使用，释放旧对象前等待 grace period。
+- 输入解析：字符设备命令遵守 256 字节和换行协议；`sscanf`/手写 parser 必须有宽度和 NUL 兜底；数组下标和状态值必须先验证范围。
+- 封包返回：302/RST 等主动回复优先构造新 skb，明确 headroom/tailroom、长度、checksum、PPPoE/VLAN 情况；失败时保持原慢路径或 drop 语义清楚。
+- PPPoE/bridge：临时修改 `skb->protocol`、`network_header` 或 data 指针时必须有统一出口恢复，特别是等待更多 TLS/QUIC 数据和错误返回。
+- 兼容层：遇到内核 API 差异优先检查 `natflow_compat.h` 和现有宏分支，不按单一新内核 API 直接改写。
+- 文档同步：改变字符设备协议、输出字段、状态位、编译宏、fast path/user/urllogger/zone 关键流程时，同步 `README.md`、`SYSTEM_DESIGN_SPEC.md` 和必要的 `docs/agent/` 记忆。
+
 ## 文档更新
 
 文档任务也要回到源码确认：
