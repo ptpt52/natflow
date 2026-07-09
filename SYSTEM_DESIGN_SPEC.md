@@ -1,7 +1,7 @@
 # Natflow 系统设计与规格限制文档
 
-生成日期：2026-07-04
-扫描范围：当前仓库的源码、头文件、Makefile、DKMS 配置、现有 Markdown 文档和仓库实际文件清单。
+生成日期：2026-07-09
+扫描范围：当前仓库的源码、头文件、Makefile、DKMS 配置、现有 Markdown 文档（含 DPI 设计）和仓库实际文件清单。
 目标读者：内核开发者、运维集成者、代码审查者，以及需要依据本规格重建实现的 AI/自动化工具。
 
 本文是根据仓库当前实现反向整理的系统规格。若本文和代码冲突，以当前源码为准；若要用 AI 生成对应实现，必须同时满足本文的接口、状态位、数据流和限制条件。
@@ -38,12 +38,13 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 | `Makefile.dkms`、`dkms.conf` | DKMS 入口 | 安装到 `/usr/src/natflow-<version>` 并通过 DKMS build/install。 |
 | `README.md` | 文档 | 面向人类的使用手册和对外接口说明。 |
 | `SYSTEM_DESIGN_SPEC.md` | 文档 | 面向开发、审查和自动化重建的系统设计规格。 |
+| `DPI_DESIGN.md` | 文档 | 新一代深度包检测与应用识别架构的设计与实施路径规划。 |
 
 ### 2.1 当前扫描基线
 
 本次重新扫描基于当前工作区实际文件和 Git 跟踪文件：
 
-- Git 跟踪文件共 21 个，其中 C 源码 7 个、头文件 8 个、Markdown 文档 2 个，以及 Makefile、DKMS 配置和 `.gitignore`。
+- 仓库包含 C 源码 7 个、头文件 8 个，以及多个 Markdown 文档（包括系统规格、DPI 设计和智能体记忆）、Makefile、DKMS 配置和 `.gitignore`。
 - 当前实际目录中没有 `natflow_path.c.orig`、`cscope.files`、`cscope.out`、`natflow.mod.c` 等历史备份、索引或构建生成文件；`.gitignore` 仍会忽略 `*.orig`、`cscope.*` 和 `*.mod.c`，因此未来若这些文件重新出现，应先判断是否为生成物或临时备份，不能加入 DKMS 源码复制清单。
 - `SYSTEM_DESIGN_SPEC.md` 本身是规格产物，参与 Git 跟踪，但不是内核模块构建输入。
 - 仓库中不再保留 `portal/` 设计草案文档；当前源码仍只提供内核模块接口，没有 authd/web server 实现。
@@ -786,7 +787,7 @@ hash 约束：
 3. 初始化 `natflow_t`。
 4. 首次匹配 QoS，设置 `qos_id` 和 `NF_FF_TOKEN_CTRL`。
 5. 根据 fakeuser 认证状态处理：
-   - `AUTH_REQ + WEB`：允许 DNS/DHCP/旁路名单；非 TCP 丢弃；HTTP GET/POST 生成 302；其他数据丢弃；裸 ACK 转 RST。
+   - `AUTH_REQ + WEB`：允许 DNS/DHCP/旁路名单；非 TCP 丢弃；HTTP GET/POST 生成 302；其他数据丢弃；裸 ACK 转 RST。生成 302 响应时，采用静态预格式化模板并使用 `skb_copy_expand` 进行 payload 注入，避免运行时大块内存动态分配。
    - `AUTH_REQ + AUTO`：转为 `AUTH_OK`。
    - `AUTH_OK`：可处理 WeChat 自动 portal 特例。
    - `AUTH_VIP` / `AUTH_BYPASS`：设置 bypass。
@@ -859,9 +860,9 @@ classid 模式：
    - 会剥离合法十进制 `:port`，但不支持 IPv6 literal Host，不做 IDNA/punycode 转换。
 6. 解析 TLS SNI：
    - 解析 TLS ClientHello extension type 0。
-   - 使用 per-CPU SNI cache 拼接跨包数据。
+   - 使用 per-CPU SNI cache 拼接跨包数据。仅缓存纯 payload 数据而非原始 skb，以避免复杂的 ownership/destructor 问题和降低内存占用。
    - 单条追加数据小于 32KB。
-   - cache 每 CPU 64 个节点，超时 4 秒。
+   - cache 每 CPU 64 个节点，超时 4 秒。attach 新节点时会在遍历过程中主动清理过期节点（cache eviction），避免被过期节点耗尽。
    - TLS record 长度不足但已确认 handshake type 是 ClientHello 时，会继续在已收到字节中探测；若可确认 handshake type 不是 ClientHello，则返回非 ClientHello。
    - TCP SNI cache 只接受按 TCP sequence 连续追加的数据，不做乱序重组。
    - 不支持一个 TLS ClientHello handshake message 横跨多个 TLS record 的完整语义重组。
