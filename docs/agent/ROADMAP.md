@@ -104,7 +104,7 @@
 
 目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，设计轻量 DPI 能力，用于协议/应用分类、审计记录和策略匹配，为后续 QoS、访问控制、报表或用户态控制面对接提供稳定接口。
 
-当前设计基线：`DPI_DESIGN.md`。MVP 已收敛为有界 L7 detector 框架：复用 HTTP Host、TLS/QUIC SNI 提取器，同时支持少量高确定性的非 HTTP/TLS/QUIC detector，输出 `proto_id`、`detector_id`、`app_id` 和被动审计事件；应用策略与高级特征不进入首期。本文档仍是目标设计，不代表源码已实现 DPI ABI 或行为。
+当前设计基线：`DPI_DESIGN.md`。MVP 已收敛为有界 L7 detector 框架：复用 HTTP Host、TLS/QUIC SNI 提取器，同时支持少量高确定性的非 HTTP/TLS/QUIC detector，输出 `proto_id`、`detector_id`、`app_id` 和被动审计事件；7.5 节已经列出 M1/M2/M4 detector 与首批域名规则应用清单。应用策略与高级特征不进入首期。本文档仍是目标设计，不代表源码已实现 DPI ABI 或行为。
 
 边界：
 

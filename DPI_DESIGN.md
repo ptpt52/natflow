@@ -12,7 +12,7 @@ Natflow 不应在内核中照搬 nDPI 或实现一个无边界通用应用识别
 
 本设计作出以下确定决策：
 
-1. MVP 不再限制为 HTTP/TLS/QUIC 域名映射；MVP 必须先建立 detector 框架、fast-path gate、终态和事件 ABI。首批 detector 包含 HTTP/1 Host、TLS ClientHello SNI、QUIC v1 Initial SNI，以及少量非 HTTP/TLS/QUIC 的高确定性 detector。具体协议集按 7.4 节分级进入，不把 nDPI 全量协议一次搬入内核。
+1. MVP 不再限制为 HTTP/TLS/QUIC 域名映射；MVP 必须先建立 detector 框架、fast-path gate、终态和事件 ABI。首批 detector 包含 HTTP/1 Host、TLS ClientHello SNI、QUIC v1 Initial SNI，以及少量非 HTTP/TLS/QUIC 的高确定性 detector。具体协议集按 7.4 节分级进入，初始支持清单见 7.5 节，不把 nDPI 全量协议一次搬入内核。
 2. fast-path gate、终态和失败降级属于 MVP，不得放到后续阶段，否则首段流量可能在分类前被加速绕过。
 3. HTTP/TLS/QUIC 只能有一套共享提取器。URL logger、Host ACL 和 DPI 都消费同一份规范化特征，不能并行重复解析。其他协议 detector 也必须复用同一 packet view、flow context、预算和终态框架。
 4. 协议识别和应用识别分开。确认流量是 TLS/QUIC 不等于确认具体应用；`app_id=0` 始终表示应用未知。
@@ -307,6 +307,78 @@ A/B/C/D 是准入等级，不是 ABI。实现时仍以固定 `detector_id`、`pr
 - 对所有规则做线性 payload contains 扫描。
 - 因端口命中就输出可阻断 `app_id`。
 - 在 flow context 中保存未上限的 payload、host 列表或候选链。
+
+### 7.5 初始支持应用清单
+
+本节定义 DPI 设计目标和分阶段支持范围，不表示当前源码已经实现。清单分成两类：
+
+- **内置 detector app/proto**：内核 detector 可在连接首段通过握手、magic、长度、方向阶段或名称字段确认 `proto_id`，必要时由规则映射为 `app_id`。
+- **域名规则 app**：内核只提供 HTTP Host、TLS/QUIC SNI、DNS QNAME 的规范化和后缀匹配；具体品牌、业务和域名后缀由用户态规则包下发，不硬编码进内核。
+
+所有清单项默认先进入审计。进入阻断或 QoS 前，必须有 shadow 数据证明误判率、覆盖率和 CPU/内存成本符合目标。端口、共享 CDN/IP、DNS 关联和统计特征不能单独把未知加密流标记为可阻断应用。
+
+#### 7.5.1 M1 内置 detector 清单
+
+M1 只承诺审计输出和规则命中事件，不默认执行应用级阻断。
+
+| 名称 | 默认输出 | 最小确认证据 | 备注 |
+| --- | --- | --- | --- |
+| HTTP/1 | `proto_id=HTTP`，Host 规则可映射 `app_id` | original 方向 request line + Host header | URI 继续服务 legacy URL logger；DPI app rule 不依赖 path |
+| TLS over TCP | `proto_id=TLS`，SNI 规则可映射 `app_id` | ClientHello record、handshake length、SNI extension | ECH 只能使用可见 outer SNI；无可见 SNI 时 app unknown |
+| QUIC v1 | `proto_id=QUIC`，SNI 规则可映射 `app_id` | UDP long header Initial v1、可解密 CRYPTO ClientHello、SNI | QUIC v2/Retry/复杂 coalesced 先输出 reason，不做强应用判断 |
+| DNS | `proto_id=DNS` | DNS header、question count、name/length 边界、type/class | QNAME 只用于本 DNS flow 审计或规则命中，不给后续流做强关联阻断 |
+| STUN/TURN | `proto_id=STUN` | message type、magic cookie、length、attribute 边界 | 可审计 WebRTC/VoIP 基础流量，但不能据此确认 Zoom/Teams 等品牌应用 |
+| SSH | `proto_id=SSH` | 双向 SSH version exchange 或原向 banner + 合法格式 | 仅确认 SSH 协议；具体业务由外部规则或地址策略决定 |
+| BitTorrent | `app_id=BITTORRENT` 或 `proto_id=BT_DHT` | TCP BitTorrent protocol handshake，或 UDP DHT magic/transaction 结构 | TCP/UDP 分 detector；命中后仍受 M1 audit-only 限制 |
+| WireGuard | `app_id=WIREGUARD` | handshake initiation/response type、长度、reserved 字段和方向阶段 | 不因 UDP 端口单独命中；优先要求方向阶段确认 |
+
+#### 7.5.2 M2 内置 detector 候选清单
+
+M2 在 M1 事件格式和资源预算稳定后进入 shadow。以下协议仍需逐项提交 nDPI 参考、样本 corpus、误判模型和包数字节预算。
+
+| 名称 | 默认输出 | 关键证据 | 风险 |
+| --- | --- | --- | --- |
+| FTP | `proto_id=FTP` | server banner、USER/PASS/response code 阶段 | 明文控制连接可识别；数据连接不在 MVP 自动关联 |
+| SMTP | `proto_id=SMTP` | banner/EHLO/HELO/response code | STARTTLS 后只保留已确认协议，不继续解析加密内容 |
+| POP3 | `proto_id=POP3` | `+OK` banner、USER/PASS/STAT 等命令 | server-first，需要反向首包预算 |
+| IMAP | `proto_id=IMAP` | tagged command、`* OK` banner、CAPABILITY | 语法较松，必须避免弱 token 误判 |
+| SIP | `proto_id=SIP` | request/status line、Via/Call-ID/CSeq 组合 | 与 HTTP-like 文本协议相似，必须多字段确认 |
+| RTSP | `proto_id=RTSP` | RTSP request/status line、CSeq/header 组合 | 与 HTTP-like 文本协议相似，不能只看方法名 |
+| MQTT | `proto_id=MQTT` | CONNECT packet type、remaining length、protocol name/version | TCP 粘包和短包要走 prefix budget |
+| Redis | `proto_id=REDIS` | RESP frame、命令/响应阶段 | 明文管理流量，误判要靠 RESP 边界确认 |
+| MySQL | `proto_id=MYSQL` | server handshake packet、protocol version、capability flags | server-first，需要反向首包预算 |
+| PostgreSQL | `proto_id=POSTGRESQL` | startup/SSLRequest/cancel request 或 server response | SSLRequest 后不继续解析加密内容 |
+| RDP | `proto_id=RDP` | TPKT/X.224 connection request/confirm | 可能与其他 TPKT 协议冲突，需严格版本/长度 |
+| SMB | `proto_id=SMB` | SMB1/SMB2 magic、header length、command field | 只确认协议，不深入文件名/共享名策略 |
+
+#### 7.5.3 M4/专项 detector 清单
+
+这些协议默认不进入 M1/M2 阻断面。只有在目标部署有明确需求、样本充足且 shadow 证明稳定后，才单独设计 detector。
+
+| 名称 | 默认输出 | 准入要求 |
+| --- | --- | --- |
+| OpenVPN | `proto_id=OPENVPN` 或 hint | 证明 magic/opcode/session id 组合在目标网络中低误判；不能只看 UDP 1194 |
+| SoftEther | `proto_id=SOFTETHER` 或 hint | 明确握手阶段和与 TLS/HTTPS 的边界 |
+| Kerberos | `proto_id=KERBEROS` | ASN.1/port/context 必须共同确认；不能只凭 88 端口 |
+| RTP/RTCP | `proto_id=RTP`/`RTCP` 或 hint | 需要与 SIP/SDP、端口范围或方向阶段组合；默认不阻断 |
+| Shadowsocks/V2Ray/Trojan/VLESS 等代理 | hint 或 domain app | 只有存在可解释握手或显式部署规则时进入；未知加密流不能靠端口/IP 标记 |
+| 游戏/私有 UDP | app hint | 按 Steam Datagram Relay、Riot、Tencent Games、Battle.net 等逐个 detector 评审；共享 CDN/IP 不作为强证据 |
+
+#### 7.5.4 首批域名规则应用清单
+
+以下应用通过 HTTP Host、TLS SNI、QUIC SNI 或 DNS QNAME 的后缀规则识别。规则包由用户态下发，内核只保存编译后的 hash + DNS label 边界 suffix probe 所需数据和 `app_id`。同一 host 命中多个后缀时，必须选择最长后缀或显式优先级最高的规则。
+
+| 类别 | 首批应用 |
+| --- | --- |
+| 搜索/平台 | Google、Baidu、Bing |
+| 视频/短视频 | YouTube、Netflix、TikTok、Douyin、Kuaishou、Bilibili、Tencent Video、iQiyi、Youku |
+| 社交/消息 | WeChat、QQ、WhatsApp、Telegram、Discord、Facebook、Instagram、X/Twitter |
+| 办公/云协作 | Microsoft 365、Teams、OneDrive、Apple iCloud、Google Workspace |
+| 电商/支付/生活服务 | Taobao、Tmall、Alipay、JD.com、Meituan、Amazon |
+| 游戏/分发 | Steam、Epic Games、Battle.net、PlayStation Network、Xbox Live、Riot Games、Tencent Games |
+| 云/基础设施 | AWS、Azure、Google Cloud、Cloudflare、Akamai、Fastly |
+
+云、CDN、对象存储和公共加速域名属于共享基础设施。默认只能作为审计分类或 QoS 辅助，不建议作为阻断目标；如果用户强制配置阻断，事件必须保留 `confidence`、`rule_id` 和命中后缀，便于解释误伤。
 
 ## 8. Flow selector、hook 与 fast-path gate
 
