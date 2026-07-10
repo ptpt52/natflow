@@ -1,6 +1,6 @@
 # Natflow 系统设计与规格限制文档
 
-生成日期：2026-07-09
+生成日期：2026-07-10
 扫描范围：当前仓库的源码、头文件、Makefile、DKMS 配置、现有 Markdown 文档（含 DPI 设计）和仓库实际文件清单。
 目标读者：内核开发者、运维集成者、代码审查者，以及需要依据本规格重建实现的 AI/自动化工具。
 
@@ -38,7 +38,7 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 | `Makefile.dkms`、`dkms.conf` | DKMS 入口 | 安装到 `/usr/src/natflow-<version>` 并通过 DKMS build/install。 |
 | `README.md` | 文档 | 面向人类的使用手册和对外接口说明。 |
 | `SYSTEM_DESIGN_SPEC.md` | 文档 | 面向开发、审查和自动化重建的系统设计规格。 |
-| `DPI_DESIGN.md` | 文档 | 新一代深度包检测与应用识别架构的设计与实施路径规划。 |
+| `DPI_DESIGN.md` | 文档 | 有界 L7 元数据分类架构与实施路径草案；当前尚未实现其中的 DPI 接口和行为。 |
 
 ### 2.1 当前扫描基线
 

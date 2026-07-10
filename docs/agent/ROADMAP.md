@@ -1,6 +1,6 @@
 # Natflow 开发路线图
 
-更新时间：2026-07-07
+更新时间：2026-07-10
 
 本文记录当前仓库的下一步开发目标。它是智能体和维护者的任务入口，不替代 `SYSTEM_DESIGN_SPEC.md`；具体实现仍以源码为准。
 
@@ -100,27 +100,27 @@
 
 ### P2-4：设计并开发 DPI 能力
 
-状态：Planned
+状态：Design Draft v2，Implementation Planned
 
 目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，设计轻量 DPI 能力，用于协议/应用分类、审计记录和策略匹配，为后续 QoS、访问控制、报表或用户态控制面对接提供稳定接口。
+
+当前设计基线：`DPI_DESIGN.md`。MVP 已收敛为 HTTP Host、TLS/QUIC SNI 域名映射和被动审计；应用策略与高级特征不进入首期。本文档仍是目标设计，不代表源码已实现 DPI ABI 或行为。
 
 边界：
 
 - 本仓库仍以 Linux 内核模块为核心；DPI 设计不默认引入完整用户态 DPI daemon、web 服务或大型签名库。
 - 现有能力已经覆盖 HTTP Host/URI、TCP TLS SNI、QUIC v1 Initial SNI 和 Host ACL；DPI 应优先复用这些解析、缓存和校验路径，避免重复实现一套并行 parser。
 - DPI 首期定位为机会性分类和审计能力，不承诺成为强安全 WAF、反规避网关或完整应用识别引擎；ECH、加密内层元数据、异常分片和混淆流量必须明确降级语义。
-- 数据面热路径必须保持有界解析、无阻塞、无大栈对象、无无界循环、少分配；等待更多数据时必须继续通过 busy bit 阻止 fast path 提前接管。
+- 数据面热路径必须保持有界解析、无阻塞、无大栈对象、无无界循环、少分配；等待更多数据时必须通过 `NF_FF_DPI_USE`/`NF_FF_BUSY_USE` 阻止 fast path 提前接管。维护者接受 `nf->status` 非原子 writer 的已知并发丢位风险。
 - 新增字符设备命令、sysctl、输出格式、状态位、编译宏或兼容层时，必须同步 `README.md`、`SYSTEM_DESIGN_SPEC.md` 和必要的 `docs/agent/` 记忆。
 
 计划：
 
-1. 设计阶段：新增 DPI 设计文档或扩展 `SYSTEM_DESIGN_SPEC.md`，盘点现有 URL/SNI/QUIC/Host ACL 能力，明确 DPI 的输入、输出、状态、owner、配置入口和验证标准。
-2. 分类模型：定义最小分类结果，例如 L3/L4 协议、HTTP method/host/path、TLS/QUIC SNI、应用协议标签、置信度和失败原因；避免把不确定结果记录成确定应用。
-3. ABI 方案：决定复用 `/dev/urllogger_queue`、扩展现有记录，还是新增 DPI 专用字符设备；若改变输出格式，优先考虑版本字段或长度显式的结构化输出，并给出兼容策略。
-4. 数据面集成：明确 hook 顺序、conntrack 状态位、`NF_FF_URLLOGGER_USE`/新增 busy bit、IPv4/IPv6、bridge、PPPoE、分片和跨包缓存的处理规则。
-5. 策略集成：定义 DPI 结果如何被 Host ACL、QoS、user/auth 或 zone 消费；首期可只做被动审计，策略执行作为第二阶段。
-6. 验证矩阵：补充基础构建、`CONFIG_NATFLOW_URLLOGGER` 构建、HTTP/TLS/QUIC 样例流、异常长度和畸形包边界、fast path 协作、PPPoE/bridge 场景和性能回归验证。
-7. 分阶段实现：MVP 先输出被动 DPI 分类记录；第二阶段接入 ACL/QoS 匹配；第三阶段再评估是否需要用户态规则或签名下发。
+1. M0：抽出 read-only packet view 和共享 HTTP/TLS/QUIC parser，建立 legacy URL/Host ACL 回归基线。
+2. M1：一次完成 DPI owner bit gate、有界跨包 context、domain ruleset、audit-only classifier、事务控制接口和版本化事件队列；默认关闭并 fail-open。
+3. M2：运行生产 shadow，对比 legacy 行为并统计覆盖率、终态原因、资源丢失和性能。
+4. M3：在明确既有 Host ACL/QoS 优先级后，分步评估 app drop/reset 和“仅填空”的 app QoS。
+5. M4：仅根据 shadow 数据分别评审 HTTP path/UA、payload signature、JA4、用户态 DNS correlation 或更多 QUIC 变体，不把它们作为首期承诺。
 
 退出条件：
 
