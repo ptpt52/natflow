@@ -100,27 +100,27 @@
 
 ### P2-4：设计并开发 DPI 能力
 
-状态：Design Draft v2，Implementation Planned
+状态：Design Draft v4，Implementation Planned
 
 目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，设计轻量 DPI 能力，用于协议/应用分类、审计记录和策略匹配，为后续 QoS、访问控制、报表或用户态控制面对接提供稳定接口。
 
-当前设计基线：`DPI_DESIGN.md`。MVP 已收敛为 HTTP Host、TLS/QUIC SNI 域名映射和被动审计；应用策略与高级特征不进入首期。本文档仍是目标设计，不代表源码已实现 DPI ABI 或行为。
+当前设计基线：`DPI_DESIGN.md`。MVP 已收敛为有界 L7 detector 框架：复用 HTTP Host、TLS/QUIC SNI 提取器，同时支持少量高确定性的非 HTTP/TLS/QUIC detector，输出 `proto_id`、`detector_id`、`app_id` 和被动审计事件；应用策略与高级特征不进入首期。本文档仍是目标设计，不代表源码已实现 DPI ABI 或行为。
 
 边界：
 
 - 本仓库仍以 Linux 内核模块为核心；DPI 设计不默认引入完整用户态 DPI daemon、web 服务或大型签名库。
 - 现有能力已经覆盖 HTTP Host/URI、TCP TLS SNI、QUIC v1 Initial SNI 和 Host ACL；DPI 应优先复用这些解析、缓存和校验路径，避免重复实现一套并行 parser。
-- DPI 首期定位为机会性分类和审计能力，不承诺成为强安全 WAF、反规避网关或完整应用识别引擎；ECH、加密内层元数据、异常分片和混淆流量必须明确降级语义。
+- DPI 首期定位为机会性分类和审计能力，不承诺成为强安全 WAF、反规避网关或完整应用识别引擎；ECH、加密内层元数据、异常分片、混淆流量和弱证据端口/IP 命中必须明确降级语义。
 - 数据面热路径必须保持有界解析、无阻塞、无大栈对象、无无界循环、少分配；等待更多数据时必须通过 `NF_FF_DPI_USE`/`NF_FF_BUSY_USE` 阻止 fast path 提前接管。维护者接受 `nf->status` 非原子 writer 的已知并发丢位风险。
 - 新增字符设备命令、sysctl、输出格式、状态位、编译宏或兼容层时，必须同步 `README.md`、`SYSTEM_DESIGN_SPEC.md` 和必要的 `docs/agent/` 记忆。
 
 计划：
 
-1. M0：抽出 read-only packet view 和共享 HTTP/TLS/QUIC parser，建立 legacy URL/Host ACL 回归基线。
-2. M1：一次完成 DPI owner bit gate、有界跨包 context、domain ruleset、audit-only classifier、事务控制接口和版本化事件队列；默认关闭并 fail-open。
-3. M2：运行生产 shadow，对比 legacy 行为并统计覆盖率、终态原因、资源丢失和性能。
+1. M0：抽出 read-only packet view、共享 HTTP/TLS/QUIC parser 和 detector dispatcher，建立 legacy URL/Host ACL 回归基线。
+2. M1：一次完成 DPI owner bit gate、有界跨包 context、首批 A 级 detector、domain/proto ruleset、audit-only classifier、事务控制接口和版本化事件队列；默认关闭并 fail-open。
+3. M2：运行生产 shadow，对比 legacy 行为并统计 detector coverage、protocol-only rate、app hit、unknown reason、资源丢失和性能，再按数据加入 B 级 detector。
 4. M3：在明确既有 Host ACL/QoS 优先级后，分步评估 app drop/reset 和“仅填空”的 app QoS。
-5. M4：仅根据 shadow 数据分别评审 HTTP path/UA、payload signature、JA4、用户态 DNS correlation 或更多 QUIC 变体，不把它们作为首期承诺。
+5. M4：仅根据 shadow 数据分别评审 HTTP path/UA、payload signature、JA4、用户态 DNS correlation、更多 QUIC 变体或 C 级复杂 detector，不把它们作为首期承诺。
 
 退出条件：
 
