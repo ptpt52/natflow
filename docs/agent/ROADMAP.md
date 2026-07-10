@@ -104,7 +104,7 @@
 
 目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，设计轻量 DPI 能力，用于协议/应用分类、审计记录和策略匹配，为后续 QoS、访问控制、报表或用户态控制面对接提供稳定接口。
 
-当前设计基线：`DPI_DESIGN.md`。MVP 已收敛为有界 L7 detector 框架：复用 HTTP Host、TLS/QUIC SNI 提取器，同时支持少量高确定性的非 HTTP/TLS/QUIC detector，输出 `proto_id`、`detector_id`、`app_id` 和被动审计事件；7.5 节已经列出 M1/M2/M4 detector 与首批域名规则应用清单。应用策略与高级特征不进入首期。本文档仍是目标设计，不代表源码已实现 DPI ABI 或行为。
+当前设计基线：`DPI_DESIGN.md`。MVP 已收敛为有界 L7 detector 框架：复用 HTTP Host、TLS/QUIC SNI 提取器，同时支持少量高确定性的非 HTTP/TLS/QUIC detector，输出 `proto_id`、`detector_id`、`app_id` 和被动审计事件；7.5 节基于 `/home/ubuntu/nDPI` 源码把 detector 和域名规则应用拆成可实现清单。应用策略与高级特征不进入首期。本文档仍是目标设计，不代表源码已实现 DPI ABI 或行为。
 
 边界：
 
@@ -117,10 +117,13 @@
 计划：
 
 1. M0：抽出 read-only packet view、共享 HTTP/TLS/QUIC parser 和 detector dispatcher，建立 legacy URL/Host ACL 回归基线。
-2. M1：一次完成 DPI owner bit gate、有界跨包 context、首批 A 级 detector、domain/proto ruleset、audit-only classifier、事务控制接口和版本化事件队列；默认关闭并 fail-open。
-3. M2：运行生产 shadow，对比 legacy 行为并统计 detector coverage、protocol-only rate、app hit、unknown reason、资源丢失和性能，再按数据加入 B 级 detector。
-4. M3：在明确既有 Host ACL/QoS 优先级后，分步评估 app drop/reset 和“仅填空”的 app QoS。
-5. M4：仅根据 shadow 数据分别评审 HTTP path/UA、payload signature、JA4、用户态 DNS correlation、更多 QUIC 变体或 C 级复杂 detector，不把它们作为首期承诺。
+2. M1a：完成 DPI owner bit gate、最小 context registry、terminal state、enable/disable、空 ruleset 事务和版本化事件骨架；默认关闭并 fail-open。
+3. M1b：完成共享 HTTP/TLS/QUIC parser、hostname normalize、domain exact/suffix ruleset，并保持 URL logger/Host ACL 兼容。
+4. M1c：加入 DNS、SSH、WireGuard 三个首批非 HTTP/TLS/QUIC protocol-only detector，全部 audit-only。
+5. M1d：加入 STUN/TURN protocol-only 和 BitTorrent handshake/uTP/DHT 子集，补齐 shadow 统计。
+6. M2：运行生产 shadow，对比 legacy 行为并统计 detector coverage、protocol-only rate、app hit、unknown reason、资源丢失和性能，再按数据加入 B 级 detector。
+7. M3：在明确既有 Host ACL/QoS 优先级后，分步评估 app drop/reset 和“仅填空”的 app QoS。
+8. M4：仅根据 shadow 数据分别评审 HTTP path/UA、payload signature、JA4、用户态 DNS correlation、更多 QUIC 变体、nDPI IP/证书/cache 类特征或 C 级复杂 detector，不把它们作为首期承诺。
 
 退出条件：
 

@@ -46,13 +46,16 @@ DPI 能力采用有界 L7 detector 框架：
 
 - 复用现有 HTTP Host、TLS SNI、QUIC Initial SNI 解析，但不把 DPI 限定为域名分类。
 - 非 HTTP/TLS/QUIC 流量通过编译期内置的小状态机 detector 进入，首批只选择 DNS、STUN、SSH、BitTorrent handshake/DHT、WireGuard 等高确定性协议中的子集。
+- nDPI 只作为参考来源：DPI detector、`host_match[]` 域名、IP/证书/cache/复合协议能力必须分层评审；Natflow UAPI 不复制 nDPI enum。
+- 默认应用规则包只纳入 nDPI 可落地的域名项；IP-only/CDN、证书、缓存和品牌私有 detector 不作为 M1 域名包能力。
+- M1 拆成 M1a gate/ABI、M1b HTTP/TLS/QUIC+domain、M1c DNS/SSH/WireGuard、M1d STUN/BitTorrent 子集，避免一次性重写整个 L7 子系统。
 - 每个 detector 必须声明方向、包数、字节数、候选裁剪、误判模型、资源上限和 corpus；默认正反向各不超过 4 个 payload 包。
 - 端口、IP/CIDR、DNS 关联和其他弱证据不能单独触发阻断。
 - 结果以 Natflow 自有 `proto_id`、`detector_id`、`app_id`、confidence 和 terminal reason 输出，不复制 nDPI enum 作为 UAPI。
 
 ### 后果
 
-- 后续实现必须先完成 `NF_FF_DPI_USE`/`NF_FF_BUSY_USE` gate、统一 packet view、detector dispatcher、事务规则、版本化事件和资源硬上限。
+- 后续实现必须先完成 `NF_FF_DPI_USE`/`NF_FF_BUSY_USE` gate、统一 packet view、detector dispatcher、事务规则、版本化事件和资源硬上限；`nf->status` 非原子风险被接受为当前工程约束，不因 DPI 引入 path 侧 repair。
 - 新增 detector 必须逐个评审，不能通过通用 payload contains、回溯正则、用户态 bytecode 或线性规则扫描绕过热路径约束。
 - M1 默认 audit-only 和 fail-open；drop/reset/QoS 必须等 shadow 数据证明误判可控后再分阶段开放。
 - 这个决策改变的是目标设计，不代表当前源码已经提供 DPI ABI 或应用识别行为。
