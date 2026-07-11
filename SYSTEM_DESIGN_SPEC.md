@@ -28,7 +28,7 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 | `natflow_main.c` | 编译源码 | 模块入口、`/dev/natflow_ctl`、子模块初始化和退出顺序。 |
 | `natflow_common.c/.h` | 编译源码/公共头 | 日志、兼容封装、conntrack 扩展探测、natflow 会话扩展、ipset/NAT 封装。 |
 | `natflow.h` | 公共头 | 核心数据结构、fastnat 节点、状态位、哈希算法、表大小和超时常量。 |
-| `natflow_l7.c/.h` | 编译源码/头 | L7 hook 生命周期和共享 feature core；当前集中管理 legacy URL hook 注册/注销，并提供 host/URI normalize、HTTP Host、TLS SNI、QUIC Initial/CRYPTO/SNI 和 DNS QNAME parser。 |
+| `natflow_l7.c/.h` | 编译源码/头 | L7 hook 生命周期和共享 feature core；当前持有 URL hook ops、内核 hook 签名兼容包装和注册/注销流程，并提供 host/URI normalize、HTTP Host、TLS SNI、QUIC Initial/CRYPTO/SNI 和 DNS QNAME parser。 |
 | `natflow_dpi.c/.h` | 编译源码/头 | DPI 控制/事件接口，提供默认关闭的 `/dev/natflow_dpi_ctl`、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、`app_id` 写入、source counters 和 `/dev/natflow_dpi_queue` match 事件。 |
 | `natflow_path.c/.h` | 编译源码/头 | fast path、route 学习、fastnat 表、vline/relay、设备 notifier、硬件 offload。 |
 | `natflow_user.c/.h` | 编译源码/头 | 用户 fakeuser、认证、QoS、用户事件、用户信息控制设备。 |
@@ -182,7 +182,7 @@ Natflow 分为控制面、策略面、数据面和观测面。
 - zone 和 user 在 path 前初始化，因此 fast path 可依赖 zone/user 状态位。
 - user 子系统初始化时，`userinfo_event_store_init()` 在 `/dev/userinfo_event_ctl` 的 `cdev_add()` 之前执行；设备节点一旦可打开，事件队列的 spinlock、list 和 waitqueue 已经有效。
 - URL logger 在 path 后初始化，但通过 `NF_FF_URLLOGGER_USE` 与 path 协调，避免未完成 URL 处理的流被快速转发。
-- L7 hook lifecycle 在 URL logger 资源初始化之后注册 legacy URL hook，退出时先注销 hook 再释放 URL logger 资源。
+- L7 hook lifecycle 在 URL logger 资源初始化之后注册 URL hook ops；hook 签名兼容包装由 L7 持有，数据面继续委托 legacy urllogger consumer。退出时先注销 hook 再释放 URL logger 资源。
 - 退出 path 时先 `disabled=1`，再注销 hooks/notifier、同步 RCU、停止硬件 offload、释放表。
 
 ## 6. 公共控制协议

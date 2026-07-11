@@ -17,6 +17,170 @@
 
 static int natflow_l7_started;
 
+#if defined(CONFIG_NATFLOW_URLLOGGER)
+#if NATFLOW_HAVE_IP_SET_STATE_API
+#define NATFLOW_L7_URLLOGGER_CONSUME(hooknum, skb, state, in, out) \
+	natflow_urllogger_consume_skb(hooknum, state, skb)
+#else
+#define NATFLOW_L7_URLLOGGER_CONSUME(hooknum, skb, state, in, out) \
+	natflow_urllogger_consume_skb(hooknum, in, out, skb)
+#endif
+
+#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
+static unsigned int natflow_l7_url_hook(unsigned int hooknum,
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
+{
+	return NATFLOW_L7_URLLOGGER_CONSUME(hooknum, skb, NULL, in, out);
+}
+#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
+static unsigned int natflow_l7_url_hook(const struct nf_hook_ops *ops,
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
+{
+	return NATFLOW_L7_URLLOGGER_CONSUME(ops->hooknum, skb, NULL, in, out);
+}
+#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
+static unsigned int natflow_l7_url_hook(const struct nf_hook_ops *ops,
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
+{
+	return NATFLOW_L7_URLLOGGER_CONSUME(state->hook, skb, state, state->in,
+	                                    state->out);
+}
+#else
+static unsigned int natflow_l7_url_hook(void *priv,
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
+{
+#if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
+	return NATFLOW_L7_URLLOGGER_CONSUME(state->hook, skb, state, state->in,
+	                                    state->out);
+#else
+	return NATFLOW_L7_URLLOGGER_CONSUME(state->hook, skb, state, state->in, NULL);
+#endif
+}
+#endif
+
+#if defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
+#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
+static unsigned int natflow_l7_url_local_in(unsigned int hooknum,
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
+{
+#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
+static unsigned int natflow_l7_url_local_in(const struct nf_hook_ops *ops,
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
+{
+	unsigned int hooknum = ops->hooknum;
+#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
+static unsigned int natflow_l7_url_local_in(const struct nf_hook_ops *ops,
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
+{
+	const struct net_device *in = state->in;
+	const struct net_device *out = state->out;
+#else
+static unsigned int natflow_l7_url_local_in(void *priv,
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
+{
+	const struct net_device *in = state->in;
+#if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
+	const struct net_device *out = state->out;
+#else
+	const struct net_device *out = NULL;
+#endif
+#endif
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn *ct;
+	struct iphdr *iph;
+
+	if (!natflow_urllogger_is_enabled())
+		return NF_ACCEPT;
+
+	ct = nf_ct_get(skb, &ctinfo);
+	if (!ct || CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
+		return NF_ACCEPT;
+	if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num != AF_INET)
+		return NF_ACCEPT;
+
+	iph = ip_hdr(skb);
+	if (iph->protocol != IPPROTO_TCP)
+		return NF_ACCEPT;
+
+#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG || NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
+	return NATFLOW_L7_URLLOGGER_CONSUME(hooknum, skb, NULL, in, out);
+#else
+	return NATFLOW_L7_URLLOGGER_CONSUME(state->hook, skb, state, in, out);
+#endif
+}
+#endif /* CONFIG_NATFLOW_URLLOGGER_LOCAL_IN */
+
+static struct nf_hook_ops natflow_l7_url_hooks[] = {
+#if defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
+	{
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_l7_url_local_in,
+		.pf = PF_INET,
+		.hooknum = NF_INET_LOCAL_IN,
+		.priority = NF_IP_PRI_FILTER + 5,
+	},
+#else
+	{
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_l7_url_hook,
+		.pf = PF_INET,
+		.hooknum = NF_INET_FORWARD,
+		.priority = NF_IP_PRI_FILTER + 5,
+	},
+	{
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_l7_url_hook,
+		.pf = AF_INET6,
+		.hooknum = NF_INET_FORWARD,
+		.priority = NF_IP_PRI_FILTER + 5,
+	},
+	{
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_l7_url_hook,
+		.pf = NFPROTO_BRIDGE,
+		.hooknum = NF_INET_FORWARD,
+		.priority = NF_IP_PRI_FILTER + 5,
+	},
+#endif
+};
+
+static int natflow_l7_url_hooks_register(void)
+{
+	return nf_register_hooks(natflow_l7_url_hooks,
+	                         ARRAY_SIZE(natflow_l7_url_hooks));
+}
+
+static void natflow_l7_url_hooks_unregister(void)
+{
+	nf_unregister_hooks(natflow_l7_url_hooks,
+	                    ARRAY_SIZE(natflow_l7_url_hooks));
+}
+#endif /* CONFIG_NATFLOW_URLLOGGER */
+
 static inline int natflow_l7_has_bytes(unsigned int offset,
         unsigned int bytes, unsigned int len)
 {
@@ -844,7 +1008,7 @@ int natflow_l7_init(void)
 		return ret;
 
 #if defined(CONFIG_NATFLOW_URLLOGGER)
-	ret = natflow_urllogger_hooks_register();
+	ret = natflow_l7_url_hooks_register();
 	if (ret != 0)
 		return ret;
 #endif
@@ -859,7 +1023,7 @@ void natflow_l7_exit(void)
 		return;
 
 #if defined(CONFIG_NATFLOW_URLLOGGER)
-	natflow_urllogger_hooks_unregister();
+	natflow_l7_url_hooks_unregister();
 #endif
 	natflow_l7_started = 0;
 }

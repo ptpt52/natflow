@@ -2083,39 +2083,17 @@ static void urllogger_quic_crypto_cleanup(void)
 	urllogger_quic_crypto_cpu_num = 0;
 }
 
-#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
-static unsigned int natflow_urllogger_hook_v1(unsigned int hooknum,
-        struct sk_buff *skb,
-        const struct net_device *in,
-        const struct net_device *out,
-        int (*okfn)(struct sk_buff *))
+int natflow_urllogger_is_enabled(void)
 {
-#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
-static unsigned int natflow_urllogger_hook_v1(const struct nf_hook_ops *ops,
-        struct sk_buff *skb,
-        const struct net_device *in,
-        const struct net_device *out,
-        int (*okfn)(struct sk_buff *))
+	return READ_ONCE(urllogger_store_enable) != 0;
+}
+
+unsigned int natflow_urllogger_consume_skb(unsigned int hooknum,
+        URLLOGGER_HOOK_CTX_ARGS,
+        struct sk_buff *skb)
 {
-	unsigned int hooknum = ops->hooknum;
-#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
-static unsigned int natflow_urllogger_hook_v1(const struct nf_hook_ops *ops,
-        struct sk_buff *skb,
-        const struct nf_hook_state *state)
-{
-	unsigned int hooknum = state->hook;
+#if NATFLOW_HAVE_IP_SET_STATE_API
 	const struct net_device *in = state->in;
-	const struct net_device *out = state->out;
-#else
-static unsigned int natflow_urllogger_hook_v1(void *priv,
-        struct sk_buff *skb,
-        const struct nf_hook_state *state)
-{
-	unsigned int hooknum = state->hook;
-	const struct net_device *in = state->in;
-#if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
-	const struct net_device *out = state->out;
-#endif
 #endif
 	int ret = NF_ACCEPT;
 	enum ip_conntrack_info ctinfo;
@@ -2127,7 +2105,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 	void *l4;
 	int bridge = 0;
 
-	if (!urllogger_store_enable)
+	if (!natflow_urllogger_is_enabled())
 		return NF_ACCEPT;
 
 	if (skb->protocol == __constant_htons(ETH_P_PPP_SES)) {
@@ -2770,132 +2748,6 @@ out:
 	}
 
 	return ret;
-}
-
-#if defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
-
-#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
-static unsigned int natflow_urllogger_local_in(unsigned int hooknum,
-        struct sk_buff *skb,
-        const struct net_device *in,
-        const struct net_device *out,
-        int (*okfn)(struct sk_buff *))
-{
-#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
-static unsigned int natflow_urllogger_local_in(const struct nf_hook_ops *ops,
-        struct sk_buff *skb,
-        const struct net_device *in,
-        const struct net_device *out,
-        int (*okfn)(struct sk_buff *))
-{
-	//unsigned int hooknum = ops->hooknum;
-#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
-static unsigned int natflow_urllogger_local_in(const struct nf_hook_ops *ops,
-        struct sk_buff *skb,
-        const struct nf_hook_state *state)
-{
-	//unsigned int hooknum = state->hook;
-	//const struct net_device *in = state->in;
-	//const struct net_device *out = state->out;
-#else
-static unsigned int natflow_urllogger_local_in(void *priv,
-        struct sk_buff *skb,
-        const struct nf_hook_state *state)
-{
-	//unsigned int hooknum = state->hook;
-	//const struct net_device *in = state->in;
-#if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
-	//const struct net_device *out = state->out;
-#endif
-#endif
-	int ret = NF_ACCEPT;
-	enum ip_conntrack_info ctinfo;
-	struct nf_conn *ct;
-	struct iphdr *iph;
-	//void *l4;
-
-	if (!urllogger_store_enable)
-		return NF_ACCEPT;
-
-	ct = nf_ct_get(skb, &ctinfo);
-	if (NULL == ct)
-		goto out;
-
-	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
-		goto out;
-
-	if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num != AF_INET)
-		goto out;
-
-	iph = ip_hdr(skb);
-	if (iph->protocol != IPPROTO_TCP) {
-		goto out;
-	}
-#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
-	return natflow_urllogger_hook_v1(hooknum, skb, in, out, okfn);
-#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
-	return natflow_urllogger_hook_v1(ops, skb, in, out, okfn);
-#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
-	return natflow_urllogger_hook_v1(ops, skb, state);
-#else
-	return natflow_urllogger_hook_v1(priv, skb, state);
-#endif
-out:
-	return ret;
-}
-
-#endif /* CONFIG_NATFLOW_URLLOGGER_LOCAL_IN */
-
-static struct nf_hook_ops urllogger_hooks[] = {
-#if defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
-	{
-#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
-		.owner = THIS_MODULE,
-#endif
-		.hook = natflow_urllogger_local_in,
-		.pf = PF_INET,
-		.hooknum = NF_INET_LOCAL_IN,
-		.priority = NF_IP_PRI_FILTER + 5,
-	},
-#else
-	{
-#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
-		.owner = THIS_MODULE,
-#endif
-		.hook = natflow_urllogger_hook_v1,
-		.pf = PF_INET,
-		.hooknum = NF_INET_FORWARD,
-		.priority = NF_IP_PRI_FILTER + 5,
-	},
-	{
-#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
-		.owner = THIS_MODULE,
-#endif
-		.hook = natflow_urllogger_hook_v1,
-		.pf = AF_INET6,
-		.hooknum = NF_INET_FORWARD,
-		.priority = NF_IP_PRI_FILTER + 5,
-	},
-	{
-#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
-		.owner = THIS_MODULE,
-#endif
-		.hook = natflow_urllogger_hook_v1,
-		.pf = NFPROTO_BRIDGE,
-		.hooknum = NF_INET_FORWARD,
-		.priority = NF_IP_PRI_FILTER + 5,
-	},
-#endif
-};
-
-int natflow_urllogger_hooks_register(void)
-{
-	return nf_register_hooks(urllogger_hooks, ARRAY_SIZE(urllogger_hooks));
-}
-
-void natflow_urllogger_hooks_unregister(void)
-{
-	nf_unregister_hooks(urllogger_hooks, ARRAY_SIZE(urllogger_hooks));
 }
 
 struct urllogger_user {
