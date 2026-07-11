@@ -19,12 +19,87 @@ static int natflow_l7_started;
 
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 #if NATFLOW_HAVE_IP_SET_STATE_API
-#define NATFLOW_L7_URLLOGGER_CONSUME(hooknum, skb, state, in, out) \
-	natflow_urllogger_consume_skb(hooknum, state, skb)
+#define NATFLOW_L7_URL_CONSUMER_ARGS \
+	unsigned int hooknum, const struct nf_hook_state *state, struct sk_buff *skb
+#define NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, state, in, out) \
+	natflow_l7_url_consume_common(hooknum, state, skb)
+#define NATFLOW_L7_URLLOGGER_CONSUME(view) \
+	natflow_urllogger_consume_skb(hooknum, state, view)
 #else
-#define NATFLOW_L7_URLLOGGER_CONSUME(hooknum, skb, state, in, out) \
-	natflow_urllogger_consume_skb(hooknum, in, out, skb)
+#define NATFLOW_L7_URL_CONSUMER_ARGS \
+	unsigned int hooknum, const struct net_device *in, \
+	const struct net_device *out, struct sk_buff *skb
+#define NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, state, in, out) \
+	natflow_l7_url_consume_common(hooknum, in, out, skb)
+#define NATFLOW_L7_URLLOGGER_CONSUME(view) \
+	natflow_urllogger_consume_skb(hooknum, in, out, view)
 #endif
+
+static unsigned int natflow_l7_url_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS)
+{
+	struct natflow_l7_packet_view view;
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn *ct;
+	unsigned int ret = NF_ACCEPT;
+
+	if (!natflow_urllogger_is_enabled())
+		return NF_ACCEPT;
+
+	memset(&view, 0, sizeof(view));
+	view.skb = skb;
+
+	if (skb->protocol == __constant_htons(ETH_P_PPP_SES)) {
+		if (!pskb_may_pull(skb, PPPOE_SES_HLEN))
+			return NF_DROP;
+
+		if (pppoe_proto(skb) == __constant_htons(PPP_IP)) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IP);
+			skb->network_header += PPPOE_SES_HLEN;
+			view.flags |= NATFLOW_L7_PACKET_F_PPPOE;
+		} else if (pppoe_proto(skb) == __constant_htons(PPP_IPV6)) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IPV6);
+			skb->network_header += PPPOE_SES_HLEN;
+			view.flags |= NATFLOW_L7_PACKET_F_PPPOE;
+		} else {
+			return NF_ACCEPT;
+		}
+	} else if (skb->protocol != __constant_htons(ETH_P_IP) &&
+	           skb->protocol != __constant_htons(ETH_P_IPV6)) {
+		return NF_ACCEPT;
+	}
+
+	ct = nf_ct_get(skb, &ctinfo);
+	if (!ct)
+		goto out;
+	if ((ct->status & IPS_NATFLOW_CT_DROP)) {
+		ret = NF_DROP;
+		goto out;
+	}
+	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
+		goto out;
+	if ((ct->status & IPS_NATFLOW_URLLOGGER_HANDLED))
+		goto out;
+
+	view.ct = ct;
+	view.l3num = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num;
+	if (view.l3num == AF_INET6)
+		view.l3 = ipv6_hdr(skb);
+	else
+		view.l3 = ip_hdr(skb);
+
+	ret = NATFLOW_L7_URLLOGGER_CONSUME(&view);
+
+out:
+	if (view.flags & NATFLOW_L7_PACKET_F_PPPOE) {
+		skb->network_header -= PPPOE_SES_HLEN;
+		skb->protocol = __constant_htons(ETH_P_PPP_SES);
+		skb_push(skb, PPPOE_SES_HLEN);
+	}
+
+	return ret;
+}
 
 #if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_l7_url_hook(unsigned int hooknum,
@@ -33,7 +108,7 @@ static unsigned int natflow_l7_url_hook(unsigned int hooknum,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
-	return NATFLOW_L7_URLLOGGER_CONSUME(hooknum, skb, NULL, in, out);
+	return NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, NULL, in, out);
 }
 #elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 static unsigned int natflow_l7_url_hook(const struct nf_hook_ops *ops,
@@ -42,14 +117,14 @@ static unsigned int natflow_l7_url_hook(const struct nf_hook_ops *ops,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
-	return NATFLOW_L7_URLLOGGER_CONSUME(ops->hooknum, skb, NULL, in, out);
+	return NATFLOW_L7_URL_CONSUMER_CALL(ops->hooknum, skb, NULL, in, out);
 }
 #elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 static unsigned int natflow_l7_url_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
-	return NATFLOW_L7_URLLOGGER_CONSUME(state->hook, skb, state, state->in,
+	return NATFLOW_L7_URL_CONSUMER_CALL(state->hook, skb, state, state->in,
 	                                    state->out);
 }
 #else
@@ -58,10 +133,10 @@ static unsigned int natflow_l7_url_hook(void *priv,
         const struct nf_hook_state *state)
 {
 #if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
-	return NATFLOW_L7_URLLOGGER_CONSUME(state->hook, skb, state, state->in,
+	return NATFLOW_L7_URL_CONSUMER_CALL(state->hook, skb, state, state->in,
 	                                    state->out);
 #else
-	return NATFLOW_L7_URLLOGGER_CONSUME(state->hook, skb, state, state->in, NULL);
+	return NATFLOW_L7_URL_CONSUMER_CALL(state->hook, skb, state, state->in, NULL);
 #endif
 }
 #endif
@@ -119,9 +194,9 @@ static unsigned int natflow_l7_url_local_in(void *priv,
 		return NF_ACCEPT;
 
 #if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG || NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
-	return NATFLOW_L7_URLLOGGER_CONSUME(hooknum, skb, NULL, in, out);
+	return NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, NULL, in, out);
 #else
-	return NATFLOW_L7_URLLOGGER_CONSUME(state->hook, skb, state, in, out);
+	return NATFLOW_L7_URL_CONSUMER_CALL(state->hook, skb, state, in, out);
 #endif
 }
 #endif /* CONFIG_NATFLOW_URLLOGGER_LOCAL_IN */

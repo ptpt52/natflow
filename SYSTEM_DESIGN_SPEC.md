@@ -28,7 +28,7 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 | `natflow_main.c` | 编译源码 | 模块入口、`/dev/natflow_ctl`、子模块初始化和退出顺序。 |
 | `natflow_common.c/.h` | 编译源码/公共头 | 日志、兼容封装、conntrack 扩展探测、natflow 会话扩展、ipset/NAT 封装。 |
 | `natflow.h` | 公共头 | 核心数据结构、fastnat 节点、状态位、哈希算法、表大小和超时常量。 |
-| `natflow_l7.c/.h` | 编译源码/头 | L7 hook 生命周期和共享 feature core；当前持有 URL hook ops、内核 hook 签名兼容包装和注册/注销流程，并提供 host/URI normalize、HTTP Host、TLS SNI、QUIC Initial/CRYPTO/SNI 和 DNS QNAME parser。 |
+| `natflow_l7.c/.h` | 编译源码/头 | L7 hook 生命周期和共享 feature core；当前持有 URL hook ops、内核 hook 签名兼容包装、PPPoE normalize/restore、基础 conntrack 过滤和注册/注销流程，并提供 packet view、host/URI normalize、HTTP Host、TLS SNI、QUIC Initial/CRYPTO/SNI 和 DNS QNAME parser。 |
 | `natflow_dpi.c/.h` | 编译源码/头 | DPI 控制/事件接口，提供默认关闭的 `/dev/natflow_dpi_ctl`、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、`app_id` 写入、source counters 和 `/dev/natflow_dpi_queue` match 事件。 |
 | `natflow_path.c/.h` | 编译源码/头 | fast path、route 学习、fastnat 表、vline/relay、设备 notifier、硬件 offload。 |
 | `natflow_user.c/.h` | 编译源码/头 | 用户 fakeuser、认证、QoS、用户事件、用户信息控制设备。 |
@@ -904,7 +904,7 @@ classid 模式：
 - Host ACL 失败路径使用 `urllogger_acl_lookup` 栈上视图复用同一 hostname normalize 规则，不依赖 URL store record 分配成功。
 - TLS/QUIC SNI server_name type 0 的内容会按 DNS hostname 规则校验后使用；严格校验会拒绝包含 `_`、非 ASCII U-label、通配符、IPv6 literal 或其他非标准 DNS hostname 的输入。
 - HTTP Host、TLS SNI、QUIC SNI 的识别是审计和粗粒度 ACL 能力，不是不可绕过的 WAF/域名防火墙边界。
-- PPPoE bridge 场景下，等待更多 TLS/QUIC 数据的缓存成功路径必须通过统一 `out` 路径退出，以恢复临时剥离的 PPPoE header、`skb->protocol` 和 `network_header`。
+- PPPoE bridge 场景下，L7 URL common path 临时剥离 PPPoE header 后构造 packet view，并在 consumer 返回后统一恢复 PPPoE header、`skb->protocol` 和 `network_header`；URL consumer 中等待更多 TLS/QUIC 数据、drop、reset、redirect 或错误路径都必须返回到该 L7 common path。
 
 ### 15.3 host ACL
 

@@ -2090,61 +2090,28 @@ int natflow_urllogger_is_enabled(void)
 
 unsigned int natflow_urllogger_consume_skb(unsigned int hooknum,
         URLLOGGER_HOOK_CTX_ARGS,
-        struct sk_buff *skb)
+        const struct natflow_l7_packet_view *view)
 {
 #if NATFLOW_HAVE_IP_SET_STATE_API
 	const struct net_device *in = state->in;
 #endif
 	int ret = NF_ACCEPT;
-	enum ip_conntrack_info ctinfo;
 	int data_len;
 	unsigned char *data;
 	natflow_t *nf = NULL;
+	struct sk_buff *skb;
 	struct nf_conn *ct;
 	struct iphdr *iph;
 	void *l4;
-	int bridge = 0;
+	int bridge;
 
-	if (!natflow_urllogger_is_enabled())
+	if (!view || !view->skb || !view->ct)
 		return NF_ACCEPT;
+	skb = view->skb;
+	ct = view->ct;
+	bridge = (view->flags & NATFLOW_L7_PACKET_F_PPPOE) != 0;
 
-	if (skb->protocol == __constant_htons(ETH_P_PPP_SES)) {
-		if (!pskb_may_pull(skb, PPPOE_SES_HLEN)) {
-			return NF_DROP;
-		}
-
-		if (pppoe_proto(skb) == __constant_htons(PPP_IP)) {
-			skb_pull(skb, PPPOE_SES_HLEN);
-			skb->protocol = __constant_htons(ETH_P_IP);
-			skb->network_header += PPPOE_SES_HLEN;
-			bridge = 1;
-		} else if (pppoe_proto(skb) == __constant_htons(PPP_IPV6)) {
-			skb_pull(skb, PPPOE_SES_HLEN);
-			skb->protocol = __constant_htons(ETH_P_IPV6);
-			skb->network_header += PPPOE_SES_HLEN;
-			bridge = 1;
-		} else {
-			return NF_ACCEPT;
-		}
-	} else if (skb->protocol != __constant_htons(ETH_P_IP) && skb->protocol != __constant_htons(ETH_P_IPV6)) {
-		return NF_ACCEPT;
-	}
-
-	ct = nf_ct_get(skb, &ctinfo);
-	if (NULL == ct)
-		goto out;
-	if ((ct->status & IPS_NATFLOW_CT_DROP)) {
-		ret = NF_DROP;
-		goto out;
-	}
-
-	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
-		goto out;
-
-	if ((ct->status & IPS_NATFLOW_URLLOGGER_HANDLED))
-		goto out;
-
-	if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6)
+	if (view->l3num == AF_INET6)
 		goto urllogger_hook_ipv6_main;
 
 	if (!pskb_may_pull(skb, sizeof(struct iphdr))) {
@@ -2741,12 +2708,6 @@ __urllogger_ipv6_skip:
 	}
 
 out:
-	if (bridge) {
-		skb->network_header -= PPPOE_SES_HLEN;
-		skb->protocol = __constant_htons(ETH_P_PPP_SES);
-		skb_push(skb, PPPOE_SES_HLEN);
-	}
-
 	return ret;
 }
 

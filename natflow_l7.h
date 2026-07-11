@@ -45,6 +45,8 @@ struct natflow_l7_data_view {
 struct natflow_l7_packet_view {
 	struct sk_buff *skb;
 	struct nf_conn *ct;
+	unsigned int flags;
+#define NATFLOW_L7_PACKET_F_PPPOE 0x01
 	int l3num;
 	unsigned char l4proto;
 	void *l3;
