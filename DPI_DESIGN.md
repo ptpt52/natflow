@@ -4,7 +4,7 @@
 
 更新时间：2026-07-11
 
-实现状态：本文描述目标架构，不代表当前源码已经提供 DPI 接口、`app_id` 结果或统一 L7 core。当前源码仍以 `natflow_urllogger.c` 实现 URL/SNI 记录和 Host ACL。
+实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，但还没有提供 DPI 控制/事件 ABI 或统一 L7 core；URL/SNI 记录和 Host ACL 仍由 `natflow_urllogger.c` 实现。
 
 ## 1. 总体结论
 
@@ -44,16 +44,16 @@ natflow_l7 core
 
 统一设计必须从当前源码出发，而不是从目标接口假设出发：
 
-- 当前 `NF_FF_BUSY_USE` 只包含 `NF_FF_USER_USE | NF_FF_URLLOGGER_USE`，还没有 DPI owner bit。
-- 当前 `natflow_t` 只有 `magic`、`qos_id`、`status` 和双向 `rroute`，还没有常驻 `app_id`。
-- 当前 fast path 在建软件 fastnat 或硬件 offload 前检查 `nf->status & NF_FF_BUSY_USE`；DPI 若不进入这个 mask，无法阻止首段流量被提前接管。
+- 当前 `NF_FF_BUSY_USE` 已包含 `NF_FF_USER_USE | NF_FF_URLLOGGER_USE | NF_FF_DPI_USE`，但源码还没有 DPI consumer 设置或清除该 bit。
+- 当前 `natflow_t` 已在尾部追加常驻 `app_id`，但源码还没有分类器写入非 0 值。
+- 当前 fast path 在建软件 fastnat 或硬件 offload 前检查 `nf->status & NF_FF_BUSY_USE`；DPI 必须沿用这个 mask 阻止首段流量被提前接管。
 - 当前 URL logger 默认注册 IPv4、IPv6 和 bridge `FORWARD` hook，优先级 `NF_IP_PRI_FILTER + 5`；可选 `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 改为 IPv4 `LOCAL_IN`。
 - 当前 `urllogger_store_enable=0` 时 hook 入口直接 accept，因此 Host ACL 也不会执行。
 - 当前 HTTP Host/URI、TLS SNI、QUIC v1 Initial SNI parser 都是 `natflow_urllogger.c` 内部静态实现，并和 URL record 分配、Host ACL、队列输出混在同一 hook。
 - 当前 TLS/QUIC 跨包 cache 按 CPU 存储。RPS/RFS 或调度变化导致同一 flow 后续包落到其他 CPU 时，可能找不到之前 prefix。
 - 当前 Host ACL 在 URL record 分配成功后才执行；URL 日志对象分配失败会同时跳过 ACL。
 - 当前 `nf->status` 的 `simple_set_bit()` 和 `simple_clear_bit()` 是非原子 read-modify-write。维护者接受这个已知风险，DPI 不引入 path 侧 repair，也不在本设计中迁移整个状态字。
-- 当前 `natflow_session_init()` 使用共享 conntrack extension 尾部布局，并依赖脆弱的 `krealloc()`/offset 假设。追加 `app_id` 前必须先做 layout guard。
+- 当前 `natflow_session_init()` 使用共享 conntrack extension 尾部布局，并依赖脆弱的 `krealloc()`/offset 假设；源码已增加 layout guard，但后续 DPI/L7 hook 注册仍必须在 guard 成功后执行。
 
 ## 3. 目标与非目标
 
@@ -180,9 +180,9 @@ bounded parser/detector
 
 实现 DPI 前必须调整初始化前置条件：
 
-1. `natflow_probe_ct_ext()` 从 path 私有初始化移动到 common/main 的 exactly-once 初始化。
-2. probe 改为可返回错误，供 DPI 判断共享 conntrack extension 是否可用。
-3. layout guard 在注册任何 URL/DPI hook 前完成。
+1. `natflow_probe_ct_ext()` 已从 path 私有初始化移动到 common/main 初始化。
+2. probe 已改为可返回错误，供 DPI 判断共享 conntrack extension 是否可用。
+3. layout guard 已在注册 path 或 URL hook 前完成；后续 L7/DPI hook 必须继续遵守该顺序。
 4. L7 core 初始化共享 context pool、parser capability 和 crypto capability。
 5. URL consumer 初始化 legacy 设备和 sysctl。
 6. DPI consumer 默认 `enable=0`，只初始化控制设备和最小状态。
@@ -618,8 +618,8 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 ### M1a：DPI gate、状态和 ABI 骨架
 
 - 增加 `CONFIG_NATFLOW_DPI`。
-- 增加 `NF_FF_DPI_USE` 和扩展后的 `NF_FF_BUSY_USE`。
-- 在 `natflow_t` 尾部追加 `app_id`，并完成 shared conntrack extension layout guard。
+- 已完成：增加 `NF_FF_DPI_USE` 和扩展后的 `NF_FF_BUSY_USE`。
+- 已完成：在 `natflow_t` 尾部追加 `app_id`，并完成 shared conntrack extension layout guard。
 - 增加最小 context registry、terminal state、drain 和 reason counter。
 - 实现 `/dev/natflow_dpi_ctl` 的 status、enable/disable、空 ruleset 事务。
 - 实现 `/dev/natflow_dpi_queue` 固定 header 事件。

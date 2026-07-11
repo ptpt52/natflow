@@ -399,6 +399,12 @@ static int __init natflow_init(void)
 	natflow_minor = MINOR(devno);
 	NATFLOW_println("natflow_major=%d, natflow_minor=%d", natflow_major, natflow_minor);
 
+	retval = natflow_probe_ct_ext();
+	if (retval) {
+		NATFLOW_println("failed to probe conntrack extension layout, error=%d", retval);
+		goto probe_ct_ext_failed;
+	}
+
 	cdev_init(&natflow_cdev, &natflow_fops);
 	natflow_cdev.owner = THIS_MODULE;
 	natflow_cdev.ops = &natflow_fops;
@@ -478,6 +484,7 @@ device_create_failed:
 class_create_failed:
 	cdev_del(&natflow_cdev);
 cdev_add_failed:
+probe_ct_ext_failed:
 	unregister_chrdev_region(devno, number_of_devices);
 
 	return retval;

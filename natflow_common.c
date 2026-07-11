@@ -41,7 +41,63 @@ void *compat_nf_ct_ext_add(struct nf_conn *ct, int id, gfp_t gfp)
 
 static int static_fixed_ext_off = NATCAP_FIXED_EXT_OFF;
 
-void natflow_probe_ct_ext(void)
+void natflow_ct_ext_layout_get(struct natflow_ct_ext_layout *layout)
+{
+	unsigned int nkoff;
+	unsigned int natflow_off;
+	unsigned int natflow_len;
+
+	nkoff = ALIGN(static_fixed_ext_off * NATCAP_FACTOR, __ALIGN_64BYTES);
+	natflow_off = ALIGN(nkoff + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS), __ALIGN_64BITS);
+	natflow_len = ALIGN(sizeof(struct natflow_t), __ALIGN_64BITS);
+
+	layout->nat_key_off = nkoff;
+	layout->natflow_off = natflow_off;
+	layout->natflow_len = natflow_len;
+	layout->total_len = ALIGN(natflow_off + natflow_len, __ALIGN_64BITS);
+}
+
+int natflow_ct_ext_layout_validate(void)
+{
+	struct natflow_ct_ext_layout layout;
+
+	natflow_ct_ext_layout_get(&layout);
+
+	if (NF_FF_DPI_USE_BIT != 21) {
+		NATFLOW_ERROR("unexpected NF_FF_DPI_USE_BIT=%u\n", NF_FF_DPI_USE_BIT);
+		return -EINVAL;
+	}
+
+	if (!(NF_FF_BUSY_USE & NF_FF_DPI_USE)) {
+		NATFLOW_ERROR("NF_FF_DPI_USE is missing from NF_FF_BUSY_USE\n");
+		return -EINVAL;
+	}
+
+	if (layout.nat_key_off > NATCAP_MAX_OFF) {
+		NATFLOW_ERROR("nat_key_off=%u exceeds NATCAP_MAX_OFF=%u\n",
+		              layout.nat_key_off, NATCAP_MAX_OFF);
+		return -EINVAL;
+	}
+
+	if (layout.natflow_off > 0xffffu) {
+		NATFLOW_ERROR("natflow_off=%u exceeds nat_key_t storage\n",
+		              layout.natflow_off);
+		return -EINVAL;
+	}
+
+	if (layout.natflow_off < layout.nat_key_off + sizeof(struct nat_key_t) ||
+	    layout.natflow_off != ALIGN(layout.natflow_off, __ALIGN_64BITS) ||
+	    layout.natflow_len < sizeof(struct natflow_t)) {
+		NATFLOW_ERROR("invalid natflow layout: key=%u flow=%u len=%u total=%u\n",
+		              layout.nat_key_off, layout.natflow_off,
+		              layout.natflow_len, layout.total_len);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+int natflow_probe_ct_ext(void)
 {
 	int i = 0;
 	struct nf_conn ct = { };
@@ -57,6 +113,8 @@ void natflow_probe_ct_ext(void)
 	} else {
 		NATFLOW_println("default static_fixed_ext_off = %u", static_fixed_ext_off);
 	}
+
+	return natflow_ct_ext_layout_validate();
 }
 
 /*
@@ -94,9 +152,10 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 {
 	struct nat_key_t *nk = NULL;
 	struct nf_ct_ext *old, *new = NULL;
+	struct natflow_ct_ext_layout layout;
 	unsigned int nkoff, newoff, newlen = 0;
 	size_t alloc_size;
-	size_t var_alloc_len = ALIGN(sizeof(struct natflow_t), __ALIGN_64BITS);
+	size_t var_alloc_len;
 
 	if (nf_ct_is_confirmed(ct)) {
 		return -1;
@@ -116,8 +175,14 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	}
 
 	old = ct->ext;
-	nkoff = ALIGN(static_fixed_ext_off * NATCAP_FACTOR, __ALIGN_64BYTES);
-	newoff = ALIGN(nkoff + ALIGN(sizeof(struct nat_key_t), __ALIGN_64BITS), __ALIGN_64BITS);
+	if (natflow_ct_ext_layout_validate() != 0) {
+		clear_bit(IPS_NATFLOW_SESSION_BIT, &ct->status);
+		return -1;
+	}
+	natflow_ct_ext_layout_get(&layout);
+	nkoff = layout.nat_key_off;
+	newoff = layout.natflow_off;
+	var_alloc_len = layout.natflow_len;
 
 	newlen = ALIGN(newoff + var_alloc_len, __ALIGN_64BITS);
 	alloc_size = ALIGN(newlen, __ALIGN_64BITS);
@@ -141,6 +206,12 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 				NATFLOW_DEBUG("append natflow key after natcap: len=%u natcap_off=%u natflow_off=%u\n",
 				              nk->len, nk->natcap_off, nk->natflow_off);
 				newoff = ALIGN(nk->len, __ALIGN_64BITS);
+				if (newoff > 0xffffu) {
+					clear_bit(IPS_NATFLOW_SESSION_BIT, &ct->status);
+					NATFLOW_ERROR("natcap append natflow_off=%u exceeds nat_key_t storage\n",
+					              newoff);
+					return -1;
+				}
 			} else {
 				/*
 				 * natflow just claimed IPS_NATFLOW_SESSION_BIT above. Any
@@ -192,6 +263,7 @@ struct natflow_t *natflow_session_get(struct nf_conn *ct)
 {
 	struct nat_key_t *nk;
 	struct natflow_t *nf = NULL;
+	struct natflow_ct_ext_layout layout;
 
 	if (!(ct->status & IPS_NATFLOW_SESSION)) {
 		return NULL;
@@ -204,13 +276,17 @@ struct natflow_t *natflow_session_get(struct nf_conn *ct)
 	if (static_fixed_ext_off * NATCAP_FACTOR > NATCAP_MAX_OFF) {
 		return NULL;
 	}
+	natflow_ct_ext_layout_get(&layout);
 
-	nk = (struct nat_key_t *)((void *)ct->ext + static_fixed_ext_off * NATCAP_FACTOR);
+	nk = (struct nat_key_t *)((void *)ct->ext + layout.nat_key_off);
 	if (nk->magic != NATCAP_MAGIC || nk->ext_magic != (((unsigned long)ct) & 0xffffffff)) {
 		return NULL;
 	}
 
 	if (nk->natflow_off == 0) {
+		return NULL;
+	}
+	if (nk->len < ALIGN(nk->natflow_off + sizeof(struct natflow_t), __ALIGN_64BITS)) {
 		return NULL;
 	}
 

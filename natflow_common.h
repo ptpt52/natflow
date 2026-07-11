@@ -139,7 +139,16 @@ static inline void nf_unregister_hooks(struct nf_hook_ops *reg, unsigned int n)
 
 #define __ALIGN_64BITS 8
 
-extern void natflow_probe_ct_ext(void);
+struct natflow_ct_ext_layout {
+	unsigned int nat_key_off;
+	unsigned int natflow_off;
+	unsigned int natflow_len;
+	unsigned int total_len;
+};
+
+extern void natflow_ct_ext_layout_get(struct natflow_ct_ext_layout *layout);
+extern int natflow_ct_ext_layout_validate(void);
+extern int natflow_probe_ct_ext(void);
 
 extern int natflow_session_init(struct nf_conn *ct, gfp_t gfp);
 extern struct natflow_t *natflow_session_get(struct nf_conn *ct);

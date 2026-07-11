@@ -87,8 +87,11 @@ typedef struct natflow_route_t {
 #define NF_FF_IFNAME_MATCH_BIT 20
 #define NF_FF_IFNAME_MATCH (1 << NF_FF_IFNAME_MATCH_BIT)
 
+#define NF_FF_DPI_USE_BIT 21
+#define NF_FF_DPI_USE (1 << NF_FF_DPI_USE_BIT)
+
 /* Note: ALL DONE */
-#define NF_FF_BUSY_USE (NF_FF_USER_USE | NF_FF_URLLOGGER_USE)
+#define NF_FF_BUSY_USE (NF_FF_USER_USE | NF_FF_URLLOGGER_USE | NF_FF_DPI_USE)
 
 typedef struct natflow_t {
 	unsigned short magic;
@@ -98,6 +101,7 @@ typedef struct natflow_t {
 #define NF_FF_DIR_REPLY 1
 #define NF_FF_DIR_MAX 2
 	struct natflow_route_t rroute[NF_FF_DIR_MAX];
+	unsigned int app_id;
 } natflow_t;
 
 /*XXX don't change */

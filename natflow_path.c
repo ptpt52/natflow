@@ -6195,8 +6195,6 @@ int natflow_path_init(void)
 {
 	int ret = 0;
 
-	natflow_probe_ct_ext();
-
 	natflow_netdev_wq = alloc_workqueue("natflow_netdev_wq", WQ_UNBOUND, 0);
 	if (natflow_netdev_wq == NULL) {
 		return -ENOMEM;
