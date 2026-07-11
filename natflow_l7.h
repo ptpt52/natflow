@@ -7,12 +7,14 @@
 #include <linux/types.h>
 
 struct nf_conn;
+struct in6_addr;
 struct sk_buff;
 
 #define NATFLOW_L7_HOST_MAX_LEN 253
 #define NATFLOW_L7_DNS_QNAME_WIRE_MAX 255
 #define NATFLOW_L7_HOST_ALLOW_PORT 0x01
 #define NATFLOW_L7_QUIC_MAX_CID_LEN 20
+#define NATFLOW_L7_TLS_CACHE_DATA_LIMIT (32 * 1024)
 
 enum natflow_l7_feature_source {
 	NATFLOW_L7_SOURCE_NONE = 0,
@@ -118,6 +120,32 @@ extern enum natflow_l7_tls_search_result natflow_l7_tls_client_hello_search(unsi
         int *data_len, unsigned char **host);
 extern enum natflow_l7_tls_search_result natflow_l7_tls_sni_search(unsigned char *data,
         int *data_len, unsigned char **host);
+extern int natflow_l7_tls_cache_attach(__be32 src_ip,
+                                       __be16 src_port,
+                                       __be32 dst_ip,
+                                       __be16 dst_port,
+                                       __u32 seq,
+                                       unsigned char *data,
+                                       unsigned int data_len);
+extern int natflow_l7_tls_cache_attach6(const struct in6_addr *src_ip,
+                                        __be16 src_port,
+                                        const struct in6_addr *dst_ip,
+                                        __be16 dst_port,
+                                        __u32 seq,
+                                        unsigned char *data,
+                                        unsigned int data_len);
+extern unsigned char *natflow_l7_tls_cache_detach(__be32 src_ip,
+                                                  __be16 src_port,
+                                                  __be32 dst_ip,
+                                                  __be16 dst_port,
+                                                  __u32 *seq,
+                                                  unsigned int *data_len);
+extern unsigned char *natflow_l7_tls_cache_detach6(const struct in6_addr *src_ip,
+                                                   __be16 src_port,
+                                                   const struct in6_addr *dst_ip,
+                                                   __be16 dst_port,
+                                                   __u32 *seq,
+                                                   unsigned int *data_len);
 extern int natflow_l7_quic_has_bytes(unsigned int offset,
                                      unsigned int bytes,
                                      unsigned int len);

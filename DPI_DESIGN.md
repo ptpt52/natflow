@@ -50,8 +50,8 @@ natflow_l7 core
 - 当前 URL logger hook 的生命周期由 `natflow_l7_init()/exit()` 触发，URL hook ops、内核 hook 签名兼容包装、PPPoE normalize/restore、基础 conntrack 过滤、packet view 构造、`NATFLOW_L7_CONSUMER_URL/DPI` mask 和 URL dispatcher 已由 `natflow_l7.c` 持有：默认注册 IPv4、IPv6 和 bridge `FORWARD` hook，优先级 `NF_IP_PRI_FILTER + 5`；可选 `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 改为 IPv4 `LOCAL_IN`。当前 active mask 按 `urllogger_store/enable` 发布 URL consumer，按 DPI enable 和 domain rule 发布 DPI host consumer；底层数据面通过 `natflow_urllogger_consume_url_view()` 委托 legacy URL consumer 复用 HTTP/TLS/QUIC parser，DPI-only 时不执行 URL CSV 或 Host ACL。HTTP/TLS/QUIC host fan-out 已通过 `natflow_l7_host_view` 固化 source、host、URI 和 HTTP method 输入 contract，legacy URL consumer 只在本地映射 URL flags、DPI event source 和 ACL 回复策略。
 - 当前 DPI protocol-only hook 仍由 `natflow_dpi.c` 独立持有，优先级 `NF_IP_PRI_FILTER + 6`，不合并进 L7 URL common path，也不受 `urllogger_store/enable` 控制；等 L7 dispatcher、consumer mask 和 DPI context 生命周期落地后再评审合并入口。
 - 当前 `urllogger_store_enable=0` 时 URL consumer 不加入 active mask，因此 URL CSV 和 Host ACL 不会执行；若 DPI enabled 且存在 domain rule，DPI host consumer 仍可复用同一 L7 hook 解析 HTTP/TLS/QUIC host。
-- 当前 HTTP Host/URI、TLS SNI、QUIC v1 Initial SNI parser API 已阶段性迁移到 `natflow_l7.c`；legacy URL consumer 仍持有 URL record 分配、Host ACL、队列输出、TCP SNI cache、QUIC cache 和 crypto glue。
-- 当前 TLS/QUIC 跨包 cache 按 CPU 存储。RPS/RFS 或调度变化导致同一 flow 后续包落到其他 CPU 时，可能找不到之前 prefix。
+- 当前 HTTP Host/URI、TLS SNI、QUIC v1 Initial SNI parser API 已阶段性迁移到 `natflow_l7.c`；TCP TLS SNI cache 已迁移到 `natflow_l7` 生命周期；legacy URL consumer 仍持有 URL record 分配、Host ACL、队列输出、QUIC cache 和 crypto glue。
+- 当前 TCP TLS cache 和 QUIC cache 都按 CPU 存储。RPS/RFS 或调度变化导致同一 flow 后续包落到其他 CPU 时，可能找不到之前 prefix。
 - 当前 Host ACL 已不依赖 URL record 分配成功；URL 日志对象分配失败时不会生成 CSV 记录，但会尽量基于同一 host normalize 规则执行 ACL。
 - 当前 `nf->status` 的 `simple_set_bit()` 和 `simple_clear_bit()` 是非原子 read-modify-write。维护者接受这个已知风险，DPI 不引入 path 侧 repair，也不在本设计中迁移整个状态字。
 - 当前 `natflow_session_init()` 使用共享 conntrack extension 尾部布局，并依赖脆弱的 `krealloc()`/offset 假设；源码已增加 layout guard，但后续 DPI/L7 hook 注册仍必须在 guard 成功后执行。
@@ -635,7 +635,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成 MVP：DPI 复用 legacy URL logger 已解析出的 HTTP Host、TLS SNI、QUIC v1 Initial SNI，不重复解析包。
 - 已完成 MVP：实现 RCU 发布的 domain exact/suffix ruleset，命中时写 `natflow_t.app_id` 并输出固定头 match event。
 - 已完成 MVP：URL record 分配失败时，DPI 与 Host ACL 一样消费 `urllogger_acl_lookup` 的最小 host 视图。
-- 已完成阶段性迁移：HTTP Host、TLS SNI、QUIC Initial/CRYPTO/SNI 解析进入 `natflow_l7` feature core，legacy URL、Host ACL 和 DPI 继续保持原有外部 ABI；HTTP/TLS/QUIC consumer fan-out 已改为消费 `natflow_l7_host_view`，调用点不再分别散落 URL flags、DPI source 和 ACL 回复策略常量。
+- 已完成阶段性迁移：HTTP Host、TLS SNI、QUIC Initial/CRYPTO/SNI 解析进入 `natflow_l7` feature core，TCP TLS SNI cache 迁入 `natflow_l7` 生命周期，legacy URL、Host ACL 和 DPI 继续保持原有外部 ABI；HTTP/TLS/QUIC consumer fan-out 已改为消费 `natflow_l7_host_view`，调用点不再分别散落 URL flags、DPI source 和 ACL 回复策略常量。
 - 当前只输出 match event；未命中不输出 `NO_RULE`，也不执行 app ACL/QoS。
 
 ### M1c：首批 protocol-only detector

@@ -5,9 +5,12 @@
  * parsing and Host ACL handling still live in natflow_urllogger.c.
  */
 #include <linux/errno.h>
+#include <linux/in6.h>
+#include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
+#include <linux/smp.h>
 #include <linux/string.h>
 #include "natflow_common.h"
 #include "natflow_l7.h"
@@ -44,6 +47,225 @@ unsigned int natflow_l7_consumer_mask(void)
 int natflow_l7_consumer_active(unsigned int consumer)
 {
 	return (natflow_l7_active_consumer_mask() & consumer) != 0;
+}
+
+struct natflow_l7_tls_cache_node {
+	unsigned long active_jiffies;
+	union {
+		__be32 src_ip;
+		struct in6_addr src_ipv6;
+	};
+	union {
+		__be32 dst_ip;
+		struct in6_addr dst_ipv6;
+	};
+	__be16 src_port;
+	__be16 dst_port;
+	__u32 seq;
+	unsigned int data_len;
+	unsigned char *data;
+};
+
+#define NATFLOW_L7_TLS_CACHE_TIMEOUT 4
+#define NATFLOW_L7_TLS_CACHE_NODE_MAX 64
+static struct natflow_l7_tls_cache_node (*natflow_l7_tls_cache)[NATFLOW_L7_TLS_CACHE_NODE_MAX];
+static unsigned int natflow_l7_tls_cache_cpu_num;
+
+#if defined(CONFIG_NATFLOW_URLLOGGER)
+static int natflow_l7_tls_cache_init(void)
+{
+	natflow_l7_tls_cache_cpu_num = nr_cpu_ids;
+	natflow_l7_tls_cache = kcalloc(natflow_l7_tls_cache_cpu_num,
+	                               sizeof(*natflow_l7_tls_cache),
+	                               GFP_KERNEL);
+	if (natflow_l7_tls_cache == NULL)
+		return -ENOMEM;
+
+	return 0;
+}
+
+static void natflow_l7_tls_cache_cleanup(void)
+{
+	int i, j;
+
+	if (natflow_l7_tls_cache == NULL)
+		return;
+
+	for (i = 0; i < natflow_l7_tls_cache_cpu_num; i++) {
+		for (j = 0; j < NATFLOW_L7_TLS_CACHE_NODE_MAX; j++) {
+			kfree(natflow_l7_tls_cache[i][j].data);
+			natflow_l7_tls_cache[i][j].data = NULL;
+		}
+	}
+
+	kfree(natflow_l7_tls_cache);
+	natflow_l7_tls_cache = NULL;
+	natflow_l7_tls_cache_cpu_num = 0;
+}
+#endif
+
+int natflow_l7_tls_cache_attach(__be32 src_ip, __be16 src_port,
+        __be32 dst_ip, __be16 dst_port, __u32 seq,
+        unsigned char *data, unsigned int data_len)
+{
+	int i = smp_processor_id();
+	int j;
+	int next_to_use = NATFLOW_L7_TLS_CACHE_NODE_MAX;
+
+	if (natflow_l7_tls_cache == NULL || i >= natflow_l7_tls_cache_cpu_num)
+		return -ENOMEM;
+
+	for (j = 0; j < NATFLOW_L7_TLS_CACHE_NODE_MAX; j++) {
+		if (natflow_l7_tls_cache[i][j].data != NULL) {
+			if (time_after(jiffies,
+			               natflow_l7_tls_cache[i][j].active_jiffies +
+			               NATFLOW_L7_TLS_CACHE_TIMEOUT * HZ)) {
+				kfree(natflow_l7_tls_cache[i][j].data);
+				natflow_l7_tls_cache[i][j].data = NULL;
+			} else if (natflow_l7_tls_cache[i][j].src_ip == src_ip &&
+			           natflow_l7_tls_cache[i][j].src_port == src_port &&
+			           natflow_l7_tls_cache[i][j].dst_ip == dst_ip &&
+			           natflow_l7_tls_cache[i][j].dst_port == dst_port) {
+				return -EEXIST;
+			}
+		}
+
+		if (next_to_use == NATFLOW_L7_TLS_CACHE_NODE_MAX &&
+		        natflow_l7_tls_cache[i][j].data == NULL)
+			next_to_use = j;
+	}
+	if (next_to_use == NATFLOW_L7_TLS_CACHE_NODE_MAX)
+		return -ENOMEM;
+
+	natflow_l7_tls_cache[i][next_to_use].src_ip = src_ip;
+	natflow_l7_tls_cache[i][next_to_use].src_port = src_port;
+	natflow_l7_tls_cache[i][next_to_use].dst_ip = dst_ip;
+	natflow_l7_tls_cache[i][next_to_use].dst_port = dst_port;
+	natflow_l7_tls_cache[i][next_to_use].seq = seq;
+	natflow_l7_tls_cache[i][next_to_use].data_len = data_len;
+	natflow_l7_tls_cache[i][next_to_use].data = data;
+	natflow_l7_tls_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
+
+	return 0;
+}
+
+int natflow_l7_tls_cache_attach6(const struct in6_addr *src_ip,
+        __be16 src_port, const struct in6_addr *dst_ip, __be16 dst_port,
+        __u32 seq, unsigned char *data, unsigned int data_len)
+{
+	int i = smp_processor_id();
+	int j;
+	int next_to_use = NATFLOW_L7_TLS_CACHE_NODE_MAX;
+
+	if (natflow_l7_tls_cache == NULL || i >= natflow_l7_tls_cache_cpu_num)
+		return -ENOMEM;
+
+	for (j = 0; j < NATFLOW_L7_TLS_CACHE_NODE_MAX; j++) {
+		if (natflow_l7_tls_cache[i][j].data != NULL) {
+			if (time_after(jiffies,
+			               natflow_l7_tls_cache[i][j].active_jiffies +
+			               NATFLOW_L7_TLS_CACHE_TIMEOUT * HZ)) {
+				kfree(natflow_l7_tls_cache[i][j].data);
+				natflow_l7_tls_cache[i][j].data = NULL;
+			} else if (memcmp(&natflow_l7_tls_cache[i][j].src_ipv6,
+			                  src_ip, sizeof(*src_ip)) == 0 &&
+			           natflow_l7_tls_cache[i][j].src_port == src_port &&
+			           memcmp(&natflow_l7_tls_cache[i][j].dst_ipv6,
+			                  dst_ip, sizeof(*dst_ip)) == 0 &&
+			           natflow_l7_tls_cache[i][j].dst_port == dst_port) {
+				return -EEXIST;
+			}
+		}
+
+		if (next_to_use == NATFLOW_L7_TLS_CACHE_NODE_MAX &&
+		        natflow_l7_tls_cache[i][j].data == NULL)
+			next_to_use = j;
+	}
+	if (next_to_use == NATFLOW_L7_TLS_CACHE_NODE_MAX)
+		return -ENOMEM;
+
+	memcpy(&natflow_l7_tls_cache[i][next_to_use].src_ipv6, src_ip,
+	       sizeof(*src_ip));
+	natflow_l7_tls_cache[i][next_to_use].src_port = src_port;
+	memcpy(&natflow_l7_tls_cache[i][next_to_use].dst_ipv6, dst_ip,
+	       sizeof(*dst_ip));
+	natflow_l7_tls_cache[i][next_to_use].dst_port = dst_port;
+	natflow_l7_tls_cache[i][next_to_use].seq = seq;
+	natflow_l7_tls_cache[i][next_to_use].data_len = data_len;
+	natflow_l7_tls_cache[i][next_to_use].data = data;
+	natflow_l7_tls_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
+
+	return 0;
+}
+
+unsigned char *natflow_l7_tls_cache_detach(__be32 src_ip, __be16 src_port,
+        __be32 dst_ip, __be16 dst_port, __u32 *seq,
+        unsigned int *data_len)
+{
+	int i = smp_processor_id();
+	int j;
+	unsigned char *data = NULL;
+
+	if (natflow_l7_tls_cache == NULL || i >= natflow_l7_tls_cache_cpu_num)
+		return NULL;
+
+	for (j = 0; j < NATFLOW_L7_TLS_CACHE_NODE_MAX; j++) {
+		if (natflow_l7_tls_cache[i][j].data != NULL) {
+			if (time_after(jiffies,
+			               natflow_l7_tls_cache[i][j].active_jiffies +
+			               NATFLOW_L7_TLS_CACHE_TIMEOUT * HZ)) {
+				kfree(natflow_l7_tls_cache[i][j].data);
+				natflow_l7_tls_cache[i][j].data = NULL;
+			} else if (natflow_l7_tls_cache[i][j].src_ip == src_ip &&
+			           natflow_l7_tls_cache[i][j].src_port == src_port &&
+			           natflow_l7_tls_cache[i][j].dst_ip == dst_ip &&
+			           natflow_l7_tls_cache[i][j].dst_port == dst_port) {
+				/* Only origin-path cache lookup is supported, so keep dst strict. */
+				data = natflow_l7_tls_cache[i][j].data;
+				*seq = natflow_l7_tls_cache[i][j].seq;
+				*data_len = natflow_l7_tls_cache[i][j].data_len;
+				natflow_l7_tls_cache[i][j].data = NULL;
+			}
+		}
+	}
+
+	return data;
+}
+
+unsigned char *natflow_l7_tls_cache_detach6(const struct in6_addr *src_ip,
+        __be16 src_port, const struct in6_addr *dst_ip, __be16 dst_port,
+        __u32 *seq, unsigned int *data_len)
+{
+	int i = smp_processor_id();
+	int j;
+	unsigned char *data = NULL;
+
+	if (natflow_l7_tls_cache == NULL || i >= natflow_l7_tls_cache_cpu_num)
+		return NULL;
+
+	for (j = 0; j < NATFLOW_L7_TLS_CACHE_NODE_MAX; j++) {
+		if (natflow_l7_tls_cache[i][j].data != NULL) {
+			if (time_after(jiffies,
+			               natflow_l7_tls_cache[i][j].active_jiffies +
+			               NATFLOW_L7_TLS_CACHE_TIMEOUT * HZ)) {
+				kfree(natflow_l7_tls_cache[i][j].data);
+				natflow_l7_tls_cache[i][j].data = NULL;
+			} else if (memcmp(&natflow_l7_tls_cache[i][j].src_ipv6,
+			                  src_ip, sizeof(*src_ip)) == 0 &&
+			           natflow_l7_tls_cache[i][j].src_port == src_port &&
+			           memcmp(&natflow_l7_tls_cache[i][j].dst_ipv6,
+			                  dst_ip, sizeof(*dst_ip)) == 0 &&
+			           natflow_l7_tls_cache[i][j].dst_port == dst_port) {
+				/* Only origin-path cache lookup is supported, so keep dst strict. */
+				data = natflow_l7_tls_cache[i][j].data;
+				*seq = natflow_l7_tls_cache[i][j].seq;
+				*data_len = natflow_l7_tls_cache[i][j].data_len;
+				natflow_l7_tls_cache[i][j].data = NULL;
+			}
+		}
+	}
+
+	return data;
 }
 
 #if defined(CONFIG_NATFLOW_URLLOGGER)
@@ -1183,9 +1405,15 @@ int natflow_l7_init(void)
 		return ret;
 
 #if defined(CONFIG_NATFLOW_URLLOGGER)
-	ret = natflow_l7_url_hooks_register();
+	ret = natflow_l7_tls_cache_init();
 	if (ret != 0)
 		return ret;
+
+	ret = natflow_l7_url_hooks_register();
+	if (ret != 0) {
+		natflow_l7_tls_cache_cleanup();
+		return ret;
+	}
 #endif
 
 	natflow_l7_started = 1;
@@ -1199,6 +1427,7 @@ void natflow_l7_exit(void)
 
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 	natflow_l7_url_hooks_unregister();
+	natflow_l7_tls_cache_cleanup();
 #endif
 	natflow_l7_started = 0;
 }

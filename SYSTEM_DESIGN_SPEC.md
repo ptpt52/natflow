@@ -28,11 +28,11 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 | `natflow_main.c` | 编译源码 | 模块入口、`/dev/natflow_ctl`、子模块初始化和退出顺序。 |
 | `natflow_common.c/.h` | 编译源码/公共头 | 日志、兼容封装、conntrack 扩展探测、natflow 会话扩展、ipset/NAT 封装。 |
 | `natflow.h` | 公共头 | 核心数据结构、fastnat 节点、状态位、哈希算法、表大小和超时常量。 |
-| `natflow_l7.c/.h` | 编译源码/头 | L7 hook 生命周期和共享 feature core；当前持有 URL hook ops、内核 hook 签名兼容包装、PPPoE normalize/restore、基础 conntrack 过滤和注册/注销流程，并提供 packet view、host/URI normalize、host view contract、HTTP Host、TLS SNI、QUIC Initial/CRYPTO/SNI 和 DNS QNAME parser。 |
+| `natflow_l7.c/.h` | 编译源码/头 | L7 hook 生命周期和共享 feature core；当前持有 URL hook ops、内核 hook 签名兼容包装、PPPoE normalize/restore、基础 conntrack 过滤、TCP TLS SNI cache 和注册/注销流程，并提供 packet view、host/URI normalize、host view contract、HTTP Host、TLS SNI、QUIC Initial/CRYPTO/SNI 和 DNS QNAME parser。 |
 | `natflow_dpi.c/.h` | 编译源码/头 | DPI 控制/事件接口，提供默认关闭的 `/dev/natflow_dpi_ctl`、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、`app_id` 写入、source counters 和 `/dev/natflow_dpi_queue` match 事件。 |
 | `natflow_path.c/.h` | 编译源码/头 | fast path、route 学习、fastnat 表、vline/relay、设备 notifier、硬件 offload。 |
 | `natflow_user.c/.h` | 编译源码/头 | 用户 fakeuser、认证、QoS、用户事件、用户信息控制设备。 |
-| `natflow_urllogger.c/.h` | 编译源码/头 | Legacy URL consumer；通过 `natflow_urllogger_consume_url_view()` 消费 L7 packet view，并用 L7 host view 驱动 URL record、Host ACL、DPI classify 和 ACL 回复策略，保留 URL/SNI 记录、URL store、Host ACL、302/RST 动作、sysctl 和 QUIC/SNI cache/crypto 资源。 |
+| `natflow_urllogger.c/.h` | 编译源码/头 | Legacy URL consumer；通过 `natflow_urllogger_consume_url_view()` 消费 L7 packet view，并用 L7 host view 驱动 URL record、Host ACL、DPI classify 和 ACL 回复策略，保留 URL/SNI 记录、URL store、Host ACL、302/RST 动作、sysctl 和 QUIC cache/crypto 资源。 |
 | `natflow_zone.c/.h` | 编译源码/头 | LAN/WAN zone 控制、设备 zone 标记、zone notifier。 |
 | `natflow_conntrack.c/.h` | 编译源码/头 | `/dev/conntrackinfo_ctl` conntrack dump。 |
 | `natflow_compat.h` | 公共头 | 大量内核版本和 API 兼容宏。 |
@@ -182,7 +182,7 @@ Natflow 分为控制面、策略面、数据面和观测面。
 - zone 和 user 在 path 前初始化，因此 fast path 可依赖 zone/user 状态位。
 - user 子系统初始化时，`userinfo_event_store_init()` 在 `/dev/userinfo_event_ctl` 的 `cdev_add()` 之前执行；设备节点一旦可打开，事件队列的 spinlock、list 和 waitqueue 已经有效。
 - URL logger 在 path 后初始化，shared L7 解析通过 `NF_FF_L7_USE` 与 path 协调，避免未完成 URL/DPI host 处理的流被快速转发。
-- L7 hook lifecycle 在 URL logger 资源初始化之后注册 URL hook ops；hook 签名兼容包装由 L7 持有，数据面通过 `natflow_urllogger_consume_url_view()` 委托 legacy URL consumer。退出时先注销 hook 再释放 URL logger 资源。
+- L7 hook lifecycle 在 URL logger 资源初始化之后初始化 TCP TLS SNI cache 并注册 URL hook ops；hook 签名兼容包装由 L7 持有，数据面通过 `natflow_urllogger_consume_url_view()` 委托 legacy URL consumer。退出时先注销 hook、释放 TCP TLS SNI cache，再释放 URL logger 资源。
 - 退出 path 时先 `disabled=1`，再注销 hooks/notifier、同步 RCU、停止硬件 offload、释放表。
 
 ## 6. 公共控制协议
@@ -899,7 +899,7 @@ classid 模式：
 
 实现边界：
 
-- `natflow_l7_copy_host_tolower()` 是 L7 共享 hostname normalize/validate 层；HTTP Host 解析已由 `natflow_l7_http_parse()` 产出共享 feature，TLS ClientHello/SNI 搜索已迁移到 `natflow_l7_tls_*()`，QUIC Initial header、CRYPTO frame 拼接和 SNI 搜索已迁移到 `natflow_l7_quic_*()`，DNS query 第一问 QNAME 由 `natflow_l7_dns_parse()` 产出共享 feature；`natflow_l7_host_view` 是当前 URL/DPI host consumer 的中立输入 contract，承载 source、host、URI 和 HTTP method，具体 URL flags、DPI event source 以及 ACL reset/redirect/drop 回复策略仍由 legacy URL consumer 映射。QUIC AES/HKDF crypto context 和分片 cache 的初始化/清理仍由 legacy URL logger 持有，以保持 crypto 初始化失败只禁用 QUIC hostname parser、不导致 URL logger 初始化失败的旧语义。ASCII 大写转小写，去除末尾 root dot；HTTP Host 允许并剥离合法十进制 `:port`；总长度限制为 1..253，单 label 限制为 1..63，只允许 `[a-z0-9.-]`，拒绝空 label、label 开头或结尾的 `-`、NUL、控制字符、空白、逗号、冒号等非 DNS hostname 字节。
+- `natflow_l7_copy_host_tolower()` 是 L7 共享 hostname normalize/validate 层；HTTP Host 解析已由 `natflow_l7_http_parse()` 产出共享 feature，TLS ClientHello/SNI 搜索已迁移到 `natflow_l7_tls_*()`，TCP TLS 跨包 SNI cache 已迁移到 `natflow_l7` 生命周期，QUIC Initial header、CRYPTO frame 拼接和 SNI 搜索已迁移到 `natflow_l7_quic_*()`，DNS query 第一问 QNAME 由 `natflow_l7_dns_parse()` 产出共享 feature；`natflow_l7_host_view` 是当前 URL/DPI host consumer 的中立输入 contract，承载 source、host、URI 和 HTTP method，具体 URL flags、DPI event source 以及 ACL reset/redirect/drop 回复策略仍由 legacy URL consumer 映射。QUIC AES/HKDF crypto context 和分片 cache 的初始化/清理仍由 legacy URL logger 持有，以保持 crypto 初始化失败只禁用 QUIC hostname parser、不导致 URL logger 初始化失败的旧语义。ASCII 大写转小写，去除末尾 root dot；HTTP Host 允许并剥离合法十进制 `:port`；总长度限制为 1..253，单 label 限制为 1..63，只允许 `[a-z0-9.-]`，拒绝空 label、label 开头或结尾的 `-`、NUL、控制字符、空白、逗号、冒号等非 DNS hostname 字节。
 - URL 记录创建前会先完成 hostname/URI 校验，并限制 `normalized_host + uri + NUL <= URLLOGGER_DATALEN`，避免按畸形输入长度做过大的 `GFP_ATOMIC` 分配。
 - Host ACL 失败路径使用 `urllogger_acl_lookup` 栈上视图复用同一 hostname normalize 规则，不依赖 URL store record 分配成功。
 - TLS/QUIC SNI server_name type 0 的内容会按 DNS hostname 规则校验后使用；严格校验会拒绝包含 `_`、非 ASCII U-label、通配符、IPv6 literal 或其他非标准 DNS hostname 的输入。
