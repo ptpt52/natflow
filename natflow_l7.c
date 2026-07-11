@@ -1,7 +1,7 @@
 /*
  * Shared L7 hook lifecycle.
  *
- * The first implementation step only centralizes hook ownership. Legacy URL
+ * L7 owns the shared hook entry and dispatches active consumers. Legacy URL
  * parsing and Host ACL handling still live in natflow_urllogger.c.
  */
 #include <linux/errno.h>
@@ -17,32 +17,79 @@
 
 static int natflow_l7_started;
 
+static unsigned int natflow_l7_active_consumer_mask(void)
+{
+	unsigned int mask = 0;
+
+#if defined(CONFIG_NATFLOW_URLLOGGER)
+	if (natflow_urllogger_url_enabled())
+		mask |= NATFLOW_L7_CONSUMER_URL;
+#endif
+
+	return mask;
+}
+
+unsigned int natflow_l7_consumer_mask(void)
+{
+	return natflow_l7_active_consumer_mask();
+}
+
+int natflow_l7_consumer_active(unsigned int consumer)
+{
+	return (natflow_l7_active_consumer_mask() & consumer) != 0;
+}
+
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 #if NATFLOW_HAVE_IP_SET_STATE_API
 #define NATFLOW_L7_URL_CONSUMER_ARGS \
 	unsigned int hooknum, const struct nf_hook_state *state, struct sk_buff *skb
 #define NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, state, in, out) \
 	natflow_l7_url_consume_common(hooknum, state, skb)
-#define NATFLOW_L7_URLLOGGER_CONSUME(view) \
-	natflow_urllogger_consume_url_view(hooknum, state, view)
+#define NATFLOW_L7_DISPATCH_URL_VIEW(view, consumer_mask) \
+	natflow_l7_dispatch_url_view(hooknum, state, view, consumer_mask)
 #else
 #define NATFLOW_L7_URL_CONSUMER_ARGS \
 	unsigned int hooknum, const struct net_device *in, \
 	const struct net_device *out, struct sk_buff *skb
 #define NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, state, in, out) \
 	natflow_l7_url_consume_common(hooknum, in, out, skb)
-#define NATFLOW_L7_URLLOGGER_CONSUME(view) \
-	natflow_urllogger_consume_url_view(hooknum, in, out, view)
+#define NATFLOW_L7_DISPATCH_URL_VIEW(view, consumer_mask) \
+	natflow_l7_dispatch_url_view(hooknum, in, out, view, consumer_mask)
 #endif
+
+#if NATFLOW_HAVE_IP_SET_STATE_API
+static unsigned int natflow_l7_dispatch_url_view(unsigned int hooknum,
+        const struct nf_hook_state *state,
+        const struct natflow_l7_packet_view *view,
+        unsigned int consumer_mask)
+#else
+static unsigned int natflow_l7_dispatch_url_view(unsigned int hooknum,
+        const struct net_device *in,
+        const struct net_device *out,
+        const struct natflow_l7_packet_view *view,
+        unsigned int consumer_mask)
+#endif
+{
+	if (!(consumer_mask & NATFLOW_L7_CONSUMER_URL))
+		return NF_ACCEPT;
+
+#if NATFLOW_HAVE_IP_SET_STATE_API
+	return natflow_urllogger_consume_url_view(hooknum, state, view);
+#else
+	return natflow_urllogger_consume_url_view(hooknum, in, out, view);
+#endif
+}
 
 static unsigned int natflow_l7_url_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS)
 {
 	struct natflow_l7_packet_view view;
 	enum ip_conntrack_info ctinfo;
 	struct nf_conn *ct;
+	unsigned int consumer_mask;
 	unsigned int ret = NF_ACCEPT;
 
-	if (!natflow_urllogger_url_enabled())
+	consumer_mask = natflow_l7_active_consumer_mask();
+	if (!(consumer_mask & NATFLOW_L7_CONSUMER_URL))
 		return NF_ACCEPT;
 
 	memset(&view, 0, sizeof(view));
@@ -89,7 +136,7 @@ static unsigned int natflow_l7_url_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS)
 	else
 		view.l3 = ip_hdr(skb);
 
-	ret = NATFLOW_L7_URLLOGGER_CONSUME(&view);
+	ret = NATFLOW_L7_DISPATCH_URL_VIEW(&view, consumer_mask);
 
 out:
 	if (view.flags & NATFLOW_L7_PACKET_F_PPPOE) {
@@ -185,8 +232,10 @@ static unsigned int natflow_l7_url_local_in(void *priv,
 	enum ip_conntrack_info ctinfo;
 	struct nf_conn *ct;
 	struct iphdr *iph;
+	unsigned int consumer_mask;
 
-	if (!natflow_urllogger_url_enabled())
+	consumer_mask = natflow_l7_active_consumer_mask();
+	if (!(consumer_mask & NATFLOW_L7_CONSUMER_URL))
 		return NF_ACCEPT;
 
 	ct = nf_ct_get(skb, &ctinfo);

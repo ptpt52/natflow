@@ -22,6 +22,11 @@ enum natflow_l7_feature_source {
 	NATFLOW_L7_SOURCE_DNS,
 };
 
+enum natflow_l7_consumer {
+	NATFLOW_L7_CONSUMER_URL = 0x01,
+	NATFLOW_L7_CONSUMER_DPI = 0x02,
+};
+
 enum natflow_l7_http_method {
 	NATFLOW_L7_HTTP_NONE = 0,
 	NATFLOW_L7_HTTP_GET = 1,
@@ -113,6 +118,8 @@ extern int natflow_l7_dns_parse(const unsigned char *data,
                                 unsigned int data_len,
                                 unsigned char l4proto,
                                 struct natflow_l7_feature *feature);
+extern unsigned int natflow_l7_consumer_mask(void);
+extern int natflow_l7_consumer_active(unsigned int consumer);
 extern int natflow_l7_init(void);
 extern void natflow_l7_exit(void);
 

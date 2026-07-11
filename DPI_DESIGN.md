@@ -45,9 +45,9 @@ natflow_l7 core
 统一设计必须从当前源码出发，而不是从目标接口假设出发：
 
 - 当前 `NF_FF_BUSY_USE` 已包含 `NF_FF_USER_USE | NF_FF_URLLOGGER_USE | NF_FF_DPI_USE`，但源码还没有 DPI consumer 设置或清除该 bit。
-- 当前 `natflow_t` 已在尾部追加常驻 `app_id`，但源码还没有分类器写入非 0 值。
+- 当前 `natflow_t` 已在尾部追加常驻 `app_id`，domain/proto classifier 命中时已写入非 0 应用结果。
 - 当前 fast path 在建软件 fastnat 或硬件 offload 前检查 `nf->status & NF_FF_BUSY_USE`；DPI 必须沿用这个 mask 阻止首段流量被提前接管。
-- 当前 URL logger hook 的生命周期由 `natflow_l7_init()/exit()` 触发，URL hook ops、内核 hook 签名兼容包装、PPPoE normalize/restore、基础 conntrack 过滤和 packet view 构造已由 `natflow_l7.c` 持有：默认注册 IPv4、IPv6 和 bridge `FORWARD` hook，优先级 `NF_IP_PRI_FILTER + 5`；可选 `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 改为 IPv4 `LOCAL_IN`。底层数据面通过 `natflow_urllogger_consume_url_view()` 委托 legacy URL consumer。
+- 当前 URL logger hook 的生命周期由 `natflow_l7_init()/exit()` 触发，URL hook ops、内核 hook 签名兼容包装、PPPoE normalize/restore、基础 conntrack 过滤、packet view 构造、`NATFLOW_L7_CONSUMER_URL/DPI` mask 骨架和 URL dispatcher 已由 `natflow_l7.c` 持有：默认注册 IPv4、IPv6 和 bridge `FORWARD` hook，优先级 `NF_IP_PRI_FILTER + 5`；可选 `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 改为 IPv4 `LOCAL_IN`。当前 active mask 仍只按 `urllogger_store/enable` 发布 URL consumer，底层数据面通过 `natflow_urllogger_consume_url_view()` 委托 legacy URL consumer，DPI consumer 位尚未激活。
 - 当前 DPI protocol-only hook 仍由 `natflow_dpi.c` 独立持有，优先级 `NF_IP_PRI_FILTER + 6`，不合并进 L7 URL common path，也不受 `urllogger_store/enable` 控制；等 L7 dispatcher、consumer mask 和 DPI context 生命周期落地后再评审合并入口。
 - 当前 `urllogger_store_enable=0` 时 hook 入口直接 accept，因此 Host ACL 也不会执行。
 - 当前 HTTP Host/URI、TLS SNI、QUIC v1 Initial SNI parser 都是 `natflow_urllogger.c` 内部静态实现，并和 URL record 分配、Host ACL、队列输出混在同一 hook。
