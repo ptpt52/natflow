@@ -4,14 +4,19 @@
  * L7 owns the shared hook entry and dispatches active consumers. Legacy URL
  * parsing and Host ACL handling still live in natflow_urllogger.c.
  */
+#include <linux/crypto.h>
 #include <linux/errno.h>
 #include <linux/in6.h>
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/scatterlist.h>
 #include <linux/slab.h>
 #include <linux/smp.h>
 #include <linux/string.h>
+#include <crypto/aead.h>
+#include <crypto/hash.h>
+#include <crypto/skcipher.h>
 #include "natflow_common.h"
 #include "natflow_l7.h"
 #if defined(CONFIG_NATFLOW_DPI) && defined(CONFIG_NATFLOW_URLLOGGER)
@@ -70,6 +75,68 @@ struct natflow_l7_tls_cache_node {
 #define NATFLOW_L7_TLS_CACHE_NODE_MAX 64
 static struct natflow_l7_tls_cache_node (*natflow_l7_tls_cache)[NATFLOW_L7_TLS_CACHE_NODE_MAX];
 static unsigned int natflow_l7_tls_cache_cpu_num;
+
+#define NATFLOW_L7_QUIC_V1_VERSION 0x00000001u
+#define NATFLOW_L7_QUIC_CACHE_TIMEOUT 4
+#define NATFLOW_L7_QUIC_CACHE_NODE_MAX 64
+#define NATFLOW_L7_QUIC_INITIAL_SECRET_LEN 32
+#define NATFLOW_L7_QUIC_INITIAL_KEY_LEN 16
+#define NATFLOW_L7_QUIC_INITIAL_IV_LEN 12
+#define NATFLOW_L7_QUIC_INITIAL_TAG_LEN 16
+#define NATFLOW_L7_QUIC_HP_SAMPLE_LEN 16
+#define NATFLOW_L7_QUIC_MAX_PACKET_NUMBER_LEN 4
+#define NATFLOW_L7_QUIC_INITIAL_SCRATCH_PACKET_LEN 2048
+#define NATFLOW_L7_QUIC_CRYPTO_DATA_LIMIT (32 * 1024)
+
+static const unsigned char natflow_l7_quic_v1_initial_salt[20] = {
+	0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17,
+	0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a,
+};
+
+struct natflow_l7_quic_crypto_ctx {
+	struct crypto_shash *hmac;
+	struct crypto_skcipher *hp;
+	struct skcipher_request *hp_req;
+	struct crypto_aead *aead;
+	struct aead_request *aead_req;
+	unsigned char key[NATFLOW_L7_QUIC_INITIAL_KEY_LEN];
+	unsigned char iv[NATFLOW_L7_QUIC_INITIAL_IV_LEN];
+	unsigned char hp_key[NATFLOW_L7_QUIC_INITIAL_KEY_LEN];
+	unsigned char mask[NATFLOW_L7_QUIC_HP_SAMPLE_LEN];
+	unsigned char nonce[NATFLOW_L7_QUIC_INITIAL_IV_LEN];
+	unsigned char hkdf_input[128];
+	unsigned char hkdf_digest[NATFLOW_L7_QUIC_INITIAL_SECRET_LEN];
+	unsigned char hkdf_info[80];
+	unsigned char initial_secret[NATFLOW_L7_QUIC_INITIAL_SECRET_LEN];
+	unsigned char client_secret[NATFLOW_L7_QUIC_INITIAL_SECRET_LEN];
+	unsigned char scratch_packet[NATFLOW_L7_QUIC_INITIAL_SCRATCH_PACKET_LEN];
+	char desc_buf[sizeof(struct shash_desc) + HASH_MAX_DESCSIZE] __aligned(__alignof__(struct shash_desc));
+};
+
+struct natflow_l7_quic_cache_node {
+	unsigned long active_jiffies;
+	union {
+		__be32 src_ip;
+		struct in6_addr src_ipv6;
+	};
+	union {
+		__be32 dst_ip;
+		struct in6_addr dst_ipv6;
+	};
+	__be16 src_port;
+	__be16 dst_port;
+	unsigned int version;
+	unsigned int dcid_len;
+	unsigned char dcid[NATFLOW_L7_QUIC_MAX_CID_LEN];
+	unsigned int crypto_len;
+	unsigned char *crypto_data;
+};
+
+static struct natflow_l7_quic_crypto_ctx *natflow_l7_quic_crypto_ctx;
+static unsigned int natflow_l7_quic_crypto_cpu_num;
+static int natflow_l7_quic_crypto_ready;
+static struct natflow_l7_quic_cache_node (*natflow_l7_quic_cache)[NATFLOW_L7_QUIC_CACHE_NODE_MAX];
+static unsigned int natflow_l7_quic_cache_cpu_num;
 
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 static int natflow_l7_tls_cache_init(void)
@@ -266,6 +333,581 @@ unsigned char *natflow_l7_tls_cache_detach6(const struct in6_addr *src_ip,
 	}
 
 	return data;
+}
+
+#if defined(CONFIG_NATFLOW_URLLOGGER)
+static int natflow_l7_quic_cache_init(void)
+{
+	natflow_l7_quic_cache_cpu_num = nr_cpu_ids;
+	natflow_l7_quic_cache = kcalloc(natflow_l7_quic_cache_cpu_num,
+	                                sizeof(*natflow_l7_quic_cache),
+	                                GFP_KERNEL);
+	if (natflow_l7_quic_cache == NULL)
+		return -ENOMEM;
+
+	return 0;
+}
+
+static void natflow_l7_quic_cache_cleanup(void)
+{
+	int i, j;
+
+	if (natflow_l7_quic_cache == NULL)
+		return;
+
+	for (i = 0; i < natflow_l7_quic_cache_cpu_num; i++) {
+		for (j = 0; j < NATFLOW_L7_QUIC_CACHE_NODE_MAX; j++) {
+			kfree(natflow_l7_quic_cache[i][j].crypto_data);
+			natflow_l7_quic_cache[i][j].crypto_data = NULL;
+		}
+	}
+
+	kfree(natflow_l7_quic_cache);
+	natflow_l7_quic_cache = NULL;
+	natflow_l7_quic_cache_cpu_num = 0;
+}
+
+static void natflow_l7_quic_crypto_cleanup(void)
+{
+	int i;
+
+	natflow_l7_quic_crypto_ready = 0;
+	if (natflow_l7_quic_crypto_ctx == NULL)
+		return;
+
+	for (i = 0; i < natflow_l7_quic_crypto_cpu_num; i++) {
+		if (natflow_l7_quic_crypto_ctx[i].aead_req != NULL)
+			aead_request_free(natflow_l7_quic_crypto_ctx[i].aead_req);
+		if (natflow_l7_quic_crypto_ctx[i].aead != NULL)
+			crypto_free_aead(natflow_l7_quic_crypto_ctx[i].aead);
+		if (natflow_l7_quic_crypto_ctx[i].hp_req != NULL)
+			skcipher_request_free(natflow_l7_quic_crypto_ctx[i].hp_req);
+		if (natflow_l7_quic_crypto_ctx[i].hp != NULL)
+			crypto_free_skcipher(natflow_l7_quic_crypto_ctx[i].hp);
+		if (natflow_l7_quic_crypto_ctx[i].hmac != NULL)
+			crypto_free_shash(natflow_l7_quic_crypto_ctx[i].hmac);
+	}
+
+	kfree(natflow_l7_quic_crypto_ctx);
+	natflow_l7_quic_crypto_ctx = NULL;
+	natflow_l7_quic_crypto_cpu_num = 0;
+}
+
+static int natflow_l7_quic_crypto_init(void)
+{
+	int i;
+	int ret = 0;
+
+	natflow_l7_quic_crypto_cpu_num = nr_cpu_ids;
+	natflow_l7_quic_crypto_ctx = kcalloc(natflow_l7_quic_crypto_cpu_num,
+	                                     sizeof(*natflow_l7_quic_crypto_ctx),
+	                                     GFP_KERNEL);
+	if (natflow_l7_quic_crypto_ctx == NULL)
+		return -ENOMEM;
+
+	for (i = 0; i < natflow_l7_quic_crypto_cpu_num; i++) {
+		natflow_l7_quic_crypto_ctx[i].hmac = crypto_alloc_shash("hmac(sha256)", 0, 0);
+		if (IS_ERR(natflow_l7_quic_crypto_ctx[i].hmac)) {
+			ret = PTR_ERR(natflow_l7_quic_crypto_ctx[i].hmac);
+			natflow_l7_quic_crypto_ctx[i].hmac = NULL;
+			goto failed;
+		}
+
+		natflow_l7_quic_crypto_ctx[i].hp = crypto_alloc_skcipher("ecb(aes)", 0, CRYPTO_ALG_ASYNC);
+		if (IS_ERR(natflow_l7_quic_crypto_ctx[i].hp)) {
+			ret = PTR_ERR(natflow_l7_quic_crypto_ctx[i].hp);
+			natflow_l7_quic_crypto_ctx[i].hp = NULL;
+			goto failed;
+		}
+
+		natflow_l7_quic_crypto_ctx[i].hp_req = skcipher_request_alloc(natflow_l7_quic_crypto_ctx[i].hp, GFP_KERNEL);
+		if (natflow_l7_quic_crypto_ctx[i].hp_req == NULL) {
+			ret = -ENOMEM;
+			goto failed;
+		}
+
+		natflow_l7_quic_crypto_ctx[i].aead = crypto_alloc_aead("gcm(aes)", 0, CRYPTO_ALG_ASYNC);
+		if (IS_ERR(natflow_l7_quic_crypto_ctx[i].aead)) {
+			ret = PTR_ERR(natflow_l7_quic_crypto_ctx[i].aead);
+			natflow_l7_quic_crypto_ctx[i].aead = NULL;
+			goto failed;
+		}
+
+		natflow_l7_quic_crypto_ctx[i].aead_req = aead_request_alloc(natflow_l7_quic_crypto_ctx[i].aead, GFP_KERNEL);
+		if (natflow_l7_quic_crypto_ctx[i].aead_req == NULL) {
+			ret = -ENOMEM;
+			goto failed;
+		}
+	}
+
+	natflow_l7_quic_crypto_ready = 1;
+	return 0;
+
+failed:
+	natflow_l7_quic_crypto_cleanup();
+	return ret;
+}
+#endif
+
+static int natflow_l7_quic_hmac_sha256(struct natflow_l7_quic_crypto_ctx *ctx,
+        const unsigned char *key, unsigned int key_len,
+        const unsigned char *data, unsigned int data_len,
+        unsigned char *out)
+{
+	struct shash_desc *desc = (struct shash_desc *)ctx->desc_buf;
+	int ret;
+
+	ret = crypto_shash_setkey(ctx->hmac, key, key_len);
+	if (ret != 0)
+		return ret;
+
+	desc->tfm = ctx->hmac;
+	ret = crypto_shash_digest(desc, data, data_len, out);
+
+	shash_desc_zero(desc);
+	return ret;
+}
+
+static int natflow_l7_quic_hkdf_expand(struct natflow_l7_quic_crypto_ctx *ctx,
+        const unsigned char *secret, unsigned int secret_len,
+        const unsigned char *info, unsigned int info_len,
+        unsigned char *out, unsigned int out_len)
+{
+	unsigned char *input = ctx->hkdf_input;
+	unsigned char *digest = ctx->hkdf_digest;
+	int ret;
+
+	if (out_len > NATFLOW_L7_QUIC_INITIAL_SECRET_LEN ||
+	        info_len + 1 > sizeof(ctx->hkdf_input))
+		return -EINVAL;
+
+	memcpy(input, info, info_len);
+	input[info_len] = 1;
+	ret = natflow_l7_quic_hmac_sha256(ctx, secret, secret_len,
+	                                  input, info_len + 1, digest);
+	if (ret == 0)
+		memcpy(out, digest, out_len);
+
+	memzero_explicit(input, sizeof(ctx->hkdf_input));
+	memzero_explicit(digest, sizeof(ctx->hkdf_digest));
+	return ret;
+}
+
+static int natflow_l7_quic_hkdf_expand_label(struct natflow_l7_quic_crypto_ctx *ctx,
+        const unsigned char *secret, unsigned int secret_len,
+        const char *label,
+        unsigned char *out, unsigned int out_len)
+{
+	unsigned char *info = ctx->hkdf_info;
+	unsigned int label_len = strlen(label);
+	unsigned int full_label_len = strlen("tls13 ") + label_len;
+	int ret;
+
+	if (full_label_len > 255 || 4 + full_label_len > sizeof(ctx->hkdf_info))
+		return -EINVAL;
+
+	info[0] = (out_len >> 8) & 0xff;
+	info[1] = out_len & 0xff;
+	info[2] = full_label_len;
+	memcpy(info + 3, "tls13 ", strlen("tls13 "));
+	memcpy(info + 3 + strlen("tls13 "), label, label_len);
+	info[3 + full_label_len] = 0;
+
+	ret = natflow_l7_quic_hkdf_expand(ctx, secret, secret_len,
+	                                  info, 4 + full_label_len, out, out_len);
+	memzero_explicit(info, sizeof(ctx->hkdf_info));
+	return ret;
+}
+
+static int natflow_l7_quic_initial_keys(struct natflow_l7_quic_crypto_ctx *ctx,
+        const unsigned char *dcid, unsigned int dcid_len,
+        unsigned char *key, unsigned char *iv, unsigned char *hp)
+{
+	unsigned char *initial_secret = ctx->initial_secret;
+	unsigned char *client_secret = ctx->client_secret;
+	int ret;
+
+	ret = natflow_l7_quic_hmac_sha256(ctx, natflow_l7_quic_v1_initial_salt,
+	                                  sizeof(natflow_l7_quic_v1_initial_salt),
+	                                  dcid, dcid_len, initial_secret);
+	if (ret != 0)
+		goto out;
+
+	ret = natflow_l7_quic_hkdf_expand_label(ctx, initial_secret,
+	                                        NATFLOW_L7_QUIC_INITIAL_SECRET_LEN,
+	                                        "client in", client_secret,
+	                                        NATFLOW_L7_QUIC_INITIAL_SECRET_LEN);
+	if (ret != 0)
+		goto out;
+
+	ret = natflow_l7_quic_hkdf_expand_label(ctx, client_secret,
+	                                        NATFLOW_L7_QUIC_INITIAL_SECRET_LEN,
+	                                        "quic key", key,
+	                                        NATFLOW_L7_QUIC_INITIAL_KEY_LEN);
+	if (ret != 0)
+		goto out;
+
+	ret = natflow_l7_quic_hkdf_expand_label(ctx, client_secret,
+	                                        NATFLOW_L7_QUIC_INITIAL_SECRET_LEN,
+	                                        "quic iv", iv,
+	                                        NATFLOW_L7_QUIC_INITIAL_IV_LEN);
+	if (ret != 0)
+		goto out;
+
+	ret = natflow_l7_quic_hkdf_expand_label(ctx, client_secret,
+	                                        NATFLOW_L7_QUIC_INITIAL_SECRET_LEN,
+	                                        "quic hp", hp,
+	                                        NATFLOW_L7_QUIC_INITIAL_KEY_LEN);
+
+out:
+	memzero_explicit(initial_secret, sizeof(ctx->initial_secret));
+	memzero_explicit(client_secret, sizeof(ctx->client_secret));
+	return ret;
+}
+
+static int natflow_l7_quic_header_protection_mask(struct natflow_l7_quic_crypto_ctx *ctx,
+        const unsigned char *hp_key,
+        const unsigned char *sample,
+        unsigned char *mask)
+{
+	struct skcipher_request *req = ctx->hp_req;
+	struct scatterlist src;
+	struct scatterlist dst;
+	int ret;
+
+	ret = crypto_skcipher_setkey(ctx->hp, hp_key,
+	                             NATFLOW_L7_QUIC_INITIAL_KEY_LEN);
+	if (ret != 0)
+		return ret;
+
+	sg_init_one(&src, sample, NATFLOW_L7_QUIC_HP_SAMPLE_LEN);
+	sg_init_one(&dst, mask, NATFLOW_L7_QUIC_HP_SAMPLE_LEN);
+	skcipher_request_set_callback(req, 0, NULL, NULL);
+	skcipher_request_set_crypt(req, &src, &dst,
+	                           NATFLOW_L7_QUIC_HP_SAMPLE_LEN, NULL);
+	return crypto_skcipher_encrypt(req);
+}
+
+static int natflow_l7_quic_initial_decrypt(struct natflow_l7_quic_crypto_ctx *ctx,
+        const unsigned char *key,
+        const unsigned char *iv,
+        unsigned char *packet,
+        unsigned int packet_len,
+        unsigned int header_len,
+        u64 packet_number,
+        unsigned char **payload,
+        unsigned int *payload_len)
+{
+	struct aead_request *req = ctx->aead_req;
+	struct scatterlist sg;
+	unsigned int crypt_len;
+	int i;
+	int ret;
+
+	if (header_len >= packet_len)
+		return -EINVAL;
+
+	crypt_len = packet_len - header_len;
+	if (crypt_len < NATFLOW_L7_QUIC_INITIAL_TAG_LEN)
+		return -EINVAL;
+
+	memcpy(ctx->nonce, iv, sizeof(ctx->nonce));
+	for (i = 0; i < 8; i++)
+		ctx->nonce[sizeof(ctx->nonce) - 1 - i] ^= (packet_number >> (i * 8)) & 0xff;
+
+	ret = crypto_aead_setauthsize(ctx->aead, NATFLOW_L7_QUIC_INITIAL_TAG_LEN);
+	if (ret != 0)
+		goto out;
+	ret = crypto_aead_setkey(ctx->aead, key, NATFLOW_L7_QUIC_INITIAL_KEY_LEN);
+	if (ret != 0)
+		goto out;
+
+	sg_init_one(&sg, packet, packet_len);
+	aead_request_set_callback(req, 0, NULL, NULL);
+	aead_request_set_ad(req, header_len);
+	aead_request_set_crypt(req, &sg, &sg, crypt_len, ctx->nonce);
+	ret = crypto_aead_decrypt(req);
+	if (ret == 0) {
+		*payload = packet + header_len;
+		*payload_len = crypt_len - NATFLOW_L7_QUIC_INITIAL_TAG_LEN;
+	}
+
+out:
+	return ret;
+}
+
+enum natflow_l7_tls_search_result natflow_l7_quic_initial_sni_search(const unsigned char *data,
+        const struct natflow_l7_quic_initial_info *info,
+        unsigned char **crypto_data,
+        unsigned int *crypto_len,
+        unsigned char **host,
+        int *host_len)
+{
+	struct natflow_l7_quic_crypto_ctx *ctx;
+	unsigned char *packet;
+	unsigned char *payload = NULL;
+	unsigned int payload_len = 0;
+	unsigned int pn_len;
+	unsigned int header_len;
+	u64 packet_number = 0;
+	int cpu = smp_processor_id();
+	int i;
+	int ret;
+
+	*host = NULL;
+
+	if (!natflow_l7_quic_crypto_ready ||
+	        natflow_l7_quic_crypto_ctx == NULL ||
+	        cpu >= natflow_l7_quic_crypto_cpu_num)
+		return NATFLOW_L7_TLS_SEARCH_NOT_CLIENT_HELLO;
+
+	ctx = &natflow_l7_quic_crypto_ctx[cpu];
+
+	/* Fits regular MTU-sized skb UDP payloads; larger Initial packets are not parsed. */
+	if (info->packet_len > sizeof(ctx->scratch_packet))
+		return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+
+	packet = ctx->scratch_packet;
+	memcpy(packet, data, info->packet_len);
+
+	ret = natflow_l7_quic_initial_keys(ctx, info->dcid, info->dcid_len,
+	                                   ctx->key, ctx->iv, ctx->hp_key);
+	if (ret != 0)
+		goto malformed;
+
+	ret = natflow_l7_quic_header_protection_mask(ctx, ctx->hp_key,
+	        packet + info->pn_offset + NATFLOW_L7_QUIC_MAX_PACKET_NUMBER_LEN,
+	        ctx->mask);
+	if (ret != 0)
+		goto malformed;
+
+	packet[0] ^= ctx->mask[0] & 0x0f;
+	pn_len = (packet[0] & 0x03) + 1;
+	if (!natflow_l7_quic_has_bytes(info->pn_offset, pn_len,
+	                               info->packet_len))
+		goto malformed;
+
+	for (i = 0; i < pn_len; i++) {
+		packet[info->pn_offset + i] ^= ctx->mask[i + 1];
+		packet_number = (packet_number << 8) | packet[info->pn_offset + i];
+	}
+
+	header_len = info->pn_offset + pn_len;
+	ret = natflow_l7_quic_initial_decrypt(ctx, ctx->key, ctx->iv,
+	                                      packet, info->packet_len,
+	                                      header_len, packet_number,
+	                                      &payload, &payload_len);
+	if (ret != 0)
+		goto malformed;
+
+	memzero_explicit(ctx->key, sizeof(ctx->key));
+	memzero_explicit(ctx->iv, sizeof(ctx->iv));
+	memzero_explicit(ctx->hp_key, sizeof(ctx->hp_key));
+	memzero_explicit(ctx->mask, sizeof(ctx->mask));
+	memzero_explicit(ctx->nonce, sizeof(ctx->nonce));
+
+	return natflow_l7_quic_crypto_frames_search(payload, payload_len,
+	        crypto_data, crypto_len, host, host_len);
+
+malformed:
+	memzero_explicit(ctx->key, sizeof(ctx->key));
+	memzero_explicit(ctx->iv, sizeof(ctx->iv));
+	memzero_explicit(ctx->hp_key, sizeof(ctx->hp_key));
+	memzero_explicit(ctx->mask, sizeof(ctx->mask));
+	memzero_explicit(ctx->nonce, sizeof(ctx->nonce));
+	return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+}
+
+static int natflow_l7_quic_cache_match(const struct natflow_l7_quic_cache_node *node,
+        __be32 src_ip, __be16 src_port,
+        __be32 dst_ip, __be16 dst_port,
+        const struct natflow_l7_quic_initial_info *info)
+{
+	return node->crypto_data != NULL &&
+	       node->src_ip == src_ip &&
+	       node->src_port == src_port &&
+	       node->dst_ip == dst_ip &&
+	       node->dst_port == dst_port &&
+	       node->version == info->version &&
+	       node->dcid_len == info->dcid_len &&
+	       memcmp(node->dcid, info->dcid, info->dcid_len) == 0;
+}
+
+static int natflow_l7_quic_cache_match6(const struct natflow_l7_quic_cache_node *node,
+        const struct in6_addr *src_ip, __be16 src_port,
+        const struct in6_addr *dst_ip, __be16 dst_port,
+        const struct natflow_l7_quic_initial_info *info)
+{
+	return node->crypto_data != NULL &&
+	       memcmp(&node->src_ipv6, src_ip, sizeof(*src_ip)) == 0 &&
+	       node->src_port == src_port &&
+	       memcmp(&node->dst_ipv6, dst_ip, sizeof(*dst_ip)) == 0 &&
+	       node->dst_port == dst_port &&
+	       node->version == info->version &&
+	       node->dcid_len == info->dcid_len &&
+	       memcmp(node->dcid, info->dcid, info->dcid_len) == 0;
+}
+
+int natflow_l7_quic_cache_attach(__be32 src_ip, __be16 src_port,
+        __be32 dst_ip, __be16 dst_port,
+        const struct natflow_l7_quic_initial_info *info,
+        unsigned char *crypto_data,
+        unsigned int crypto_len)
+{
+	int i = smp_processor_id();
+	int j;
+	int next_to_use = NATFLOW_L7_QUIC_CACHE_NODE_MAX;
+
+	if (crypto_data == NULL || crypto_len == 0)
+		return -EINVAL;
+	if (natflow_l7_quic_cache == NULL || i >= natflow_l7_quic_cache_cpu_num)
+		return -ENOMEM;
+
+	for (j = 0; j < NATFLOW_L7_QUIC_CACHE_NODE_MAX; j++) {
+		if (natflow_l7_quic_cache[i][j].crypto_data != NULL &&
+		        time_after(jiffies,
+		                   natflow_l7_quic_cache[i][j].active_jiffies +
+		                   NATFLOW_L7_QUIC_CACHE_TIMEOUT * HZ)) {
+			kfree(natflow_l7_quic_cache[i][j].crypto_data);
+			natflow_l7_quic_cache[i][j].crypto_data = NULL;
+		}
+		if (natflow_l7_quic_cache_match(&natflow_l7_quic_cache[i][j],
+		                                 src_ip, src_port, dst_ip, dst_port,
+		                                 info))
+			return -EEXIST;
+		if (next_to_use == NATFLOW_L7_QUIC_CACHE_NODE_MAX &&
+		        natflow_l7_quic_cache[i][j].crypto_data == NULL)
+			next_to_use = j;
+	}
+	if (next_to_use == NATFLOW_L7_QUIC_CACHE_NODE_MAX)
+		return -ENOMEM;
+
+	natflow_l7_quic_cache[i][next_to_use].src_ip = src_ip;
+	natflow_l7_quic_cache[i][next_to_use].src_port = src_port;
+	natflow_l7_quic_cache[i][next_to_use].dst_ip = dst_ip;
+	natflow_l7_quic_cache[i][next_to_use].dst_port = dst_port;
+	natflow_l7_quic_cache[i][next_to_use].version = info->version;
+	natflow_l7_quic_cache[i][next_to_use].dcid_len = info->dcid_len;
+	memcpy(natflow_l7_quic_cache[i][next_to_use].dcid, info->dcid,
+	       info->dcid_len);
+	natflow_l7_quic_cache[i][next_to_use].crypto_len = crypto_len;
+	natflow_l7_quic_cache[i][next_to_use].crypto_data = crypto_data;
+	natflow_l7_quic_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
+	return 0;
+}
+
+int natflow_l7_quic_cache_attach6(const struct in6_addr *src_ip,
+        __be16 src_port, const struct in6_addr *dst_ip, __be16 dst_port,
+        const struct natflow_l7_quic_initial_info *info,
+        unsigned char *crypto_data,
+        unsigned int crypto_len)
+{
+	int i = smp_processor_id();
+	int j;
+	int next_to_use = NATFLOW_L7_QUIC_CACHE_NODE_MAX;
+
+	if (crypto_data == NULL || crypto_len == 0)
+		return -EINVAL;
+	if (natflow_l7_quic_cache == NULL || i >= natflow_l7_quic_cache_cpu_num)
+		return -ENOMEM;
+
+	for (j = 0; j < NATFLOW_L7_QUIC_CACHE_NODE_MAX; j++) {
+		if (natflow_l7_quic_cache[i][j].crypto_data != NULL &&
+		        time_after(jiffies,
+		                   natflow_l7_quic_cache[i][j].active_jiffies +
+		                   NATFLOW_L7_QUIC_CACHE_TIMEOUT * HZ)) {
+			kfree(natflow_l7_quic_cache[i][j].crypto_data);
+			natflow_l7_quic_cache[i][j].crypto_data = NULL;
+		}
+		if (natflow_l7_quic_cache_match6(&natflow_l7_quic_cache[i][j],
+		                                  src_ip, src_port, dst_ip, dst_port,
+		                                  info))
+			return -EEXIST;
+		if (next_to_use == NATFLOW_L7_QUIC_CACHE_NODE_MAX &&
+		        natflow_l7_quic_cache[i][j].crypto_data == NULL)
+			next_to_use = j;
+	}
+	if (next_to_use == NATFLOW_L7_QUIC_CACHE_NODE_MAX)
+		return -ENOMEM;
+
+	memcpy(&natflow_l7_quic_cache[i][next_to_use].src_ipv6, src_ip,
+	       sizeof(*src_ip));
+	natflow_l7_quic_cache[i][next_to_use].src_port = src_port;
+	memcpy(&natflow_l7_quic_cache[i][next_to_use].dst_ipv6, dst_ip,
+	       sizeof(*dst_ip));
+	natflow_l7_quic_cache[i][next_to_use].dst_port = dst_port;
+	natflow_l7_quic_cache[i][next_to_use].version = info->version;
+	natflow_l7_quic_cache[i][next_to_use].dcid_len = info->dcid_len;
+	memcpy(natflow_l7_quic_cache[i][next_to_use].dcid, info->dcid,
+	       info->dcid_len);
+	natflow_l7_quic_cache[i][next_to_use].crypto_len = crypto_len;
+	natflow_l7_quic_cache[i][next_to_use].crypto_data = crypto_data;
+	natflow_l7_quic_cache[i][next_to_use].active_jiffies = (unsigned long)jiffies;
+	return 0;
+}
+
+unsigned char *natflow_l7_quic_cache_detach(__be32 src_ip, __be16 src_port,
+        __be32 dst_ip, __be16 dst_port,
+        const struct natflow_l7_quic_initial_info *info,
+        unsigned int *crypto_len)
+{
+	int i = smp_processor_id();
+	int j;
+	unsigned char *crypto_data = NULL;
+
+	if (natflow_l7_quic_cache == NULL || i >= natflow_l7_quic_cache_cpu_num)
+		return NULL;
+
+	for (j = 0; j < NATFLOW_L7_QUIC_CACHE_NODE_MAX; j++) {
+		if (natflow_l7_quic_cache[i][j].crypto_data != NULL &&
+		        time_after(jiffies,
+		                   natflow_l7_quic_cache[i][j].active_jiffies +
+		                   NATFLOW_L7_QUIC_CACHE_TIMEOUT * HZ)) {
+			kfree(natflow_l7_quic_cache[i][j].crypto_data);
+			natflow_l7_quic_cache[i][j].crypto_data = NULL;
+		} else if (natflow_l7_quic_cache_match(&natflow_l7_quic_cache[i][j],
+		                                       src_ip, src_port, dst_ip,
+		                                       dst_port, info)) {
+			crypto_data = natflow_l7_quic_cache[i][j].crypto_data;
+			*crypto_len = natflow_l7_quic_cache[i][j].crypto_len;
+			natflow_l7_quic_cache[i][j].crypto_data = NULL;
+			break;
+		}
+	}
+
+	return crypto_data;
+}
+
+unsigned char *natflow_l7_quic_cache_detach6(const struct in6_addr *src_ip,
+        __be16 src_port, const struct in6_addr *dst_ip, __be16 dst_port,
+        const struct natflow_l7_quic_initial_info *info,
+        unsigned int *crypto_len)
+{
+	int i = smp_processor_id();
+	int j;
+	unsigned char *crypto_data = NULL;
+
+	if (natflow_l7_quic_cache == NULL || i >= natflow_l7_quic_cache_cpu_num)
+		return NULL;
+
+	for (j = 0; j < NATFLOW_L7_QUIC_CACHE_NODE_MAX; j++) {
+		if (natflow_l7_quic_cache[i][j].crypto_data != NULL &&
+		        time_after(jiffies,
+		                   natflow_l7_quic_cache[i][j].active_jiffies +
+		                   NATFLOW_L7_QUIC_CACHE_TIMEOUT * HZ)) {
+			kfree(natflow_l7_quic_cache[i][j].crypto_data);
+			natflow_l7_quic_cache[i][j].crypto_data = NULL;
+		} else if (natflow_l7_quic_cache_match6(&natflow_l7_quic_cache[i][j],
+		                                        src_ip, src_port, dst_ip,
+		                                        dst_port, info)) {
+			crypto_data = natflow_l7_quic_cache[i][j].crypto_data;
+			*crypto_len = natflow_l7_quic_cache[i][j].crypto_len;
+			natflow_l7_quic_cache[i][j].crypto_data = NULL;
+			break;
+		}
+	}
+
+	return crypto_data;
 }
 
 #if defined(CONFIG_NATFLOW_URLLOGGER)
@@ -1086,12 +1728,6 @@ need_more:
 	return NATFLOW_L7_TLS_SEARCH_NEED_MORE;
 }
 
-#define NATFLOW_L7_QUIC_V1_VERSION 0x00000001u
-#define NATFLOW_L7_QUIC_MAX_PACKET_NUMBER_LEN 4
-#define NATFLOW_L7_QUIC_INITIAL_TAG_LEN 16
-#define NATFLOW_L7_QUIC_HP_SAMPLE_LEN 16
-#define NATFLOW_L7_QUIC_CRYPTO_DATA_LIMIT (32 * 1024)
-
 int natflow_l7_quic_has_bytes(unsigned int offset,
         unsigned int bytes, unsigned int len)
 {
@@ -1409,8 +2045,20 @@ int natflow_l7_init(void)
 	if (ret != 0)
 		return ret;
 
+	ret = natflow_l7_quic_cache_init();
+	if (ret != 0) {
+		natflow_l7_tls_cache_cleanup();
+		return ret;
+	}
+
+	ret = natflow_l7_quic_crypto_init();
+	if (ret != 0)
+		NATFLOW_WARN("QUIC hostname parser disabled, crypto init error=%d\n", ret);
+
 	ret = natflow_l7_url_hooks_register();
 	if (ret != 0) {
+		natflow_l7_quic_crypto_cleanup();
+		natflow_l7_quic_cache_cleanup();
 		natflow_l7_tls_cache_cleanup();
 		return ret;
 	}
@@ -1427,6 +2075,8 @@ void natflow_l7_exit(void)
 
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 	natflow_l7_url_hooks_unregister();
+	natflow_l7_quic_crypto_cleanup();
+	natflow_l7_quic_cache_cleanup();
 	natflow_l7_tls_cache_cleanup();
 #endif
 	natflow_l7_started = 0;
