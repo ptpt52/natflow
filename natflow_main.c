@@ -43,6 +43,9 @@
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 #include "natflow_urllogger.h"
 #endif
+#if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
+#include "natflow_l7.h"
+#endif
 #include "natflow_conntrack.h"
 
 static int natflow_major = 0;
@@ -462,8 +465,22 @@ static int __init natflow_init(void)
 	}
 #endif
 
+#if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
+	retval = natflow_l7_init();
+	if (retval) {
+		NATFLOW_println("failed to initialize natflow l7, error=%d", retval);
+		goto natflow_l7_init_failed;
+	}
+#endif
+
 	return 0;
 
+#if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
+natflow_l7_init_failed:
+#if defined(CONFIG_NATFLOW_URLLOGGER)
+	natflow_urllogger_exit();
+#endif
+#endif
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 	/* natflow_urllogger_init() failed before registering urllogger resources. */
 natflow_urllogger_init_failed:
@@ -495,6 +512,9 @@ static void __exit natflow_exit(void) {
 
 	NATFLOW_println("removing");
 
+#if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
+	natflow_l7_exit();
+#endif
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 	natflow_urllogger_exit();
 #endif

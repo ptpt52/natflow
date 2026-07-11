@@ -3269,6 +3269,16 @@ static struct nf_hook_ops urllogger_hooks[] = {
 #endif
 };
 
+int natflow_urllogger_hooks_register(void)
+{
+	return nf_register_hooks(urllogger_hooks, ARRAY_SIZE(urllogger_hooks));
+}
+
+void natflow_urllogger_hooks_unregister(void)
+{
+	nf_unregister_hooks(urllogger_hooks, ARRAY_SIZE(urllogger_hooks));
+}
+
 struct urllogger_user {
 	struct mutex lock;
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
@@ -3969,10 +3979,6 @@ int natflow_urllogger_init(void)
 		goto device_create_failed;
 	}
 
-	ret = nf_register_hooks(urllogger_hooks, ARRAY_SIZE(urllogger_hooks));
-	if (ret != 0)
-		goto nf_register_hooks_failed;
-
 	ret = natflow_hostacl_init();
 	if (ret != 0)
 		goto natflow_hostacl_init_failed;
@@ -3988,8 +3994,6 @@ int natflow_urllogger_init(void)
 register_sysctl_failed:
 	natflow_hostacl_exit();
 natflow_hostacl_init_failed:
-	nf_unregister_hooks(urllogger_hooks, ARRAY_SIZE(urllogger_hooks));
-nf_register_hooks_failed:
 	device_destroy(urllogger_class, devno);
 device_create_failed:
 	class_destroy(urllogger_class);
@@ -4016,7 +4020,6 @@ void natflow_urllogger_exit(void)
 	cdev_del(&urllogger_cdev);
 	unregister_chrdev_region(devno, 1);
 
-	nf_unregister_hooks(urllogger_hooks, ARRAY_SIZE(urllogger_hooks));
 	urllogger_store_clear();
 
 	if (urllogger_table_header) {

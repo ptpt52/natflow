@@ -7,5 +7,7 @@
 
 extern int natflow_urllogger_init(void);
 extern void natflow_urllogger_exit(void);
+extern int natflow_urllogger_hooks_register(void);
+extern void natflow_urllogger_hooks_unregister(void);
 
 #endif /* _NATFLOW_URLLOGGER_H_ */

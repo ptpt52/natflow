@@ -4,7 +4,7 @@
 
 更新时间：2026-07-11
 
-实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，但还没有提供 DPI 控制/事件 ABI 或统一 L7 core；URL/SNI 记录和 Host ACL 仍由 `natflow_urllogger.c` 实现。
+实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，并增加了 `natflow_l7` hook 生命周期骨架；但还没有提供 DPI 控制/事件 ABI，也还没有把 URL parser 迁移到统一 L7 feature core。URL/SNI 记录和 Host ACL 仍由 `natflow_urllogger.c` 实现。
 
 ## 1. 总体结论
 
@@ -47,7 +47,7 @@ natflow_l7 core
 - 当前 `NF_FF_BUSY_USE` 已包含 `NF_FF_USER_USE | NF_FF_URLLOGGER_USE | NF_FF_DPI_USE`，但源码还没有 DPI consumer 设置或清除该 bit。
 - 当前 `natflow_t` 已在尾部追加常驻 `app_id`，但源码还没有分类器写入非 0 值。
 - 当前 fast path 在建软件 fastnat 或硬件 offload 前检查 `nf->status & NF_FF_BUSY_USE`；DPI 必须沿用这个 mask 阻止首段流量被提前接管。
-- 当前 URL logger 默认注册 IPv4、IPv6 和 bridge `FORWARD` hook，优先级 `NF_IP_PRI_FILTER + 5`；可选 `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 改为 IPv4 `LOCAL_IN`。
+- 当前 URL logger hook 的生命周期由 `natflow_l7_init()/exit()` 触发，底层仍使用 `natflow_urllogger.c` 中的 legacy hook 表：默认注册 IPv4、IPv6 和 bridge `FORWARD` hook，优先级 `NF_IP_PRI_FILTER + 5`；可选 `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 改为 IPv4 `LOCAL_IN`。
 - 当前 `urllogger_store_enable=0` 时 hook 入口直接 accept，因此 Host ACL 也不会执行。
 - 当前 HTTP Host/URI、TLS SNI、QUIC v1 Initial SNI parser 都是 `natflow_urllogger.c` 内部静态实现，并和 URL record 分配、Host ACL、队列输出混在同一 hook。
 - 当前 TLS/QUIC 跨包 cache 按 CPU 存储。RPS/RFS 或调度变化导致同一 flow 后续包落到其他 CPU 时，可能找不到之前 prefix。
@@ -183,8 +183,8 @@ bounded parser/detector
 1. `natflow_probe_ct_ext()` 已从 path 私有初始化移动到 common/main 初始化。
 2. probe 已改为可返回错误，供 DPI 判断共享 conntrack extension 是否可用。
 3. layout guard 已在注册 path 或 URL hook 前完成；后续 L7/DPI hook 必须继续遵守该顺序。
-4. L7 core 初始化共享 context pool、parser capability 和 crypto capability。
-5. URL consumer 初始化 legacy 设备和 sysctl。
+4. `natflow_l7` 已成为 URL hook lifecycle owner，但还没有共享 context pool、parser capability 或 crypto capability。
+5. URL consumer 初始化 legacy 设备和 sysctl，再由 L7 core 注册 hook，避免 hook 进入未初始化的 URL 资源。
 6. DPI consumer 默认 `enable=0`，只初始化控制设备和最小状态。
 
 退出顺序反向执行：先阻止新 hook/新 arm，再 drain active context，写 terminal event，清 owner bit，唤醒 reader，最后释放规则、cache、crypto 和设备。

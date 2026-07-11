@@ -28,6 +28,7 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 | `natflow_main.c` | 编译源码 | 模块入口、`/dev/natflow_ctl`、子模块初始化和退出顺序。 |
 | `natflow_common.c/.h` | 编译源码/公共头 | 日志、兼容封装、conntrack 扩展探测、natflow 会话扩展、ipset/NAT 封装。 |
 | `natflow.h` | 公共头 | 核心数据结构、fastnat 节点、状态位、哈希算法、表大小和超时常量。 |
+| `natflow_l7.c/.h` | 编译源码/头 | L7 hook 生命周期骨架；当前只集中管理 legacy URL hook 注册/注销，尚未承载共享 parser。 |
 | `natflow_path.c/.h` | 编译源码/头 | fast path、route 学习、fastnat 表、vline/relay、设备 notifier、硬件 offload。 |
 | `natflow_user.c/.h` | 编译源码/头 | 用户 fakeuser、认证、QoS、用户事件、用户信息控制设备。 |
 | `natflow_urllogger.c/.h` | 编译源码/头 | URL/SNI 解析、URL 存储、host ACL、sysctl。 |
@@ -38,13 +39,13 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 | `Makefile.dkms`、`dkms.conf` | DKMS 入口 | 安装到 `/usr/src/natflow-<version>` 并通过 DKMS build/install。 |
 | `README.md` | 文档 | 面向人类的使用手册和对外接口说明。 |
 | `SYSTEM_DESIGN_SPEC.md` | 文档 | 面向开发、审查和自动化重建的系统设计规格。 |
-| `DPI_DESIGN.md` | 文档 | 统一 L7 core 与 DPI 目标设计，覆盖 legacy URL/HostACL consumer、DPI classifier consumer、HTTP/TLS/QUIC 共享解析、`app_id` flow result、独立 DPI ABI、分级 detector 和 M0-M4 实施路径；当前源码已预留 DPI busy bit、`app_id` 和 layout guard，但尚未实现 DPI 接口和分类行为。 |
+| `DPI_DESIGN.md` | 文档 | 统一 L7 core 与 DPI 目标设计，覆盖 legacy URL/HostACL consumer、DPI classifier consumer、HTTP/TLS/QUIC 共享解析、`app_id` flow result、独立 DPI ABI、分级 detector 和 M0-M4 实施路径；当前源码已预留 DPI busy bit、`app_id`、layout guard 和 L7 hook lifecycle 骨架，但尚未实现 DPI 接口和分类行为。 |
 
 ### 2.1 当前扫描基线
 
 本次重新扫描基于当前工作区实际文件和 Git 跟踪文件：
 
-- 仓库包含 C 源码 7 个、头文件 8 个，以及多个 Markdown 文档（包括系统规格、DPI 设计和智能体记忆）、Makefile、DKMS 配置和 `.gitignore`。
+- 仓库包含 C 源码 8 个、头文件 9 个，以及多个 Markdown 文档（包括系统规格、DPI 设计和智能体记忆）、Makefile、DKMS 配置和 `.gitignore`。
 - 当前实际目录中没有 `natflow_path.c.orig`、`cscope.files`、`cscope.out`、`natflow.mod.c` 等历史备份、索引或构建生成文件；`.gitignore` 仍会忽略 `*.orig`、`cscope.*` 和 `*.mod.c`，因此未来若这些文件重新出现，应先判断是否为生成物或临时备份，不能加入 DKMS 源码复制清单。
 - `SYSTEM_DESIGN_SPEC.md` 本身是规格产物，参与 Git 跟踪，但不是内核模块构建输入。
 - 仓库中不再保留 `portal/` 设计草案文档；当前源码仍只提供内核模块接口，没有 authd/web server 实现。
@@ -56,7 +57,7 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 主 Makefile：
 
 - 生成内核模块 `natflow.o`。
-- `natflow-y` 包含 `natflow_main.o natflow_common.o natflow_path.o natflow_user.o natflow_zone.o natflow_urllogger.o natflow_conntrack.o`。
+- `natflow-y` 包含 `natflow_main.o natflow_common.o natflow_l7.o natflow_path.o natflow_user.o natflow_zone.o natflow_urllogger.o natflow_conntrack.o`。
 - 默认 `EXTRA_CFLAGS += -Wall -Werror -Wno-stringop-overread`。
 - 定义 `NO_DEBUG` 时追加 `-Wno-unused -Os -DNO_DEBUG`，并关闭 `NATFLOW_DEBUG/INFO/WARN/ERROR/FIXME` 宏输出。
 - 运行时全局日志级别可通过 `debug=<u>` 掩码控制（包含 `debug_ratelimited` 等位）。
@@ -158,22 +159,25 @@ Natflow 分为控制面、策略面、数据面和观测面。
 5. 初始化 user/auth/QoS/userinfo：`natflow_user_init()`。
 6. 初始化 conntrackinfo：`conntrackinfo_init()`。
 7. 若 `CONFIG_NATFLOW_PATH`，初始化 path：`natflow_path_init()`。
-8. 若 `CONFIG_NATFLOW_URLLOGGER`，初始化 urllogger：`natflow_urllogger_init()`。
+8. 若 `CONFIG_NATFLOW_URLLOGGER`，初始化 urllogger 设备、Host ACL 和 sysctl：`natflow_urllogger_init()`。
+9. 若 `CONFIG_NATFLOW_URLLOGGER || CONFIG_NATFLOW_DPI`，初始化 L7 hook 生命周期：`natflow_l7_init()`。
 
 退出顺序反向执行：
 
-1. URL logger 退出。
-2. path 退出。
-3. conntrackinfo 退出。
-4. user 退出。
-5. zone 退出。
-6. 注销 `/dev/natflow_ctl`。
+1. L7 hook lifecycle 退出。
+2. URL logger 退出。
+3. path 退出。
+4. conntrackinfo 退出。
+5. user 退出。
+6. zone 退出。
+7. 注销 `/dev/natflow_ctl`。
 
 设计含义：
 
 - zone 和 user 在 path 前初始化，因此 fast path 可依赖 zone/user 状态位。
 - user 子系统初始化时，`userinfo_event_store_init()` 在 `/dev/userinfo_event_ctl` 的 `cdev_add()` 之前执行；设备节点一旦可打开，事件队列的 spinlock、list 和 waitqueue 已经有效。
 - URL logger 在 path 后初始化，但通过 `NF_FF_URLLOGGER_USE` 与 path 协调，避免未完成 URL 处理的流被快速转发。
+- L7 hook lifecycle 在 URL logger 资源初始化之后注册 legacy URL hook，退出时先注销 hook 再释放 URL logger 资源。
 - 退出 path 时先 `disabled=1`，再注销 hooks/notifier、同步 RCU、停止硬件 offload、释放表。
 
 ## 6. 公共控制协议

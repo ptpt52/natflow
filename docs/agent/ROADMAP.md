@@ -106,6 +106,8 @@
 
 当前设计基线：`DPI_DESIGN.md`。Draft v5 把内部目标统一为 `natflow_l7` core：共享 read-only packet view、bounded prefix、HTTP/TLS/QUIC parser、hostname normalize、consumer fan-out 和资源生命周期；legacy URL logger/Host ACL 作为 URL consumer 保持外部 ABI，DPI 作为 classifier consumer 新增独立控制和事件 ABI。本文档仍是目标设计，不代表源码已实现 DPI ABI 或行为。
 
+实现进度：源码已完成 M0b 的 DPI busy bit、`app_id` 尾增和 layout guard，并完成 M0c 的 `natflow_l7` hook lifecycle 骨架；legacy URL parser/Host ACL 尚未迁移到共享 feature core，DPI ABI 也尚未实现。
+
 边界：
 
 - 本仓库仍以 Linux 内核模块为核心；DPI 设计不默认引入完整用户态 DPI daemon、web 服务或大型签名库。
