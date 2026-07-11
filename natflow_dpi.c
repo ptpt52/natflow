@@ -26,11 +26,18 @@ enum natflow_dpi_state {
 };
 
 #define NATFLOW_DPI_DOMAIN_RULE_MAX 128
+#define NATFLOW_DPI_PROTO_RULE_MAX 32
 #define NATFLOW_DPI_EVENT_MAX 1024
 
 enum natflow_dpi_domain_kind {
 	NATFLOW_DPI_DOMAIN_EXACT = 0,
 	NATFLOW_DPI_DOMAIN_SUFFIX = 1,
+};
+
+enum natflow_dpi_proto {
+	NATFLOW_DPI_PROTO_DNS = 1,
+	NATFLOW_DPI_PROTO_SSH = 2,
+	NATFLOW_DPI_PROTO_WIREGUARD = 3,
 };
 
 struct natflow_dpi_domain_rule {
@@ -41,11 +48,19 @@ struct natflow_dpi_domain_rule {
 	unsigned char host[NATFLOW_DPI_HOST_MAX_LEN + 1];
 };
 
+struct natflow_dpi_proto_rule {
+	unsigned int rule_id;
+	unsigned int app_id;
+	unsigned char proto;
+};
+
 struct natflow_dpi_ruleset {
 	struct rcu_head rcu;
 	unsigned int generation;
 	unsigned int domain_count;
+	unsigned int proto_count;
 	struct natflow_dpi_domain_rule domain[NATFLOW_DPI_DOMAIN_RULE_MAX];
+	struct natflow_dpi_proto_rule proto[NATFLOW_DPI_PROTO_RULE_MAX];
 };
 
 struct natflow_dpi_event_node {
@@ -184,6 +199,48 @@ static void natflow_dpi_pending_free(void)
 	natflow_dpi_pending_ruleset = NULL;
 }
 
+static unsigned int natflow_dpi_ruleset_count(const struct natflow_dpi_ruleset *ruleset)
+{
+	if (!ruleset)
+		return 0;
+	return ruleset->domain_count + ruleset->proto_count;
+}
+
+static bool natflow_dpi_pending_rule_id_exists(unsigned int rule_id)
+{
+	unsigned int i;
+
+	if (!natflow_dpi_pending_ruleset)
+		return false;
+
+	for (i = 0; i < natflow_dpi_pending_ruleset->domain_count; i++) {
+		if (natflow_dpi_pending_ruleset->domain[i].rule_id == rule_id)
+			return true;
+	}
+	for (i = 0; i < natflow_dpi_pending_ruleset->proto_count; i++) {
+		if (natflow_dpi_pending_ruleset->proto[i].rule_id == rule_id)
+			return true;
+	}
+	return false;
+}
+
+static int natflow_dpi_proto_parse(const char *name, unsigned char *proto)
+{
+	if (strcmp(name, "dns") == 0) {
+		*proto = NATFLOW_DPI_PROTO_DNS;
+		return 0;
+	}
+	if (strcmp(name, "ssh") == 0) {
+		*proto = NATFLOW_DPI_PROTO_SSH;
+		return 0;
+	}
+	if (strcmp(name, "wireguard") == 0 || strcmp(name, "wg") == 0) {
+		*proto = NATFLOW_DPI_PROTO_WIREGUARD;
+		return 0;
+	}
+	return -EINVAL;
+}
+
 static int natflow_dpi_ruleset_domain_add(char *data)
 {
 	struct natflow_dpi_domain_rule *rule;
@@ -197,7 +254,6 @@ static int natflow_dpi_ruleset_domain_add(char *data)
 	bool have_kind = false;
 	bool have_host = false;
 	char *p = data + strlen("domain");
-	unsigned int i;
 
 	if (!natflow_dpi_txn_active || !natflow_dpi_pending_ruleset)
 		return -EINVAL;
@@ -257,10 +313,8 @@ static int natflow_dpi_ruleset_domain_add(char *data)
 	if (!have_id || !have_app || !have_kind || !have_host)
 		return -EINVAL;
 
-	for (i = 0; i < natflow_dpi_pending_ruleset->domain_count; i++) {
-		if (natflow_dpi_pending_ruleset->domain[i].rule_id == rule_id)
-			return -EEXIST;
-	}
+	if (natflow_dpi_pending_rule_id_exists(rule_id))
+		return -EEXIST;
 
 	rule = &natflow_dpi_pending_ruleset->domain[natflow_dpi_pending_ruleset->domain_count++];
 	rule->rule_id = rule_id;
@@ -268,6 +322,68 @@ static int natflow_dpi_ruleset_domain_add(char *data)
 	rule->kind = kind;
 	rule->host_len = host_len;
 	memcpy(rule->host, host, host_len + 1);
+	return 0;
+}
+
+static int natflow_dpi_ruleset_proto_add(char *data)
+{
+	struct natflow_dpi_proto_rule *rule;
+	unsigned int rule_id = 0;
+	unsigned int app_id = 0;
+	unsigned char proto = 0;
+	bool have_id = false;
+	bool have_app = false;
+	bool have_proto = false;
+	char *p = data + strlen("proto");
+
+	if (!natflow_dpi_txn_active || !natflow_dpi_pending_ruleset)
+		return -EINVAL;
+	if (natflow_dpi_pending_ruleset->proto_count >= NATFLOW_DPI_PROTO_RULE_MAX)
+		return -ENOSPC;
+
+	while (*p != 0) {
+		char *token;
+		char *next;
+
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (*p == 0)
+			break;
+		token = p;
+		while (*p != 0 && *p != ' ' && *p != '\t')
+			p++;
+		next = p;
+		if (*next != 0)
+			*next++ = 0;
+
+		if (strncmp(token, "id=", 3) == 0) {
+			if (have_id || kstrtouint(token + 3, 0, &rule_id) != 0 || rule_id == 0)
+				return -EINVAL;
+			have_id = true;
+		} else if (strncmp(token, "app=", 4) == 0) {
+			if (have_app || kstrtouint(token + 4, 0, &app_id) != 0 || app_id == 0)
+				return -EINVAL;
+			have_app = true;
+		} else if (strncmp(token, "proto=", 6) == 0) {
+			if (have_proto || natflow_dpi_proto_parse(token + 6, &proto) != 0)
+				return -EINVAL;
+			have_proto = true;
+		} else {
+			return -EINVAL;
+		}
+
+		p = next;
+	}
+
+	if (!have_id || !have_app || !have_proto)
+		return -EINVAL;
+	if (natflow_dpi_pending_rule_id_exists(rule_id))
+		return -EEXIST;
+
+	rule = &natflow_dpi_pending_ruleset->proto[natflow_dpi_pending_ruleset->proto_count++];
+	rule->rule_id = rule_id;
+	rule->app_id = app_id;
+	rule->proto = proto;
 	return 0;
 }
 
@@ -369,7 +485,7 @@ static int natflow_dpi_rules_commit(void)
 	old_ruleset = rcu_dereference_protected(natflow_dpi_active_ruleset, 1);
 	rcu_assign_pointer(natflow_dpi_active_ruleset, new_ruleset);
 	natflow_dpi_generation = new_ruleset->generation;
-	natflow_dpi_rules = new_ruleset->domain_count;
+	natflow_dpi_rules = natflow_dpi_ruleset_count(new_ruleset);
 	if (old_ruleset)
 		call_rcu(&old_ruleset->rcu, natflow_dpi_ruleset_free_rcu);
 	return 0;
@@ -437,21 +553,86 @@ void natflow_dpi_classify_host(struct nf_conn *ct, const unsigned char *host,
 	rcu_read_unlock();
 }
 
+static unsigned int natflow_dpi_proto_event_source(unsigned int proto)
+{
+	switch (proto) {
+	case NATFLOW_DPI_PROTO_DNS:
+		return NATFLOW_DPI_EVENT_SOURCE_DNS;
+	case NATFLOW_DPI_PROTO_SSH:
+		return NATFLOW_DPI_EVENT_SOURCE_SSH;
+	case NATFLOW_DPI_PROTO_WIREGUARD:
+		return NATFLOW_DPI_EVENT_SOURCE_WIREGUARD;
+	default:
+		return 0;
+	}
+}
+
+static void natflow_dpi_classify_proto(struct nf_conn *ct, unsigned int proto)
+{
+	const struct natflow_dpi_proto_rule *rule;
+	struct natflow_dpi_ruleset *ruleset;
+	natflow_t *nf;
+	unsigned int i;
+	unsigned int source;
+
+	if (!ct || proto == 0)
+		return;
+	if (READ_ONCE(natflow_dpi_state) != NATFLOW_DPI_STATE_ENABLED)
+		return;
+
+	nf = natflow_session_get(ct);
+	if (!nf || READ_ONCE(nf->app_id) != 0)
+		return;
+
+	source = natflow_dpi_proto_event_source(proto);
+	if (source == 0)
+		return;
+
+	rcu_read_lock();
+	ruleset = rcu_dereference(natflow_dpi_active_ruleset);
+	if (!ruleset) {
+		rcu_read_unlock();
+		return;
+	}
+
+	for (i = 0; i < ruleset->proto_count; i++) {
+		rule = &ruleset->proto[i];
+		if (rule->proto != proto)
+			continue;
+
+		WRITE_ONCE(nf->app_id, rule->app_id);
+		natflow_dpi_event_queue(NATFLOW_DPI_REASON_MATCHED,
+		                        ruleset->generation, rule->app_id,
+		                        rule->rule_id, source);
+		break;
+	}
+	rcu_read_unlock();
+}
+
 static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 {
 	char *buffer = m->private;
+	struct natflow_dpi_ruleset *ruleset;
+	unsigned int domain_rules = 0;
+	unsigned int proto_rules = 0;
 	int n;
 
 	if (*pos != 0)
 		return NULL;
 
 	mutex_lock(&natflow_dpi_lock);
+	ruleset = rcu_dereference_protected(natflow_dpi_active_ruleset, 1);
+	if (ruleset) {
+		domain_rules = ruleset->domain_count;
+		proto_rules = ruleset->proto_count;
+	}
 	n = snprintf(buffer, PAGE_SIZE - 1,
 	             "# Version: %s\n"
 	             "# Usage:\n"
 	             "#    enable=0|1\n"
 	             "#    rules_begin\n"
 	             "#    domain id=<rule_id> app=<app_id> kind=exact|suffix host=<host>\n"
+	             "#    proto id=<rule_id> app=<app_id> proto=dns|ssh|wireguard\n"
 	             "#    rules_commit\n"
 	             "#    rules_abort\n"
 	             "#    rules_clear\n"
@@ -462,6 +643,8 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             "enable=%u\n"
 	             "generation=%u\n"
 	             "rules=%u\n"
+	             "domain_rules=%u\n"
+	             "proto_rules=%u\n"
 	             "txn_active=%u\n"
 	             "events=%llu\n"
 	             "events_lost=%llu\n",
@@ -472,6 +655,8 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             natflow_dpi_state == NATFLOW_DPI_STATE_ENABLED,
 	             natflow_dpi_generation,
 	             natflow_dpi_rules,
+	             domain_rules,
+	             proto_rules,
 	             natflow_dpi_txn_active,
 	             (unsigned long long)atomic64_read(&natflow_dpi_events),
 	             (unsigned long long)atomic64_read(&natflow_dpi_events_lost));
@@ -534,6 +719,10 @@ static int natflow_dpi_ctl_apply_line(char *data)
 			goto out;
 	} else if (strncmp(data, "domain ", strlen("domain ")) == 0) {
 		err = natflow_dpi_ruleset_domain_add(data);
+		if (err != 0)
+			goto out;
+	} else if (strncmp(data, "proto ", strlen("proto ")) == 0) {
+		err = natflow_dpi_ruleset_proto_add(data);
 		if (err != 0)
 			goto out;
 	} else if (strcmp(data, "rules_commit") == 0) {
@@ -677,6 +866,230 @@ static const struct file_operations natflow_dpi_queue_fops = {
 	.poll = natflow_dpi_queue_poll,
 	.llseek = no_llseek,
 };
+
+static unsigned int natflow_dpi_detect_tcp(__be16 dport)
+{
+	if (dport == __constant_htons(53))
+		return NATFLOW_DPI_PROTO_DNS;
+	if (dport == __constant_htons(22))
+		return NATFLOW_DPI_PROTO_SSH;
+	return 0;
+}
+
+static unsigned int natflow_dpi_detect_udp(__be16 dport)
+{
+	if (dport == __constant_htons(53))
+		return NATFLOW_DPI_PROTO_DNS;
+	if (dport == __constant_htons(51820))
+		return NATFLOW_DPI_PROTO_WIREGUARD;
+	return 0;
+}
+
+static void natflow_dpi_detect_ipv4(struct sk_buff *skb, struct nf_conn *ct)
+{
+	struct iphdr *iph;
+	void *l4;
+	unsigned int ihl;
+	unsigned int proto = 0;
+
+	if (!pskb_may_pull(skb, sizeof(struct iphdr)))
+		return;
+
+	iph = ip_hdr(skb);
+	if (iph->version != 4 || iph->ihl < 5)
+		return;
+	ihl = iph->ihl * 4;
+	if (!pskb_may_pull(skb, ihl))
+		return;
+
+	iph = ip_hdr(skb);
+	if (iph->protocol == IPPROTO_TCP) {
+		if (!pskb_may_pull(skb, ihl + sizeof(struct tcphdr)))
+			return;
+		iph = ip_hdr(skb);
+		l4 = (void *)iph + ihl;
+		if (TCPH(l4)->doff < 5)
+			return;
+		if (!pskb_may_pull(skb, ihl + TCPH(l4)->doff * 4))
+			return;
+		iph = ip_hdr(skb);
+		l4 = (void *)iph + ihl;
+		proto = natflow_dpi_detect_tcp(TCPH(l4)->dest);
+	} else if (iph->protocol == IPPROTO_UDP) {
+		if (!pskb_may_pull(skb, ihl + sizeof(struct udphdr)))
+			return;
+		iph = ip_hdr(skb);
+		l4 = (void *)iph + ihl;
+		if (ntohs(UDPH(l4)->len) < sizeof(struct udphdr))
+			return;
+		proto = natflow_dpi_detect_udp(UDPH(l4)->dest);
+	}
+
+	if (proto)
+		natflow_dpi_classify_proto(ct, proto);
+}
+
+static void natflow_dpi_detect_ipv6(struct sk_buff *skb, struct nf_conn *ct)
+{
+	struct ipv6hdr *ip6h;
+	void *l4;
+	unsigned int proto = 0;
+
+	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr)))
+		return;
+
+	ip6h = ipv6_hdr(skb);
+	if (ip6h->version != 6)
+		return;
+	if (ip6h->nexthdr == IPPROTO_TCP) {
+		if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct tcphdr)))
+			return;
+		ip6h = ipv6_hdr(skb);
+		l4 = (void *)ip6h + sizeof(struct ipv6hdr);
+		if (TCPH(l4)->doff < 5)
+			return;
+		if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4))
+			return;
+		ip6h = ipv6_hdr(skb);
+		l4 = (void *)ip6h + sizeof(struct ipv6hdr);
+		proto = natflow_dpi_detect_tcp(TCPH(l4)->dest);
+	} else if (ip6h->nexthdr == IPPROTO_UDP) {
+		if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr)))
+			return;
+		ip6h = ipv6_hdr(skb);
+		l4 = (void *)ip6h + sizeof(struct ipv6hdr);
+		if (ntohs(UDPH(l4)->len) < sizeof(struct udphdr))
+			return;
+		proto = natflow_dpi_detect_udp(UDPH(l4)->dest);
+	}
+
+	if (proto)
+		natflow_dpi_classify_proto(ct, proto);
+}
+
+#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
+static unsigned int natflow_dpi_hook(unsigned int hooknum,
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
+{
+#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
+static unsigned int natflow_dpi_hook(const struct nf_hook_ops *ops,
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
+{
+#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
+static unsigned int natflow_dpi_hook(const struct nf_hook_ops *ops,
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
+{
+#else
+static unsigned int natflow_dpi_hook(void *priv,
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
+{
+#endif
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn *ct;
+	int bridge = 0;
+
+	if (READ_ONCE(natflow_dpi_state) != NATFLOW_DPI_STATE_ENABLED ||
+	        READ_ONCE(natflow_dpi_rules) == 0)
+		return NF_ACCEPT;
+
+	if (skb->protocol == __constant_htons(ETH_P_PPP_SES)) {
+		if (!pskb_may_pull(skb, PPPOE_SES_HLEN))
+			return NF_ACCEPT;
+
+		if (pppoe_proto(skb) == __constant_htons(PPP_IP)) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IP);
+			skb->network_header += PPPOE_SES_HLEN;
+			bridge = 1;
+		} else if (pppoe_proto(skb) == __constant_htons(PPP_IPV6)) {
+			skb_pull(skb, PPPOE_SES_HLEN);
+			skb->protocol = __constant_htons(ETH_P_IPV6);
+			skb->network_header += PPPOE_SES_HLEN;
+			bridge = 1;
+		} else {
+			return NF_ACCEPT;
+		}
+	} else if (skb->protocol != __constant_htons(ETH_P_IP) &&
+	           skb->protocol != __constant_htons(ETH_P_IPV6)) {
+		return NF_ACCEPT;
+	}
+
+	ct = nf_ct_get(skb, &ctinfo);
+	if (!ct || CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
+		goto out;
+
+	if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6)
+		natflow_dpi_detect_ipv6(skb, ct);
+	else if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET)
+		natflow_dpi_detect_ipv4(skb, ct);
+
+out:
+	if (bridge) {
+		skb->network_header -= PPPOE_SES_HLEN;
+		skb->protocol = __constant_htons(ETH_P_PPP_SES);
+		skb_push(skb, PPPOE_SES_HLEN);
+	}
+	return NF_ACCEPT;
+}
+
+static struct nf_hook_ops natflow_dpi_hooks[] = {
+	{
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_dpi_hook,
+		.pf = PF_INET,
+		.hooknum = NF_INET_FORWARD,
+		.priority = NF_IP_PRI_FILTER + 6,
+	},
+	{
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_dpi_hook,
+		.pf = AF_INET6,
+		.hooknum = NF_INET_FORWARD,
+		.priority = NF_IP_PRI_FILTER + 6,
+	},
+	{
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_dpi_hook,
+		.pf = NFPROTO_BRIDGE,
+		.hooknum = NF_INET_FORWARD,
+		.priority = NF_IP_PRI_FILTER + 6,
+	},
+};
+
+static int natflow_dpi_hooks_started;
+
+static int natflow_dpi_hooks_register(void)
+{
+	int ret;
+
+	ret = nf_register_hooks(natflow_dpi_hooks, ARRAY_SIZE(natflow_dpi_hooks));
+	if (ret == 0)
+		natflow_dpi_hooks_started = 1;
+	return ret;
+}
+
+static void natflow_dpi_hooks_unregister(void)
+{
+	if (!natflow_dpi_hooks_started)
+		return;
+
+	nf_unregister_hooks(natflow_dpi_hooks, ARRAY_SIZE(natflow_dpi_hooks));
+	natflow_dpi_hooks_started = 0;
+}
 
 static int natflow_dpi_ctl_device_init(void)
 {
@@ -826,8 +1239,14 @@ int natflow_dpi_init(void)
 	if (ret != 0)
 		goto queue_device_init_failed;
 
+	ret = natflow_dpi_hooks_register();
+	if (ret != 0)
+		goto hooks_register_failed;
+
 	return 0;
 
+hooks_register_failed:
+	natflow_dpi_queue_device_exit();
 queue_device_init_failed:
 	natflow_dpi_ctl_device_exit();
 ctl_device_init_failed:
@@ -840,6 +1259,8 @@ ctl_device_init_failed:
 void natflow_dpi_exit(void)
 {
 	struct natflow_dpi_ruleset *ruleset;
+
+	natflow_dpi_hooks_unregister();
 
 	mutex_lock(&natflow_dpi_lock);
 	WRITE_ONCE(natflow_dpi_state, NATFLOW_DPI_STATE_DISABLED);

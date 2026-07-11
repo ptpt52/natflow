@@ -124,7 +124,7 @@ make
 | --- | --- |
 | `CONFIG_NATFLOW_PATH` | 启用 fast path、vline/relay、硬件 offload 相关控制。 |
 | `CONFIG_NATFLOW_URLLOGGER` | 启用 URL logger、Host ACL 和 `/proc/sys/urllogger_store`。 |
-| `CONFIG_NATFLOW_DPI` | 启用 DPI 控制/事件接口、domain exact/suffix 规则和 `/dev/natflow_dpi_queue`；默认关闭。当前数据面 host 分类依赖 `CONFIG_NATFLOW_URLLOGGER` 的 HTTP/TLS/QUIC parser。 |
+| `CONFIG_NATFLOW_DPI` | 启用 DPI 控制/事件接口、domain exact/suffix 规则、protocol-only 规则和 `/dev/natflow_dpi_queue`；默认关闭。当前 HTTP/TLS/QUIC host 分类依赖 `CONFIG_NATFLOW_URLLOGGER` parser。 |
 | `CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH` | MTK 外部设备硬件 offload 使用 VLAN hash 模式；会影响 bridge VLAN filter。 |
 | `CONFIG_HWNAT_EXTDEV_DISABLED` | 禁用部分外部设备硬件 offload 分支。 |
 | `NO_DEBUG=1` | 追加 `-DNO_DEBUG -Os`，编译期关闭日志宏。 |
@@ -237,8 +237,8 @@ echo 1 >/proc/sys/urllogger_store/enable
 | `/dev/qos_ctl` | char device | 全局 QoS 规则和 `tc_classid_mode`。 |
 | `/dev/hostacl_ctl` | char device | Host ACL 规则和默认动作。 |
 | `/dev/urllogger_queue` | char device | URL/SNI/ACL 命中记录队列。 |
-| `/dev/natflow_dpi_ctl` | char device | DPI enable 状态、domain ruleset 事务和统计。 |
-| `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列，当前输出 domain match 固定头事件。 |
+| `/dev/natflow_dpi_ctl` | char device | DPI enable 状态、domain/proto ruleset 事务和统计。 |
+| `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列，当前输出 domain/proto match 固定头事件。 |
 | `/dev/conntrackinfo_ctl` | char device | conntrack 文本快照。 |
 | `/proc/sys/urllogger_store/*` | sysctl | URL logger 开关、容量和合并窗口。 |
 
@@ -552,11 +552,11 @@ timestamp,mac,sip,sport,dip,dport,hits,method,type,acl_idx,acl_action,url
 echo 'clear' >/dev/urllogger_queue
 ```
 
-## DPI domain rules
+## DPI rules and protocol detectors
 
-需要编译 `CONFIG_NATFLOW_DPI`。当前 DPI 默认关闭，支持 domain exact/suffix ruleset，并在 HTTP Host、TLS SNI、QUIC v1 Initial SNI 命中规则时写入 `natflow_t.app_id` 和输出二进制事件。现阶段分类输入来自 legacy URL logger parser，因此数据面 host 分类还需要同时编译并启用 `CONFIG_NATFLOW_URLLOGGER` 和 `/proc/sys/urllogger_store/enable=1`。
+需要编译 `CONFIG_NATFLOW_DPI`。当前 DPI 默认关闭，支持 domain exact/suffix ruleset 和 DNS/SSH/WireGuard protocol-only ruleset，命中规则时写入 `natflow_t.app_id` 和输出二进制事件。HTTP Host、TLS SNI、QUIC v1 Initial SNI 的 domain 分类输入来自 legacy URL logger parser，因此 host 分类还需要同时编译并启用 `CONFIG_NATFLOW_URLLOGGER` 和 `/proc/sys/urllogger_store/enable=1`；DNS/SSH/WireGuard protocol-only detector 由 DPI 自己的 FORWARD/bridge hook 处理。
 
-当前 DPI 仍是 audit-only：不执行 drop/reset/QoS，不覆盖 Host ACL、认证或 conntrack drop 结果；未命中、禁用、无 URL logger parser 或没有 natflow session 时 fail-open。若当前连接没有 natflow session，DPI 仍可输出 match event，但不会创建 session 或写入 `app_id`。
+当前 DPI 仍是 audit-only：不执行 drop/reset/QoS，不覆盖 Host ACL、认证或 conntrack drop 结果；未命中、禁用、无 URL logger parser 或没有 natflow session 时 fail-open。domain host 命中时若当前连接没有 natflow session，DPI 仍可输出 match event，但不会创建 session 或写入 `app_id`；protocol-only 命中要求已有 natflow session 且 `app_id=0`。
 
 控制：
 
@@ -567,6 +567,9 @@ echo enable=0 >/dev/natflow_dpi_ctl
 echo rules_begin >/dev/natflow_dpi_ctl
 echo 'domain id=1 app=100 kind=exact host=example.com' >/dev/natflow_dpi_ctl
 echo 'domain id=2 app=100 kind=suffix host=example.net' >/dev/natflow_dpi_ctl
+echo 'proto id=3 app=200 proto=dns' >/dev/natflow_dpi_ctl
+echo 'proto id=4 app=201 proto=ssh' >/dev/natflow_dpi_ctl
+echo 'proto id=5 app=202 proto=wireguard' >/dev/natflow_dpi_ctl
 echo rules_commit >/dev/natflow_dpi_ctl
 echo rules_abort >/dev/natflow_dpi_ctl
 echo rules_clear >/dev/natflow_dpi_ctl
@@ -574,12 +577,13 @@ echo rules_clear >/dev/natflow_dpi_ctl
 
 规则说明：
 
-- `rules_begin` 创建待提交 ruleset，`domain ...` 只能在事务中写入。
+- `rules_begin` 创建待提交 ruleset，`domain ...` 和 `proto ...` 只能在事务中写入。
 - `rules_commit` 原子发布新 ruleset 并递增 `generation`；`rules_abort` 放弃待提交 ruleset。
 - `rules_clear` 发布空 ruleset 并递增 `generation`。
-- `id` 和 `app` 必须为非 0 整数；同一事务内 `id` 不能重复；单个 ruleset 当前最多 128 条 domain 规则。
+- `id` 和 `app` 必须为非 0 整数；同一事务内 `id` 不能重复；单个 ruleset 当前最多 128 条 domain 规则和 32 条 proto 规则。
 - `host` 会转小写、去掉末尾点，并校验 DNS label；HTTP Host 中的端口由 URL logger normalize 时剥离。
 - `kind=suffix` 同时匹配完全相同的 host 和带点边界的子域名，例如规则 `example.net` 可匹配 `example.net` 与 `www.example.net`。
+- `proto` 当前支持 `dns`、`ssh`、`wireguard`（也接受 `wg`）。protocol-only detector 当前按 original direction 的目标端口识别：DNS TCP/UDP 53，SSH TCP 22，WireGuard UDP 51820。
 
 `/dev/natflow_dpi_queue` 使用版本化二进制记录。当前 record 只有固定头；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。队列最多缓存 1024 条事件，溢出或分配失败会增加 `events_lost`。
 
@@ -603,11 +607,11 @@ struct natflow_dpi_event_hdr {
 当前 match event 字段含义：
 
 - `version=1`，`header_len=record_len=sizeof(struct natflow_dpi_event_hdr)`。
-- `reason=6` 表示 domain rule matched。
+- `reason=6` 表示 rule matched。
 - `generation` 是命中时的 ruleset generation。
-- `app_id` 和 `rule_id` 来自命中的 domain rule。
+- `app_id` 和 `rule_id` 来自命中的 domain 或 proto rule。
 - `category_id=0` 预留。
-- `flags` 当前记录 host 来源：1=`HTTP`，2=`TLS`，3=`QUIC`。
+- `flags` 当前记录事件来源：1=`HTTP`，2=`TLS`，3=`QUIC`，4=`DNS`，5=`SSH`，6=`WireGuard`。
 - `timestamp` 是 `ktime_get_ns()` 的内核单调时间纳秒值。
 
 ## `/dev/conntrackinfo_ctl`

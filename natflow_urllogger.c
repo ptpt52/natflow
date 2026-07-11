@@ -2457,7 +2457,7 @@ skip:
 			struct urllogger_acl_lookup acl;
 
 			if (urllogger_acl_lookup_init(&acl, host, host_len, 0) == 0) {
-				urllogger_dpi_classify_lookup(ct, &acl, NATFLOW_DPI_HOST_SOURCE_QUIC);
+				urllogger_dpi_classify_lookup(ct, &acl, NATFLOW_DPI_EVENT_SOURCE_QUIC);
 				urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET);
 				if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
 					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
@@ -2493,7 +2493,7 @@ skip:
 
 		url->acl_idx = 64;
 		url->acl_action = acl_action_default;
-		urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_HOST_SOURCE_QUIC);
+		urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_EVENT_SOURCE_QUIC);
 		urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET);
 		if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
 			set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
@@ -2583,7 +2583,7 @@ skip:
 			struct urllogger_acl_lookup acl;
 
 			if (urllogger_acl_lookup_init(&acl, host, host_len, 0) == 0) {
-				urllogger_dpi_classify_lookup(ct, &acl, NATFLOW_DPI_HOST_SOURCE_QUIC);
+				urllogger_dpi_classify_lookup(ct, &acl, NATFLOW_DPI_EVENT_SOURCE_QUIC);
 				urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET6);
 				if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
 					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
@@ -2620,7 +2620,7 @@ skip:
 
 		url->acl_idx = 64;
 		url->acl_action = acl_action_default;
-		urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_HOST_SOURCE_QUIC);
+		urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_EVENT_SOURCE_QUIC);
 		urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET6);
 		if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
 			set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
@@ -2938,7 +2938,7 @@ __urllogger_ip_skip:
 				struct urllogger_acl_lookup acl;
 
 				if (urllogger_acl_lookup_init(&acl, host, host_len, 0) == 0) {
-					urllogger_dpi_classify_lookup(ct, &acl, NATFLOW_DPI_HOST_SOURCE_TLS);
+					urllogger_dpi_classify_lookup(ct, &acl, NATFLOW_DPI_EVENT_SOURCE_TLS);
 					urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET);
 					if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
 						set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
@@ -2990,7 +2990,7 @@ __urllogger_ip_skip:
 
 			url->acl_idx = 64; /* 64 = before acl matching */
 			url->acl_action = acl_action_default;
-			urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_HOST_SOURCE_TLS);
+			urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_EVENT_SOURCE_TLS);
 			urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET);
 			if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
 				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
@@ -3033,7 +3033,7 @@ __urllogger_ip_skip:
 					struct urllogger_acl_lookup acl;
 
 					if (urllogger_acl_lookup_init(&acl, host, host_len, URLINFO_HOST_ALLOW_PORT) == 0) {
-						urllogger_dpi_classify_lookup(ct, &acl, NATFLOW_DPI_HOST_SOURCE_HTTP);
+						urllogger_dpi_classify_lookup(ct, &acl, NATFLOW_DPI_EVENT_SOURCE_HTTP);
 						urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET);
 						if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
 							set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
@@ -3087,7 +3087,7 @@ __urllogger_ip_skip:
 
 				url->acl_idx = 64; /* 64 = before acl matching */
 				url->acl_action = acl_action_default;
-				urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_HOST_SOURCE_HTTP);
+				urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_EVENT_SOURCE_HTTP);
 				urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET);
 				if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
 					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
@@ -3243,7 +3243,7 @@ __urllogger_ipv6_skip:
 				struct urllogger_acl_lookup acl;
 
 				if (urllogger_acl_lookup_init(&acl, host, host_len, 0) == 0) {
-					urllogger_dpi_classify_lookup(ct, &acl, NATFLOW_DPI_HOST_SOURCE_TLS);
+					urllogger_dpi_classify_lookup(ct, &acl, NATFLOW_DPI_EVENT_SOURCE_TLS);
 					urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET6);
 					if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
 						set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
@@ -3292,7 +3292,7 @@ __urllogger_ipv6_skip:
 
 			url->acl_idx = 64; /* 64 = before acl matching */
 			url->acl_action = acl_action_default;
-			urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_HOST_SOURCE_TLS);
+			urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_EVENT_SOURCE_TLS);
 			urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET6);
 			if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
 				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
@@ -3327,7 +3327,7 @@ __urllogger_ipv6_skip:
 					struct urllogger_acl_lookup acl;
 
 					if (urllogger_acl_lookup_init(&acl, host, host_len, URLINFO_HOST_ALLOW_PORT) == 0) {
-						urllogger_dpi_classify_lookup(ct, &acl, NATFLOW_DPI_HOST_SOURCE_HTTP);
+						urllogger_dpi_classify_lookup(ct, &acl, NATFLOW_DPI_EVENT_SOURCE_HTTP);
 						urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET6);
 						if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
 							set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
@@ -3382,7 +3382,7 @@ __urllogger_ipv6_skip:
 
 				url->acl_idx = 64; /* 64 = before acl matching */
 				url->acl_action = acl_action_default;
-				urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_HOST_SOURCE_HTTP);
+				urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_EVENT_SOURCE_HTTP);
 				urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET6);
 				if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
 					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);

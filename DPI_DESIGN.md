@@ -4,7 +4,7 @@
 
 更新时间：2026-07-11
 
-实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，增加了 `natflow_l7` hook 生命周期骨架，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、match event producer 和 `app_id` 写入。当前 M1b 数据面 consumer 仍复用 `natflow_urllogger.c` 已解析出的 HTTP Host、TLS SNI 和 QUIC SNI，并未完成共享 L7 feature core 或 protocol-only detector。
+实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，增加了 `natflow_l7` hook 生命周期骨架，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、DNS/SSH/WireGuard protocol-only ruleset、match event producer 和 `app_id` 写入。当前 M1b/M1c 数据面 consumer 仍复用 `natflow_urllogger.c` 已解析出的 HTTP Host、TLS SNI 和 QUIC SNI，protocol-only detector 是端口型 MVP；尚未完成共享 L7 feature core 或 DNS QNAME feature。
 
 ## 1. 总体结论
 
@@ -622,8 +622,8 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成：在 `natflow_t` 尾部追加 `app_id`，并完成 shared conntrack extension layout guard。
 - 增加最小 context registry、terminal state、drain 和 reason counter。
 - 已完成骨架：实现 `/dev/natflow_dpi_ctl` 的 status、enable/disable、空 ruleset 事务。
-- 已完成骨架：实现 `/dev/natflow_dpi_queue` 固定 header ABI；当前队列无 producer。
-- 只输出 `NO_DETECTOR`、`DPI_DISABLED`、`CACHE_FULL` 等 terminal event，不宣称应用识别。
+- 已完成骨架：实现 `/dev/natflow_dpi_queue` 固定 header ABI；后续 M1b/M1c 已增加 match event producer。
+- M1a 当时不宣称应用识别；后续 M1b/M1c 已加入 audit-only 的 domain/proto match。
 
 ### M1b：HTTP/TLS/QUIC 和 domain rules
 
@@ -635,9 +635,10 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 ### M1c：首批 protocol-only detector
 
-- 增加 DNS、SSH、WireGuard。
-- DNS QNAME 可进入 domain rules；SSH/WireGuard 默认 protocol-only。
-- 全部 audit-only。
+- 已完成 MVP：增加 DNS、SSH、WireGuard protocol-only 规则和独立 DPI FORWARD/bridge hook。
+- 已完成 MVP：DNS 按 TCP/UDP 53、SSH 按 TCP 22、WireGuard 按 UDP 51820 识别，命中 proto rule 后写 `app_id` 并输出 match event。
+- 当前仍未完成：DNS QNAME feature 不进入 domain rules；后续需要共享 parser 或 DNS-specific parser 后再接入。
+- 全部 audit-only，不执行 app ACL/QoS。
 
 ### M1d：第二批 A 级 detector
 
