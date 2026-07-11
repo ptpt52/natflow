@@ -4,7 +4,7 @@
 
 更新时间：2026-07-11
 
-实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，增加了 `natflow_l7` hook 生命周期骨架，并让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行；但还没有提供 DPI 控制/事件 ABI，也还没有把 URL parser 迁移到统一 L7 feature core。URL/SNI 记录和 Host ACL 仍由 `natflow_urllogger.c` 实现。
+实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，增加了 `natflow_l7` hook 生命周期骨架，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue 骨架；但还没有数据面 DPI consumer、detector、规则匹配或非 0 `app_id` 写入，也还没有把 URL parser 迁移到统一 L7 feature core。URL/SNI 记录和 Host ACL 仍由 `natflow_urllogger.c` 实现。
 
 ## 1. 总体结论
 
@@ -617,12 +617,12 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 ### M1a：DPI gate、状态和 ABI 骨架
 
-- 增加 `CONFIG_NATFLOW_DPI`。
+- 已完成：增加 `CONFIG_NATFLOW_DPI`。
 - 已完成：增加 `NF_FF_DPI_USE` 和扩展后的 `NF_FF_BUSY_USE`。
 - 已完成：在 `natflow_t` 尾部追加 `app_id`，并完成 shared conntrack extension layout guard。
 - 增加最小 context registry、terminal state、drain 和 reason counter。
-- 实现 `/dev/natflow_dpi_ctl` 的 status、enable/disable、空 ruleset 事务。
-- 实现 `/dev/natflow_dpi_queue` 固定 header 事件。
+- 已完成骨架：实现 `/dev/natflow_dpi_ctl` 的 status、enable/disable、空 ruleset 事务。
+- 已完成骨架：实现 `/dev/natflow_dpi_queue` 固定 header ABI；当前队列无 producer。
 - 只输出 `NO_DETECTOR`、`DPI_DISABLED`、`CACHE_FULL` 等 terminal event，不宣称应用识别。
 
 ### M1b：HTTP/TLS/QUIC 和 domain rules

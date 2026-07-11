@@ -124,6 +124,7 @@ make
 | --- | --- |
 | `CONFIG_NATFLOW_PATH` | 启用 fast path、vline/relay、硬件 offload 相关控制。 |
 | `CONFIG_NATFLOW_URLLOGGER` | 启用 URL logger、Host ACL 和 `/proc/sys/urllogger_store`。 |
+| `CONFIG_NATFLOW_DPI` | 启用 DPI 控制/事件骨架、`/dev/natflow_dpi_ctl` 和 `/dev/natflow_dpi_queue`；当前默认关闭且不做应用识别。 |
 | `CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH` | MTK 外部设备硬件 offload 使用 VLAN hash 模式；会影响 bridge VLAN filter。 |
 | `CONFIG_HWNAT_EXTDEV_DISABLED` | 禁用部分外部设备硬件 offload 分支。 |
 | `NO_DEBUG=1` | 追加 `-DNO_DEBUG -Os`，编译期关闭日志宏。 |
@@ -236,6 +237,8 @@ echo 1 >/proc/sys/urllogger_store/enable
 | `/dev/qos_ctl` | char device | 全局 QoS 规则和 `tc_classid_mode`。 |
 | `/dev/hostacl_ctl` | char device | Host ACL 规则和默认动作。 |
 | `/dev/urllogger_queue` | char device | URL/SNI/ACL 命中记录队列。 |
+| `/dev/natflow_dpi_ctl` | char device | DPI enable 状态、空 ruleset 事务和统计。 |
+| `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列；当前骨架阶段为空队列。 |
 | `/dev/conntrackinfo_ctl` | char device | conntrack 文本快照。 |
 | `/proc/sys/urllogger_store/*` | sysctl | URL logger 开关、容量和合并窗口。 |
 
@@ -547,6 +550,39 @@ timestamp,mac,sip,sport,dip,dport,hits,method,type,acl_idx,acl_action,url
 
 ```sh
 echo 'clear' >/dev/urllogger_queue
+```
+
+## DPI skeleton
+
+需要编译 `CONFIG_NATFLOW_DPI`。当前 DPI 只提供控制面和事件 ABI 骨架，默认关闭，不执行应用识别，不写非 0 `app_id`，不执行 drop/reset/QoS。
+
+控制：
+
+```sh
+cat /dev/natflow_dpi_ctl
+echo enable=1 >/dev/natflow_dpi_ctl
+echo enable=0 >/dev/natflow_dpi_ctl
+echo rules_begin >/dev/natflow_dpi_ctl
+echo rules_commit >/dev/natflow_dpi_ctl
+echo rules_abort >/dev/natflow_dpi_ctl
+echo rules_clear >/dev/natflow_dpi_ctl
+```
+
+`/dev/natflow_dpi_queue` 使用版本化二进制记录，当前骨架阶段没有 producer，读取为空。固定头为：
+
+```c
+struct natflow_dpi_event_hdr {
+	__u16 version;
+	__u16 header_len;
+	__u16 record_len;
+	__u16 reason;
+	__u32 generation;
+	__u32 app_id;
+	__u32 category_id;
+	__u32 rule_id;
+	__u32 flags;
+	__u64 timestamp;
+} __packed;
 ```
 
 ## `/dev/conntrackinfo_ctl`

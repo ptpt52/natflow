@@ -46,6 +46,9 @@
 #if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
 #include "natflow_l7.h"
 #endif
+#if defined(CONFIG_NATFLOW_DPI)
+#include "natflow_dpi.h"
+#endif
 #include "natflow_conntrack.h"
 
 static int natflow_major = 0;
@@ -465,6 +468,14 @@ static int __init natflow_init(void)
 	}
 #endif
 
+#if defined(CONFIG_NATFLOW_DPI)
+	retval = natflow_dpi_init();
+	if (retval) {
+		NATFLOW_println("failed to initialize natflow dpi, error=%d", retval);
+		goto natflow_dpi_init_failed;
+	}
+#endif
+
 #if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
 	retval = natflow_l7_init();
 	if (retval) {
@@ -477,6 +488,10 @@ static int __init natflow_init(void)
 
 #if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
 natflow_l7_init_failed:
+#if defined(CONFIG_NATFLOW_DPI)
+	natflow_dpi_exit();
+natflow_dpi_init_failed:
+#endif
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 	natflow_urllogger_exit();
 #endif
@@ -514,6 +529,9 @@ static void __exit natflow_exit(void) {
 
 #if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
 	natflow_l7_exit();
+#endif
+#if defined(CONFIG_NATFLOW_DPI)
+	natflow_dpi_exit();
 #endif
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 	natflow_urllogger_exit();
