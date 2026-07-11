@@ -44,6 +44,7 @@
 #include <net/ip6_checksum.h>
 #include "natflow_common.h"
 #include "natflow_dpi.h"
+#include "natflow_l7.h"
 #include "natflow_urllogger.h"
 #include "natflow_user.h"
 #include "natflow_path.h"
@@ -55,116 +56,17 @@ static const char * const urllogger_dev_name = "urllogger_queue";
 static struct class *urllogger_class;
 static struct device *urllogger_dev;
 
-#define URLINFO_HOST_MAX_LEN 253
-#define URLINFO_HOST_ALLOW_PORT 0x01
-
-static inline int urlinfo_is_digit(unsigned char c)
-{
-	return c >= '0' && c <= '9';
-}
-
-static inline int urlinfo_host_char_valid(unsigned char c)
-{
-	return (c >= 'a' && c <= 'z') ||
-	       (c >= '0' && c <= '9') ||
-	       c == '-' ||
-	       c == '.';
-}
+#define URLINFO_HOST_MAX_LEN NATFLOW_L7_HOST_MAX_LEN
+#define URLINFO_HOST_ALLOW_PORT NATFLOW_L7_HOST_ALLOW_PORT
 
 static inline ssize_t urlinfo_copy_host_tolower(unsigned char *dst, const unsigned char *src, ssize_t n, unsigned int flags)
 {
-	ssize_t i = 0;
-	ssize_t end = n;
-	ssize_t out = 0;
-	ssize_t label_len = 0;
-	unsigned char last = 0;
-
-	if (n <= 0)
-		return -EINVAL;
-
-	if ((flags & URLINFO_HOST_ALLOW_PORT)) {
-		ssize_t colon = -1;
-		unsigned int port = 0;
-
-		for (i = 0; i < end; i++) {
-			if (src[i] != ':')
-				continue;
-			if (colon >= 0)
-				return -EINVAL;
-			colon = i;
-		}
-
-		if (colon >= 0) {
-			if (colon == 0 || colon + 1 >= end)
-				return -EINVAL;
-			for (i = colon + 1; i < end; i++) {
-				unsigned int digit;
-
-				if (!urlinfo_is_digit(src[i]))
-					return -EINVAL;
-				digit = src[i] - '0';
-				if (port > 6553 || (port == 6553 && digit > 5))
-					return -EINVAL;
-				port = port * 10 + digit;
-			}
-			end = colon;
-		}
-	}
-
-	if (end > 0 && src[end - 1] == '.')
-		end--;
-	if (end <= 0 || end > URLINFO_HOST_MAX_LEN)
-		return -EINVAL;
-
-	for (i = 0; i < end; i++) {
-		unsigned char c = src[i];
-
-		if (c >= 'A' && c <= 'Z')
-			c = c - 'A' + 'a';
-		if (!urlinfo_host_char_valid(c))
-			return -EINVAL;
-
-		if (c == '.') {
-			if (label_len == 0 || label_len > 63 || (out > 0 && last == '-'))
-				return -EINVAL;
-			if (dst)
-				dst[out] = c;
-			out++;
-			last = c;
-			label_len = 0;
-			continue;
-		}
-
-		if (label_len == 0 && c == '-')
-			return -EINVAL;
-		label_len++;
-		if (label_len > 63)
-			return -EINVAL;
-		if (dst)
-			dst[out] = c;
-		out++;
-		last = c;
-	}
-
-	if (label_len == 0 || (out > 0 && last == '-'))
-		return -EINVAL;
-
-	return out;
+	return natflow_l7_copy_host_tolower(dst, src, n, flags);
 }
 
 static inline int urlinfo_uri_validate(const unsigned char *uri, int uri_len)
 {
-	int i;
-
-	if (uri_len <= 0)
-		return -EINVAL;
-
-	for (i = 0; i < uri_len; i++) {
-		if (uri[i] < 0x20 || uri[i] == 0x7f)
-			return -EINVAL;
-	}
-
-	return 0;
+	return natflow_l7_uri_validate(uri, uri_len);
 }
 
 struct urlinfo {
@@ -974,86 +876,6 @@ static enum tls_sni_search_result tls_sni_search(unsigned char *data, int *data_
 
 need_more:
 	return TLS_SNI_SEARCH_NEED_MORE;
-}
-
-/* to do it simple:
-   just assume
-   1. data begin with 'GET ' or 'POST ' or 'HEAD '
- */
-static int http_url_search(unsigned char *data,
-                           int *data_len /*IN: data_len, OUT: host_len */, unsigned char **host,
-                           int *uri_len, unsigned char **uri, int *http_method)
-{
-	unsigned char *p = data;
-	int p_len = *data_len;
-	unsigned int i = 0;
-
-	if (i + 5 > p_len) return -1;
-	if ((p[i] == 'G' || p[i] == 'g') &&
-	        (p[i + 1] == 'E' || p[i + 1] == 'e') &&
-	        (p[i + 2] == 'T' || p[i + 2] == 't') &&
-	        (p[i + 3] == ' ' || p[i + 3] == ' ')) {
-		i += 4;
-		*http_method = NATFLOW_HTTP_GET;
-	} else if ((p[i] == 'P' || p[i] == 'p') &&
-	           (p[i + 1] == 'O' || p[i + 1] == 'o') &&
-	           (p[i + 2] == 'S' || p[i + 2] == 's') &&
-	           (p[i + 3] == 'T' || p[i + 3] == 't') &&
-	           (p[i + 4] == ' ' || p[i + 4] == ' ')) {
-		i += 5;
-		*http_method = NATFLOW_HTTP_POST;
-	} else if ((p[i] == 'H' || p[i] == 'h') &&
-	           (p[i + 1] == 'E' || p[i + 1] == 'e') &&
-	           (p[i + 2] == 'A' || p[i + 2] == 'a') &&
-	           (p[i + 3] == 'D' || p[i + 3] == 'd') &&
-	           (p[i + 4] == ' ' || p[i + 4] == ' ')) {
-		i += 5;
-		*http_method = NATFLOW_HTTP_HEAD;
-	} else {
-		return 0;
-	}
-
-	while (i < p_len && p[i] == ' ') i++;
-	if (i >= p_len) return -1;
-	if (p[i] != '/') return -1;
-	*uri = p + i;
-
-	i++;
-	while (i < p_len && p[i] != ' ') i++;
-	if (i >= p_len) return -1;
-	if (p[i] != ' ') return -1;
-	*uri_len = p + i - *uri;
-	i++;
-
-	while (i < p_len && p[i] != '\n') i++;
-	if (i >= p_len) return -1;
-	i++;
-
-	do {
-		if (i + 5 > p_len) return -1;
-		if ((p[i] == 'H' || p[i] == 'h') &&
-		        (p[i + 1] == 'o' || p[i + 1] == 'O') &&
-		        (p[i + 2] == 's' || p[i + 2] == 'S') &&
-		        (p[i + 3] == 't' || p[i + 3] == 'T') &&
-		        p[i + 4] == ':') {
-			i += 5;
-			while (i < p_len && p[i] == ' ') i++;
-			if (i >= p_len) return -1;
-			*host = p + i;
-
-			i++;
-			while (i < p_len && p[i] != ' ' && p[i] != '\r' && p[i] != '\n') i++;
-			if (i >= p_len) return -1;
-			if (p[i] != ' ' && p[i] != '\r' && p[i] != '\n') return -1;
-			*data_len = p + i - *host;
-
-			return *data_len + *uri_len;
-		}
-		while (i < p_len && p[i] != '\n') i++;
-		i++;
-	} while (1);
-
-	return 0; /* not found */
 }
 
 static inline void natflow_urllogger_tcp_reply_rstack(const struct net_device *dev, struct sk_buff *oskb, struct nf_conn *ct, int pppoe_hdr)
@@ -3017,22 +2839,20 @@ __urllogger_ip_skip:
 
 			urllogger_store_record(url);
 		} else {
-			unsigned char *uri = NULL;
-			int uri_len = 0;
-			int http_method = 0;
+			struct natflow_l7_feature feature;
 
 			if (prev_data) {
 				kfree(prev_data);
 				prev_data = NULL;
 			}
 			data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
-			host_len = data_len;
-			if (http_url_search(data, &host_len, &host, &uri_len, &uri, &http_method) > 0) {
-				struct urlinfo *url = urlinfo_alloc_record(host, host_len, URLINFO_HOST_ALLOW_PORT, uri, uri_len);
+			if (natflow_l7_http_parse(data, data_len, &feature) > 0) {
+				struct urlinfo *url = urlinfo_alloc_record(feature.host, feature.host_len, 0,
+				                      feature.raw_uri.data, feature.raw_uri.len);
 				if (!url) {
 					struct urllogger_acl_lookup acl;
 
-					if (urllogger_acl_lookup_init(&acl, host, host_len, URLINFO_HOST_ALLOW_PORT) == 0) {
+					if (urllogger_acl_lookup_init(&acl, feature.host, feature.host_len, 0) == 0) {
 						urllogger_dpi_classify_lookup(ct, &acl, NATFLOW_DPI_EVENT_SOURCE_HTTP);
 						urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET);
 						if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
@@ -3048,7 +2868,8 @@ __urllogger_ip_skip:
 								natflow_auth_convert_tcprst(skb);
 								ret = NF_ACCEPT;
 							} else if (acl.acl_action == URLINFO_ACL_ACTION_REDIRECT) {
-								if (http_method == NATFLOW_HTTP_GET || http_method == NATFLOW_HTTP_POST) {
+								if (feature.http_method == NATFLOW_L7_HTTP_GET ||
+								        feature.http_method == NATFLOW_L7_HTTP_POST) {
 									natflow_urllogger_tcp_reply_302(in, skb, ct, bridge);
 								} else {
 									natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
@@ -3081,7 +2902,7 @@ __urllogger_ip_skip:
 				}
 				url->timestamp = URLINFO_NOW;
 				url->flags = 0;
-				url->http_method = http_method;
+				url->http_method = feature.http_method;
 				url->hits = 1;
 				memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
 
@@ -3311,22 +3132,20 @@ __urllogger_ipv6_skip:
 
 			urllogger_store_record(url);
 		} else {
-			unsigned char *uri = NULL;
-			int uri_len = 0;
-			int http_method = 0;
+			struct natflow_l7_feature feature;
 
 			if (prev_data) {
 				kfree(prev_data);
 				prev_data = NULL;
 			}
 			data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
-			host_len = data_len;
-			if (http_url_search(data, &host_len, &host, &uri_len, &uri, &http_method) > 0) {
-				struct urlinfo *url = urlinfo_alloc_record(host, host_len, URLINFO_HOST_ALLOW_PORT, uri, uri_len);
+			if (natflow_l7_http_parse(data, data_len, &feature) > 0) {
+				struct urlinfo *url = urlinfo_alloc_record(feature.host, feature.host_len, 0,
+				                      feature.raw_uri.data, feature.raw_uri.len);
 				if (!url) {
 					struct urllogger_acl_lookup acl;
 
-					if (urllogger_acl_lookup_init(&acl, host, host_len, URLINFO_HOST_ALLOW_PORT) == 0) {
+					if (urllogger_acl_lookup_init(&acl, feature.host, feature.host_len, 0) == 0) {
 						urllogger_dpi_classify_lookup(ct, &acl, NATFLOW_DPI_EVENT_SOURCE_HTTP);
 						urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET6);
 						if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
@@ -3342,7 +3161,8 @@ __urllogger_ipv6_skip:
 								natflow_auth_convert_tcprst6(skb);
 								ret = NF_ACCEPT;
 							} else if (acl.acl_action == URLINFO_ACL_ACTION_REDIRECT) {
-								if (http_method == NATFLOW_HTTP_GET || http_method == NATFLOW_HTTP_POST) {
+								if (feature.http_method == NATFLOW_L7_HTTP_GET ||
+								        feature.http_method == NATFLOW_L7_HTTP_POST) {
 									natflow_urllogger_tcp_reply_302_v6(in, skb, ct, bridge);
 								} else {
 									natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
@@ -3376,7 +3196,7 @@ __urllogger_ipv6_skip:
 				url->timestamp = URLINFO_NOW;
 				url->flags = 0;
 				url->flags |= URLINFO_IPV6;
-				url->http_method = http_method;
+				url->http_method = feature.http_method;
 				url->hits = 1;
 				memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
 

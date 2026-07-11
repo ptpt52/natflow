@@ -71,6 +71,8 @@ extern int natflow_l7_feature_set_host(struct natflow_l7_feature *feature,
 extern int natflow_l7_feature_set_uri(struct natflow_l7_feature *feature,
                                       const unsigned char *uri,
                                       int uri_len);
+extern int natflow_l7_http_parse(unsigned char *data, int data_len,
+                                 struct natflow_l7_feature *feature);
 extern int natflow_l7_init(void);
 extern void natflow_l7_exit(void);
 

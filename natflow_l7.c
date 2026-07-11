@@ -170,6 +170,117 @@ int natflow_l7_feature_set_uri(struct natflow_l7_feature *feature,
 	return 0;
 }
 
+/* Simple request-line + Host header parser matching legacy URL logger behavior. */
+int natflow_l7_http_parse(unsigned char *data, int data_len,
+        struct natflow_l7_feature *feature)
+{
+	unsigned char *host = NULL;
+	unsigned char *uri = NULL;
+	unsigned char *p = data;
+	int host_len;
+	int uri_len;
+	int p_len = data_len;
+	unsigned int i = 0;
+	enum natflow_l7_http_method http_method;
+
+	if (!data || !feature)
+		return -1;
+
+	natflow_l7_feature_init(feature, NATFLOW_L7_SOURCE_HTTP);
+
+	if (i + 5 > p_len)
+		return -1;
+	if ((p[i] == 'G' || p[i] == 'g') &&
+	        (p[i + 1] == 'E' || p[i + 1] == 'e') &&
+	        (p[i + 2] == 'T' || p[i + 2] == 't') &&
+	        p[i + 3] == ' ') {
+		i += 4;
+		http_method = NATFLOW_L7_HTTP_GET;
+	} else if ((p[i] == 'P' || p[i] == 'p') &&
+	           (p[i + 1] == 'O' || p[i + 1] == 'o') &&
+	           (p[i + 2] == 'S' || p[i + 2] == 's') &&
+	           (p[i + 3] == 'T' || p[i + 3] == 't') &&
+	           p[i + 4] == ' ') {
+		i += 5;
+		http_method = NATFLOW_L7_HTTP_POST;
+	} else if ((p[i] == 'H' || p[i] == 'h') &&
+	           (p[i + 1] == 'E' || p[i + 1] == 'e') &&
+	           (p[i + 2] == 'A' || p[i + 2] == 'a') &&
+	           (p[i + 3] == 'D' || p[i + 3] == 'd') &&
+	           p[i + 4] == ' ') {
+		i += 5;
+		http_method = NATFLOW_L7_HTTP_HEAD;
+	} else {
+		return 0;
+	}
+
+	while (i < p_len && p[i] == ' ')
+		i++;
+	if (i >= p_len)
+		return -1;
+	if (p[i] != '/')
+		return -1;
+	uri = p + i;
+
+	i++;
+	while (i < p_len && p[i] != ' ')
+		i++;
+	if (i >= p_len)
+		return -1;
+	if (p[i] != ' ')
+		return -1;
+	uri_len = p + i - uri;
+	i++;
+
+	while (i < p_len && p[i] != '\n')
+		i++;
+	if (i >= p_len)
+		return -1;
+	i++;
+
+	do {
+		if (i + 5 > p_len)
+			return -1;
+		if ((p[i] == 'H' || p[i] == 'h') &&
+		        (p[i + 1] == 'o' || p[i + 1] == 'O') &&
+		        (p[i + 2] == 's' || p[i + 2] == 'S') &&
+		        (p[i + 3] == 't' || p[i + 3] == 'T') &&
+		        p[i + 4] == ':') {
+			i += 5;
+			while (i < p_len && p[i] == ' ')
+				i++;
+			if (i >= p_len)
+				return -1;
+			host = p + i;
+
+			i++;
+			while (i < p_len && p[i] != ' ' && p[i] != '\r' && p[i] != '\n')
+				i++;
+			if (i >= p_len)
+				return -1;
+			if (p[i] != ' ' && p[i] != '\r' && p[i] != '\n')
+				return -1;
+			host_len = p + i - host;
+
+			if (natflow_l7_feature_set_host(feature, host, host_len,
+			                                NATFLOW_L7_HOST_ALLOW_PORT) < 0)
+				return -1;
+			feature->raw_uri.data = uri;
+			feature->raw_uri.len = uri_len;
+			feature->uri_len = uri_len;
+			feature->flags |= NATFLOW_L7_FEATURE_URI;
+			feature->http_method = http_method;
+
+			return host_len + uri_len;
+		}
+		while (i < p_len && p[i] != '\n')
+			i++;
+		i++;
+	} while (1);
+
+	return 0;
+}
+
 int natflow_l7_init(void)
 {
 	int ret;
