@@ -113,7 +113,7 @@
 - 本仓库仍以 Linux 内核模块为核心；DPI 设计不默认引入完整用户态 DPI daemon、web 服务或大型签名库。
 - 现有能力已经覆盖 HTTP Host/URI、TCP TLS SNI、QUIC v1 Initial SNI 和 Host ACL；实现应先抽出 `natflow_l7` 共享 core，让 URL consumer 与 DPI consumer 消费同一次 parser 结果，避免重复实现并行 parser。
 - DPI 首期定位为机会性分类和审计能力，不承诺成为强安全 WAF、反规避网关或完整应用识别引擎；ECH、加密内层元数据、异常分片、混淆流量和弱证据端口/IP 命中必须明确降级语义。
-- 数据面热路径必须保持有界解析、无阻塞、无大栈对象、无无界循环、少分配；等待更多数据时必须通过 `NF_FF_DPI_USE`/`NF_FF_BUSY_USE` 阻止 fast path 提前接管。维护者接受 `nf->status` 非原子 writer 的已知并发丢位风险。
+- 数据面热路径必须保持有界解析、无阻塞、无大栈对象、无无界循环、少分配；shared L7 等待更多 HTTP/TLS/QUIC 数据时必须通过 `NF_FF_L7_USE`/`NF_FF_BUSY_USE` 阻止 fast path 提前接管，后续独立 DPI context 若跨包等待则使用 `NF_FF_DPI_USE`。维护者接受 `nf->status` 非原子 writer 的已知并发丢位风险。
 - 新增字符设备命令、sysctl、输出格式、状态位、编译宏或兼容层时，必须同步 `README.md`、`SYSTEM_DESIGN_SPEC.md` 和必要的 `docs/agent/` 记忆。
 
 实现基线：`docs/agent/DPI_IMPLEMENTATION_CHECKLIST.md` 记录每步实现前后的自审口径、legacy URL/Host ACL 兼容基线、conntrack/fast path 约束和自动检查建议。

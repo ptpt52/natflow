@@ -35,7 +35,7 @@ M0/M1 期间必须保持：
 
 M0/M1 期间必须保持：
 
-- `NF_FF_DPI_USE` 如果新增，必须纳入 `NF_FF_BUSY_USE`。
+- `NF_FF_L7_USE` 和 `NF_FF_DPI_USE` 必须纳入 `NF_FF_BUSY_USE`；shared HTTP/TLS/QUIC parser 使用 L7 bit，后续独立 DPI context 使用 DPI bit。
 - `natflow_t` 只追加 `app_id` 作为常驻 DPI flow result；其他 DPI 细节只进入 terminal event。
 - 追加字段前必须验证 shared conntrack extension 布局，失败时不能注册 DPI/L7 hook。
 - 已 confirm 且没有 natflow session 的 flow 不能强行追加扩展。

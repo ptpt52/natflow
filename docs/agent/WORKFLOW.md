@@ -51,7 +51,7 @@ Bug 修复任务要优先形成可验证假设：
 
 - 热路径：不能睡眠，避免无界循环和大栈对象；包处理路径使用 `GFP_ATOMIC`，控制面初始化/配置路径才使用 `GFP_KERNEL`。
 - skb 读写：访问 IP/TCP/UDP/ICMP/QUIC/TLS 字段前先确认线性可读；写入前确认 skb 可写；任何 pull、trim、cow、copy、expand 后重新获取 header 和 payload 指针。
-- fast path 协作：user/auth、URL logger、Host ACL 等策略未完成前必须设置 `NF_FF_USER_USE` 或 `NF_FF_URLLOGGER_USE`，完成或确定放弃后再清理状态。
+- fast path 协作：user/auth、shared L7、DPI 等策略未完成前必须设置对应 busy bit，例如 `NF_FF_USER_USE`、`NF_FF_L7_USE` 或 `NF_FF_DPI_USE`，完成或确定放弃后再清理状态。
 - 资源归属：跨包 cache、skb/data buffer、crypto scratch、RCU buffer 都要明确 owner；attach/发布成功后调用方不再释放，失败路径必须释放或恢复。
 - 并发模型：控制面写共享规则时优先构造新对象，再用锁和 RCU 发布；读侧在 RCU 临界区内使用，释放旧对象前等待 grace period。
 - 输入解析：字符设备命令遵守 256 字节和换行协议；`sscanf`/手写 parser 必须有宽度和 NUL 兜底；数组下标和状态值必须先验证范围。

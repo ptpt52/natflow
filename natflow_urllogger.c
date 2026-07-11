@@ -1789,8 +1789,8 @@ static noinline unsigned int urllogger_quic4(URLLOGGER_HOOK_CTX_ARGS,
 		goto skip;
 
 	nf = natflow_session_get(ct);
-	if (nf && !(nf->status & NF_FF_URLLOGGER_USE))
-		simple_set_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+	if (nf && !(nf->status & NF_FF_L7_USE))
+		simple_set_bit(NF_FF_L7_USE_BIT, &nf->status);
 
 	crypto_data = urllogger_quic_cache_detach(iph->saddr, UDPH(l4)->source,
 	              iph->daddr, UDPH(l4)->dest, &quic_info, &crypto_len);
@@ -1811,8 +1811,8 @@ static noinline unsigned int urllogger_quic4(URLLOGGER_HOOK_CTX_ARGS,
 
 skip:
 	set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &ct->status);
-	if (nf && (nf->status & NF_FF_URLLOGGER_USE))
-		simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+	if (nf && (nf->status & NF_FF_L7_USE))
+		simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
 
 	if (host) {
 		struct urlinfo *url;
@@ -1929,8 +1929,8 @@ static noinline unsigned int urllogger_quic6(URLLOGGER_HOOK_CTX_ARGS,
 		goto skip;
 
 	nf = natflow_session_get(ct);
-	if (nf && !(nf->status & NF_FF_URLLOGGER_USE))
-		simple_set_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+	if (nf && !(nf->status & NF_FF_L7_USE))
+		simple_set_bit(NF_FF_L7_USE_BIT, &nf->status);
 
 	crypto_data = urllogger_quic_cache_detach6(&ip6h->saddr, UDPH(l4)->source,
 	              &ip6h->daddr, UDPH(l4)->dest, &quic_info, &crypto_len);
@@ -1951,8 +1951,8 @@ static noinline unsigned int urllogger_quic6(URLLOGGER_HOOK_CTX_ARGS,
 
 skip:
 	set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &ct->status);
-	if (nf && (nf->status & NF_FF_URLLOGGER_USE))
-		simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+	if (nf && (nf->status & NF_FF_L7_USE))
+		simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
 
 	if (host) {
 		struct urlinfo *url;
@@ -2180,9 +2180,9 @@ unsigned int natflow_urllogger_consume_url_view(unsigned int hooknum,
 
 	/* pause fastnat path */
 	nf = natflow_session_get(ct);
-	if (nf && !(nf->status & NF_FF_URLLOGGER_USE)) {
-		/* tell FF -urllogger- need this conn */
-		simple_set_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+	if (nf && !(nf->status & NF_FF_L7_USE)) {
+		/* tell FF shared L7 still needs this conn */
+		simple_set_bit(NF_FF_L7_USE_BIT, &nf->status);
 	}
 
 	data_len = ntohs(iph->tot_len) - (iph->ihl * 4 + TCPH(l4)->doff * 4);
@@ -2270,9 +2270,9 @@ unsigned int natflow_urllogger_consume_url_view(unsigned int hooknum,
 __urllogger_ip_skip:
 		/* check one packet only */
 		set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &ct->status);
-		if (nf && (nf->status & NF_FF_URLLOGGER_USE)) {
-			/* tell FF -urllogger- has finished it's job */
-			simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+		if (nf && (nf->status & NF_FF_L7_USE)) {
+			/* tell FF shared L7 has finished its job */
+			simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
 		}
 
 		if (host) {
@@ -2511,9 +2511,9 @@ urllogger_hook_ipv6_main:
 
 	/* pause fastnat path */
 	nf = natflow_session_get(ct);
-	if (nf && !(nf->status & NF_FF_URLLOGGER_USE)) {
-		/* tell FF -urllogger- need this conn */
-		simple_set_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+	if (nf && !(nf->status & NF_FF_L7_USE)) {
+		/* tell FF shared L7 still needs this conn */
+		simple_set_bit(NF_FF_L7_USE_BIT, &nf->status);
 	}
 
 	data_len = ntohs(IPV6H->payload_len) - TCPH(l4)->doff * 4;
@@ -2601,9 +2601,9 @@ urllogger_hook_ipv6_main:
 __urllogger_ipv6_skip:
 		/* check one packet only */
 		set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &ct->status);
-		if (nf && (nf->status & NF_FF_URLLOGGER_USE)) {
-			/* tell FF -urllogger- has finished it's job */
-			simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
+		if (nf && (nf->status & NF_FF_L7_USE)) {
+			/* tell FF shared L7 has finished its job */
+			simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
 		}
 
 		if (host) {

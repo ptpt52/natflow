@@ -63,6 +63,16 @@ int natflow_ct_ext_layout_validate(void)
 
 	natflow_ct_ext_layout_get(&layout);
 
+	if (NF_FF_L7_USE_BIT != 19) {
+		NATFLOW_ERROR("unexpected NF_FF_L7_USE_BIT=%u\n", NF_FF_L7_USE_BIT);
+		return -EINVAL;
+	}
+
+	if (!(NF_FF_BUSY_USE & NF_FF_L7_USE)) {
+		NATFLOW_ERROR("NF_FF_L7_USE is missing from NF_FF_BUSY_USE\n");
+		return -EINVAL;
+	}
+
 	if (NF_FF_DPI_USE_BIT != 21) {
 		NATFLOW_ERROR("unexpected NF_FF_DPI_USE_BIT=%u\n", NF_FF_DPI_USE_BIT);
 		return -EINVAL;

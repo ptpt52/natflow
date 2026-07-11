@@ -4,7 +4,7 @@
 
 更新时间：2026-07-11
 
-实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，增加了 `natflow_l7` hook 生命周期和共享 feature core，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、match event producer、source counters 和 `app_id` 写入。当前 HTTP/TLS/QUIC 解析已阶段性迁移到 `natflow_l7`，DNS QNAME 由 DPI hook 解析后进入 domain rules；protocol-only detector 仍是端口/payload 子集 MVP。
+实现状态：本文描述目标架构。当前源码已经把 bit 19 收敛为 `NF_FF_L7_USE` shared L7 fast-path pause 位，预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，增加了 `natflow_l7` hook 生命周期和共享 feature core，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、match event producer、source counters 和 `app_id` 写入。当前 HTTP/TLS/QUIC 解析已阶段性迁移到 `natflow_l7`，DNS QNAME 由 DPI hook 解析后进入 domain rules；protocol-only detector 仍是端口/payload 子集 MVP。
 
 ## 1. 总体结论
 
@@ -44,7 +44,7 @@ natflow_l7 core
 
 统一设计必须从当前源码出发，而不是从目标接口假设出发：
 
-- 当前 `NF_FF_BUSY_USE` 已包含 `NF_FF_USER_USE | NF_FF_URLLOGGER_USE | NF_FF_DPI_USE`，但源码还没有 DPI consumer 设置或清除该 bit。
+- 当前 `NF_FF_BUSY_USE` 已包含 `NF_FF_USER_USE | NF_FF_L7_USE | NF_FF_DPI_USE`。shared HTTP/TLS/QUIC L7 parser 使用 `NF_FF_L7_USE` 暂停 fast path；`NF_FF_DPI_USE` 仍预留给后续独立 DPI context，当前源码还没有 DPI consumer 设置或清除该 bit。
 - 当前 `natflow_t` 已在尾部追加常驻 `app_id`，domain/proto classifier 命中时已写入非 0 应用结果。
 - 当前 fast path 在建软件 fastnat 或硬件 offload 前检查 `nf->status & NF_FF_BUSY_USE`；DPI 必须沿用这个 mask 阻止首段流量被提前接管。
 - 当前 URL logger hook 的生命周期由 `natflow_l7_init()/exit()` 触发，URL hook ops、内核 hook 签名兼容包装、PPPoE normalize/restore、基础 conntrack 过滤、packet view 构造、`NATFLOW_L7_CONSUMER_URL/DPI` mask 和 URL dispatcher 已由 `natflow_l7.c` 持有：默认注册 IPv4、IPv6 和 bridge `FORWARD` hook，优先级 `NF_IP_PRI_FILTER + 5`；可选 `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 改为 IPv4 `LOCAL_IN`。当前 active mask 按 `urllogger_store/enable` 发布 URL consumer，按 DPI enable 和 domain rule 发布 DPI host consumer；底层数据面通过 `natflow_urllogger_consume_url_view()` 委托 legacy URL consumer 复用 HTTP/TLS/QUIC parser，DPI-only 时不执行 URL CSV 或 Host ACL。
@@ -194,20 +194,23 @@ bounded parser/detector
 
 ### 7.1 Owner bit
 
-新增 DPI bit：
+shared L7 与 DPI busy bits：
 
 ```c
+#define NF_FF_L7_USE_BIT 19
+#define NF_FF_L7_USE (1 << NF_FF_L7_USE_BIT)
 #define NF_FF_DPI_USE_BIT 21
 #define NF_FF_DPI_USE (1 << NF_FF_DPI_USE_BIT)
-#define NF_FF_BUSY_USE (NF_FF_USER_USE | NF_FF_URLLOGGER_USE | NF_FF_DPI_USE)
+#define NF_FF_BUSY_USE (NF_FF_USER_USE | NF_FF_L7_USE | NF_FF_DPI_USE)
 ```
 
 要求：
 
+- `NF_FF_L7_USE_BIT` 复用原 URL logger fast-path pause 位，语义改为 shared HTTP/TLS/QUIC L7 parser 正在等待 terminal。
 - `NF_FF_DPI_USE_BIT` 必须在当前 `nf->status` bit map 中空闲。
 - 编译期和 init 时都要检查该 bit 未与既有 bit 冲突。
 - 所有 fast path 建表和硬件 offload 入口必须继续用 `NF_FF_BUSY_USE` 判断。
-- DPI 在 selected flow arm 成功后设置 `NF_FF_DPI_USE`，terminal 后清除。
+- shared L7 parser 在 selected flow arm 成功后设置 `NF_FF_L7_USE`，terminal 后清除；后续独立 DPI context 若需要跨包等待，再设置 `NF_FF_DPI_USE` 并在 terminal 后清除。
 - 继续接受 `nf->status` 非原子 writer 风险，不增加 path 侧 repair，但必须保留 lost-owner/early-fastpath 计数和并发压测。
 
 ### 7.2 `natflow_t` 尾部结果
@@ -228,7 +231,7 @@ struct natflow_dpi_flow {
 - `rule_id`、`ruleset_generation`、`category_id`、`proto_id`、`detector_id`、`evidence`、`confidence`、`reason`、packet/byte counter 和 policy action 都只进入 active context 或 terminal event。
 - 不在 flow 中保存 host、URI、payload、证书、名称字符串或指针。
 - 不使用 `skb->mark` 或 `ct->mark` 保存 DPI 结果，避免覆盖 QoS、tc 和用户态既有语义。
-- writer 在 matched 结果时先写 `app_id`，再写 terminal state，最后清 `NF_FF_DPI_USE`。unknown/error/disabled 保持 `app_id=0`。
+- writer 在 matched 结果时先写 `app_id`，再写 terminal state，最后清对应 busy bit。当前 shared HTTP/TLS/QUIC host path 清 `NF_FF_L7_USE`；后续独立 DPI context 清 `NF_FF_DPI_USE`。unknown/error/disabled 保持 `app_id=0`。
 
 追加字段前必须验证 `nat_key_t.len`、`natflow_off`、`NATCAP_MAX_OFF`、`__ALIGN_64BITS` 和 NATCAP 组合布局。验证不通过时，`CONFIG_NATFLOW_DPI` build 必须拒绝启用，不能静默切换到长期 side-table 模型。
 
@@ -620,7 +623,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 ### M1a：DPI gate、状态和 ABI 骨架
 
 - 已完成：增加 `CONFIG_NATFLOW_DPI`。
-- 已完成：增加 `NF_FF_DPI_USE` 和扩展后的 `NF_FF_BUSY_USE`。
+- 已完成：增加 `NF_FF_L7_USE`、`NF_FF_DPI_USE` 和扩展后的 `NF_FF_BUSY_USE`。
 - 已完成：在 `natflow_t` 尾部追加 `app_id`，并完成 shared conntrack extension layout guard。
 - 增加最小 context registry、terminal state、drain 和 reason counter。
 - 已完成骨架：实现 `/dev/natflow_dpi_ctl` 的 status、enable/disable、空 ruleset 事务。
@@ -737,7 +740,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 - 内部实现统一为 L7 core，URL 和 DPI 不重复解析 HTTP/TLS/QUIC。
 - legacy URL logger、Host ACL、sysctl 和 CSV 行为不回退。
-- `NF_FF_DPI_USE` 正常阻止 fast path 提前接管 selected flow。
+- `NF_FF_L7_USE` 正常阻止 fast path 提前接管 shared HTTP/TLS/QUIC selected flow；后续独立 DPI context 使用 `NF_FF_DPI_USE`。
 - 所有 terminal/error/disable/exit 路径都写 reason 并清 DPI owner bit。
 - flow 常驻结果只有 `app_id`，其他细节在 event 中输出。
 - unknown/error/resource exhaustion 默认 fail-open。
