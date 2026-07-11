@@ -17,6 +17,12 @@
 
 static int natflow_l7_started;
 
+static inline int natflow_l7_has_bytes(unsigned int offset,
+        unsigned int bytes, unsigned int len)
+{
+	return offset <= len && bytes <= len - offset;
+}
+
 static inline int natflow_l7_is_digit(unsigned char c)
 {
 	return c >= '0' && c <= '9';
@@ -528,7 +534,7 @@ need_more:
 int natflow_l7_quic_has_bytes(unsigned int offset,
         unsigned int bytes, unsigned int len)
 {
-	return offset <= len && bytes <= len - offset;
+	return natflow_l7_has_bytes(offset, bytes, len);
 }
 
 static int natflow_l7_quic_read_varint(const unsigned char *data,
@@ -747,6 +753,86 @@ enum natflow_l7_tls_search_result natflow_l7_quic_crypto_frames_search(const uns
 	}
 
 	return has_crypto ? sni_result : NATFLOW_L7_TLS_SEARCH_NO_SNI;
+}
+
+int natflow_l7_dns_parse(const unsigned char *data, unsigned int data_len,
+        unsigned char l4proto, struct natflow_l7_feature *feature)
+{
+	unsigned char host[NATFLOW_L7_HOST_MAX_LEN + 1];
+	unsigned int offset;
+	unsigned int qdcount;
+	unsigned int host_len = 0;
+	unsigned int flags;
+	unsigned int msg_len;
+
+	if (!data || !feature)
+		return -EINVAL;
+
+	natflow_l7_feature_init(feature, NATFLOW_L7_SOURCE_DNS);
+
+	if (l4proto == IPPROTO_TCP) {
+		unsigned int available;
+
+		if (data_len < 2)
+			return -EINVAL;
+		msg_len = ntohs(get_byte2(data));
+		if (msg_len < 12)
+			return -EINVAL;
+		available = data_len - 2;
+		data += 2;
+		data_len = msg_len < available ? msg_len : available;
+	} else if (l4proto != IPPROTO_UDP) {
+		return -EINVAL;
+	}
+
+	if (data_len < 12)
+		return -EINVAL;
+
+	flags = ntohs(get_byte2(data + 2));
+	if (flags & 0x8000)
+		return 0;
+	if ((flags & 0x7800) != 0)
+		return 0;
+	qdcount = ntohs(get_byte2(data + 4));
+	if (qdcount == 0)
+		return 0;
+
+	offset = 12;
+	do {
+		unsigned int label_len;
+
+		if (!natflow_l7_has_bytes(offset, 1, data_len))
+			return -EINVAL;
+		label_len = data[offset++];
+		if (label_len == 0)
+			break;
+		if ((label_len & 0xc0) != 0 || label_len > 63)
+			return -EINVAL;
+		if (!natflow_l7_has_bytes(offset, label_len, data_len))
+			return -EINVAL;
+		if (host_len != 0) {
+			if (host_len >= NATFLOW_L7_HOST_MAX_LEN)
+				return -EINVAL;
+			host[host_len++] = '.';
+		}
+		if (label_len > NATFLOW_L7_HOST_MAX_LEN - host_len)
+			return -EINVAL;
+		memcpy(host + host_len, data + offset, label_len);
+		host_len += label_len;
+		offset += label_len;
+	} while (offset < data_len);
+
+	if (host_len == 0)
+		return 0;
+	if (!natflow_l7_has_bytes(offset, 4, data_len))
+		return -EINVAL;
+
+	if (natflow_l7_feature_set_host(feature, host, host_len, 0) < 0)
+		return -EINVAL;
+	feature->raw_host.data = feature->host;
+	feature->raw_host.len = feature->host_len;
+
+	return 1;
 }
 
 int natflow_l7_init(void)

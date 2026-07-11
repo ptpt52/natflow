@@ -106,7 +106,7 @@
 
 当前设计基线：`DPI_DESIGN.md`。Draft v5 把内部目标统一为 `natflow_l7` core：共享 read-only packet view、bounded prefix、HTTP/TLS/QUIC parser、hostname normalize、consumer fan-out 和资源生命周期；legacy URL logger/Host ACL 作为 URL consumer 保持外部 ABI，DPI 作为 classifier consumer 新增独立控制和事件 ABI。本文档仍是目标设计，不代表源码已实现 DPI ABI 或行为。
 
-实现进度：源码已完成 M0b 的 DPI busy bit、`app_id` 尾增和 layout guard，完成 M0c 的 `natflow_l7` hook lifecycle 骨架、共享 feature/normalize 基础结构、HTTP Host parser、TLS ClientHello/SNI 搜索和 QUIC Initial header/CRYPTO frame/SNI 搜索迁移，完成 M0d 的 Host ACL 与 URL record 分配解耦，完成 M1a 的 DPI ctl/queue 设备骨架，完成 M1b 的 domain exact/suffix ruleset、match event producer 和复用 urllogger host 的 `app_id` 写入，完成 M1c 的 DNS/SSH/WireGuard protocol-only detector，其中 SSH 支持 TCP 22 和 TCP original-direction `SSH-<version>-` banner，并完成 M1d 的 STUN/TURN、BitTorrent TCP handshake、UDP uTP/DHT 子集、source/reason counters 和 `events_clear` 测试辅助命令；DNS QNAME feature、QUIC crypto/cache 生命周期迁移、误判 corpus 和生产 shadow 数据尚未实现。
+实现进度：源码已完成 M0b 的 DPI busy bit、`app_id` 尾增和 layout guard，完成 M0c 的 `natflow_l7` hook lifecycle 骨架、共享 feature/normalize 基础结构、HTTP Host parser、TLS ClientHello/SNI 搜索、QUIC Initial header/CRYPTO frame/SNI 搜索迁移和 DNS QNAME parser，完成 M0d 的 Host ACL 与 URL record 分配解耦，完成 M1a 的 DPI ctl/queue 设备骨架，完成 M1b 的 domain exact/suffix ruleset、match event producer 和复用 urllogger host 的 `app_id` 写入，完成 M1c 的 DNS QNAME domain 分类和 DNS/SSH/WireGuard protocol-only detector，其中 SSH 支持 TCP 22 和 TCP original-direction `SSH-<version>-` banner，并完成 M1d 的 STUN/TURN、BitTorrent TCP handshake、UDP uTP/DHT 子集、source/reason counters 和 `events_clear` 测试辅助命令；QUIC crypto/cache 生命周期迁移、误判 corpus 和生产 shadow 数据尚未实现。
 
 边界：
 
@@ -123,7 +123,7 @@
 1. M0：建立 `natflow_l7` core，抽出 read-only packet view、hostname normalize、共享 HTTP/TLS/QUIC parser、bounded prefix 和 consumer mask，保持 legacy URL/Host ACL ABI。
 2. M1a：完成 DPI owner bit gate、`app_id` 尾增、layout guard、最小 context registry、terminal state、enable/disable、空 ruleset 事务和版本化事件骨架；默认关闭并 fail-open。
 3. M1b：完成 domain exact/suffix ruleset，让 URL logger、Host ACL 和 DPI 消费同一次 HTTP/TLS/QUIC parser 结果。
-4. M1c：加入 DNS、SSH、WireGuard 三个首批非 HTTP/TLS/QUIC protocol-only detector，全部 audit-only。
+4. M1c：加入 DNS QNAME domain 分类，以及 DNS、SSH、WireGuard 三个首批非 HTTP/TLS/QUIC protocol-only detector，全部 audit-only。
 5. M1d：加入 STUN/TURN protocol-only、BitTorrent TCP handshake 和 UDP uTP/DHT 子集，补齐 shadow 统计。
 6. M2：运行生产 shadow，对比 legacy 行为并统计 detector coverage、protocol-only rate、app hit、unknown reason、资源丢失和性能，再按数据加入 B 级 detector。
 7. M3：在明确既有 Host ACL/QoS 优先级后，分步评估 app drop/reset 和“仅填空”的 app QoS。

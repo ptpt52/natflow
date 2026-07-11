@@ -10,6 +10,7 @@ struct nf_conn;
 struct sk_buff;
 
 #define NATFLOW_L7_HOST_MAX_LEN 253
+#define NATFLOW_L7_DNS_QNAME_WIRE_MAX 255
 #define NATFLOW_L7_HOST_ALLOW_PORT 0x01
 #define NATFLOW_L7_QUIC_MAX_CID_LEN 20
 
@@ -106,6 +107,10 @@ extern enum natflow_l7_tls_search_result natflow_l7_quic_crypto_frames_search(co
         unsigned int *crypto_len,
         unsigned char **host,
         int *host_len);
+extern int natflow_l7_dns_parse(const unsigned char *data,
+                                unsigned int data_len,
+                                unsigned char l4proto,
+                                struct natflow_l7_feature *feature);
 extern int natflow_l7_init(void);
 extern void natflow_l7_exit(void);
 

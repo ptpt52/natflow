@@ -1,10 +1,10 @@
 # Natflow 统一 L7 与 DPI 设计
 
-状态：Draft v5，待实现评审
+状态：Draft v5，实施中
 
 更新时间：2026-07-11
 
-实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，增加了 `natflow_l7` hook 生命周期骨架，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、match event producer、source counters 和 `app_id` 写入。当前 M1b-M1d 数据面 consumer 仍复用 `natflow_urllogger.c` 已解析出的 HTTP Host、TLS SNI 和 QUIC SNI，protocol-only detector 是端口/payload 子集 MVP；尚未完成共享 L7 feature core 或 DNS QNAME feature。
+实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，增加了 `natflow_l7` hook 生命周期和共享 feature core，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、match event producer、source counters 和 `app_id` 写入。当前 HTTP/TLS/QUIC 解析已阶段性迁移到 `natflow_l7`，DNS QNAME 由 DPI hook 解析后进入 domain rules；protocol-only detector 仍是端口/payload 子集 MVP。
 
 ## 1. 总体结论
 
@@ -272,7 +272,7 @@ parser/detector 输出统一 feature：
 | `TLS_SNI` | TLS ClientHello | 普通可见 SNI。 |
 | `TLS_OUTER_SNI` | TLS ClientHello + ECH | 只表示 outer SNI，event 必须保留 evidence。 |
 | `QUIC_SNI` | QUIC v1 Initial | 从 CRYPTO 中 ClientHello 提取。 |
-| `DNS_QNAME` | DNS detector | M1c 后可进入 domain rules。 |
+| `DNS_QNAME` | DNS detector | original direction TCP/UDP 53 query 第一问 QNAME，normalize 后进入 domain rules。 |
 | `PROTO` | protocol detector | 输出 `proto_id`、`detector_id`、confidence。 |
 
 hostname normalize 复用现有严格规则：ASCII 小写、去 root dot、总长 1..253、单 label 1..63、拒绝空 label、控制字符、空白、逗号、非 DNS 字节、label 首尾 `-`。HTTP Host 可允许并剥离合法十进制 `:port`；TLS/QUIC SNI 不接受端口。
@@ -630,14 +630,14 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成 MVP：DPI 复用 legacy URL logger 已解析出的 HTTP Host、TLS SNI、QUIC v1 Initial SNI，不重复解析包。
 - 已完成 MVP：实现 RCU 发布的 domain exact/suffix ruleset，命中时写 `natflow_t.app_id` 并输出固定头 match event。
 - 已完成 MVP：URL record 分配失败时，DPI 与 Host ACL 一样消费 `urllogger_acl_lookup` 的最小 host 视图。
-- 仍未完成：把 URL、Host ACL 和 DPI 迁移到真正共享的 `natflow_l7` feature core。
+- 已完成阶段性迁移：HTTP Host、TLS SNI、QUIC Initial/CRYPTO/SNI 解析进入 `natflow_l7` feature core，legacy URL、Host ACL 和 DPI 继续保持原有外部 ABI。
 - 当前只输出 match event；未命中不输出 `NO_RULE`，也不执行 app ACL/QoS。
 
 ### M1c：首批 protocol-only detector
 
 - 已完成 MVP：增加 DNS、SSH、WireGuard protocol-only 规则和独立 DPI FORWARD/bridge hook。
 - 已完成 MVP：DNS 按 TCP/UDP 53、SSH 按 TCP 22 或 TCP original-direction payload `SSH-<version>-` banner、WireGuard 按 UDP 51820 识别，命中 proto rule 后写 `app_id` 并输出 match event。
-- 当前仍未完成：DNS QNAME feature 不进入 domain rules；后续需要共享 parser 或 DNS-specific parser 后再接入。
+- 已完成 MVP：DNS query 第一问 QNAME 由 `natflow_l7_dns_parse()` 解析并进入 domain exact/suffix ruleset，命中事件 source 为 DNS。
 - 全部 audit-only，不执行 app ACL/QoS。
 
 ### M1d：第二批 A 级 detector
