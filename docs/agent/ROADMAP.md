@@ -1,6 +1,6 @@
 # Natflow 开发路线图
 
-更新时间：2026-07-10
+更新时间：2026-07-11
 
 本文记录当前仓库的下一步开发目标。它是智能体和维护者的任务入口，不替代 `SYSTEM_DESIGN_SPEC.md`；具体实现仍以源码为准。
 
@@ -100,25 +100,25 @@
 
 ### P2-4：设计并开发 DPI 能力
 
-状态：Design Draft v4，Implementation Planned
+状态：Design Draft v5，Implementation Planned
 
-目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，设计轻量 DPI 能力，用于协议/应用分类、审计记录和策略匹配，为后续 QoS、访问控制、报表或用户态控制面对接提供稳定接口。
+目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，先统一 L7 parser/context/consumer 生命周期，再实现轻量 DPI 能力，用于协议/应用分类、审计记录和后续策略匹配。
 
-当前设计基线：`DPI_DESIGN.md`。MVP 已收敛为有界 L7 detector 框架：复用 HTTP Host、TLS/QUIC SNI 提取器，同时支持少量高确定性的非 HTTP/TLS/QUIC detector，输出 `proto_id`、`detector_id`、`app_id` 和被动审计事件；7.5 节基于 `/home/ubuntu/nDPI` 源码把 detector 和域名规则应用拆成可实现清单。应用策略与高级特征不进入首期。本文档仍是目标设计，不代表源码已实现 DPI ABI 或行为。
+当前设计基线：`DPI_DESIGN.md`。Draft v5 把内部目标统一为 `natflow_l7` core：共享 read-only packet view、bounded prefix、HTTP/TLS/QUIC parser、hostname normalize、consumer fan-out 和资源生命周期；legacy URL logger/Host ACL 作为 URL consumer 保持外部 ABI，DPI 作为 classifier consumer 新增独立控制和事件 ABI。本文档仍是目标设计，不代表源码已实现 DPI ABI 或行为。
 
 边界：
 
 - 本仓库仍以 Linux 内核模块为核心；DPI 设计不默认引入完整用户态 DPI daemon、web 服务或大型签名库。
-- 现有能力已经覆盖 HTTP Host/URI、TCP TLS SNI、QUIC v1 Initial SNI 和 Host ACL；DPI 应优先复用这些解析、缓存和校验路径，避免重复实现一套并行 parser。
+- 现有能力已经覆盖 HTTP Host/URI、TCP TLS SNI、QUIC v1 Initial SNI 和 Host ACL；实现应先抽出 `natflow_l7` 共享 core，让 URL consumer 与 DPI consumer 消费同一次 parser 结果，避免重复实现并行 parser。
 - DPI 首期定位为机会性分类和审计能力，不承诺成为强安全 WAF、反规避网关或完整应用识别引擎；ECH、加密内层元数据、异常分片、混淆流量和弱证据端口/IP 命中必须明确降级语义。
 - 数据面热路径必须保持有界解析、无阻塞、无大栈对象、无无界循环、少分配；等待更多数据时必须通过 `NF_FF_DPI_USE`/`NF_FF_BUSY_USE` 阻止 fast path 提前接管。维护者接受 `nf->status` 非原子 writer 的已知并发丢位风险。
 - 新增字符设备命令、sysctl、输出格式、状态位、编译宏或兼容层时，必须同步 `README.md`、`SYSTEM_DESIGN_SPEC.md` 和必要的 `docs/agent/` 记忆。
 
 计划：
 
-1. M0：抽出 read-only packet view、共享 HTTP/TLS/QUIC parser 和 detector dispatcher，建立 legacy URL/Host ACL 回归基线。
-2. M1a：完成 DPI owner bit gate、最小 context registry、terminal state、enable/disable、空 ruleset 事务和版本化事件骨架；默认关闭并 fail-open。
-3. M1b：完成共享 HTTP/TLS/QUIC parser、hostname normalize、domain exact/suffix ruleset，并保持 URL logger/Host ACL 兼容。
+1. M0：建立 `natflow_l7` core，抽出 read-only packet view、hostname normalize、共享 HTTP/TLS/QUIC parser、bounded prefix 和 consumer mask，保持 legacy URL/Host ACL ABI。
+2. M1a：完成 DPI owner bit gate、`app_id` 尾增、layout guard、最小 context registry、terminal state、enable/disable、空 ruleset 事务和版本化事件骨架；默认关闭并 fail-open。
+3. M1b：完成 domain exact/suffix ruleset，让 URL logger、Host ACL 和 DPI 消费同一次 HTTP/TLS/QUIC parser 结果。
 4. M1c：加入 DNS、SSH、WireGuard 三个首批非 HTTP/TLS/QUIC protocol-only detector，全部 audit-only。
 5. M1d：加入 STUN/TURN protocol-only 和 BitTorrent handshake/uTP/DHT 子集，补齐 shadow 统计。
 6. M2：运行生产 shadow，对比 legacy 行为并统计 detector coverage、protocol-only rate、app hit、unknown reason、资源丢失和性能，再按数据加入 B 级 detector。
@@ -127,7 +127,7 @@
 
 退出条件：
 
-- DPI 设计文档明确能力范围、非目标、ABI、数据面状态机、兼容策略和验证矩阵。
+- 设计文档明确统一 L7 core、legacy URL consumer、DPI consumer、能力范围、非目标、ABI、数据面状态机、兼容策略和验证矩阵。
 - MVP 不破坏现有 URL logger、Host ACL、user/auth、QoS 和 fast path 行为。
 - 新增或修改的用户可见接口在 `README.md` 和 `SYSTEM_DESIGN_SPEC.md` 中有完整说明。
 - 至少完成基础构建和 `CONFIG_NATFLOW_PATH` + `CONFIG_NATFLOW_URLLOGGER` 构建验证；若环境缺少内核头文件，必须记录未验证原因。

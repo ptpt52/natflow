@@ -38,7 +38,7 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 | `Makefile.dkms`、`dkms.conf` | DKMS 入口 | 安装到 `/usr/src/natflow-<version>` 并通过 DKMS build/install。 |
 | `README.md` | 文档 | 面向人类的使用手册和对外接口说明。 |
 | `SYSTEM_DESIGN_SPEC.md` | 文档 | 面向开发、审查和自动化重建的系统设计规格。 |
-| `DPI_DESIGN.md` | 文档 | 有界 L7 detector 框架与实施路径草案，覆盖 HTTP/TLS/QUIC 共享解析、nDPI 参考的可实现应用清单、分级非 HTTP/TLS/QUIC detector 和 M1a-M1d 拆分；当前尚未实现其中的 DPI 接口和行为。 |
+| `DPI_DESIGN.md` | 文档 | 统一 L7 core 与 DPI 目标设计，覆盖 legacy URL/HostACL consumer、DPI classifier consumer、HTTP/TLS/QUIC 共享解析、`app_id` flow result、独立 DPI ABI、分级 detector 和 M0-M4 实施路径；当前尚未实现其中的 DPI 接口和行为。 |
 
 ### 2.1 当前扫描基线
 
