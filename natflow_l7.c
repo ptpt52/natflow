@@ -101,6 +101,7 @@ out:
 	return ret;
 }
 
+#if !defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
 #if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_l7_url_hook(unsigned int hooknum,
         struct sk_buff *skb,
@@ -140,6 +141,7 @@ static unsigned int natflow_l7_url_hook(void *priv,
 #endif
 }
 #endif
+#endif /* !CONFIG_NATFLOW_URLLOGGER_LOCAL_IN */
 
 #if defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
 #if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
@@ -162,18 +164,22 @@ static unsigned int natflow_l7_url_local_in(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
+#if !NATFLOW_HAVE_IP_SET_STATE_API
 	const struct net_device *in = state->in;
 	const struct net_device *out = state->out;
+#endif
 #else
 static unsigned int natflow_l7_url_local_in(void *priv,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
+#if !NATFLOW_HAVE_IP_SET_STATE_API
 	const struct net_device *in = state->in;
 #if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
 	const struct net_device *out = state->out;
 #else
 	const struct net_device *out = NULL;
+#endif
 #endif
 #endif
 	enum ip_conntrack_info ctinfo;
