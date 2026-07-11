@@ -932,7 +932,7 @@ classid 模式：
 - 单个 ruleset 当前最多 128 条 domain 规则和 32 条 proto 规则。`id` 和 `app` 必须非 0，同一事务内 `id` 不能重复；`host` 会转小写、去掉末尾点，并校验 DNS label；`kind=suffix` 匹配完全相同 host 或带点边界的子域名。
 - `proto` 当前支持 `dns`、`ssh`、`wireguard`/`wg`、`stun`、`turn`、`bittorrent`/`bt`。
 - 端口型 detector 当前按 original direction 的目标端口识别：DNS TCP/UDP 53，SSH TCP 22，WireGuard UDP 51820。
-- 有界 payload detector 当前覆盖 STUN/TURN header、length 和 magic cookie，按 TURN 方法区分 TURN；BitTorrent 覆盖 TCP handshake、uTP v1 header 和 DHT bencode token 前缀窗口。IPv6 detector 当前只处理无 extension header 的 TCP/UDP。
+- 有界 payload detector 当前覆盖 STUN/TURN header、length 和 magic cookie，按 TURN 方法区分 TURN；BitTorrent 的 TCP 分支覆盖标准 handshake，UDP 分支覆盖 uTP v1 header 和 DHT bencode token 前缀窗口，其中 uTP 会校验版本、类型和扩展号。IPv6 detector 当前只处理无 extension header 的 TCP/UDP。
 - DPI 默认 `disabled`。`enable=1` 后，HTTP/TLS/QUIC host 分类仍来自 legacy URL logger parser，因此需要同时编译并启用 `CONFIG_NATFLOW_URLLOGGER` 和 `/proc/sys/urllogger_store/enable=1`；protocol-only detector 由 `natflow_dpi.c` 自己的 IPv4、IPv6、bridge FORWARD hook 处理，优先级 `NF_IP_PRI_FILTER + 6`。
 - `natflow_urllogger.c` 在 HTTP Host、TCP TLS SNI、QUIC v1 Initial SNI normalize 成功后调用 `natflow_dpi_classify_host()`；URL record 分配失败时也会通过 `urllogger_acl_lookup` 的最小 host 视图调用 DPI。Host ACL 行为和 `/dev/urllogger_queue` CSV 输出不因 DPI 改变。
 - domain 命中时，如果当前 conntrack 已有 natflow session，则写入 `natflow_t.app_id`；不会为了 DPI 创建 session。无 session 时仍可输出 match event。protocol-only 命中要求已有 natflow session 且 `app_id==0`，用于避免每包重复事件。

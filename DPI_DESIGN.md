@@ -531,7 +531,7 @@ M0 若改变 HTTP 跨包识别、TLS cache 跨 CPU 行为或 enable 只影响新
 
 | 等级 | 协议示例 | 进入条件 | 默认动作 |
 | --- | --- | --- | --- |
-| A | DNS、SSH、WireGuard、STUN/TURN、BitTorrent handshake/DHT | 有固定 magic、版本/长度字段或稳定握手，少量包内可高置信确认。 | audit-only，可产生 `DIRECT_PROTOCOL`。 |
+| A | DNS、SSH、WireGuard、STUN/TURN、BitTorrent TCP handshake 与 UDP uTP/DHT | 有固定 magic、版本/长度字段或稳定握手，少量包内可高置信确认。 | audit-only，可产生 `DIRECT_PROTOCOL`。 |
 | B | FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB | 明文命令或二进制握手明确，但可能依赖 server-first 或升级路径。 | shadow 后再考虑 policy。 |
 | C | OpenVPN、SoftEther、Kerberos、RTP/RTCP、游戏/私有 TCP/UDP、代理/VPN 变体 | 需要多包方向模式、弱 magic、端口上下文或复杂状态。 | 默认 protocol-only 或 hint。 |
 | D | 仅端口/IP、DNS 关联、统计特征、加密不可见流量 | 证据弱或容易受共享基础设施污染。 | 不单独产生可阻断 app。 |
@@ -544,7 +544,7 @@ M0 若改变 HTTP 跨包识别、TLS cache 跨 CPU 行为或 enable 只影响新
 | --- | --- |
 | M1b | HTTP、TLS、QUIC parser 统一和 domain exact/suffix rules。 |
 | M1c | DNS、SSH、WireGuard protocol-only detector。 |
-| M1d | STUN/TURN protocol-only、BitTorrent handshake/uTP/DHT 子集。 |
+| M1d | STUN/TURN protocol-only、BitTorrent TCP handshake 与 UDP uTP/DHT 子集。 |
 | M2 | MQTT、MySQL、PostgreSQL、SMB、FTP、SMTP、POP3、IMAP、SIP、RTSP、RESP、RDP 等 shadow 评估。 |
 | M4 | OpenVPN、SoftEther、Kerberos、RTP/RTCP、私有游戏/聊天、代理/VPN、IP/证书/cache/JA4 等专项评审。 |
 
@@ -643,7 +643,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 ### M1d：第二批 A 级 detector
 
 - 已完成 MVP：增加 STUN/TURN 子集，识别 STUN header、length、magic cookie，并按 TURN 方法区分 TURN。
-- 已完成 MVP：增加 BitTorrent TCP handshake、uTP v1 header 和 DHT bencode token 前缀窗口子集。
+- 已完成 MVP：增加 BitTorrent TCP handshake，以及 UDP uTP v1 header 和 DHT bencode token 前缀窗口子集；uTP 会校验版本、类型和扩展号。
 - 已完成 MVP：`/dev/natflow_dpi_ctl` status 输出 HTTP/TLS/QUIC/DNS/SSH/WireGuard/STUN/TURN/BitTorrent source counters 和 `events_lost`。
 - 仍未完成：更完整的 reason counters、payload TLV、IPv6 extension header 解析、误判 corpus 和生产 shadow 数据采集。
 

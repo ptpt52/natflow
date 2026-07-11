@@ -964,22 +964,44 @@ static unsigned int natflow_dpi_detect_stun_turn(const unsigned char *data,
 	}
 }
 
-static unsigned int natflow_dpi_detect_bittorrent(const unsigned char *data,
+static unsigned int natflow_dpi_detect_bittorrent_tcp(const unsigned char *data,
         unsigned int inspect_len)
 {
-	unsigned char utp_type;
-
 	if (inspect_len >= 20 &&
 	        data[0] == 19 &&
 	        memcmp(data + 1, "BitTorrent protocol", 19) == 0)
 		return NATFLOW_DPI_PROTO_BITTORRENT;
 
-	if (inspect_len >= 20) {
-		utp_type = data[0] >> 4;
-		if ((data[0] & 0x0f) == 1 && utp_type <= 4)
-			return NATFLOW_DPI_PROTO_BITTORRENT;
-	}
+	return 0;
+}
 
+static bool natflow_dpi_payload_is_utp(const unsigned char *data,
+        unsigned int inspect_len)
+{
+	unsigned char utp_type;
+	unsigned char utp_version;
+	unsigned char utp_extension;
+
+	if (inspect_len < 20)
+		return false;
+
+	utp_type = data[0] >> 4;
+	utp_version = data[0] & 0x0f;
+	utp_extension = data[1];
+
+	if (utp_version != 1 || utp_type > 4)
+		return false;
+	if (utp_extension > 2)
+		return false;
+
+	return true;
+}
+
+static unsigned int natflow_dpi_detect_bittorrent_udp(const unsigned char *data,
+        unsigned int inspect_len)
+{
+	if (natflow_dpi_payload_is_utp(data, inspect_len))
+		return NATFLOW_DPI_PROTO_BITTORRENT;
 	if (inspect_len >= 8 && data[0] == 'd') {
 		if (natflow_dpi_payload_has_token(data, inspect_len, "1:y1:q", 6) ||
 		        natflow_dpi_payload_has_token(data, inspect_len, "1:y1:r", 6) ||
@@ -991,7 +1013,7 @@ static unsigned int natflow_dpi_detect_bittorrent(const unsigned char *data,
 }
 
 static unsigned int natflow_dpi_detect_payload(const unsigned char *data,
-        unsigned int payload_len, unsigned int inspect_len)
+        unsigned int payload_len, unsigned int inspect_len, unsigned char l4proto)
 {
 	unsigned int proto;
 
@@ -1002,7 +1024,12 @@ static unsigned int natflow_dpi_detect_payload(const unsigned char *data,
 	if (proto)
 		return proto;
 
-	return natflow_dpi_detect_bittorrent(data, inspect_len);
+	if (l4proto == IPPROTO_TCP)
+		return natflow_dpi_detect_bittorrent_tcp(data, inspect_len);
+	if (l4proto == IPPROTO_UDP)
+		return natflow_dpi_detect_bittorrent_udp(data, inspect_len);
+
+	return 0;
 }
 
 static unsigned int natflow_dpi_detect_tcp(__be16 dport)
@@ -1073,7 +1100,8 @@ static void natflow_dpi_detect_ipv4(struct sk_buff *skb, struct nf_conn *ct)
 				iph = ip_hdr(skb);
 				l4 = (void *)iph + ihl;
 				payload = (unsigned char *)l4 + l4_len;
-				proto = natflow_dpi_detect_payload(payload, payload_len, inspect_len);
+				proto = natflow_dpi_detect_payload(payload, payload_len,
+				                                   inspect_len, IPPROTO_TCP);
 			}
 		}
 	} else if (iph->protocol == IPPROTO_UDP) {
@@ -1094,7 +1122,8 @@ static void natflow_dpi_detect_ipv4(struct sk_buff *skb, struct nf_conn *ct)
 				iph = ip_hdr(skb);
 				l4 = (void *)iph + ihl;
 				payload = (unsigned char *)l4 + sizeof(struct udphdr);
-				proto = natflow_dpi_detect_payload(payload, payload_len, inspect_len);
+				proto = natflow_dpi_detect_payload(payload, payload_len,
+				                                   inspect_len, IPPROTO_UDP);
 			}
 		}
 	}
@@ -1145,7 +1174,8 @@ static void natflow_dpi_detect_ipv6(struct sk_buff *skb, struct nf_conn *ct)
 				ip6h = ipv6_hdr(skb);
 				l4 = (void *)ip6h + sizeof(struct ipv6hdr);
 				payload = (unsigned char *)l4 + l4_len;
-				proto = natflow_dpi_detect_payload(payload, payload_len, inspect_len);
+				proto = natflow_dpi_detect_payload(payload, payload_len,
+				                                   inspect_len, IPPROTO_TCP);
 			}
 		}
 	} else if (ip6h->nexthdr == IPPROTO_UDP) {
@@ -1166,7 +1196,8 @@ static void natflow_dpi_detect_ipv6(struct sk_buff *skb, struct nf_conn *ct)
 				ip6h = ipv6_hdr(skb);
 				l4 = (void *)ip6h + sizeof(struct ipv6hdr);
 				payload = (unsigned char *)l4 + sizeof(struct udphdr);
-				proto = natflow_dpi_detect_payload(payload, payload_len, inspect_len);
+				proto = natflow_dpi_detect_payload(payload, payload_len,
+				                                   inspect_len, IPPROTO_UDP);
 			}
 		}
 	}
