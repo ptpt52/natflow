@@ -930,7 +930,7 @@ classid 模式：
 
 - `/dev/natflow_dpi_ctl` 使用 seq_file 输出状态，支持 `enable=0|1`、`enable`、`disable`、`rules_begin`、`domain id=<rule_id> app=<app_id> kind=exact|suffix host=<host>`、`proto id=<rule_id> app=<app_id> proto=dns|ssh|wireguard|stun|turn|bittorrent`、`rules_commit`、`rules_abort`、`rules_clear` 和 `events_clear`。
 - `rules_begin` 分配 pending ruleset，`domain ...` 和 `proto ...` 只能在事务中写入；`rules_commit` 用 RCU 原子发布完整 ruleset 并递增 generation；`rules_abort` 丢弃 pending；`rules_clear` 发布空 ruleset。
-- `events_clear` 清空 `/dev/natflow_dpi_queue` 中已排队事件，并把 `events`、`events_lost` 和 `events_*` source counters 归零；不改变 enable 状态、ruleset 或 generation。持续流量下可能立刻产生新事件，单项测试前应先暂停流量或临时禁用 DPI。
+- `events_clear` 清空 `/dev/natflow_dpi_queue` 中已排队事件，并把 `events`、`events_lost`、`events_*` source counters 和 `proto_*` reason counters 归零；不改变 enable 状态、ruleset 或 generation。持续流量下可能立刻产生新事件，单项测试前应先暂停流量或临时禁用 DPI。
 - 单个 ruleset 当前最多 128 条 domain 规则和 32 条 proto 规则。`id` 和 `app` 必须非 0，同一事务内 `id` 不能重复；`host` 会转小写、去掉末尾点，并校验 DNS label；`kind=suffix` 匹配完全相同 host 或带点边界的子域名。
 - `proto` 当前支持 `dns`、`ssh`、`wireguard`/`wg`、`stun`、`turn`、`bittorrent`/`bt`。
 - 端口型 detector 当前按 original direction 的目标端口识别：DNS TCP/UDP 53，SSH TCP 22，WireGuard UDP 51820。
@@ -939,7 +939,7 @@ classid 模式：
 - `natflow_urllogger.c` 在 HTTP Host、TCP TLS SNI、QUIC v1 Initial SNI normalize 成功后调用 `natflow_dpi_classify_host()`；URL record 分配失败时也会通过 `urllogger_acl_lookup` 的最小 host 视图调用 DPI。Host ACL 行为和 `/dev/urllogger_queue` CSV 输出不因 DPI 改变。
 - domain 命中时，如果当前 conntrack 已有 natflow session，则写入 `natflow_t.app_id`；不会为了 DPI 创建 session。无 session 时仍可输出 match event。protocol-only 命中要求已有 natflow session 且 `app_id==0`，用于避免每包重复事件。
 - `/dev/natflow_dpi_queue` 输出固定头二进制事件；队列为空时 `read()` 返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。队列最多缓存 1024 条事件，溢出或分配失败增加 `events_lost`。
-- `/dev/natflow_dpi_ctl` status 输出 `events_*` source counters，按 HTTP/TLS/QUIC/DNS/SSH/WireGuard/STUN/TURN/BitTorrent 统计 match event，用于 shadow 观测。
+- `/dev/natflow_dpi_ctl` status 输出 `events_*` source counters，按 HTTP/TLS/QUIC/DNS/SSH/WireGuard/STUN/TURN/BitTorrent 统计 match event；同时输出 `proto_no_session`、`proto_app_exists` 和 `proto_no_rule`，用于解释 protocol-only detector 已识别但未产生 match event 的原因。
 - 固定事件头为 packed `struct natflow_dpi_event_hdr`，`version=1`，包含 `header_len`、`record_len`、`reason`、`generation`、`app_id`、`category_id`、`rule_id`、`flags` 和 `timestamp`。当前 match event 使用 `reason=6`，`category_id=0`，`flags` 表示来源：1=HTTP、2=TLS、3=QUIC、4=DNS、5=SSH、6=WireGuard、7=STUN、8=TURN、9=BitTorrent，`timestamp` 为 `ktime_get_ns()`。
 - 当前不会执行 drop/reset/QoS，不覆盖认证、Host ACL 或 conntrack drop 结果；未命中、禁用、无 parser、无 session 或事件队列丢失都 fail-open。
 

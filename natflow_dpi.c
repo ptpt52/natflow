@@ -103,6 +103,9 @@ static unsigned int natflow_dpi_generation = 1;
 static atomic64_t natflow_dpi_events;
 static atomic64_t natflow_dpi_events_lost;
 static atomic64_t natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_MAX + 1];
+static atomic64_t natflow_dpi_proto_no_session;
+static atomic64_t natflow_dpi_proto_app_exists;
+static atomic64_t natflow_dpi_proto_no_rule;
 
 static const char *natflow_dpi_state_name(unsigned int state)
 {
@@ -483,6 +486,9 @@ static void natflow_dpi_events_clear(void)
 	natflow_dpi_event_purge();
 	atomic64_set(&natflow_dpi_events, 0);
 	atomic64_set(&natflow_dpi_events_lost, 0);
+	atomic64_set(&natflow_dpi_proto_no_session, 0);
+	atomic64_set(&natflow_dpi_proto_app_exists, 0);
+	atomic64_set(&natflow_dpi_proto_no_rule, 0);
 	for (i = 0; i <= NATFLOW_DPI_EVENT_SOURCE_MAX; i++)
 		atomic64_set(&natflow_dpi_source_events[i], 0);
 	wake_up_interruptible(&natflow_dpi_wait);
@@ -622,8 +628,14 @@ static void natflow_dpi_classify_proto(struct nf_conn *ct, unsigned int proto)
 		return;
 
 	nf = natflow_session_get(ct);
-	if (!nf || READ_ONCE(nf->app_id) != 0)
+	if (!nf) {
+		atomic64_inc(&natflow_dpi_proto_no_session);
 		return;
+	}
+	if (READ_ONCE(nf->app_id) != 0) {
+		atomic64_inc(&natflow_dpi_proto_app_exists);
+		return;
+	}
 
 	source = natflow_dpi_proto_event_source(proto);
 	if (source == 0)
@@ -645,9 +657,11 @@ static void natflow_dpi_classify_proto(struct nf_conn *ct, unsigned int proto)
 		natflow_dpi_event_queue(NATFLOW_DPI_REASON_MATCHED,
 		                        ruleset->generation, rule->app_id,
 		                        rule->rule_id, source);
-		break;
+		rcu_read_unlock();
+		return;
 	}
 	rcu_read_unlock();
+	atomic64_inc(&natflow_dpi_proto_no_rule);
 }
 
 static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
@@ -698,7 +712,10 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             "events_wireguard=%llu\n"
 	             "events_stun=%llu\n"
 	             "events_turn=%llu\n"
-	             "events_bittorrent=%llu\n",
+	             "events_bittorrent=%llu\n"
+	             "proto_no_session=%llu\n"
+	             "proto_app_exists=%llu\n"
+	             "proto_no_rule=%llu\n",
 	             NATFLOW_VERSION,
 	             NATFLOW_DPI_EVENT_VERSION,
 	             (unsigned int)sizeof(struct natflow_dpi_event_hdr),
@@ -719,7 +736,10 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_WIREGUARD]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_STUN]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_TURN]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_BITTORRENT]));
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_BITTORRENT]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_proto_no_session),
+	             (unsigned long long)atomic64_read(&natflow_dpi_proto_app_exists),
+	             (unsigned long long)atomic64_read(&natflow_dpi_proto_no_rule));
 	mutex_unlock(&natflow_dpi_lock);
 
 	if (n < 0)
@@ -1476,6 +1496,9 @@ int natflow_dpi_init(void)
 	init_waitqueue_head(&natflow_dpi_wait);
 	atomic64_set(&natflow_dpi_events, 0);
 	atomic64_set(&natflow_dpi_events_lost, 0);
+	atomic64_set(&natflow_dpi_proto_no_session, 0);
+	atomic64_set(&natflow_dpi_proto_app_exists, 0);
+	atomic64_set(&natflow_dpi_proto_no_rule, 0);
 	for (i = 0; i <= NATFLOW_DPI_EVENT_SOURCE_MAX; i++)
 		atomic64_set(&natflow_dpi_source_events[i], 0);
 	natflow_dpi_generation = 1;

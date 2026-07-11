@@ -584,14 +584,14 @@ echo events_clear >/dev/natflow_dpi_ctl
 - `rules_begin` 创建待提交 ruleset，`domain ...` 和 `proto ...` 只能在事务中写入。
 - `rules_commit` 原子发布新 ruleset 并递增 `generation`；`rules_abort` 放弃待提交 ruleset。
 - `rules_clear` 发布空 ruleset 并递增 `generation`。
-- `events_clear` 清空 `/dev/natflow_dpi_queue` 中已排队事件，并把 `events`、`events_lost` 和 `events_*` source counters 归零；不改变 enable 状态、ruleset 或 `generation`。持续流量下可能立刻产生新事件，单项测试前建议先暂停流量或临时 `enable=0`。
+- `events_clear` 清空 `/dev/natflow_dpi_queue` 中已排队事件，并把 `events`、`events_lost`、`events_*` source counters 和 `proto_*` reason counters 归零；不改变 enable 状态、ruleset 或 `generation`。持续流量下可能立刻产生新事件，单项测试前建议先暂停流量或临时 `enable=0`。
 - `id` 和 `app` 必须为非 0 整数；同一事务内 `id` 不能重复；单个 ruleset 当前最多 128 条 domain 规则和 32 条 proto 规则。
 - `host` 会转小写、去掉末尾点，并校验 DNS label；HTTP Host 中的端口由 URL logger normalize 时剥离。
 - `kind=suffix` 同时匹配完全相同的 host 和带点边界的子域名，例如规则 `example.net` 可匹配 `example.net` 与 `www.example.net`。
 - `proto` 当前支持 `dns`、`ssh`、`wireguard`（也接受 `wg`）、`stun`、`turn`、`bittorrent`（也接受 `bt`）。
 - 端口型 detector：DNS TCP/UDP 53，SSH TCP 22，WireGuard UDP 51820。
 - 有界 payload detector：STUN/TURN 识别 STUN header、length 和 magic cookie，并按 TURN 方法区分 TURN；BitTorrent 的 TCP 分支识别标准 handshake，UDP 分支识别 uTP v1 header 和 DHT bencode token 前缀窗口，其中 uTP 会校验版本、类型和扩展号。
-- `cat /dev/natflow_dpi_ctl` 会输出 `events_*` source counters，可用于 shadow 统计。
+- `cat /dev/natflow_dpi_ctl` 会输出 `events_*` source counters 和 `proto_no_session`、`proto_app_exists`、`proto_no_rule` protocol-only reason counters，可用于 shadow 统计和解释 detector 已识别但未产生 match event 的原因。
 
 `/dev/natflow_dpi_queue` 使用版本化二进制记录。当前 record 只有固定头；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。队列最多缓存 1024 条事件，溢出或分配失败会增加 `events_lost`。
 
