@@ -914,6 +914,7 @@ unsigned char *natflow_l7_quic_cache_detach6(const struct in6_addr *src_ip,
 #if NATFLOW_HAVE_IP_SET_STATE_API
 #define NATFLOW_L7_URL_CONSUMER_ARGS \
 	unsigned int hooknum, const struct nf_hook_state *state, struct sk_buff *skb
+#define NATFLOW_L7_URL_CONSUMER_CALL_ARGS hooknum, state, skb
 #define NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, state, in, out) \
 	natflow_l7_url_consume_common(hooknum, state, skb)
 #define NATFLOW_L7_DISPATCH_PACKET_VIEW(view, consumer_mask) \
@@ -924,6 +925,7 @@ unsigned char *natflow_l7_quic_cache_detach6(const struct in6_addr *src_ip,
 #define NATFLOW_L7_URL_CONSUMER_ARGS \
 	unsigned int hooknum, const struct net_device *in, \
 	const struct net_device *out, struct sk_buff *skb
+#define NATFLOW_L7_URL_CONSUMER_CALL_ARGS hooknum, in, out, skb
 #define NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, state, in, out) \
 	natflow_l7_url_consume_common(hooknum, in, out, skb)
 #define NATFLOW_L7_DISPATCH_PACKET_VIEW(view, consumer_mask) \
@@ -1133,17 +1135,237 @@ done:
 	return ret;
 }
 
+struct natflow_l7_tcp_flow {
+	int l3num;
+	struct iphdr *iph;
+	void *l4;
+	unsigned char *data;
+	int data_len;
+	union {
+		struct {
+			__be32 src_ip;
+			__be32 dst_ip;
+		};
+		struct {
+			struct in6_addr src_ip6;
+			struct in6_addr dst_ip6;
+		};
+	};
+	__be16 src_port;
+	__be16 dst_port;
+	__u32 seq;
+};
+
+static unsigned char *natflow_l7_tcp_tls_cache_detach(const struct natflow_l7_tcp_flow *flow,
+        __u32 *seq, unsigned int *data_len)
+{
+	if (flow->l3num == AF_INET6)
+		return natflow_l7_tls_cache_detach6(&flow->src_ip6,
+		                                    flow->src_port,
+		                                    &flow->dst_ip6,
+		                                    flow->dst_port,
+		                                    seq, data_len);
+
+	return natflow_l7_tls_cache_detach(flow->src_ip,
+	                                   flow->src_port,
+	                                   flow->dst_ip,
+	                                   flow->dst_port,
+	                                   seq, data_len);
+}
+
+static int natflow_l7_tcp_tls_cache_attach(const struct natflow_l7_tcp_flow *flow,
+        __u32 seq, unsigned char *data, unsigned int data_len)
+{
+	if (flow->l3num == AF_INET6)
+		return natflow_l7_tls_cache_attach6(&flow->src_ip6,
+		                                    flow->src_port,
+		                                    &flow->dst_ip6,
+		                                    flow->dst_port,
+		                                    seq, data, data_len);
+
+	return natflow_l7_tls_cache_attach(flow->src_ip,
+	                                   flow->src_port,
+	                                   flow->dst_ip,
+	                                   flow->dst_port,
+	                                   seq, data, data_len);
+}
+
+static int natflow_l7_tcp_tls_cache_attach_current(const struct natflow_l7_tcp_flow *flow,
+        unsigned char *data, unsigned int data_len)
+{
+	return natflow_l7_tcp_tls_cache_attach(flow, flow->seq, data, data_len);
+}
+
+static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_ARGS,
+        const struct natflow_l7_packet_view *view,
+        const struct net_device *reply_dev,
+        int bridge,
+        const struct natflow_l7_tcp_flow *flow)
+{
+	struct nf_conn *ct;
+	natflow_t *nf = NULL;
+	unsigned char *prev_data = NULL;
+	__u32 prev_seq = 0;
+	unsigned int prev_data_len = 0;
+	unsigned char *host = NULL;
+	int host_len = 0;
+	enum natflow_l7_tls_search_result sni_result;
+	unsigned int ret = NF_ACCEPT;
+
+	if (!view || !view->ct || !flow)
+		return ret;
+
+	ct = view->ct;
+	nf = natflow_session_get(ct);
+	if (nf && !(nf->status & NF_FF_L7_USE))
+		simple_set_bit(NF_FF_L7_USE_BIT, &nf->status);
+
+	if (flow->data_len <= 0)
+		return ret;
+	if (!flow->data)
+		goto terminal;
+
+	prev_data = natflow_l7_tcp_tls_cache_detach(flow, &prev_seq,
+	                                            &prev_data_len);
+	if (prev_data) {
+		unsigned int append_len = flow->data_len;
+		unsigned int next_data_len;
+
+		if (ntohl(flow->seq) == ntohl(prev_seq) + prev_data_len) {
+			unsigned char *new_data;
+
+			if (prev_data_len >= NATFLOW_L7_TLS_CACHE_DATA_LIMIT ||
+			        append_len > NATFLOW_L7_TLS_CACHE_DATA_LIMIT - prev_data_len) {
+				if (flow->l3num == AF_INET6)
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": sni cache data too large, prev_data_len=%u, data_len=%u\n",
+					              DEBUG_TCP_ARG6(flow->iph,flow->l4),
+					              prev_data_len, append_len);
+				else
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": sni cache data too large, prev_data_len=%u, data_len=%u\n",
+					              DEBUG_TCP_ARG(flow->iph,flow->l4),
+					              prev_data_len, append_len);
+				goto terminal;
+			}
+			next_data_len = prev_data_len + append_len;
+
+			new_data = krealloc(prev_data, next_data_len, GFP_ATOMIC);
+			if (!new_data) {
+				if (flow->l3num == AF_INET6)
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to krealloc data\n",
+					              DEBUG_TCP_ARG6(flow->iph,flow->l4));
+				else
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to krealloc data\n",
+					              DEBUG_TCP_ARG(flow->iph,flow->l4));
+				kfree(prev_data);
+				prev_data = NULL;
+				goto terminal;
+			}
+			prev_data = new_data;
+
+			memcpy(prev_data + prev_data_len, flow->data, flow->data_len);
+			prev_data_len = next_data_len;
+
+			host_len = prev_data_len;
+			sni_result = natflow_l7_tls_sni_search(prev_data, &host_len,
+			                                       &host);
+			if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
+				if (prev_data_len >= NATFLOW_L7_TLS_CACHE_DATA_LIMIT ||
+				        natflow_l7_tcp_tls_cache_attach(flow, prev_seq,
+				                                        prev_data,
+				                                        prev_data_len) != 0) {
+					if (flow->l3num == AF_INET6)
+						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach l7 tls cache6, prev_data_len=%u\n",
+						              DEBUG_TCP_ARG6(flow->iph,flow->l4),
+						              prev_data_len);
+					else
+						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach l7 tls cache, prev_data_len=%u\n",
+						              DEBUG_TCP_ARG(flow->iph,flow->l4),
+						              prev_data_len);
+					goto terminal;
+				}
+				prev_data = NULL;
+				goto done;
+			}
+		} else if (ntohl(flow->seq) == ntohl(prev_seq)) {
+			if (natflow_l7_tcp_tls_cache_attach(flow, prev_seq,
+			                                    prev_data,
+			                                    prev_data_len) != 0) {
+				if (flow->l3num == AF_INET6)
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach l7 tls cache6\n",
+					              DEBUG_TCP_ARG6(flow->iph,flow->l4));
+				else
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach l7 tls cache\n",
+					              DEBUG_TCP_ARG(flow->iph,flow->l4));
+				goto terminal;
+			}
+			prev_data = NULL;
+			goto done;
+		} else {
+			goto terminal;
+		}
+	} else {
+		host_len = flow->data_len;
+		sni_result = natflow_l7_tls_sni_search(flow->data, &host_len, &host);
+		if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
+			prev_data = kmemdup(flow->data, flow->data_len, GFP_ATOMIC);
+			if (!prev_data)
+				goto terminal;
+			if (natflow_l7_tcp_tls_cache_attach_current(flow, prev_data,
+			                                            flow->data_len) != 0) {
+				if (flow->l3num == AF_INET6)
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach l7 tls cache6\n",
+					              DEBUG_TCP_ARG6(flow->iph,flow->l4));
+				else
+					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach l7 tls cache\n",
+					              DEBUG_TCP_ARG(flow->iph,flow->l4));
+				goto terminal;
+			}
+			prev_data = NULL;
+			goto done;
+		}
+	}
+
+terminal:
+	set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &ct->status);
+	if (nf && (nf->status & NF_FF_L7_USE))
+		simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
+
+	if (host) {
+		struct natflow_l7_host_view host_view;
+
+		if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_TLS,
+		                              host, host_len, 0) == 0)
+			ret = NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
+			                                    reply_dev, bridge);
+		kfree(prev_data);
+		goto done;
+	}
+
+	kfree(prev_data);
+	prev_data = NULL;
+
+	if (flow->data) {
+		struct natflow_l7_feature feature;
+		struct natflow_l7_host_view host_view;
+
+		if (natflow_l7_http_parse(flow->data, flow->data_len, &feature) > 0 &&
+		        natflow_l7_host_view_from_feature(&host_view, &feature) == 0)
+			ret = NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
+			                                    reply_dev, bridge);
+	}
+
+done:
+	return ret;
+}
+
 static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_URL_CONSUMER_ARGS,
         const struct natflow_l7_packet_view *view)
 {
 	const struct net_device *reply_dev;
-	struct nf_conn *ct;
-	natflow_t *nf = NULL;
+	struct natflow_l7_tcp_flow flow;
 	struct iphdr *iph;
 	void *l4;
-	int bridge;
 	int data_len;
-	unsigned char *data;
 	unsigned int ret = NF_ACCEPT;
 
 	if (!view || !view->ct)
@@ -1154,8 +1376,6 @@ static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_URL_CONSUMER_ARGS,
 #else
 	reply_dev = in;
 #endif
-	ct = view->ct;
-	bridge = (view->flags & NATFLOW_L7_PACKET_F_PPPOE) != 0;
 
 	if (!pskb_may_pull(skb, sizeof(struct iphdr)))
 		return ret;
@@ -1167,156 +1387,38 @@ static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_URL_CONSUMER_ARGS,
 		return ret;
 	iph = ip_hdr(skb);
 	l4 = (void *)iph + iph->ihl * 4;
-
-	nf = natflow_session_get(ct);
-	if (nf && !(nf->status & NF_FF_L7_USE))
-		simple_set_bit(NF_FF_L7_USE_BIT, &nf->status);
-
 	data_len = ntohs(iph->tot_len) - (iph->ihl * 4 + TCPH(l4)->doff * 4);
-	if (data_len > 0) {
-		unsigned char *prev_data = NULL;
-		__u32 prev_seq = 0;
-		unsigned int prev_data_len = 0;
-		unsigned char *host = NULL;
-		int host_len;
-		int allow_http = 0;
-		enum natflow_l7_tls_search_result sni_result;
 
-		if (skb_try_make_writable(skb, skb->len))
-			goto skip;
+	memset(&flow, 0, sizeof(flow));
+	flow.l3num = AF_INET;
+	flow.data_len = data_len;
+	if (data_len > 0 && !skb_try_make_writable(skb, skb->len)) {
 		iph = ip_hdr(skb);
 		l4 = (void *)iph + iph->ihl * 4;
-		data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
-		allow_http = 1;
-
-		prev_data = natflow_l7_tls_cache_detach(iph->saddr, TCPH(l4)->source,
-		                                        iph->daddr, TCPH(l4)->dest,
-		                                        &prev_seq, &prev_data_len);
-		if (prev_data) {
-			unsigned int append_len = data_len;
-			unsigned int next_data_len;
-
-			if (ntohl(TCPH(l4)->seq) == ntohl(prev_seq) + prev_data_len) {
-				unsigned char *new_data;
-
-				if (prev_data_len >= NATFLOW_L7_TLS_CACHE_DATA_LIMIT ||
-				        append_len > NATFLOW_L7_TLS_CACHE_DATA_LIMIT - prev_data_len) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": sni cache data too large, prev_data_len=%u, data_len=%u\n",
-					              DEBUG_TCP_ARG(iph,l4), prev_data_len, append_len);
-					goto skip;
-				}
-				next_data_len = prev_data_len + append_len;
-
-				new_data = krealloc(prev_data, next_data_len, GFP_ATOMIC);
-				if (!new_data) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to krealloc data\n",
-					              DEBUG_TCP_ARG(iph,l4));
-					kfree(prev_data);
-					prev_data = NULL;
-					goto skip;
-				}
-				prev_data = new_data;
-
-				memcpy(prev_data + prev_data_len, data, data_len);
-				prev_data_len = next_data_len;
-
-				host_len = prev_data_len;
-				sni_result = natflow_l7_tls_sni_search(prev_data, &host_len,
-				                                       &host);
-				if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
-					if (prev_data_len >= NATFLOW_L7_TLS_CACHE_DATA_LIMIT ||
-					        natflow_l7_tls_cache_attach(iph->saddr, TCPH(l4)->source,
-					                                    iph->daddr, TCPH(l4)->dest,
-					                                    prev_seq, prev_data,
-					                                    prev_data_len) != 0) {
-						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach l7 tls cache, prev_data_len=%u\n",
-						              DEBUG_TCP_ARG(iph,l4), prev_data_len);
-						goto skip;
-					}
-					prev_data = NULL;
-					goto done;
-				}
-			} else if (ntohl(TCPH(l4)->seq) == ntohl(prev_seq)) {
-				if (natflow_l7_tls_cache_attach(iph->saddr, TCPH(l4)->source,
-				                                iph->daddr, TCPH(l4)->dest,
-				                                prev_seq, prev_data,
-				                                prev_data_len) != 0) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach l7 tls cache\n",
-					              DEBUG_TCP_ARG(iph,l4));
-					goto skip;
-				}
-				prev_data = NULL;
-				goto done;
-			} else {
-				goto skip;
-			}
-		} else {
-			host_len = data_len;
-			sni_result = natflow_l7_tls_sni_search(data, &host_len, &host);
-			if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
-				prev_data = kmemdup(data, data_len, GFP_ATOMIC);
-				if (!prev_data)
-					goto skip;
-				if (natflow_l7_tls_cache_attach(iph->saddr, TCPH(l4)->source,
-				                                iph->daddr, TCPH(l4)->dest,
-				                                TCPH(l4)->seq, prev_data,
-				                                data_len) != 0) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach l7 tls cache\n",
-					              DEBUG_TCP_ARG(iph,l4));
-					goto skip;
-				}
-				prev_data = NULL;
-				goto done;
-			}
-		}
-
-skip:
-		set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &ct->status);
-		if (nf && (nf->status & NF_FF_L7_USE))
-			simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
-
-		if (host) {
-			struct natflow_l7_host_view host_view;
-
-			if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_TLS,
-			                              host, host_len, 0) == 0)
-				ret = NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
-				                                    reply_dev, bridge);
-			kfree(prev_data);
-			goto done;
-		}
-
-		kfree(prev_data);
-		prev_data = NULL;
-		if (!allow_http)
-			goto done;
-		data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
-		{
-			struct natflow_l7_feature feature;
-			struct natflow_l7_host_view host_view;
-
-			if (natflow_l7_http_parse(data, data_len, &feature) > 0 &&
-			        natflow_l7_host_view_from_feature(&host_view, &feature) == 0)
-				ret = NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
-				                                    reply_dev, bridge);
-		}
+		flow.iph = iph;
+		flow.l4 = l4;
+		flow.src_ip = iph->saddr;
+		flow.dst_ip = iph->daddr;
+		flow.src_port = TCPH(l4)->source;
+		flow.dst_port = TCPH(l4)->dest;
+		flow.seq = TCPH(l4)->seq;
+		flow.data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
 	}
 
-done:
-	return ret;
+	return natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_CALL_ARGS,
+	                              view, reply_dev,
+	                              (view->flags & NATFLOW_L7_PACKET_F_PPPOE) != 0,
+	                              &flow);
 }
 
 static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_URL_CONSUMER_ARGS,
         const struct natflow_l7_packet_view *view)
 {
 	const struct net_device *reply_dev;
-	struct nf_conn *ct;
-	natflow_t *nf = NULL;
+	struct natflow_l7_tcp_flow flow;
 	struct iphdr *iph;
 	void *l4;
-	int bridge;
 	int data_len;
-	unsigned char *data;
 	unsigned int ret = NF_ACCEPT;
 
 	if (!view || !view->ct)
@@ -1327,8 +1429,6 @@ static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_URL_CONSUMER_ARGS,
 #else
 	reply_dev = in;
 #endif
-	ct = view->ct;
-	bridge = (view->flags & NATFLOW_L7_PACKET_F_PPPOE) != 0;
 
 	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr)))
 		return ret;
@@ -1340,152 +1440,28 @@ static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_URL_CONSUMER_ARGS,
 		return ret;
 	iph = (void *)ipv6_hdr(skb);
 	l4 = (void *)iph + sizeof(struct ipv6hdr);
-
-	nf = natflow_session_get(ct);
-	if (nf && !(nf->status & NF_FF_L7_USE))
-		simple_set_bit(NF_FF_L7_USE_BIT, &nf->status);
-
 	data_len = ntohs(IPV6H->payload_len) - TCPH(l4)->doff * 4;
-	if (data_len > 0) {
-		unsigned char *prev_data = NULL;
-		__u32 prev_seq = 0;
-		unsigned int prev_data_len = 0;
-		unsigned char *host = NULL;
-		int host_len;
-		int allow_http = 0;
-		enum natflow_l7_tls_search_result sni_result;
 
-		if (skb_try_make_writable(skb, skb->len))
-			goto skip;
+	memset(&flow, 0, sizeof(flow));
+	flow.l3num = AF_INET6;
+	flow.data_len = data_len;
+	if (data_len > 0 && !skb_try_make_writable(skb, skb->len)) {
 		iph = (void *)ipv6_hdr(skb);
 		l4 = (void *)iph + sizeof(struct ipv6hdr);
-		data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
-		allow_http = 1;
-
-		prev_data = natflow_l7_tls_cache_detach6(&IPV6H->saddr,
-		                                         TCPH(l4)->source,
-		                                         &IPV6H->daddr,
-		                                         TCPH(l4)->dest,
-		                                         &prev_seq,
-		                                         &prev_data_len);
-		if (prev_data) {
-			unsigned int append_len = data_len;
-			unsigned int next_data_len;
-
-			if (ntohl(TCPH(l4)->seq) == ntohl(prev_seq) + prev_data_len) {
-				unsigned char *new_data;
-
-				if (prev_data_len >= NATFLOW_L7_TLS_CACHE_DATA_LIMIT ||
-				        append_len > NATFLOW_L7_TLS_CACHE_DATA_LIMIT - prev_data_len) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": sni cache data too large, prev_data_len=%u, data_len=%u\n",
-					              DEBUG_TCP_ARG6(iph,l4), prev_data_len, append_len);
-					goto skip;
-				}
-				next_data_len = prev_data_len + append_len;
-
-				new_data = krealloc(prev_data, next_data_len, GFP_ATOMIC);
-				if (!new_data) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to krealloc data\n",
-					              DEBUG_TCP_ARG6(iph,l4));
-					kfree(prev_data);
-					prev_data = NULL;
-					goto skip;
-				}
-				prev_data = new_data;
-
-				memcpy(prev_data + prev_data_len, data, data_len);
-				prev_data_len = next_data_len;
-
-				host_len = prev_data_len;
-				sni_result = natflow_l7_tls_sni_search(prev_data, &host_len,
-				                                       &host);
-				if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
-					if (prev_data_len >= NATFLOW_L7_TLS_CACHE_DATA_LIMIT ||
-					        natflow_l7_tls_cache_attach6(&IPV6H->saddr,
-					                                     TCPH(l4)->source,
-					                                     &IPV6H->daddr,
-					                                     TCPH(l4)->dest,
-					                                     prev_seq, prev_data,
-					                                     prev_data_len) != 0) {
-						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach l7 tls cache6, prev_data_len=%u\n",
-						              DEBUG_TCP_ARG6(iph,l4), prev_data_len);
-						goto skip;
-					}
-					prev_data = NULL;
-					goto done;
-				}
-			} else if (ntohl(TCPH(l4)->seq) == ntohl(prev_seq)) {
-				if (natflow_l7_tls_cache_attach6(&IPV6H->saddr,
-				                                 TCPH(l4)->source,
-				                                 &IPV6H->daddr,
-				                                 TCPH(l4)->dest,
-				                                 prev_seq, prev_data,
-				                                 prev_data_len) != 0) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach l7 tls cache6\n",
-					              DEBUG_TCP_ARG6(iph,l4));
-					goto skip;
-				}
-				prev_data = NULL;
-				goto done;
-			} else {
-				goto skip;
-			}
-		} else {
-			host_len = data_len;
-			sni_result = natflow_l7_tls_sni_search(data, &host_len, &host);
-			if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
-				prev_data = kmemdup(data, data_len, GFP_ATOMIC);
-				if (!prev_data)
-					goto skip;
-				if (natflow_l7_tls_cache_attach6(&IPV6H->saddr,
-				                                 TCPH(l4)->source,
-				                                 &IPV6H->daddr,
-				                                 TCPH(l4)->dest,
-				                                 TCPH(l4)->seq, prev_data,
-				                                 data_len) != 0) {
-					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach l7 tls cache6\n",
-					              DEBUG_TCP_ARG6(iph,l4));
-					goto skip;
-				}
-				prev_data = NULL;
-				goto done;
-			}
-		}
-
-skip:
-		set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &ct->status);
-		if (nf && (nf->status & NF_FF_L7_USE))
-			simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
-
-		if (host) {
-			struct natflow_l7_host_view host_view;
-
-			if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_TLS,
-			                              host, host_len, 0) == 0)
-				ret = NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
-				                                    reply_dev, bridge);
-			kfree(prev_data);
-			goto done;
-		}
-
-		kfree(prev_data);
-		prev_data = NULL;
-		if (!allow_http)
-			goto done;
-		data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
-		{
-			struct natflow_l7_feature feature;
-			struct natflow_l7_host_view host_view;
-
-			if (natflow_l7_http_parse(data, data_len, &feature) > 0 &&
-			        natflow_l7_host_view_from_feature(&host_view, &feature) == 0)
-				ret = NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
-				                                    reply_dev, bridge);
-		}
+		flow.iph = iph;
+		flow.l4 = l4;
+		memcpy(&flow.src_ip6, &IPV6H->saddr, sizeof(flow.src_ip6));
+		memcpy(&flow.dst_ip6, &IPV6H->daddr, sizeof(flow.dst_ip6));
+		flow.src_port = TCPH(l4)->source;
+		flow.dst_port = TCPH(l4)->dest;
+		flow.seq = TCPH(l4)->seq;
+		flow.data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
 	}
 
-done:
-	return ret;
+	return natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_CALL_ARGS,
+	                              view, reply_dev,
+	                              (view->flags & NATFLOW_L7_PACKET_F_PPPOE) != 0,
+	                              &flow);
 }
 
 #if NATFLOW_HAVE_IP_SET_STATE_API
