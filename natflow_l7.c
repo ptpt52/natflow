@@ -11,6 +11,9 @@
 #include <linux/string.h>
 #include "natflow_common.h"
 #include "natflow_l7.h"
+#if defined(CONFIG_NATFLOW_DPI) && defined(CONFIG_NATFLOW_URLLOGGER)
+#include "natflow_dpi.h"
+#endif
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 #include "natflow_urllogger.h"
 #endif
@@ -24,6 +27,10 @@ static unsigned int natflow_l7_active_consumer_mask(void)
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 	if (natflow_urllogger_url_enabled())
 		mask |= NATFLOW_L7_CONSUMER_URL;
+#endif
+#if defined(CONFIG_NATFLOW_DPI) && defined(CONFIG_NATFLOW_URLLOGGER)
+	if (natflow_dpi_host_consumer_enabled())
+		mask |= NATFLOW_L7_CONSUMER_DPI;
 #endif
 
 	return mask;
@@ -40,6 +47,17 @@ int natflow_l7_consumer_active(unsigned int consumer)
 }
 
 #if defined(CONFIG_NATFLOW_URLLOGGER)
+static unsigned int natflow_l7_pending_consumer_mask(const struct nf_conn *ct,
+        unsigned int consumer_mask)
+{
+	if ((ct->status & IPS_NATFLOW_URLLOGGER_HANDLED))
+		consumer_mask &= ~NATFLOW_L7_CONSUMER_URL;
+	if ((ct->status & IPS_NATFLOW_L7_DPI_HANDLED))
+		consumer_mask &= ~NATFLOW_L7_CONSUMER_DPI;
+
+	return consumer_mask;
+}
+
 #if NATFLOW_HAVE_IP_SET_STATE_API
 #define NATFLOW_L7_URL_CONSUMER_ARGS \
 	unsigned int hooknum, const struct nf_hook_state *state, struct sk_buff *skb
@@ -70,7 +88,7 @@ static unsigned int natflow_l7_dispatch_url_view(unsigned int hooknum,
         unsigned int consumer_mask)
 #endif
 {
-	if (!(consumer_mask & NATFLOW_L7_CONSUMER_URL))
+	if (!(consumer_mask & (NATFLOW_L7_CONSUMER_URL | NATFLOW_L7_CONSUMER_DPI)))
 		return NF_ACCEPT;
 
 #if NATFLOW_HAVE_IP_SET_STATE_API
@@ -89,7 +107,7 @@ static unsigned int natflow_l7_url_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS)
 	unsigned int ret = NF_ACCEPT;
 
 	consumer_mask = natflow_l7_active_consumer_mask();
-	if (!(consumer_mask & NATFLOW_L7_CONSUMER_URL))
+	if (!(consumer_mask & (NATFLOW_L7_CONSUMER_URL | NATFLOW_L7_CONSUMER_DPI)))
 		return NF_ACCEPT;
 
 	memset(&view, 0, sizeof(view));
@@ -126,10 +144,12 @@ static unsigned int natflow_l7_url_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS)
 	}
 	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
 		goto out;
-	if ((ct->status & IPS_NATFLOW_URLLOGGER_HANDLED))
+	consumer_mask = natflow_l7_pending_consumer_mask(ct, consumer_mask);
+	if (consumer_mask == 0)
 		goto out;
 
 	view.ct = ct;
+	view.consumer_mask = consumer_mask;
 	view.l3num = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num;
 	if (view.l3num == AF_INET6)
 		view.l3 = ipv6_hdr(skb);
@@ -235,7 +255,7 @@ static unsigned int natflow_l7_url_local_in(void *priv,
 	unsigned int consumer_mask;
 
 	consumer_mask = natflow_l7_active_consumer_mask();
-	if (!(consumer_mask & NATFLOW_L7_CONSUMER_URL))
+	if (!(consumer_mask & (NATFLOW_L7_CONSUMER_URL | NATFLOW_L7_CONSUMER_DPI)))
 		return NF_ACCEPT;
 
 	ct = nf_ct_get(skb, &ctinfo);

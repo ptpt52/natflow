@@ -47,10 +47,10 @@ natflow_l7 core
 - 当前 `NF_FF_BUSY_USE` 已包含 `NF_FF_USER_USE | NF_FF_URLLOGGER_USE | NF_FF_DPI_USE`，但源码还没有 DPI consumer 设置或清除该 bit。
 - 当前 `natflow_t` 已在尾部追加常驻 `app_id`，domain/proto classifier 命中时已写入非 0 应用结果。
 - 当前 fast path 在建软件 fastnat 或硬件 offload 前检查 `nf->status & NF_FF_BUSY_USE`；DPI 必须沿用这个 mask 阻止首段流量被提前接管。
-- 当前 URL logger hook 的生命周期由 `natflow_l7_init()/exit()` 触发，URL hook ops、内核 hook 签名兼容包装、PPPoE normalize/restore、基础 conntrack 过滤、packet view 构造、`NATFLOW_L7_CONSUMER_URL/DPI` mask 骨架和 URL dispatcher 已由 `natflow_l7.c` 持有：默认注册 IPv4、IPv6 和 bridge `FORWARD` hook，优先级 `NF_IP_PRI_FILTER + 5`；可选 `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 改为 IPv4 `LOCAL_IN`。当前 active mask 仍只按 `urllogger_store/enable` 发布 URL consumer，底层数据面通过 `natflow_urllogger_consume_url_view()` 委托 legacy URL consumer，DPI consumer 位尚未激活。
+- 当前 URL logger hook 的生命周期由 `natflow_l7_init()/exit()` 触发，URL hook ops、内核 hook 签名兼容包装、PPPoE normalize/restore、基础 conntrack 过滤、packet view 构造、`NATFLOW_L7_CONSUMER_URL/DPI` mask 和 URL dispatcher 已由 `natflow_l7.c` 持有：默认注册 IPv4、IPv6 和 bridge `FORWARD` hook，优先级 `NF_IP_PRI_FILTER + 5`；可选 `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 改为 IPv4 `LOCAL_IN`。当前 active mask 按 `urllogger_store/enable` 发布 URL consumer，按 DPI enable 和 domain rule 发布 DPI host consumer；底层数据面通过 `natflow_urllogger_consume_url_view()` 委托 legacy URL consumer 复用 HTTP/TLS/QUIC parser，DPI-only 时不执行 URL CSV 或 Host ACL。
 - 当前 DPI protocol-only hook 仍由 `natflow_dpi.c` 独立持有，优先级 `NF_IP_PRI_FILTER + 6`，不合并进 L7 URL common path，也不受 `urllogger_store/enable` 控制；等 L7 dispatcher、consumer mask 和 DPI context 生命周期落地后再评审合并入口。
-- 当前 `urllogger_store_enable=0` 时 hook 入口直接 accept，因此 Host ACL 也不会执行。
-- 当前 HTTP Host/URI、TLS SNI、QUIC v1 Initial SNI parser 都是 `natflow_urllogger.c` 内部静态实现，并和 URL record 分配、Host ACL、队列输出混在同一 hook。
+- 当前 `urllogger_store_enable=0` 时 URL consumer 不加入 active mask，因此 URL CSV 和 Host ACL 不会执行；若 DPI enabled 且存在 domain rule，DPI host consumer 仍可复用同一 L7 hook 解析 HTTP/TLS/QUIC host。
+- 当前 HTTP Host/URI、TLS SNI、QUIC v1 Initial SNI parser API 已阶段性迁移到 `natflow_l7.c`；legacy URL consumer 仍持有 URL record 分配、Host ACL、队列输出、TCP SNI cache、QUIC cache 和 crypto glue。
 - 当前 TLS/QUIC 跨包 cache 按 CPU 存储。RPS/RFS 或调度变化导致同一 flow 后续包落到其他 CPU 时，可能找不到之前 prefix。
 - 当前 Host ACL 已不依赖 URL record 分配成功；URL 日志对象分配失败时不会生成 CSV 记录，但会尽量基于同一 host normalize 规则执行 ACL。
 - 当前 `nf->status` 的 `simple_set_bit()` 和 `simple_clear_bit()` 是非原子 read-modify-write。维护者接受这个已知风险，DPI 不引入 path 侧 repair，也不在本设计中迁移整个状态字。
@@ -102,6 +102,7 @@ MVP 是审计和机会性分类能力。`UNKNOWN`、`ERROR`、预算耗尽、不
 | `/proc/sys/urllogger_store/*` | 保持路径、字段名和语义。尤其 `enable=0` 表示 URL CSV 和 Host ACL 都不执行。 |
 | `CONFIG_NATFLOW_URLLOGGER` | 继续表示启用 legacy URL logger、Host ACL 和 sysctl。 |
 | `IPS_NATFLOW_URLLOGGER_HANDLED` | 只表示 legacy URL consumer 已处理，不代表 DPI terminal。 |
+| `IPS_NATFLOW_L7_DPI_HANDLED` | 只表示 L7 DPI host consumer 已处理，不代表 legacy URL consumer。 |
 
 可以在内部把实现文件拆分或把符号改成 `natflow_l7_url_*`，但不在 M0/M1 迁移用户可见名字。若未来需要新增 alias，例如 `/dev/natflow_l7_url_queue`，也必须保持旧节点长期可用，并把 alias 作为独立 ABI 任务。
 
@@ -508,6 +509,7 @@ legacy consumer 的目标是行为兼容，不是顺手修语义：
 - `host_acl_rule<id>_ipv4`、`host_acl_rule<id>_ipv6`、`host_acl_rule<id>_mac` ipset 命名保持不变。
 - `/proc/sys/urllogger_store/enable=0` 时 URL CSV 和 Host ACL 都不执行，即使 DPI 已启用。
 - `/proc/sys/urllogger_store/enable=1` 时 URL/HostACL consumer 加入 L7 active consumer mask。
+- DPI `enable=1` 且存在 domain rule 时，DPI host consumer 加入 L7 active consumer mask，不要求 `urllogger_store/enable=1`。
 - 已完成：Host ACL 决策不再依赖 URL record 分配成功；当前使用 `urllogger_acl_lookup` 最小 host 视图，后续迁移到 parser feature。
 - reset/redirect/drop 动作仍由 legacy URL consumer 执行。DPI MVP 不提供 redirect。
 - PPPoE/bridge 场景下必须保留 skb 状态恢复；目标 read-only packet view 应减少临时 pull/restore。

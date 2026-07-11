@@ -49,6 +49,7 @@ struct natflow_dpi_event_hdr {
 
 extern int natflow_dpi_init(void);
 extern void natflow_dpi_exit(void);
+extern int natflow_dpi_host_consumer_enabled(void);
 extern void natflow_dpi_classify_host(struct nf_conn *ct,
                                       const unsigned char *host,
                                       unsigned short host_len,

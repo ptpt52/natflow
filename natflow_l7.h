@@ -52,6 +52,7 @@ struct natflow_l7_packet_view {
 	struct nf_conn *ct;
 	unsigned int flags;
 #define NATFLOW_L7_PACKET_F_PPPOE 0x01
+	unsigned int consumer_mask;
 	int l3num;
 	unsigned char l4proto;
 	void *l3;

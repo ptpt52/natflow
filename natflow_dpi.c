@@ -99,6 +99,7 @@ static struct natflow_dpi_ruleset *natflow_dpi_pending_ruleset;
 static unsigned int natflow_dpi_state = NATFLOW_DPI_STATE_DISABLED;
 static unsigned int natflow_dpi_txn_active;
 static unsigned int natflow_dpi_rules;
+static unsigned int natflow_dpi_domain_rules;
 static unsigned int natflow_dpi_proto_rules;
 static unsigned int natflow_dpi_generation = 1;
 static atomic64_t natflow_dpi_events;
@@ -526,6 +527,7 @@ static int natflow_dpi_rules_commit(void)
 	rcu_assign_pointer(natflow_dpi_active_ruleset, new_ruleset);
 	natflow_dpi_generation = new_ruleset->generation;
 	natflow_dpi_rules = natflow_dpi_ruleset_count(new_ruleset);
+	WRITE_ONCE(natflow_dpi_domain_rules, new_ruleset->domain_count);
 	natflow_dpi_proto_rules = new_ruleset->proto_count;
 	if (old_ruleset)
 		call_rcu(&old_ruleset->rcu, natflow_dpi_ruleset_free_rcu);
@@ -547,10 +549,17 @@ static int natflow_dpi_rules_clear(void)
 	rcu_assign_pointer(natflow_dpi_active_ruleset, new_ruleset);
 	natflow_dpi_generation = new_ruleset->generation;
 	natflow_dpi_rules = 0;
+	WRITE_ONCE(natflow_dpi_domain_rules, 0);
 	natflow_dpi_proto_rules = 0;
 	if (old_ruleset)
 		call_rcu(&old_ruleset->rcu, natflow_dpi_ruleset_free_rcu);
 	return 0;
+}
+
+int natflow_dpi_host_consumer_enabled(void)
+{
+	return READ_ONCE(natflow_dpi_state) == NATFLOW_DPI_STATE_ENABLED &&
+	       READ_ONCE(natflow_dpi_domain_rules) != 0;
 }
 
 void natflow_dpi_classify_host(struct nf_conn *ct, const unsigned char *host,
@@ -1597,6 +1606,7 @@ int natflow_dpi_init(void)
 		atomic64_set(&natflow_dpi_source_events[i], 0);
 	natflow_dpi_generation = 1;
 	natflow_dpi_rules = 0;
+	WRITE_ONCE(natflow_dpi_domain_rules, 0);
 	natflow_dpi_proto_rules = 0;
 	natflow_dpi_txn_active = 0;
 	WRITE_ONCE(natflow_dpi_state, NATFLOW_DPI_STATE_DISABLED);
@@ -1645,6 +1655,7 @@ void natflow_dpi_exit(void)
 	rcu_assign_pointer(natflow_dpi_active_ruleset, NULL);
 	natflow_dpi_generation = 1;
 	natflow_dpi_rules = 0;
+	WRITE_ONCE(natflow_dpi_domain_rules, 0);
 	natflow_dpi_proto_rules = 0;
 	mutex_unlock(&natflow_dpi_lock);
 

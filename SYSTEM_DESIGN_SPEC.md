@@ -90,7 +90,7 @@ DKMS Makefile：
 | --- | --- |
 | `CONFIG_NATFLOW_PATH` | 编译并初始化 fast path、vline/relay、`natflow_ctl` 中 path 相关命令。未定义时 path 能力不生效。 |
 | `CONFIG_NATFLOW_URLLOGGER` | 编译并初始化 URL logger、host ACL、sysctl。 |
-| `CONFIG_NATFLOW_DPI` | 编译并初始化 DPI 控制/事件接口，提供 `/dev/natflow_dpi_ctl`、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset 和 `/dev/natflow_dpi_queue`；默认关闭。当前 HTTP/TLS/QUIC host 分类复用 `CONFIG_NATFLOW_URLLOGGER` parser，DNS QNAME 分类由 DPI hook 自己解析。 |
+| `CONFIG_NATFLOW_DPI` | 编译并初始化 DPI 控制/事件接口，提供 `/dev/natflow_dpi_ctl`、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset 和 `/dev/natflow_dpi_queue`；默认关闭。当前 HTTP/TLS/QUIC host 分类复用 `CONFIG_NATFLOW_URLLOGGER` parser，并在 DPI enabled 且存在 domain rule 时独立激活 L7 DPI consumer；DNS QNAME 分类由 DPI hook 自己解析。 |
 | `CONFIG_NETFILTER_INGRESS` | 使用 per-netdev ingress hook；当前源码也只在该模式下分配 `natflow_fast_nat_table` 并编译主要软件 fastnat 命中/建表路径；vline/relay 只在该模式下有实际转发路径。 |
 | `CONFIG_NET_RALINK_OFFLOAD` | 启用 Ralink/MTK 硬件 offload 相关代码。 |
 | `NATFLOW_OFFLOAD_HWNAT_FAKE` + `CONFIG_NET_MEDIATEK_SOC` | 启用 fake HWNAT/MTK offload 分支。 |
@@ -580,8 +580,9 @@ Natflow 复用 `ct->status` 的高位和扩展位：
 - `IPS_NATFLOW_CT_DROP`：bit 17，用在普通 ct 上表示该连接应丢弃；与上一个宏同 bit，不同上下文使用。
 - `IPS_NATFLOW_USER_BYPASS`：bit 15。
 - `IPS_NATFLOW_FF_STOP`：bit 18，永久停止该 ct 的 fast path。
-- `IPS_NATFLOW_URLLOGGER_HANDLED`：bit 19。
+- `IPS_NATFLOW_URLLOGGER_HANDLED`：bit 19，legacy URL consumer one-shot 标记。
 - `IPS_NATFLOW_SKIP_BRIDGE`：bit 20，用于 bridge/non-bridge 双 hook 去重。
+- `IPS_NATFLOW_L7_DPI_HANDLED`：bit 21，L7 DPI host consumer one-shot 标记。
 - NATCAP 相关位保留用于兼容。
 
 AI 重建时必须注意 bit 17 在 fakeuser 和普通 ct 上语义不同，不能简单合并成一个枚举。
@@ -861,9 +862,9 @@ classid 模式：
 
 ### 15.2 解析流程
 
-1. `enable=0` 时直接 accept。
+1. 若 URL consumer 和 DPI host consumer 都未激活，则直接 accept；`/proc/sys/urllogger_store/enable=1` 激活 URL/HostACL consumer，DPI `enable=1` 且存在 domain rule 激活 DPI host consumer。
 2. 跳过已设置 `IPS_NATFLOW_CT_DROP` 的连接。
-3. 只处理 original 方向，且未设置 `IPS_NATFLOW_URLLOGGER_HANDLED`。
+3. 只处理 original 方向，且至少有一个 active consumer 未设置对应 handled bit：URL consumer 使用 `IPS_NATFLOW_URLLOGGER_HANDLED`，DPI host consumer 使用 `IPS_NATFLOW_L7_DPI_HANDLED`。
 4. 设置 `NF_FF_URLLOGGER_USE` 暂停 fast path。
 5. 解析 HTTP：
    - 方法只识别 `GET `、`POST `、`HEAD `。
@@ -893,8 +894,8 @@ classid 模式：
    - QUIC crypto 上下文按 CPU 分配，并把 key/iv/header-protection key/mask/nonce、HKDF scratch 和 shash desc 缓冲放在 `urllogger_quic_crypto_ctx` 中，避免在 `CONFIG_VMAP_STACK` 内核上把栈地址传给 scatterlist/crypto API，同时降低包处理路径栈占用。
    - 不解析 HTTP/3 `:authority` 或 path，不支持 ECH 内层真实 SNI。
    - QUIC crypto 初始化失败时，URL logger 仍可加载，但 QUIC hostname parser 被禁用。
-8. 命中 host 后执行 host ACL。正常路径复用 URL record；若 URL record 分配失败，则退到最小 ACL view 尽量执行 ACL，但不会生成对应 `/dev/urllogger_queue` 记录。
-9. 处理完成后设置 `IPS_NATFLOW_URLLOGGER_HANDLED`。
+8. 命中 host 后按 active consumer fan-out：URL consumer 执行 URL CSV 和 Host ACL，正常路径复用 URL record；若 URL record 分配失败，则退到最小 ACL view 尽量执行 ACL，但不会生成对应 `/dev/urllogger_queue` 记录。DPI host consumer 调用 domain classifier，写入 `app_id` 并输出 match event；DPI-only 时不创建 URL record、不执行 Host ACL。
+9. 处理完成后分别设置 active consumer 的 handled bit。
 10. URL logger 不会因为固定域名命中而自动添加任何全局 ipset；host ACL 只测试 `host_acl_rule<id>_ipv4/ipv6/mac` 这类用户态配置的过滤集合。
 
 实现边界：
@@ -936,8 +937,8 @@ classid 模式：
 - DNS QNAME detector 在 original direction 的 TCP/UDP 53 标准 query 中解析第一问 QNAME，忽略 response、非 query opcode、压缩 QNAME、畸形或前缀不足的报文；QNAME 经过同一 hostname normalize 后进入 domain exact/suffix ruleset，命中事件 source 为 DNS。
 - 端口型 protocol-only detector 当前按 original direction 的目标端口识别：DNS TCP/UDP 53，SSH TCP 22，WireGuard UDP 51820。
 - 有界 payload detector 当前覆盖 TCP original direction 的 SSH banner `SSH-<version>-` identification string、STUN/TURN header、length 和 magic cookie，按 TURN 方法区分 TURN；BitTorrent 的 TCP 分支覆盖标准 handshake，UDP 分支覆盖 uTP v1 header 和 DHT bencode token 前缀窗口，其中 uTP 会校验版本、类型和扩展号。IPv6 detector 当前只处理无 extension header 的 TCP/UDP。
-- DPI 默认 `disabled`。`enable=1` 后，HTTP/TLS/QUIC host 分类仍来自 legacy URL logger parser，因此需要同时编译并启用 `CONFIG_NATFLOW_URLLOGGER` 和 `/proc/sys/urllogger_store/enable=1`；DNS QNAME domain 分类和 protocol-only detector 由 `natflow_dpi.c` 自己的 IPv4、IPv6、bridge FORWARD hook 处理，优先级 `NF_IP_PRI_FILTER + 6`。DPI hook 在存在任意 DPI 规则时运行；非 DNS payload detector 只在存在 proto 规则时执行。
-- `natflow_l7` 已有 `NATFLOW_L7_CONSUMER_URL/DPI` mask 骨架和 URL dispatcher；当前 active mask 仍只按 `/proc/sys/urllogger_store/enable` 发布 URL consumer，因此 HTTP/TLS/QUIC host DPI 分类仍保持旧依赖。当前不把 DPI protocol-only hook 合并进 L7 URL common path，也不让其受 `/proc/sys/urllogger_store/enable` 控制；后续只有在 L7 拥有完整 dispatcher、consumer mask 和 DPI context 生命周期后，再评审是否合并 hook 入口。
+- DPI 默认 `disabled`。`enable=1` 后，HTTP/TLS/QUIC host 分类仍来自 legacy URL logger parser，因此需要同时编译 `CONFIG_NATFLOW_URLLOGGER`；但 L7 DPI host consumer 由 DPI enable 和 domain rule 独立激活，不再要求 `/proc/sys/urllogger_store/enable=1`。DNS QNAME domain 分类和 protocol-only detector 由 `natflow_dpi.c` 自己的 IPv4、IPv6、bridge FORWARD hook 处理，优先级 `NF_IP_PRI_FILTER + 6`。DPI hook 在存在任意 DPI 规则时运行；非 DNS payload detector 只在存在 proto 规则时执行。
+- `natflow_l7` 已有 `NATFLOW_L7_CONSUMER_URL/DPI` mask 和 URL dispatcher；active mask 按 `/proc/sys/urllogger_store/enable` 发布 URL consumer，按 `natflow_dpi_host_consumer_enabled()` 发布 DPI host consumer。当前不把 DPI protocol-only hook 合并进 L7 URL common path，也不让其受 `/proc/sys/urllogger_store/enable` 控制；后续只有在 L7 拥有完整 dispatcher、consumer mask 和 DPI context 生命周期后，再评审是否合并 hook 入口。
 - `natflow_urllogger.c` 在 HTTP Host、TCP TLS SNI、QUIC v1 Initial SNI normalize 成功后调用 `natflow_dpi_classify_host()`；URL record 分配失败时也会通过 `urllogger_acl_lookup` 的最小 host 视图调用 DPI。DNS QNAME 则由 DPI hook 直接解析并调用同一 domain classifier。Host ACL 行为和 `/dev/urllogger_queue` CSV 输出不因 DPI 改变。
 - domain 命中时，如果当前 conntrack 已有 natflow session，则写入 `natflow_t.app_id`；不会为了 DPI 创建 session。无 session 时仍可输出 match event。protocol-only 命中要求已有 natflow session 且 `app_id==0`，用于避免每包重复事件。
 - `/dev/natflow_dpi_queue` 输出固定头二进制事件；队列为空时 `read()` 返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。队列最多缓存 1024 条事件，溢出或分配失败增加 `events_lost`。
