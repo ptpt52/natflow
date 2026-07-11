@@ -893,7 +893,7 @@ classid 模式：
    - QUIC crypto 上下文按 CPU 分配，并把 key/iv/header-protection key/mask/nonce、HKDF scratch 和 shash desc 缓冲放在 `urllogger_quic_crypto_ctx` 中，避免在 `CONFIG_VMAP_STACK` 内核上把栈地址传给 scatterlist/crypto API，同时降低包处理路径栈占用。
    - 不解析 HTTP/3 `:authority` 或 path，不支持 ECH 内层真实 SNI。
    - QUIC crypto 初始化失败时，URL logger 仍可加载，但 QUIC hostname parser 被禁用。
-8. 命中 host 后按 active consumer fan-out：URL consumer 执行 URL CSV 和 Host ACL，正常路径复用 URL record；若 URL record 分配失败，则退到最小 ACL view 尽量执行 ACL，但不会生成对应 `/dev/urllogger_queue` 记录。DPI host consumer 调用 domain classifier，写入 `app_id` 并输出 match event；DPI-only 时不创建 URL record、不执行 Host ACL。
+8. 命中 host 后按 active consumer fan-out：URL consumer 执行 URL CSV 和 Host ACL，正常路径复用 URL record；若 URL record 分配失败，则退到最小 ACL view 尽量执行 ACL，但不会生成对应 `/dev/urllogger_queue` 记录。DPI host consumer 调用 domain classifier，写入 `app_id` 并输出 match event；DPI-only 时不创建 URL record、不执行 Host ACL。当前 HTTP/TLS/QUIC host fan-out 已收敛到 legacy URL consumer 的公共 helper，避免各 parser 路径重复实现 URL record、Host ACL 和 DPI classify。
 9. 处理完成后设置 `IPS_NATFLOW_L7_HANDLED`。
 10. URL logger 不会因为固定域名命中而自动添加任何全局 ipset；host ACL 只测试 `host_acl_rule<id>_ipv4/ipv6/mac` 这类用户态配置的过滤集合。
 

@@ -1038,6 +1038,180 @@ out:
 	}
 }
 
+enum urllogger_redirect_reply {
+	URLLOGGER_REDIRECT_DROP = 0,
+	URLLOGGER_REDIRECT_RST,
+	URLLOGGER_REDIRECT_HTTP,
+};
+
+static inline void urllogger_fill_url_tuple(struct urlinfo *url,
+        struct nf_conn *ct, int l3num)
+{
+	if (l3num == AF_INET6) {
+		if (urllogger_store_tuple_type == 0) {
+			/* 0: dir0-src dir0-dst */
+			url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
+			url->dipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3;
+			url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+			url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
+		} else if (urllogger_store_tuple_type == 1) {
+			/* 1: dir0-src dir1-src */
+			url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
+			url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
+			url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+			url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+		} else {
+			/* 2: dir1-dst dir1-src */
+			url->sipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3;
+			url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
+			url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
+			url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+		}
+		return;
+	}
+
+	if (urllogger_store_tuple_type == 0) {
+		/* 0: dir0-src dir0-dst */
+		url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+		url->dip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
+		url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+		url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
+	} else if (urllogger_store_tuple_type == 1) {
+		/* 1: dir0-src dir1-src */
+		url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+		url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
+		url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
+		url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+	} else {
+		/* 2: dir1-dst dir1-src */
+		url->sip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip;
+		url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
+		url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
+		url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
+	}
+}
+
+static inline unsigned int urllogger_reply_acl_action(URLLOGGER_HOOK_CTX_ARGS,
+        const struct net_device *reply_dev, struct sk_buff *skb,
+        struct nf_conn *ct, natflow_t *nf, int l3num, int bridge,
+        unsigned char acl_action, unsigned char http_method, int reset_reply,
+        enum urllogger_redirect_reply redirect_reply)
+{
+	unsigned int ret = NF_DROP;
+
+	set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+	if (nf && !(nf->status & NF_FF_USER_USE))
+		simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+
+	if (acl_action == URLINFO_ACL_ACTION_RESET && reset_reply) {
+		if (l3num == AF_INET6) {
+			natflow_urllogger_tcp_reply_rstack6(reply_dev, skb, ct, bridge);
+			natflow_auth_convert_tcprst6(skb);
+		} else {
+			natflow_urllogger_tcp_reply_rstack(reply_dev, skb, ct, bridge);
+			natflow_auth_convert_tcprst(skb);
+		}
+		return NF_ACCEPT;
+	}
+
+	if (acl_action != URLINFO_ACL_ACTION_REDIRECT)
+		return ret;
+
+	if (redirect_reply == URLLOGGER_REDIRECT_RST) {
+		if (l3num == AF_INET6) {
+			natflow_urllogger_tcp_reply_rstack6(reply_dev, skb, ct, bridge);
+			natflow_auth_convert_tcprst6(skb);
+		} else {
+			natflow_urllogger_tcp_reply_rstack(reply_dev, skb, ct, bridge);
+			natflow_auth_convert_tcprst(skb);
+		}
+		return NF_ACCEPT;
+	}
+
+	if (redirect_reply == URLLOGGER_REDIRECT_HTTP) {
+		if (l3num == AF_INET6) {
+			if (http_method == NATFLOW_HTTP_GET ||
+			        http_method == NATFLOW_HTTP_POST)
+				natflow_urllogger_tcp_reply_302_v6(reply_dev, skb, ct, bridge);
+			else
+				natflow_urllogger_tcp_reply_rstack6(reply_dev, skb, ct, bridge);
+			natflow_auth_convert_tcprst6(skb);
+		} else {
+			if (http_method == NATFLOW_HTTP_GET ||
+			        http_method == NATFLOW_HTTP_POST)
+				natflow_urllogger_tcp_reply_302(reply_dev, skb, ct, bridge);
+			else
+				natflow_urllogger_tcp_reply_rstack(reply_dev, skb, ct, bridge);
+			natflow_auth_convert_tcprst(skb);
+		}
+		return NF_ACCEPT;
+	}
+
+	return ret;
+}
+
+static unsigned int urllogger_consume_host(URLLOGGER_HOOK_CTX_ARGS,
+        const struct net_device *reply_dev, struct sk_buff *skb,
+        struct nf_conn *ct, natflow_t *nf, const unsigned char *host,
+        int host_len, unsigned int host_flags, const unsigned char *uri,
+        int uri_len, unsigned int url_flags, unsigned char http_method,
+        unsigned int dpi_source, int l3num, int bridge, int url_consumer,
+        int dpi_consumer, int reset_reply,
+        enum urllogger_redirect_reply redirect_reply)
+{
+	struct urlinfo *url;
+	unsigned int ret = NF_ACCEPT;
+
+	if (!url_consumer) {
+		if (dpi_consumer)
+			urllogger_dpi_classify_raw_host(ct, host, host_len,
+			                                dpi_source);
+		return ret;
+	}
+
+	url = urlinfo_alloc_record(host, host_len, host_flags, uri, uri_len);
+	if (!url) {
+		struct urllogger_acl_lookup acl;
+
+		if (urllogger_acl_lookup_init(&acl, host, host_len, host_flags) == 0) {
+			if (dpi_consumer)
+				urllogger_dpi_classify_lookup(ct, &acl,
+				                              dpi_source);
+			urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS,
+			                                skb, &acl, l3num);
+			if (acl.acl_action != URLINFO_ACL_ACTION_RECORD)
+				ret = urllogger_reply_acl_action(URLLOGGER_HOOK_CTX_PASS,
+				                                 reply_dev, skb, ct, nf,
+				                                 l3num, bridge, acl.acl_action,
+				                                 http_method, reset_reply,
+				                                 redirect_reply);
+		}
+		return ret;
+	}
+
+	urllogger_fill_url_tuple(url, ct, l3num);
+	url->timestamp = URLINFO_NOW;
+	url->flags = url_flags;
+	url->http_method = http_method;
+	url->hits = 1;
+	memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
+
+	url->acl_idx = 64; /* 64 = before acl matching */
+	url->acl_action = acl_action_default;
+	if (dpi_consumer)
+		urllogger_dpi_classify_url(ct, url, dpi_source);
+	urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, l3num);
+	if (url->acl_action != URLINFO_ACL_ACTION_RECORD)
+		ret = urllogger_reply_acl_action(URLLOGGER_HOOK_CTX_PASS,
+		                                 reply_dev, skb, ct, nf, l3num,
+		                                 bridge, url->acl_action,
+		                                 url->http_method, reset_reply,
+		                                 redirect_reply);
+
+	urllogger_store_record(url);
+	return ret;
+}
+
 
 struct urllogger_sni_cache_node {
 	unsigned long active_jiffies;
@@ -1814,71 +1988,15 @@ skip:
 	if (nf && (nf->status & NF_FF_L7_USE))
 		simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
 
-	if (host) {
-		struct urlinfo *url;
-
-		if (!url_consumer) {
-			if (dpi_consumer)
-				urllogger_dpi_classify_raw_host(ct, host, host_len,
-				                                NATFLOW_DPI_EVENT_SOURCE_QUIC);
-			goto done;
-		}
-
-		url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
-		if (!url) {
-			struct urllogger_acl_lookup acl;
-
-			if (urllogger_acl_lookup_init(&acl, host, host_len, 0) == 0) {
-				if (dpi_consumer)
-					urllogger_dpi_classify_lookup(ct, &acl,
-					                              NATFLOW_DPI_EVENT_SOURCE_QUIC);
-				urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET);
-				if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
-					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-					ret = NF_DROP;
-					if (nf && !(nf->status & NF_FF_USER_USE))
-						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-				}
-			}
-			goto done;
-		}
-
-		if (urllogger_store_tuple_type == 0) {
-			url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
-			url->dip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
-			url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-			url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
-		} else if (urllogger_store_tuple_type == 1) {
-			url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
-			url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
-			url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-			url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-		} else {
-			url->sip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip;
-			url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
-			url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
-			url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-		}
-		url->timestamp = URLINFO_NOW;
-		url->flags = URLINFO_QUIC;
-		url->http_method = 0;
-		url->hits = 1;
-		memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
-
-		url->acl_idx = 64;
-		url->acl_action = acl_action_default;
-		if (dpi_consumer)
-			urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_EVENT_SOURCE_QUIC);
-		urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET);
-		if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
-			set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-			ret = NF_DROP;
-			if (nf && !(nf->status & NF_FF_USER_USE))
-				simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-		}
-
-		urllogger_store_record(url);
-	}
+	if (host)
+		ret = urllogger_consume_host(URLLOGGER_HOOK_CTX_PASS,
+		                             NULL, skb, ct, nf, host, host_len,
+		                             0, NULL, 0, URLINFO_QUIC,
+		                             NATFLOW_HTTP_NONE,
+		                             NATFLOW_DPI_EVENT_SOURCE_QUIC,
+		                             AF_INET, 0, url_consumer,
+		                             dpi_consumer, 0,
+		                             URLLOGGER_REDIRECT_DROP);
 
 done:
 	kfree(crypto_data);
@@ -1954,72 +2072,16 @@ skip:
 	if (nf && (nf->status & NF_FF_L7_USE))
 		simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
 
-	if (host) {
-		struct urlinfo *url;
-
-		if (!url_consumer) {
-			if (dpi_consumer)
-				urllogger_dpi_classify_raw_host(ct, host, host_len,
-				                                NATFLOW_DPI_EVENT_SOURCE_QUIC);
-			goto done;
-		}
-
-		url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
-		if (!url) {
-			struct urllogger_acl_lookup acl;
-
-			if (urllogger_acl_lookup_init(&acl, host, host_len, 0) == 0) {
-				if (dpi_consumer)
-					urllogger_dpi_classify_lookup(ct, &acl,
-					                              NATFLOW_DPI_EVENT_SOURCE_QUIC);
-				urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET6);
-				if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
-					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-					ret = NF_DROP;
-					if (nf && !(nf->status & NF_FF_USER_USE))
-						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-				}
-			}
-			goto done;
-		}
-
-		if (urllogger_store_tuple_type == 0) {
-			url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
-			url->dipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3;
-			url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-			url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
-		} else if (urllogger_store_tuple_type == 1) {
-			url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
-			url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
-			url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-			url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-		} else {
-			url->sipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3;
-			url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
-			url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
-			url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-		}
-		url->timestamp = URLINFO_NOW;
-		url->flags = URLINFO_QUIC;
-		url->flags |= URLINFO_IPV6;
-		url->http_method = 0;
-		url->hits = 1;
-		memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
-
-		url->acl_idx = 64;
-		url->acl_action = acl_action_default;
-		if (dpi_consumer)
-			urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_EVENT_SOURCE_QUIC);
-		urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET6);
-		if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
-			set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-			ret = NF_DROP;
-			if (nf && !(nf->status & NF_FF_USER_USE))
-				simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-		}
-
-		urllogger_store_record(url);
-	}
+	if (host)
+		ret = urllogger_consume_host(URLLOGGER_HOOK_CTX_PASS,
+		                             NULL, skb, ct, nf, host, host_len,
+		                             0, NULL, 0,
+		                             URLINFO_QUIC | URLINFO_IPV6,
+		                             NATFLOW_HTTP_NONE,
+		                             NATFLOW_DPI_EVENT_SOURCE_QUIC,
+		                             AF_INET6, 0, url_consumer,
+		                             dpi_consumer, 0,
+		                             URLLOGGER_REDIRECT_DROP);
 
 done:
 	kfree(crypto_data);
@@ -2276,102 +2338,18 @@ __urllogger_ip_skip:
 		}
 
 		if (host) {
-			struct urlinfo *url;
-
-			if (!url_consumer) {
-				if (dpi_consumer)
-					urllogger_dpi_classify_raw_host(ct, host, host_len,
-					                                NATFLOW_DPI_EVENT_SOURCE_TLS);
-				if (prev_data) kfree(prev_data);
-				goto out;
-			}
-
-			url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
-			if (!url) {
-				struct urllogger_acl_lookup acl;
-
-				if (urllogger_acl_lookup_init(&acl, host, host_len, 0) == 0) {
-					if (dpi_consumer)
-						urllogger_dpi_classify_lookup(ct, &acl,
-						                              NATFLOW_DPI_EVENT_SOURCE_TLS);
-					urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET);
-					if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
-						set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-						ret = NF_DROP;
-						/* tell FF do not emit pkts */
-						if (nf && !(nf->status & NF_FF_USER_USE)) {
-							/* tell FF -user- need to use this conn */
-							simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-						}
-						if (acl.acl_action == URLINFO_ACL_ACTION_RESET) {
-							natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
-							natflow_auth_convert_tcprst(skb);
-							ret = NF_ACCEPT;
-						} else if (acl.acl_action == URLINFO_ACL_ACTION_REDIRECT) {
-							natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
-							natflow_auth_convert_tcprst(skb);
-							ret = NF_ACCEPT;
-						}
-					}
-				}
-				if (prev_data) kfree(prev_data);
-				goto out;
-			}
-			if (prev_data) kfree(prev_data);
-			if (urllogger_store_tuple_type == 0) {
-				/* 0: dir0-src dir0-dst */
-				url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
-				url->dip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
-				url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-				url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
-			} else if (urllogger_store_tuple_type == 1) {
-				/* 1: dir0-src dir1-src */
-				url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
-				url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
-				url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-				url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-			} else {
-				/* 2: dir1-dst dir1-src */
-				url->sip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip;
-				url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
-				url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
-				url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-			}
-			url->timestamp = URLINFO_NOW;
-			url->flags = URLINFO_HTTPS;
-			url->http_method = 0;
-			url->hits = 1;
-			memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
-
-			url->acl_idx = 64; /* 64 = before acl matching */
-			url->acl_action = acl_action_default;
-			if (dpi_consumer)
-				urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_EVENT_SOURCE_TLS);
-			urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET);
-			if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
-				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-				ret = NF_DROP;
-				/* tell FF do not emit pkts */
-				if (nf && !(nf->status & NF_FF_USER_USE)) {
-					/* tell FF -user- need to use this conn */
-					simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-				}
-				if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
-					natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
-					natflow_auth_convert_tcprst(skb);
-					ret = NF_ACCEPT;
-				} else if (url->acl_action == URLINFO_ACL_ACTION_REDIRECT) {
-					if (url->http_method == NATFLOW_HTTP_GET || url->http_method == NATFLOW_HTTP_POST) {
-						natflow_urllogger_tcp_reply_302(in, skb, ct, bridge);
-					} else {
-						natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
-					}
-					natflow_auth_convert_tcprst(skb);
-					ret = NF_ACCEPT;
-				}
-			}
-
-			urllogger_store_record(url);
+			ret = urllogger_consume_host(URLLOGGER_HOOK_CTX_PASS,
+			                             in, skb, ct, nf, host,
+			                             host_len, 0, NULL, 0,
+			                             URLINFO_HTTPS,
+			                             NATFLOW_HTTP_NONE,
+			                             NATFLOW_DPI_EVENT_SOURCE_TLS,
+			                             AF_INET, bridge,
+			                             url_consumer, dpi_consumer,
+			                             1, URLLOGGER_REDIRECT_RST);
+			if (prev_data)
+				kfree(prev_data);
+			goto out;
 		} else {
 			struct natflow_l7_feature feature;
 
@@ -2381,106 +2359,17 @@ __urllogger_ip_skip:
 			}
 			data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
 			if (natflow_l7_http_parse(data, data_len, &feature) > 0) {
-				struct urlinfo *url;
-
-				if (!url_consumer) {
-					if (dpi_consumer)
-						urllogger_dpi_classify_raw_host(ct, feature.host,
-						                                feature.host_len,
-						                                NATFLOW_DPI_EVENT_SOURCE_HTTP);
-					goto out;
-				}
-
-				url = urlinfo_alloc_record(feature.host, feature.host_len, 0,
-				                           feature.raw_uri.data, feature.raw_uri.len);
-				if (!url) {
-					struct urllogger_acl_lookup acl;
-
-					if (urllogger_acl_lookup_init(&acl, feature.host, feature.host_len, 0) == 0) {
-						if (dpi_consumer)
-							urllogger_dpi_classify_lookup(ct, &acl,
-							                              NATFLOW_DPI_EVENT_SOURCE_HTTP);
-						urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET);
-						if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
-							set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-							ret = NF_DROP;
-							/* tell FF do not emit pkts */
-							if (nf && !(nf->status & NF_FF_USER_USE)) {
-								/* tell FF -user- need to use this conn */
-								simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-							}
-							if (acl.acl_action == URLINFO_ACL_ACTION_RESET) {
-								natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
-								natflow_auth_convert_tcprst(skb);
-								ret = NF_ACCEPT;
-							} else if (acl.acl_action == URLINFO_ACL_ACTION_REDIRECT) {
-								if (feature.http_method == NATFLOW_L7_HTTP_GET ||
-								        feature.http_method == NATFLOW_L7_HTTP_POST) {
-									natflow_urllogger_tcp_reply_302(in, skb, ct, bridge);
-								} else {
-									natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
-								}
-								natflow_auth_convert_tcprst(skb);
-								ret = NF_ACCEPT;
-							}
-						}
-					}
-					goto out;
-				}
-				if (urllogger_store_tuple_type == 0) {
-					/* 0: dir0-src dir0-dst */
-					url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
-					url->dip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip;
-					url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-					url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
-				} else if (urllogger_store_tuple_type == 1) {
-					/* 1: dir0-src dir1-src */
-					url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
-					url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
-					url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-					url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-				} else {
-					/* 2: dir1-dst dir1-src */
-					url->sip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip;
-					url->dip = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip;
-					url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
-					url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-				}
-				url->timestamp = URLINFO_NOW;
-				url->flags = 0;
-				url->http_method = feature.http_method;
-				url->hits = 1;
-				memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
-
-				url->acl_idx = 64; /* 64 = before acl matching */
-				url->acl_action = acl_action_default;
-				if (dpi_consumer)
-					urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_EVENT_SOURCE_HTTP);
-				urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET);
-				if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
-					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-					ret = NF_DROP;
-					/* tell FF do not emit pkts */
-					if (nf && !(nf->status & NF_FF_USER_USE)) {
-						/* tell FF -user- need to use this conn */
-						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-					}
-					if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
-						natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
-						natflow_auth_convert_tcprst(skb);
-						ret = NF_ACCEPT;
-					} else if (url->acl_action == URLINFO_ACL_ACTION_REDIRECT) {
-						if (url->http_method == NATFLOW_HTTP_GET || url->http_method == NATFLOW_HTTP_POST) {
-							natflow_urllogger_tcp_reply_302(in, skb, ct, bridge);
-						} else {
-							natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
-						}
-						natflow_auth_convert_tcprst(skb);
-						ret = NF_ACCEPT;
-					}
-				}
-
-				urllogger_store_record(url);
+				ret = urllogger_consume_host(URLLOGGER_HOOK_CTX_PASS,
+				                             in, skb, ct, nf,
+				                             feature.host,
+				                             feature.host_len, 0,
+				                             feature.raw_uri.data,
+				                             feature.raw_uri.len, 0,
+				                             feature.http_method,
+				                             NATFLOW_DPI_EVENT_SOURCE_HTTP,
+				                             AF_INET, bridge,
+				                             url_consumer, dpi_consumer,
+				                             1, URLLOGGER_REDIRECT_HTTP);
 			}
 		}
 	}
@@ -2607,91 +2496,18 @@ __urllogger_ipv6_skip:
 		}
 
 		if (host) {
-			struct urlinfo *url;
-
-			if (!url_consumer) {
-				if (dpi_consumer)
-					urllogger_dpi_classify_raw_host(ct, host, host_len,
-					                                NATFLOW_DPI_EVENT_SOURCE_TLS);
-				if (prev_data) kfree(prev_data);
-				goto out;
-			}
-
-			url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
-			if (!url) {
-				struct urllogger_acl_lookup acl;
-
-				if (urllogger_acl_lookup_init(&acl, host, host_len, 0) == 0) {
-					if (dpi_consumer)
-						urllogger_dpi_classify_lookup(ct, &acl,
-						                              NATFLOW_DPI_EVENT_SOURCE_TLS);
-					urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET6);
-					if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
-						set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-						ret = NF_DROP;
-						/* tell FF do not emit pkts */
-						if (nf && !(nf->status & NF_FF_USER_USE)) {
-							/* tell FF -user- need to use this conn */
-							simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-						}
-						if (acl.acl_action == URLINFO_ACL_ACTION_RESET) {
-							natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
-							natflow_auth_convert_tcprst6(skb);
-							ret = NF_ACCEPT;
-						}
-					}
-				}
-				if (prev_data) kfree(prev_data);
-				goto out;
-			}
-			if (prev_data) kfree(prev_data);
-			if (urllogger_store_tuple_type == 0) {
-				/* 0: dir0-src dir0-dst */
-				url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
-				url->dipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3;
-				url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-				url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
-			} else if (urllogger_store_tuple_type == 1) {
-				/* 1: dir0-src dir1-src */
-				url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
-				url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
-				url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-				url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-			} else {
-				/* 2: dir1-dst dir1-src */
-				url->sipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3;
-				url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
-				url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
-				url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-			}
-			url->timestamp = URLINFO_NOW;
-			url->flags = URLINFO_HTTPS;
-			url->flags |= URLINFO_IPV6;
-			url->http_method = 0;
-			url->hits = 1;
-			memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
-
-			url->acl_idx = 64; /* 64 = before acl matching */
-			url->acl_action = acl_action_default;
-			if (dpi_consumer)
-				urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_EVENT_SOURCE_TLS);
-			urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET6);
-			if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
-				set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-				ret = NF_DROP;
-				/* tell FF do not emit pkts */
-				if (nf && !(nf->status & NF_FF_USER_USE)) {
-					/* tell FF -user- need to use this conn */
-					simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-				}
-				if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
-					natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
-					natflow_auth_convert_tcprst6(skb);
-					ret = NF_ACCEPT;
-				}
-			}
-
-			urllogger_store_record(url);
+			ret = urllogger_consume_host(URLLOGGER_HOOK_CTX_PASS,
+			                             in, skb, ct, nf, host,
+			                             host_len, 0, NULL, 0,
+			                             URLINFO_HTTPS | URLINFO_IPV6,
+			                             NATFLOW_HTTP_NONE,
+			                             NATFLOW_DPI_EVENT_SOURCE_TLS,
+			                             AF_INET6, bridge,
+			                             url_consumer, dpi_consumer,
+			                             1, URLLOGGER_REDIRECT_DROP);
+			if (prev_data)
+				kfree(prev_data);
+			goto out;
 		} else {
 			struct natflow_l7_feature feature;
 
@@ -2701,107 +2517,18 @@ __urllogger_ipv6_skip:
 			}
 			data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
 			if (natflow_l7_http_parse(data, data_len, &feature) > 0) {
-				struct urlinfo *url;
-
-				if (!url_consumer) {
-					if (dpi_consumer)
-						urllogger_dpi_classify_raw_host(ct, feature.host,
-						                                feature.host_len,
-						                                NATFLOW_DPI_EVENT_SOURCE_HTTP);
-					goto out;
-				}
-
-				url = urlinfo_alloc_record(feature.host, feature.host_len, 0,
-				                           feature.raw_uri.data, feature.raw_uri.len);
-				if (!url) {
-					struct urllogger_acl_lookup acl;
-
-					if (urllogger_acl_lookup_init(&acl, feature.host, feature.host_len, 0) == 0) {
-						if (dpi_consumer)
-							urllogger_dpi_classify_lookup(ct, &acl,
-							                              NATFLOW_DPI_EVENT_SOURCE_HTTP);
-						urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET6);
-						if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
-							set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-							ret = NF_DROP;
-							/* tell FF do not emit pkts */
-							if (nf && !(nf->status & NF_FF_USER_USE)) {
-								/* tell FF -user- need to use this conn */
-								simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-							}
-							if (acl.acl_action == URLINFO_ACL_ACTION_RESET) {
-								natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
-								natflow_auth_convert_tcprst6(skb);
-								ret = NF_ACCEPT;
-							} else if (acl.acl_action == URLINFO_ACL_ACTION_REDIRECT) {
-								if (feature.http_method == NATFLOW_L7_HTTP_GET ||
-								        feature.http_method == NATFLOW_L7_HTTP_POST) {
-									natflow_urllogger_tcp_reply_302_v6(in, skb, ct, bridge);
-								} else {
-									natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
-								}
-								natflow_auth_convert_tcprst6(skb);
-								ret = NF_ACCEPT;
-							}
-						}
-					}
-					goto out;
-				}
-				if (urllogger_store_tuple_type == 0) {
-					/* 0: dir0-src dir0-dst */
-					url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
-					url->dipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3;
-					url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-					url->dport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
-				} else if (urllogger_store_tuple_type == 1) {
-					/* 1: dir0-src dir1-src */
-					url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
-					url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
-					url->sport = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.all;
-					url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-				} else {
-					/* 2: dir1-dst dir1-src */
-					url->sipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3;
-					url->dipv6 = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3;
-					url->sport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all;
-					url->dport = ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all;
-				}
-				url->timestamp = URLINFO_NOW;
-				url->flags = 0;
-				url->flags |= URLINFO_IPV6;
-				url->http_method = feature.http_method;
-				url->hits = 1;
-				memcpy(url->mac, eth_hdr(skb)->h_source, ETH_ALEN);
-
-				url->acl_idx = 64; /* 64 = before acl matching */
-				url->acl_action = acl_action_default;
-				if (dpi_consumer)
-					urllogger_dpi_classify_url(ct, url, NATFLOW_DPI_EVENT_SOURCE_HTTP);
-				urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_PASS, skb, url, AF_INET6);
-				if (url->acl_action != URLINFO_ACL_ACTION_RECORD) {
-					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
-					ret = NF_DROP;
-					/* tell FF do not emit pkts */
-					if (nf && !(nf->status & NF_FF_USER_USE)) {
-						/* tell FF -user- need to use this conn */
-						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
-					}
-					if (url->acl_action == URLINFO_ACL_ACTION_RESET) {
-						natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
-						natflow_auth_convert_tcprst6(skb);
-						ret = NF_ACCEPT;
-					} else if (url->acl_action == URLINFO_ACL_ACTION_REDIRECT) {
-						if (url->http_method == NATFLOW_HTTP_GET || url->http_method == NATFLOW_HTTP_POST) {
-							natflow_urllogger_tcp_reply_302_v6(in, skb, ct, bridge);
-						} else {
-							natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
-						}
-						natflow_auth_convert_tcprst6(skb);
-						ret = NF_ACCEPT;
-					}
-				}
-
-				urllogger_store_record(url);
+				ret = urllogger_consume_host(URLLOGGER_HOOK_CTX_PASS,
+				                             in, skb, ct, nf,
+				                             feature.host,
+				                             feature.host_len, 0,
+				                             feature.raw_uri.data,
+				                             feature.raw_uri.len,
+				                             URLINFO_IPV6,
+				                             feature.http_method,
+				                             NATFLOW_DPI_EVENT_SOURCE_HTTP,
+				                             AF_INET6, bridge,
+				                             url_consumer, dpi_consumer,
+				                             1, URLLOGGER_REDIRECT_HTTP);
 			}
 		}
 	}

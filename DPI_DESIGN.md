@@ -512,7 +512,7 @@ legacy consumer 的目标是行为兼容，不是顺手修语义：
 - `/proc/sys/urllogger_store/enable=0` 时 URL CSV 和 Host ACL 都不执行，即使 DPI 已启用。
 - `/proc/sys/urllogger_store/enable=1` 时 URL/HostACL consumer 加入 L7 active consumer mask。
 - DPI `enable=1` 且存在 domain rule 时，DPI host consumer 加入 L7 active consumer mask，不要求 `urllogger_store/enable=1`。
-- 已完成：Host ACL 决策不再依赖 URL record 分配成功；当前使用 `urllogger_acl_lookup` 最小 host 视图，后续迁移到 parser feature。
+- 已完成：Host ACL 决策不再依赖 URL record 分配成功；当前使用 `urllogger_acl_lookup` 最小 host 视图，HTTP/TLS/QUIC host fan-out 已通过 legacy URL consumer 公共 helper 统一处理 URL record、Host ACL、DPI classify 和现有 ACL 回复策略。
 - reset/redirect/drop 动作仍由 legacy URL consumer 执行。DPI MVP 不提供 redirect。
 - PPPoE/bridge 场景下必须保留 skb 状态恢复；目标 read-only packet view 应减少临时 pull/restore。
 
