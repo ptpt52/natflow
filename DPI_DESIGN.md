@@ -531,7 +531,7 @@ M0 若改变 HTTP 跨包识别、TLS cache 跨 CPU 行为或 enable 只影响新
 
 | 等级 | 协议示例 | 进入条件 | 默认动作 |
 | --- | --- | --- | --- |
-| A | DNS、SSH、WireGuard、STUN/TURN、BitTorrent TCP handshake 与 UDP uTP/DHT | 有固定 magic、版本/长度字段或稳定握手，少量包内可高置信确认。 | audit-only，可产生 `DIRECT_PROTOCOL`。 |
+| A | DNS、SSH port/banner、WireGuard、STUN/TURN、BitTorrent TCP handshake 与 UDP uTP/DHT | 有固定 magic、版本/长度字段或稳定握手，少量包内可高置信确认。 | audit-only，可产生 `DIRECT_PROTOCOL`。 |
 | B | FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB | 明文命令或二进制握手明确，但可能依赖 server-first 或升级路径。 | shadow 后再考虑 policy。 |
 | C | OpenVPN、SoftEther、Kerberos、RTP/RTCP、游戏/私有 TCP/UDP、代理/VPN 变体 | 需要多包方向模式、弱 magic、端口上下文或复杂状态。 | 默认 protocol-only 或 hint。 |
 | D | 仅端口/IP、DNS 关联、统计特征、加密不可见流量 | 证据弱或容易受共享基础设施污染。 | 不单独产生可阻断 app。 |
@@ -636,7 +636,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 ### M1c：首批 protocol-only detector
 
 - 已完成 MVP：增加 DNS、SSH、WireGuard protocol-only 规则和独立 DPI FORWARD/bridge hook。
-- 已完成 MVP：DNS 按 TCP/UDP 53、SSH 按 TCP 22、WireGuard 按 UDP 51820 识别，命中 proto rule 后写 `app_id` 并输出 match event。
+- 已完成 MVP：DNS 按 TCP/UDP 53、SSH 按 TCP 22 或 TCP original-direction payload `SSH-<version>-` banner、WireGuard 按 UDP 51820 识别，命中 proto rule 后写 `app_id` 并输出 match event。
 - 当前仍未完成：DNS QNAME feature 不进入 domain rules；后续需要共享 parser 或 DNS-specific parser 后再接入。
 - 全部 audit-only，不执行 app ACL/QoS。
 

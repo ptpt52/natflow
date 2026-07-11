@@ -1010,6 +1010,33 @@ static unsigned int natflow_dpi_detect_bittorrent_tcp(const unsigned char *data,
 	return 0;
 }
 
+static unsigned int natflow_dpi_detect_ssh_tcp(const unsigned char *data,
+        unsigned int inspect_len)
+{
+	unsigned int i;
+	unsigned int limit;
+
+	if (inspect_len < 8)
+		return 0;
+	if (memcmp(data, "SSH-", 4) != 0)
+		return 0;
+	if (data[4] != '1' && data[4] != '2')
+		return 0;
+	if (data[5] != '.')
+		return 0;
+	if (data[6] < '0' || data[6] > '9')
+		return 0;
+
+	limit = inspect_len < 16 ? inspect_len : 16;
+	for (i = 7; i < limit; i++) {
+		if (data[i] == '-')
+			return NATFLOW_DPI_PROTO_SSH;
+		if ((data[i] < '0' || data[i] > '9') && data[i] != '.')
+			return 0;
+	}
+	return 0;
+}
+
 static bool natflow_dpi_payload_is_utp(const unsigned char *data,
         unsigned int inspect_len)
 {
@@ -1059,8 +1086,12 @@ static unsigned int natflow_dpi_detect_payload(const unsigned char *data,
 	if (proto)
 		return proto;
 
-	if (l4proto == IPPROTO_TCP)
+	if (l4proto == IPPROTO_TCP) {
+		proto = natflow_dpi_detect_ssh_tcp(data, inspect_len);
+		if (proto)
+			return proto;
 		return natflow_dpi_detect_bittorrent_tcp(data, inspect_len);
+	}
 	if (l4proto == IPPROTO_UDP)
 		return natflow_dpi_detect_bittorrent_udp(data, inspect_len);
 
