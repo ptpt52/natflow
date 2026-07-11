@@ -27,6 +27,14 @@ enum natflow_l7_http_method {
 	NATFLOW_L7_HTTP_HEAD = 3,
 };
 
+enum natflow_l7_tls_search_result {
+	NATFLOW_L7_TLS_SEARCH_FOUND,
+	NATFLOW_L7_TLS_SEARCH_NEED_MORE,
+	NATFLOW_L7_TLS_SEARCH_NOT_CLIENT_HELLO,
+	NATFLOW_L7_TLS_SEARCH_NO_SNI,
+	NATFLOW_L7_TLS_SEARCH_MALFORMED,
+};
+
 struct natflow_l7_data_view {
 	const unsigned char *data;
 	int len;
@@ -73,6 +81,10 @@ extern int natflow_l7_feature_set_uri(struct natflow_l7_feature *feature,
                                       int uri_len);
 extern int natflow_l7_http_parse(unsigned char *data, int data_len,
                                  struct natflow_l7_feature *feature);
+extern enum natflow_l7_tls_search_result natflow_l7_tls_client_hello_search(unsigned char *data,
+        int *data_len, unsigned char **host);
+extern enum natflow_l7_tls_search_result natflow_l7_tls_sni_search(unsigned char *data,
+        int *data_len, unsigned char **host);
 extern int natflow_l7_init(void);
 extern void natflow_l7_exit(void);
 

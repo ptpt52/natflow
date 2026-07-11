@@ -635,249 +635,6 @@ static noinline void urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_ARGS,
 	} while (1);
 }
 
-static inline int tls_sni_has_bytes(unsigned int offset, unsigned int bytes, unsigned int len)
-{
-	return offset <= len && bytes <= len - offset;
-}
-
-enum tls_sni_search_result {
-	TLS_SNI_SEARCH_FOUND,
-	TLS_SNI_SEARCH_NEED_MORE,
-	TLS_SNI_SEARCH_NOT_CLIENT_HELLO,
-	TLS_SNI_SEARCH_NO_SNI,
-	TLS_SNI_SEARCH_MALFORMED,
-};
-
-static enum tls_sni_search_result tls_client_hello_search(unsigned char *data, int *data_len, unsigned char **host)
-{
-	unsigned char *p = data;
-	unsigned int p_len;
-	unsigned int i_data_len;
-	unsigned int i = 0;
-	unsigned int len;
-
-	*host = NULL;
-
-	if (*data_len <= 0)
-		return TLS_SNI_SEARCH_NEED_MORE;
-
-	p_len = *data_len;
-	i_data_len = p_len;
-
-	if (!tls_sni_has_bytes(i, 1, i_data_len))
-		return TLS_SNI_SEARCH_NEED_MORE;
-	if (p[i + 0] != 0x01) { /* Handshake type is not ClientHello. */
-		return TLS_SNI_SEARCH_NOT_CLIENT_HELLO;
-	}
-	i += 1;
-	if (!tls_sni_has_bytes(i, 3, i_data_len))
-		goto need_more;
-	len = ((unsigned int)p[i + 0] << 16) |
-	      ((unsigned int)p[i + 1] << 8) |
-	      ((unsigned int)p[i + 2]); /* handshake_len */
-	i += 1 + 2;
-
-	p = p + i;
-	p_len = len;
-	i_data_len -= i;
-	i = 0;
-
-	/* client_version + random */
-	if (!tls_sni_has_bytes(i, 2 + 32, p_len))
-		return TLS_SNI_SEARCH_MALFORMED;
-	if (!tls_sni_has_bytes(i, 2 + 32, i_data_len))
-		goto need_more;
-	i += 2 + 32;
-
-	if (!tls_sni_has_bytes(i, 1, p_len))
-		return TLS_SNI_SEARCH_MALFORMED;
-	if (!tls_sni_has_bytes(i, 1, i_data_len))
-		goto need_more;
-	len = p[i + 0]; /* session_id_len */
-	i += 1;
-	if (!tls_sni_has_bytes(i, len, p_len))
-		return TLS_SNI_SEARCH_MALFORMED;
-	if (!tls_sni_has_bytes(i, len, i_data_len))
-		goto need_more;
-	i += len;
-
-	if (!tls_sni_has_bytes(i, 2, p_len))
-		return TLS_SNI_SEARCH_MALFORMED;
-	if (!tls_sni_has_bytes(i, 2, i_data_len))
-		goto need_more;
-	len = ntohs(get_byte2(p + i + 0)); /* cipher_suites_len */
-	i += 2;
-	if (!tls_sni_has_bytes(i, len, p_len))
-		return TLS_SNI_SEARCH_MALFORMED;
-	if (!tls_sni_has_bytes(i, len, i_data_len))
-		goto need_more;
-	i += len;
-
-	if (!tls_sni_has_bytes(i, 1, p_len))
-		return TLS_SNI_SEARCH_MALFORMED;
-	if (!tls_sni_has_bytes(i, 1, i_data_len))
-		goto need_more;
-	len = p[i + 0]; /* compression_methods_len */
-	i += 1;
-	if (!tls_sni_has_bytes(i, len, p_len))
-		return TLS_SNI_SEARCH_MALFORMED;
-	if (!tls_sni_has_bytes(i, len, i_data_len))
-		goto need_more;
-	i += len;
-
-	if (!tls_sni_has_bytes(i, 2, p_len))
-		return TLS_SNI_SEARCH_NO_SNI;
-	if (!tls_sni_has_bytes(i, 2, i_data_len))
-		goto need_more;
-	len = ntohs(get_byte2(p + i + 0)); /* ext_len */
-	i += 2;
-	if (!tls_sni_has_bytes(i, len, p_len))
-		return TLS_SNI_SEARCH_MALFORMED;
-
-	p = p + i;
-	p_len = len;
-	i_data_len -= i;
-	i = 0;
-
-	while (i < p_len && i < i_data_len) {
-		if (!tls_sni_has_bytes(i, 4, p_len))
-			return TLS_SNI_SEARCH_MALFORMED;
-		if (!tls_sni_has_bytes(i, 4, i_data_len))
-			goto need_more;
-		len = ntohs(get_byte2(p + i + 0 + 2)); /* extension_data_len */
-		if (ntohs(get_byte2(p + i + 0)) != 0) {
-			if (!tls_sni_has_bytes(i + 4, len, p_len))
-				return TLS_SNI_SEARCH_MALFORMED;
-			if (!tls_sni_has_bytes(i + 4, len, i_data_len))
-				goto need_more;
-			i += 4 + len;
-			continue;
-		}
-		i += 4;
-		if (!tls_sni_has_bytes(i, len, p_len))
-			return TLS_SNI_SEARCH_MALFORMED;
-
-		p = p + i;
-		p_len = len;
-		i_data_len -= i;
-		i = 0;
-		break;
-	}
-	if (i >= i_data_len && i < p_len)
-		goto need_more;
-	if (i >= p_len)
-		return TLS_SNI_SEARCH_NO_SNI;
-
-	if (!tls_sni_has_bytes(i, 2, p_len))
-		return TLS_SNI_SEARCH_MALFORMED;
-	if (!tls_sni_has_bytes(i, 2, i_data_len))
-		goto need_more;
-	len = ntohs(get_byte2(p + i + 0)); /* snl_len */
-	i += 2;
-	if (!tls_sni_has_bytes(i, len, p_len))
-		return TLS_SNI_SEARCH_MALFORMED;
-
-	p = p + i;
-	p_len = len;
-	i_data_len -= i;
-	i = 0;
-
-	while (i < p_len && i < i_data_len) {
-		if (!tls_sni_has_bytes(i, 1, p_len))
-			return TLS_SNI_SEARCH_MALFORMED;
-		if (!tls_sni_has_bytes(i, 1, i_data_len))
-			goto need_more;
-		if (p[i + 0] != 0) {
-			if (!tls_sni_has_bytes(i, 3, p_len))
-				return TLS_SNI_SEARCH_MALFORMED;
-			if (!tls_sni_has_bytes(i, 3, i_data_len))
-				goto need_more;
-			len = ntohs(get_byte2(p + i + 0 + 1));
-			if (!tls_sni_has_bytes(i + 3, len, p_len))
-				return TLS_SNI_SEARCH_MALFORMED;
-			if (!tls_sni_has_bytes(i + 3, len, i_data_len))
-				goto need_more;
-			i += 3 + len;
-			continue;
-		}
-		if (!tls_sni_has_bytes(i, 3, p_len))
-			return TLS_SNI_SEARCH_MALFORMED;
-		if (!tls_sni_has_bytes(i, 3, i_data_len))
-			goto need_more;
-		len = ntohs(get_byte2(p + i + 0 + 1));
-		i += 3;
-		if (!tls_sni_has_bytes(i, len, p_len))
-			return TLS_SNI_SEARCH_MALFORMED;
-		if (!tls_sni_has_bytes(i, len, i_data_len))
-			goto need_more;
-
-		*data_len = len;
-		*host = p + i;
-		return TLS_SNI_SEARCH_FOUND;
-	}
-	if (i >= i_data_len && i < p_len)
-		goto need_more;
-
-	return TLS_SNI_SEARCH_NO_SNI;
-
-need_more:
-	return TLS_SNI_SEARCH_NEED_MORE;
-}
-
-static enum tls_sni_search_result tls_sni_search(unsigned char *data, int *data_len, unsigned char **host)
-{
-	unsigned char *p = data;
-	unsigned int p_len;
-	unsigned int i_data_len;
-	unsigned int actual_len;
-	unsigned int i = 0;
-	unsigned int len;
-
-	*host = NULL;
-
-	if (*data_len <= 0)
-		return TLS_SNI_SEARCH_MALFORMED;
-
-	p_len = *data_len;
-	i_data_len = p_len;
-
-	if (!tls_sni_has_bytes(i, 1, i_data_len))
-		return TLS_SNI_SEARCH_NEED_MORE;
-	if (p[i + 0] != 0x16) { /* Content type is not handshake. */
-		return TLS_SNI_SEARCH_NOT_CLIENT_HELLO;
-	}
-	i += 1 + 2;
-	if (!tls_sni_has_bytes(i, 2, i_data_len))
-		goto need_more;
-	len = ntohs(get_byte2(p + i + 0)); /* content_len */
-	i += 2;
-	if (!tls_sni_has_bytes(i, len, i_data_len)) {
-		if (!tls_sni_has_bytes(i, 1, i_data_len))
-			goto need_more;
-		if (p[i] != 0x01) /* Handshake type is not ClientHello. */
-			return TLS_SNI_SEARCH_NOT_CLIENT_HELLO;
-		/* Keep probing; the complete SNI may already be available. */
-	}
-
-	actual_len = min_t(unsigned int, len, i_data_len - i);
-	if (actual_len == len && !tls_sni_has_bytes(0, 4, actual_len))
-		return TLS_SNI_SEARCH_MALFORMED;
-	if (tls_sni_has_bytes(0, 4, actual_len)) {
-		unsigned int handshake_len = ((unsigned int)p[i + 1] << 16) |
-		                             ((unsigned int)p[i + 2] << 8) |
-		                             ((unsigned int)p[i + 3]);
-
-		if (!tls_sni_has_bytes(4, handshake_len, len))
-			return TLS_SNI_SEARCH_MALFORMED;
-	}
-
-	*data_len = actual_len;
-	return tls_client_hello_search(p + i, data_len, host);
-
-need_more:
-	return TLS_SNI_SEARCH_NEED_MORE;
-}
-
 static inline void natflow_urllogger_tcp_reply_rstack(const struct net_device *dev, struct sk_buff *oskb, struct nf_conn *ct, int pppoe_hdr)
 {
 	struct sk_buff *nskb;
@@ -1865,14 +1622,14 @@ static int quic_skip_ack_frame(const unsigned char *data, unsigned int data_len,
 	return 0;
 }
 
-static enum tls_sni_search_result quic_crypto_frames_search(const unsigned char *data,
+static enum natflow_l7_tls_search_result quic_crypto_frames_search(const unsigned char *data,
         unsigned int data_len,
         unsigned char **crypto_data,
         unsigned int *crypto_len,
         unsigned char **host,
         int *host_len)
 {
-	enum tls_sni_search_result sni_result = TLS_SNI_SEARCH_NEED_MORE;
+	enum natflow_l7_tls_search_result sni_result = NATFLOW_L7_TLS_SEARCH_NEED_MORE;
 	unsigned int offset = 0;
 	int has_crypto = 0;
 
@@ -1886,7 +1643,7 @@ static enum tls_sni_search_result quic_crypto_frames_search(const unsigned char 
 		case 0x02: /* ACK */
 		case 0x03: /* ACK with ECN */
 			if (quic_skip_ack_frame(data, data_len, &offset, frame_type) != 0)
-				return TLS_SNI_SEARCH_MALFORMED;
+				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
 			break;
 		case 0x06: { /* CRYPTO */
 			u64 crypto_offset;
@@ -1895,10 +1652,10 @@ static enum tls_sni_search_result quic_crypto_frames_search(const unsigned char 
 
 			if (quic_read_varint(data, data_len, &offset, &crypto_offset) != 0 ||
 			        quic_read_varint(data, data_len, &offset, &crypto_frame_len) != 0) {
-				return TLS_SNI_SEARCH_MALFORMED;
+				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
 			}
 			if (crypto_frame_len > UINT_MAX || !quic_has_bytes(offset, (unsigned int)crypto_frame_len, data_len))
-				return TLS_SNI_SEARCH_MALFORMED;
+				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
 
 			merge_ret = quic_crypto_data_merge(crypto_data, crypto_len, crypto_offset,
 			                                   data + offset, (unsigned int)crypto_frame_len);
@@ -1908,29 +1665,29 @@ static enum tls_sni_search_result quic_crypto_frames_search(const unsigned char 
 				continue;
 			}
 			if (merge_ret != 0)
-				return TLS_SNI_SEARCH_MALFORMED;
+				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
 
 			has_crypto = 1;
 			*host_len = *crypto_len;
-			sni_result = tls_client_hello_search(*crypto_data, host_len, host);
-			if (sni_result != TLS_SNI_SEARCH_NEED_MORE)
+			sni_result = natflow_l7_tls_client_hello_search(*crypto_data, host_len, host);
+			if (sni_result != NATFLOW_L7_TLS_SEARCH_NEED_MORE)
 				return sni_result;
 			break;
 		}
 		default:
-			return has_crypto ? sni_result : TLS_SNI_SEARCH_NO_SNI;
+			return has_crypto ? sni_result : NATFLOW_L7_TLS_SEARCH_NO_SNI;
 		}
 	}
 
 	if (*crypto_data != NULL && *crypto_len > 0) {
 		*host_len = *crypto_len;
-		sni_result = tls_client_hello_search(*crypto_data, host_len, host);
+		sni_result = natflow_l7_tls_client_hello_search(*crypto_data, host_len, host);
 	}
 
-	return has_crypto ? sni_result : TLS_SNI_SEARCH_NO_SNI;
+	return has_crypto ? sni_result : NATFLOW_L7_TLS_SEARCH_NO_SNI;
 }
 
-static enum tls_sni_search_result quic_initial_sni_search(const unsigned char *data,
+static enum natflow_l7_tls_search_result quic_initial_sni_search(const unsigned char *data,
         const struct quic_initial_info *info,
         unsigned char **crypto_data,
         unsigned int *crypto_len,
@@ -1953,13 +1710,13 @@ static enum tls_sni_search_result quic_initial_sni_search(const unsigned char *d
 	if (!urllogger_quic_crypto_ready ||
 	        urllogger_quic_crypto_ctx == NULL ||
 	        cpu >= urllogger_quic_crypto_cpu_num)
-		return TLS_SNI_SEARCH_NOT_CLIENT_HELLO;
+		return NATFLOW_L7_TLS_SEARCH_NOT_CLIENT_HELLO;
 
 	ctx = &urllogger_quic_crypto_ctx[cpu];
 
 	/* Fits regular MTU-sized skb UDP payloads; larger Initial packets are not parsed. */
 	if (info->packet_len > sizeof(ctx->scratch_packet)) {
-		return TLS_SNI_SEARCH_MALFORMED;
+		return NATFLOW_L7_TLS_SEARCH_MALFORMED;
 	}
 
 	packet = ctx->scratch_packet;
@@ -2004,7 +1761,7 @@ malformed:
 	memzero_explicit(ctx->hp_key, sizeof(ctx->hp_key));
 	memzero_explicit(ctx->mask, sizeof(ctx->mask));
 	memzero_explicit(ctx->nonce, sizeof(ctx->nonce));
-	return TLS_SNI_SEARCH_MALFORMED;
+	return NATFLOW_L7_TLS_SEARCH_MALFORMED;
 }
 
 static inline int urllogger_quic_cache_init(void)
@@ -2210,7 +1967,7 @@ static noinline unsigned int urllogger_quic4(URLLOGGER_HOOK_CTX_ARGS,
         struct sk_buff *skb, struct nf_conn *ct)
 {
 	struct quic_initial_info quic_info;
-	enum tls_sni_search_result sni_result;
+	enum natflow_l7_tls_search_result sni_result;
 	unsigned char *host = NULL;
 	unsigned char *crypto_data = NULL;
 	natflow_t *nf = NULL;
@@ -2256,7 +2013,7 @@ static noinline unsigned int urllogger_quic4(URLLOGGER_HOOK_CTX_ARGS,
 	sni_result = quic_initial_sni_search(data, &quic_info,
 	                                     &crypto_data, &crypto_len,
 	                                     &host, &host_len);
-	if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
+	if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
 		if (crypto_data != NULL && crypto_len > 0 &&
 		        urllogger_quic_cache_attach(iph->saddr, UDPH(l4)->source,
 		                                    iph->daddr, UDPH(l4)->dest,
@@ -2336,7 +2093,7 @@ static noinline unsigned int urllogger_quic6(URLLOGGER_HOOK_CTX_ARGS,
         struct sk_buff *skb, struct nf_conn *ct)
 {
 	struct quic_initial_info quic_info;
-	enum tls_sni_search_result sni_result;
+	enum natflow_l7_tls_search_result sni_result;
 	unsigned char *host = NULL;
 	unsigned char *crypto_data = NULL;
 	natflow_t *nf = NULL;
@@ -2382,7 +2139,7 @@ static noinline unsigned int urllogger_quic6(URLLOGGER_HOOK_CTX_ARGS,
 	sni_result = quic_initial_sni_search(data, &quic_info,
 	                                     &crypto_data, &crypto_len,
 	                                     &host, &host_len);
-	if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
+	if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
 		if (crypto_data != NULL && crypto_len > 0 &&
 		        urllogger_quic_cache_attach6(&ip6h->saddr, UDPH(l4)->source,
 		                                     &ip6h->daddr, UDPH(l4)->dest,
@@ -2671,7 +2428,7 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 		unsigned int prev_data_len = 0;
 		unsigned char *host = NULL;
 		int host_len;
-		enum tls_sni_search_result sni_result;
+		enum natflow_l7_tls_search_result sni_result;
 
 		if (skb_try_make_writable(skb, skb->len)) {
 			goto out;
@@ -2708,8 +2465,8 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 				prev_data_len = next_data_len;
 
 				host_len = prev_data_len;
-				sni_result = tls_sni_search(prev_data, &host_len, &host);
-				if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
+				sni_result = natflow_l7_tls_sni_search(prev_data, &host_len, &host);
+				if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
 					if (prev_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
 					        urllogger_sni_cache_attach(iph->saddr, TCPH(l4)->source,
 					                                   iph->daddr, TCPH(l4)->dest, prev_seq, prev_data, prev_data_len) != 0) {
@@ -2732,8 +2489,8 @@ static unsigned int natflow_urllogger_hook_v1(void *priv,
 			}
 		} else {
 			host_len = data_len;
-			sni_result = tls_sni_search(data, &host_len, &host);
-			if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
+			sni_result = natflow_l7_tls_sni_search(data, &host_len, &host);
+			if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
 				prev_data = kmemdup(data, data_len, GFP_ATOMIC);
 				if (prev_data) {
 					if (urllogger_sni_cache_attach(iph->saddr, TCPH(l4)->source, iph->daddr, TCPH(l4)->dest, TCPH(l4)->seq, prev_data, data_len) != 0) {
@@ -2975,7 +2732,7 @@ urllogger_hook_ipv6_main:
 		unsigned int prev_data_len = 0;
 		unsigned char *host = NULL;
 		int host_len;
-		enum tls_sni_search_result sni_result;
+		enum natflow_l7_tls_search_result sni_result;
 
 		if (skb_try_make_writable(skb, skb->len)) {
 			goto out;
@@ -3012,8 +2769,8 @@ urllogger_hook_ipv6_main:
 				prev_data_len = next_data_len;
 
 				host_len = prev_data_len;
-				sni_result = tls_sni_search(prev_data, &host_len, &host);
-				if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
+				sni_result = natflow_l7_tls_sni_search(prev_data, &host_len, &host);
+				if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
 					if (prev_data_len >= URLLOGGER_SNI_CACHE_DATA_LIMIT ||
 					        urllogger_sni_cache_attach6(&IPV6H->saddr, TCPH(l4)->source,
 					                                    &IPV6H->daddr, TCPH(l4)->dest, prev_seq, prev_data, prev_data_len) != 0) {
@@ -3036,8 +2793,8 @@ urllogger_hook_ipv6_main:
 			}
 		} else {
 			host_len = data_len;
-			sni_result = tls_sni_search(data, &host_len, &host);
-			if (sni_result == TLS_SNI_SEARCH_NEED_MORE) {
+			sni_result = natflow_l7_tls_sni_search(data, &host_len, &host);
+			if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
 				prev_data = kmemdup(data, data_len, GFP_ATOMIC);
 				if (prev_data) {
 					if (urllogger_sni_cache_attach6(&IPV6H->saddr, TCPH(l4)->source, &IPV6H->daddr, TCPH(l4)->dest, TCPH(l4)->seq, prev_data, data_len) != 0) {

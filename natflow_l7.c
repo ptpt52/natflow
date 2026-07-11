@@ -5,6 +5,7 @@
  * parsing and Host ACL handling still live in natflow_urllogger.c.
  */
 #include <linux/errno.h>
+#include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/string.h>
 #include "natflow_common.h"
@@ -279,6 +280,242 @@ int natflow_l7_http_parse(unsigned char *data, int data_len,
 	} while (1);
 
 	return 0;
+}
+
+static inline int natflow_l7_tls_has_bytes(unsigned int offset,
+        unsigned int bytes, unsigned int len)
+{
+	return offset <= len && bytes <= len - offset;
+}
+
+enum natflow_l7_tls_search_result natflow_l7_tls_client_hello_search(unsigned char *data,
+        int *data_len, unsigned char **host)
+{
+	unsigned char *p = data;
+	unsigned int p_len;
+	unsigned int i_data_len;
+	unsigned int i = 0;
+	unsigned int len;
+
+	*host = NULL;
+
+	if (*data_len <= 0)
+		return NATFLOW_L7_TLS_SEARCH_NEED_MORE;
+
+	p_len = *data_len;
+	i_data_len = p_len;
+
+	if (!natflow_l7_tls_has_bytes(i, 1, i_data_len))
+		return NATFLOW_L7_TLS_SEARCH_NEED_MORE;
+	if (p[i + 0] != 0x01) {
+		return NATFLOW_L7_TLS_SEARCH_NOT_CLIENT_HELLO;
+	}
+	i += 1;
+	if (!natflow_l7_tls_has_bytes(i, 3, i_data_len))
+		goto need_more;
+	len = ((unsigned int)p[i + 0] << 16) |
+	      ((unsigned int)p[i + 1] << 8) |
+	      ((unsigned int)p[i + 2]);
+	i += 1 + 2;
+
+	p = p + i;
+	p_len = len;
+	i_data_len -= i;
+	i = 0;
+
+	if (!natflow_l7_tls_has_bytes(i, 2 + 32, p_len))
+		return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+	if (!natflow_l7_tls_has_bytes(i, 2 + 32, i_data_len))
+		goto need_more;
+	i += 2 + 32;
+
+	if (!natflow_l7_tls_has_bytes(i, 1, p_len))
+		return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+	if (!natflow_l7_tls_has_bytes(i, 1, i_data_len))
+		goto need_more;
+	len = p[i + 0];
+	i += 1;
+	if (!natflow_l7_tls_has_bytes(i, len, p_len))
+		return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+	if (!natflow_l7_tls_has_bytes(i, len, i_data_len))
+		goto need_more;
+	i += len;
+
+	if (!natflow_l7_tls_has_bytes(i, 2, p_len))
+		return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+	if (!natflow_l7_tls_has_bytes(i, 2, i_data_len))
+		goto need_more;
+	len = ntohs(get_byte2(p + i + 0));
+	i += 2;
+	if (!natflow_l7_tls_has_bytes(i, len, p_len))
+		return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+	if (!natflow_l7_tls_has_bytes(i, len, i_data_len))
+		goto need_more;
+	i += len;
+
+	if (!natflow_l7_tls_has_bytes(i, 1, p_len))
+		return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+	if (!natflow_l7_tls_has_bytes(i, 1, i_data_len))
+		goto need_more;
+	len = p[i + 0];
+	i += 1;
+	if (!natflow_l7_tls_has_bytes(i, len, p_len))
+		return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+	if (!natflow_l7_tls_has_bytes(i, len, i_data_len))
+		goto need_more;
+	i += len;
+
+	if (!natflow_l7_tls_has_bytes(i, 2, p_len))
+		return NATFLOW_L7_TLS_SEARCH_NO_SNI;
+	if (!natflow_l7_tls_has_bytes(i, 2, i_data_len))
+		goto need_more;
+	len = ntohs(get_byte2(p + i + 0));
+	i += 2;
+	if (!natflow_l7_tls_has_bytes(i, len, p_len))
+		return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+
+	p = p + i;
+	p_len = len;
+	i_data_len -= i;
+	i = 0;
+
+	while (i < p_len && i < i_data_len) {
+		if (!natflow_l7_tls_has_bytes(i, 4, p_len))
+			return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+		if (!natflow_l7_tls_has_bytes(i, 4, i_data_len))
+			goto need_more;
+		len = ntohs(get_byte2(p + i + 0 + 2));
+		if (ntohs(get_byte2(p + i + 0)) != 0) {
+			if (!natflow_l7_tls_has_bytes(i + 4, len, p_len))
+				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+			if (!natflow_l7_tls_has_bytes(i + 4, len, i_data_len))
+				goto need_more;
+			i += 4 + len;
+			continue;
+		}
+		i += 4;
+		if (!natflow_l7_tls_has_bytes(i, len, p_len))
+			return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+
+		p = p + i;
+		p_len = len;
+		i_data_len -= i;
+		i = 0;
+		break;
+	}
+	if (i >= i_data_len && i < p_len)
+		goto need_more;
+	if (i >= p_len)
+		return NATFLOW_L7_TLS_SEARCH_NO_SNI;
+
+	if (!natflow_l7_tls_has_bytes(i, 2, p_len))
+		return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+	if (!natflow_l7_tls_has_bytes(i, 2, i_data_len))
+		goto need_more;
+	len = ntohs(get_byte2(p + i + 0));
+	i += 2;
+	if (!natflow_l7_tls_has_bytes(i, len, p_len))
+		return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+
+	p = p + i;
+	p_len = len;
+	i_data_len -= i;
+	i = 0;
+
+	while (i < p_len && i < i_data_len) {
+		if (!natflow_l7_tls_has_bytes(i, 1, p_len))
+			return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+		if (!natflow_l7_tls_has_bytes(i, 1, i_data_len))
+			goto need_more;
+		if (p[i + 0] != 0) {
+			if (!natflow_l7_tls_has_bytes(i, 3, p_len))
+				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+			if (!natflow_l7_tls_has_bytes(i, 3, i_data_len))
+				goto need_more;
+			len = ntohs(get_byte2(p + i + 0 + 1));
+			if (!natflow_l7_tls_has_bytes(i + 3, len, p_len))
+				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+			if (!natflow_l7_tls_has_bytes(i + 3, len, i_data_len))
+				goto need_more;
+			i += 3 + len;
+			continue;
+		}
+		if (!natflow_l7_tls_has_bytes(i, 3, p_len))
+			return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+		if (!natflow_l7_tls_has_bytes(i, 3, i_data_len))
+			goto need_more;
+		len = ntohs(get_byte2(p + i + 0 + 1));
+		i += 3;
+		if (!natflow_l7_tls_has_bytes(i, len, p_len))
+			return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+		if (!natflow_l7_tls_has_bytes(i, len, i_data_len))
+			goto need_more;
+
+		*data_len = len;
+		*host = p + i;
+		return NATFLOW_L7_TLS_SEARCH_FOUND;
+	}
+	if (i >= i_data_len && i < p_len)
+		goto need_more;
+
+	return NATFLOW_L7_TLS_SEARCH_NO_SNI;
+
+need_more:
+	return NATFLOW_L7_TLS_SEARCH_NEED_MORE;
+}
+
+enum natflow_l7_tls_search_result natflow_l7_tls_sni_search(unsigned char *data,
+        int *data_len, unsigned char **host)
+{
+	unsigned char *p = data;
+	unsigned int p_len;
+	unsigned int i_data_len;
+	unsigned int actual_len;
+	unsigned int i = 0;
+	unsigned int len;
+
+	*host = NULL;
+
+	if (*data_len <= 0)
+		return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+
+	p_len = *data_len;
+	i_data_len = p_len;
+
+	if (!natflow_l7_tls_has_bytes(i, 1, i_data_len))
+		return NATFLOW_L7_TLS_SEARCH_NEED_MORE;
+	if (p[i + 0] != 0x16) {
+		return NATFLOW_L7_TLS_SEARCH_NOT_CLIENT_HELLO;
+	}
+	i += 1 + 2;
+	if (!natflow_l7_tls_has_bytes(i, 2, i_data_len))
+		goto need_more;
+	len = ntohs(get_byte2(p + i + 0));
+	i += 2;
+	if (!natflow_l7_tls_has_bytes(i, len, i_data_len)) {
+		if (!natflow_l7_tls_has_bytes(i, 1, i_data_len))
+			goto need_more;
+		if (p[i] != 0x01)
+			return NATFLOW_L7_TLS_SEARCH_NOT_CLIENT_HELLO;
+	}
+
+	actual_len = min_t(unsigned int, len, i_data_len - i);
+	if (actual_len == len && !natflow_l7_tls_has_bytes(0, 4, actual_len))
+		return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+	if (natflow_l7_tls_has_bytes(0, 4, actual_len)) {
+		unsigned int handshake_len = ((unsigned int)p[i + 1] << 16) |
+		                             ((unsigned int)p[i + 2] << 8) |
+		                             ((unsigned int)p[i + 3]);
+
+		if (!natflow_l7_tls_has_bytes(4, handshake_len, len))
+			return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+	}
+
+	*data_len = actual_len;
+	return natflow_l7_tls_client_hello_search(p + i, data_len, host);
+
+need_more:
+	return NATFLOW_L7_TLS_SEARCH_NEED_MORE;
 }
 
 int natflow_l7_init(void)
