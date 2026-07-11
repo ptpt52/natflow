@@ -100,7 +100,7 @@
 
 ### P2-4：设计并开发 DPI 能力
 
-状态：Design Draft v5，Implementation Planned
+状态：Design Draft v5，Implementation Started
 
 目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，先统一 L7 parser/context/consumer 生命周期，再实现轻量 DPI 能力，用于协议/应用分类、审计记录和后续策略匹配。
 
@@ -113,6 +113,8 @@
 - DPI 首期定位为机会性分类和审计能力，不承诺成为强安全 WAF、反规避网关或完整应用识别引擎；ECH、加密内层元数据、异常分片、混淆流量和弱证据端口/IP 命中必须明确降级语义。
 - 数据面热路径必须保持有界解析、无阻塞、无大栈对象、无无界循环、少分配；等待更多数据时必须通过 `NF_FF_DPI_USE`/`NF_FF_BUSY_USE` 阻止 fast path 提前接管。维护者接受 `nf->status` 非原子 writer 的已知并发丢位风险。
 - 新增字符设备命令、sysctl、输出格式、状态位、编译宏或兼容层时，必须同步 `README.md`、`SYSTEM_DESIGN_SPEC.md` 和必要的 `docs/agent/` 记忆。
+
+实现基线：`docs/agent/DPI_IMPLEMENTATION_CHECKLIST.md` 记录每步实现前后的自审口径、legacy URL/Host ACL 兼容基线、conntrack/fast path 约束和自动检查建议。
 
 计划：
 
