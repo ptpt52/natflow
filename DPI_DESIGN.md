@@ -48,6 +48,7 @@ natflow_l7 core
 - 当前 `natflow_t` 已在尾部追加常驻 `app_id`，但源码还没有分类器写入非 0 值。
 - 当前 fast path 在建软件 fastnat 或硬件 offload 前检查 `nf->status & NF_FF_BUSY_USE`；DPI 必须沿用这个 mask 阻止首段流量被提前接管。
 - 当前 URL logger hook 的生命周期由 `natflow_l7_init()/exit()` 触发，URL hook ops、内核 hook 签名兼容包装、PPPoE normalize/restore、基础 conntrack 过滤和 packet view 构造已由 `natflow_l7.c` 持有：默认注册 IPv4、IPv6 和 bridge `FORWARD` hook，优先级 `NF_IP_PRI_FILTER + 5`；可选 `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 改为 IPv4 `LOCAL_IN`。底层数据面通过 `natflow_urllogger_consume_url_view()` 委托 legacy URL consumer。
+- 当前 DPI protocol-only hook 仍由 `natflow_dpi.c` 独立持有，优先级 `NF_IP_PRI_FILTER + 6`，不合并进 L7 URL common path，也不受 `urllogger_store/enable` 控制；等 L7 dispatcher、consumer mask 和 DPI context 生命周期落地后再评审合并入口。
 - 当前 `urllogger_store_enable=0` 时 hook 入口直接 accept，因此 Host ACL 也不会执行。
 - 当前 HTTP Host/URI、TLS SNI、QUIC v1 Initial SNI parser 都是 `natflow_urllogger.c` 内部静态实现，并和 URL record 分配、Host ACL、队列输出混在同一 hook。
 - 当前 TLS/QUIC 跨包 cache 按 CPU 存储。RPS/RFS 或调度变化导致同一 flow 后续包落到其他 CPU 时，可能找不到之前 prefix。
@@ -185,7 +186,7 @@ bounded parser/detector
 3. layout guard 已在注册 path 或 URL hook 前完成；后续 L7/DPI hook 必须继续遵守该顺序。
 4. `natflow_l7` 已成为 URL hook lifecycle owner，并持有 URL hook ops、签名兼容包装、PPPoE normalize/restore 和 packet view 构造；但还没有共享 context pool 或 crypto capability。
 5. URL consumer 初始化 legacy 设备和 sysctl，再由 L7 core 注册 hook，避免 hook 进入未初始化的 URL 资源。
-6. DPI consumer 默认 `enable=0`，只初始化控制设备和最小状态。
+6. DPI consumer 默认 `enable=0`，只初始化控制设备和最小状态；M1 阶段 protocol-only hook 暂时保持在 `natflow_dpi.c` 内独立注册和退出。
 
 退出顺序反向执行：先阻止新 hook/新 arm，再 drain active context，写 terminal event，清 owner bit，唤醒 reader，最后释放规则、cache、crypto 和设备。
 

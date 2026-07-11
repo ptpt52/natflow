@@ -937,6 +937,7 @@ classid 模式：
 - 端口型 protocol-only detector 当前按 original direction 的目标端口识别：DNS TCP/UDP 53，SSH TCP 22，WireGuard UDP 51820。
 - 有界 payload detector 当前覆盖 TCP original direction 的 SSH banner `SSH-<version>-` identification string、STUN/TURN header、length 和 magic cookie，按 TURN 方法区分 TURN；BitTorrent 的 TCP 分支覆盖标准 handshake，UDP 分支覆盖 uTP v1 header 和 DHT bencode token 前缀窗口，其中 uTP 会校验版本、类型和扩展号。IPv6 detector 当前只处理无 extension header 的 TCP/UDP。
 - DPI 默认 `disabled`。`enable=1` 后，HTTP/TLS/QUIC host 分类仍来自 legacy URL logger parser，因此需要同时编译并启用 `CONFIG_NATFLOW_URLLOGGER` 和 `/proc/sys/urllogger_store/enable=1`；DNS QNAME domain 分类和 protocol-only detector 由 `natflow_dpi.c` 自己的 IPv4、IPv6、bridge FORWARD hook 处理，优先级 `NF_IP_PRI_FILTER + 6`。DPI hook 在存在任意 DPI 规则时运行；非 DNS payload detector 只在存在 proto 规则时执行。
+- 当前不把 DPI protocol-only hook 合并进 L7 URL common path，也不让其受 `/proc/sys/urllogger_store/enable` 控制；后续只有在 L7 拥有统一 dispatcher、consumer mask 和 DPI context 生命周期后，再评审是否合并 hook 入口。
 - `natflow_urllogger.c` 在 HTTP Host、TCP TLS SNI、QUIC v1 Initial SNI normalize 成功后调用 `natflow_dpi_classify_host()`；URL record 分配失败时也会通过 `urllogger_acl_lookup` 的最小 host 视图调用 DPI。DNS QNAME 则由 DPI hook 直接解析并调用同一 domain classifier。Host ACL 行为和 `/dev/urllogger_queue` CSV 输出不因 DPI 改变。
 - domain 命中时，如果当前 conntrack 已有 natflow session，则写入 `natflow_t.app_id`；不会为了 DPI 创建 session。无 session 时仍可输出 match event。protocol-only 命中要求已有 natflow session 且 `app_id==0`，用于避免每包重复事件。
 - `/dev/natflow_dpi_queue` 输出固定头二进制事件；队列为空时 `read()` 返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。队列最多缓存 1024 条事件，溢出或分配失败增加 `events_lost`。
