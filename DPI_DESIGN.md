@@ -4,7 +4,7 @@
 
 更新时间：2026-07-11
 
-实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，增加了 `natflow_l7` hook 生命周期骨架，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、DNS/SSH/WireGuard protocol-only ruleset、match event producer 和 `app_id` 写入。当前 M1b/M1c 数据面 consumer 仍复用 `natflow_urllogger.c` 已解析出的 HTTP Host、TLS SNI 和 QUIC SNI，protocol-only detector 是端口型 MVP；尚未完成共享 L7 feature core 或 DNS QNAME feature。
+实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，增加了 `natflow_l7` hook 生命周期骨架，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、match event producer、source counters 和 `app_id` 写入。当前 M1b-M1d 数据面 consumer 仍复用 `natflow_urllogger.c` 已解析出的 HTTP Host、TLS SNI 和 QUIC SNI，protocol-only detector 是端口/payload 子集 MVP；尚未完成共享 L7 feature core 或 DNS QNAME feature。
 
 ## 1. 总体结论
 
@@ -642,9 +642,10 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 ### M1d：第二批 A 级 detector
 
-- 增加 STUN/TURN 子集。
-- 增加 BitTorrent handshake/uTP/DHT 子集。
-- 补 shadow 统计和误判 corpus。
+- 已完成 MVP：增加 STUN/TURN 子集，识别 STUN header、length、magic cookie，并按 TURN 方法区分 TURN。
+- 已完成 MVP：增加 BitTorrent TCP handshake、uTP v1 header 和 DHT bencode token 前缀窗口子集。
+- 已完成 MVP：`/dev/natflow_dpi_ctl` status 输出 HTTP/TLS/QUIC/DNS/SSH/WireGuard/STUN/TURN/BitTorrent source counters 和 `events_lost`。
+- 仍未完成：更完整的 reason counters、payload TLV、IPv6 extension header 解析、误判 corpus 和生产 shadow 数据采集。
 
 ### M2：生产 shadow
 
