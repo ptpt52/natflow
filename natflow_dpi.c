@@ -556,6 +556,12 @@ static int natflow_dpi_rules_clear(void)
 	return 0;
 }
 
+int natflow_dpi_consumer_enabled(void)
+{
+	return READ_ONCE(natflow_dpi_state) == NATFLOW_DPI_STATE_ENABLED &&
+	       READ_ONCE(natflow_dpi_rules) != 0;
+}
+
 int natflow_dpi_host_consumer_enabled(void)
 {
 	return READ_ONCE(natflow_dpi_state) == NATFLOW_DPI_STATE_ENABLED &&
@@ -1344,128 +1350,17 @@ static void natflow_dpi_detect_ipv6(struct sk_buff *skb, struct nf_conn *ct)
 		natflow_dpi_classify_proto(ct, proto);
 }
 
-#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
-static unsigned int natflow_dpi_hook(unsigned int hooknum,
-        struct sk_buff *skb,
-        const struct net_device *in,
-        const struct net_device *out,
-        int (*okfn)(struct sk_buff *))
+void natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view *view)
 {
-#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
-static unsigned int natflow_dpi_hook(const struct nf_hook_ops *ops,
-        struct sk_buff *skb,
-        const struct net_device *in,
-        const struct net_device *out,
-        int (*okfn)(struct sk_buff *))
-{
-#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
-static unsigned int natflow_dpi_hook(const struct nf_hook_ops *ops,
-        struct sk_buff *skb,
-        const struct nf_hook_state *state)
-{
-#else
-static unsigned int natflow_dpi_hook(void *priv,
-        struct sk_buff *skb,
-        const struct nf_hook_state *state)
-{
-#endif
-	enum ip_conntrack_info ctinfo;
-	struct nf_conn *ct;
-	int bridge = 0;
-
-	if (READ_ONCE(natflow_dpi_state) != NATFLOW_DPI_STATE_ENABLED ||
-	        READ_ONCE(natflow_dpi_rules) == 0)
-		return NF_ACCEPT;
-
-	if (skb->protocol == __constant_htons(ETH_P_PPP_SES)) {
-		if (!pskb_may_pull(skb, PPPOE_SES_HLEN))
-			return NF_ACCEPT;
-
-		if (pppoe_proto(skb) == __constant_htons(PPP_IP)) {
-			skb_pull(skb, PPPOE_SES_HLEN);
-			skb->protocol = __constant_htons(ETH_P_IP);
-			skb->network_header += PPPOE_SES_HLEN;
-			bridge = 1;
-		} else if (pppoe_proto(skb) == __constant_htons(PPP_IPV6)) {
-			skb_pull(skb, PPPOE_SES_HLEN);
-			skb->protocol = __constant_htons(ETH_P_IPV6);
-			skb->network_header += PPPOE_SES_HLEN;
-			bridge = 1;
-		} else {
-			return NF_ACCEPT;
-		}
-	} else if (skb->protocol != __constant_htons(ETH_P_IP) &&
-	           skb->protocol != __constant_htons(ETH_P_IPV6)) {
-		return NF_ACCEPT;
-	}
-
-	ct = nf_ct_get(skb, &ctinfo);
-	if (!ct || CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
-		goto out;
-
-	if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6)
-		natflow_dpi_detect_ipv6(skb, ct);
-	else if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET)
-		natflow_dpi_detect_ipv4(skb, ct);
-
-out:
-	if (bridge) {
-		skb->network_header -= PPPOE_SES_HLEN;
-		skb->protocol = __constant_htons(ETH_P_PPP_SES);
-		skb_push(skb, PPPOE_SES_HLEN);
-	}
-	return NF_ACCEPT;
-}
-
-static struct nf_hook_ops natflow_dpi_hooks[] = {
-	{
-#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
-		.owner = THIS_MODULE,
-#endif
-		.hook = natflow_dpi_hook,
-		.pf = PF_INET,
-		.hooknum = NF_INET_FORWARD,
-		.priority = NF_IP_PRI_FILTER + 6,
-	},
-	{
-#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
-		.owner = THIS_MODULE,
-#endif
-		.hook = natflow_dpi_hook,
-		.pf = AF_INET6,
-		.hooknum = NF_INET_FORWARD,
-		.priority = NF_IP_PRI_FILTER + 6,
-	},
-	{
-#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
-		.owner = THIS_MODULE,
-#endif
-		.hook = natflow_dpi_hook,
-		.pf = NFPROTO_BRIDGE,
-		.hooknum = NF_INET_FORWARD,
-		.priority = NF_IP_PRI_FILTER + 6,
-	},
-};
-
-static int natflow_dpi_hooks_started;
-
-static int natflow_dpi_hooks_register(void)
-{
-	int ret;
-
-	ret = nf_register_hooks(natflow_dpi_hooks, ARRAY_SIZE(natflow_dpi_hooks));
-	if (ret == 0)
-		natflow_dpi_hooks_started = 1;
-	return ret;
-}
-
-static void natflow_dpi_hooks_unregister(void)
-{
-	if (!natflow_dpi_hooks_started)
+	if (!view || !view->skb || !view->ct)
+		return;
+	if (!natflow_dpi_consumer_enabled())
 		return;
 
-	nf_unregister_hooks(natflow_dpi_hooks, ARRAY_SIZE(natflow_dpi_hooks));
-	natflow_dpi_hooks_started = 0;
+	if (view->l3num == AF_INET6)
+		natflow_dpi_detect_ipv6(view->skb, view->ct);
+	else if (view->l3num == AF_INET)
+		natflow_dpi_detect_ipv4(view->skb, view->ct);
 }
 
 static int natflow_dpi_ctl_device_init(void)
@@ -1624,14 +1519,8 @@ int natflow_dpi_init(void)
 	if (ret != 0)
 		goto queue_device_init_failed;
 
-	ret = natflow_dpi_hooks_register();
-	if (ret != 0)
-		goto hooks_register_failed;
-
 	return 0;
 
-hooks_register_failed:
-	natflow_dpi_queue_device_exit();
 queue_device_init_failed:
 	natflow_dpi_ctl_device_exit();
 ctl_device_init_failed:
@@ -1644,8 +1533,6 @@ ctl_device_init_failed:
 void natflow_dpi_exit(void)
 {
 	struct natflow_dpi_ruleset *ruleset;
-
-	natflow_dpi_hooks_unregister();
 
 	mutex_lock(&natflow_dpi_lock);
 	WRITE_ONCE(natflow_dpi_state, NATFLOW_DPI_STATE_DISABLED);

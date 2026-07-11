@@ -19,7 +19,7 @@
 #include <crypto/skcipher.h>
 #include "natflow_common.h"
 #include "natflow_l7.h"
-#if defined(CONFIG_NATFLOW_DPI) && defined(CONFIG_NATFLOW_URLLOGGER)
+#if defined(CONFIG_NATFLOW_DPI)
 #include "natflow_dpi.h"
 #endif
 #if defined(CONFIG_NATFLOW_URLLOGGER)
@@ -36,8 +36,8 @@ static unsigned int natflow_l7_active_consumer_mask(void)
 	if (natflow_urllogger_url_enabled())
 		mask |= NATFLOW_L7_CONSUMER_URL;
 #endif
-#if defined(CONFIG_NATFLOW_DPI) && defined(CONFIG_NATFLOW_URLLOGGER)
-	if (natflow_dpi_host_consumer_enabled())
+#if defined(CONFIG_NATFLOW_DPI)
+	if (natflow_dpi_consumer_enabled())
 		mask |= NATFLOW_L7_CONSUMER_DPI;
 #endif
 
@@ -138,7 +138,20 @@ static int natflow_l7_quic_crypto_ready;
 static struct natflow_l7_quic_cache_node (*natflow_l7_quic_cache)[NATFLOW_L7_QUIC_CACHE_NODE_MAX];
 static unsigned int natflow_l7_quic_cache_cpu_num;
 
-#if defined(CONFIG_NATFLOW_URLLOGGER)
+#if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
+static unsigned int natflow_l7_host_consumer_mask(unsigned int consumer_mask)
+{
+	unsigned int mask = consumer_mask & NATFLOW_L7_CONSUMER_URL;
+
+#if defined(CONFIG_NATFLOW_DPI)
+	if ((consumer_mask & NATFLOW_L7_CONSUMER_DPI) &&
+	        natflow_dpi_host_consumer_enabled())
+		mask |= NATFLOW_L7_CONSUMER_DPI;
+#endif
+
+	return mask;
+}
+
 static int natflow_l7_tls_cache_init(void)
 {
 	natflow_l7_tls_cache_cpu_num = nr_cpu_ids;
@@ -335,7 +348,7 @@ unsigned char *natflow_l7_tls_cache_detach6(const struct in6_addr *src_ip,
 	return data;
 }
 
-#if defined(CONFIG_NATFLOW_URLLOGGER)
+#if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
 static int natflow_l7_quic_cache_init(void)
 {
 	natflow_l7_quic_cache_cpu_num = nr_cpu_ids;
@@ -910,13 +923,15 @@ unsigned char *natflow_l7_quic_cache_detach6(const struct in6_addr *src_ip,
 	return crypto_data;
 }
 
-#if defined(CONFIG_NATFLOW_URLLOGGER)
+#if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
 #if NATFLOW_HAVE_IP_SET_STATE_API
 #define NATFLOW_L7_URL_CONSUMER_ARGS \
 	unsigned int hooknum, const struct nf_hook_state *state, struct sk_buff *skb
 #define NATFLOW_L7_URL_CONSUMER_CALL_ARGS hooknum, state, skb
 #define NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, state, in, out) \
 	natflow_l7_url_consume_common(hooknum, state, skb)
+#define NATFLOW_L7_DPI_CONSUMER_CALL(hooknum, skb, state, in, out) \
+	natflow_l7_dpi_consume_common(hooknum, state, skb)
 #define NATFLOW_L7_DISPATCH_PACKET_VIEW(view, consumer_mask) \
 	natflow_l7_dispatch_packet_view(hooknum, state, view, consumer_mask)
 #define NATFLOW_L7_DISPATCH_HOST_VIEW(view, host_view, reply_dev, bridge) \
@@ -928,10 +943,30 @@ unsigned char *natflow_l7_quic_cache_detach6(const struct in6_addr *src_ip,
 #define NATFLOW_L7_URL_CONSUMER_CALL_ARGS hooknum, in, out, skb
 #define NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, state, in, out) \
 	natflow_l7_url_consume_common(hooknum, in, out, skb)
+#define NATFLOW_L7_DPI_CONSUMER_CALL(hooknum, skb, state, in, out) \
+	natflow_l7_dpi_consume_common(hooknum, in, out, skb)
 #define NATFLOW_L7_DISPATCH_PACKET_VIEW(view, consumer_mask) \
 	natflow_l7_dispatch_packet_view(hooknum, in, out, view, consumer_mask)
 #define NATFLOW_L7_DISPATCH_HOST_VIEW(view, host_view, reply_dev, bridge) \
 	natflow_l7_dispatch_host_view(hooknum, in, out, view, host_view, reply_dev, bridge)
+#endif
+
+#if defined(CONFIG_NATFLOW_DPI) && !defined(CONFIG_NATFLOW_URLLOGGER)
+static unsigned int natflow_l7_dpi_event_source(enum natflow_l7_feature_source source)
+{
+	switch (source) {
+	case NATFLOW_L7_SOURCE_HTTP:
+		return NATFLOW_DPI_EVENT_SOURCE_HTTP;
+	case NATFLOW_L7_SOURCE_TLS:
+		return NATFLOW_DPI_EVENT_SOURCE_TLS;
+	case NATFLOW_L7_SOURCE_QUIC:
+		return NATFLOW_DPI_EVENT_SOURCE_QUIC;
+	case NATFLOW_L7_SOURCE_DNS:
+		return NATFLOW_DPI_EVENT_SOURCE_DNS;
+	default:
+		return 0;
+	}
+}
 #endif
 
 #if NATFLOW_HAVE_IP_SET_STATE_API
@@ -951,17 +986,48 @@ static unsigned int natflow_l7_dispatch_host_view(unsigned int hooknum,
         int bridge)
 #endif
 {
-	if (!view ||
-	        !(view->consumer_mask & (NATFLOW_L7_CONSUMER_URL |
-	                                 NATFLOW_L7_CONSUMER_DPI)))
+	struct natflow_l7_packet_view dispatch_view;
+	unsigned int host_mask;
+
+	if (!view || !host_view)
 		return NF_ACCEPT;
 
+	host_mask = natflow_l7_host_consumer_mask(view->consumer_mask);
+	if (host_mask == 0)
+		return NF_ACCEPT;
+
+	dispatch_view = *view;
+	dispatch_view.consumer_mask = host_mask;
+
+#if defined(CONFIG_NATFLOW_URLLOGGER)
 #if NATFLOW_HAVE_IP_SET_STATE_API
-	return natflow_urllogger_consume_host_view(hooknum, state, view,
+	return natflow_urllogger_consume_host_view(hooknum, state, &dispatch_view,
 	                                           host_view, reply_dev, bridge);
 #else
-	return natflow_urllogger_consume_host_view(hooknum, in, out, view,
+	return natflow_urllogger_consume_host_view(hooknum, in, out, &dispatch_view,
 	                                           host_view, reply_dev, bridge);
+#endif
+#else
+	(void)hooknum;
+	(void)reply_dev;
+	(void)bridge;
+#if NATFLOW_HAVE_IP_SET_STATE_API
+	(void)state;
+#else
+	(void)in;
+	(void)out;
+#endif
+#if defined(CONFIG_NATFLOW_DPI)
+	if (host_mask & NATFLOW_L7_CONSUMER_DPI) {
+		unsigned int dpi_source;
+
+		dpi_source = natflow_l7_dpi_event_source(host_view->source);
+		if (dpi_source != 0)
+			natflow_dpi_classify_host(view->ct, host_view->host.data,
+			                          host_view->host.len, dpi_source);
+	}
+#endif
+	return NF_ACCEPT;
 #endif
 }
 
@@ -1196,6 +1262,19 @@ static int natflow_l7_tcp_tls_cache_attach_current(const struct natflow_l7_tcp_f
 	return natflow_l7_tcp_tls_cache_attach(flow, flow->seq, data, data_len);
 }
 
+static void natflow_l7_mark_handled(const struct natflow_l7_packet_view *view)
+{
+	natflow_t *nf;
+
+	if (!view || !view->ct)
+		return;
+
+	set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &view->ct->status);
+	nf = natflow_session_get(view->ct);
+	if (nf && (nf->status & NF_FF_L7_USE))
+		simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
+}
+
 static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_ARGS,
         const struct natflow_l7_packet_view *view,
         const struct net_device *reply_dev,
@@ -1211,6 +1290,7 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_ARGS
 	int host_len = 0;
 	enum natflow_l7_tls_search_result sni_result;
 	unsigned int ret = NF_ACCEPT;
+	unsigned int host_mask;
 
 	if (!view || !view->ct || !flow)
 		return ret;
@@ -1224,6 +1304,15 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_ARGS
 		return ret;
 	if (!flow->data)
 		goto terminal;
+
+	host_mask = natflow_l7_host_consumer_mask(view->consumer_mask);
+	if (host_mask == 0) {
+#if defined(CONFIG_NATFLOW_DPI)
+		if (view->consumer_mask & NATFLOW_L7_CONSUMER_DPI)
+			natflow_dpi_consume_packet_view(view);
+#endif
+		goto terminal;
+	}
 
 	prev_data = natflow_l7_tcp_tls_cache_detach(flow, &prev_seq,
 	                                            &prev_data_len);
@@ -1337,6 +1426,10 @@ terminal:
 		                              host, host_len, 0) == 0)
 			ret = NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
 			                                    reply_dev, bridge);
+#if defined(CONFIG_NATFLOW_DPI)
+		if (ret == NF_ACCEPT && (view->consumer_mask & NATFLOW_L7_CONSUMER_DPI))
+			natflow_dpi_consume_packet_view(view);
+#endif
 		kfree(prev_data);
 		goto done;
 	}
@@ -1353,6 +1446,11 @@ terminal:
 			ret = NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
 			                                    reply_dev, bridge);
 	}
+
+#if defined(CONFIG_NATFLOW_DPI)
+	if (ret == NF_ACCEPT && (view->consumer_mask & NATFLOW_L7_CONSUMER_DPI))
+		natflow_dpi_consume_packet_view(view);
+#endif
 
 done:
 	return ret;
@@ -1494,11 +1592,36 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 		if (ip6h->version != 6)
 			return NF_ACCEPT;
 		if (ip6h->nexthdr == IPPROTO_UDP) {
+			__be16 dport;
+			void *l4;
+
+			if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr)))
+				return NF_ACCEPT;
+			ip6h = ipv6_hdr(skb);
+			l4 = (void *)ip6h + sizeof(struct ipv6hdr);
+			dport = UDPH(l4)->dest;
+			if (dport == __constant_htons(443) &&
+			        natflow_l7_host_consumer_mask(consumer_mask) != 0) {
+				unsigned int ret;
+
 #if NATFLOW_HAVE_IP_SET_STATE_API
-			return natflow_l7_quic6(hooknum, state, skb, view);
+				ret = natflow_l7_quic6(hooknum, state, skb, view);
 #else
-			return natflow_l7_quic6(hooknum, in, out, skb, view);
+				ret = natflow_l7_quic6(hooknum, in, out, skb, view);
 #endif
+#if defined(CONFIG_NATFLOW_DPI)
+				if (ret == NF_ACCEPT &&
+				        (consumer_mask & NATFLOW_L7_CONSUMER_DPI))
+					natflow_dpi_consume_packet_view(view);
+#endif
+				return ret;
+			}
+#if defined(CONFIG_NATFLOW_DPI)
+			if (consumer_mask & NATFLOW_L7_CONSUMER_DPI)
+				natflow_dpi_consume_packet_view(view);
+#endif
+			natflow_l7_mark_handled(view);
+			return NF_ACCEPT;
 		}
 		if (ip6h->nexthdr == IPPROTO_TCP) {
 #if NATFLOW_HAVE_IP_SET_STATE_API
@@ -1514,11 +1637,40 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 			return NF_ACCEPT;
 		iph = ip_hdr(skb);
 		if (iph->protocol == IPPROTO_UDP) {
+			__be16 dport;
+			unsigned int ihl;
+			void *l4;
+
+			if (iph->ihl < 5)
+				return NF_ACCEPT;
+			ihl = iph->ihl * 4;
+			if (!pskb_may_pull(skb, ihl + sizeof(struct udphdr)))
+				return NF_ACCEPT;
+			iph = ip_hdr(skb);
+			l4 = (void *)iph + ihl;
+			dport = UDPH(l4)->dest;
+			if (dport == __constant_htons(443) &&
+			        natflow_l7_host_consumer_mask(consumer_mask) != 0) {
+				unsigned int ret;
+
 #if NATFLOW_HAVE_IP_SET_STATE_API
-			return natflow_l7_quic4(hooknum, state, skb, view);
+				ret = natflow_l7_quic4(hooknum, state, skb, view);
 #else
-			return natflow_l7_quic4(hooknum, in, out, skb, view);
+				ret = natflow_l7_quic4(hooknum, in, out, skb, view);
 #endif
+#if defined(CONFIG_NATFLOW_DPI)
+				if (ret == NF_ACCEPT &&
+				        (consumer_mask & NATFLOW_L7_CONSUMER_DPI))
+					natflow_dpi_consume_packet_view(view);
+#endif
+				return ret;
+			}
+#if defined(CONFIG_NATFLOW_DPI)
+			if (consumer_mask & NATFLOW_L7_CONSUMER_DPI)
+				natflow_dpi_consume_packet_view(view);
+#endif
+			natflow_l7_mark_handled(view);
+			return NF_ACCEPT;
 		}
 		if (iph->protocol == IPPROTO_TCP) {
 #if NATFLOW_HAVE_IP_SET_STATE_API
@@ -1532,15 +1684,14 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 	return NF_ACCEPT;
 }
 
-static unsigned int natflow_l7_url_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS)
+static unsigned int natflow_l7_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS,
+        unsigned int consumer_mask)
 {
 	struct natflow_l7_packet_view view;
 	enum ip_conntrack_info ctinfo;
 	struct nf_conn *ct;
-	unsigned int consumer_mask;
 	unsigned int ret = NF_ACCEPT;
 
-	consumer_mask = natflow_l7_active_consumer_mask();
 	if (!(consumer_mask & (NATFLOW_L7_CONSUMER_URL | NATFLOW_L7_CONSUMER_DPI)))
 		return NF_ACCEPT;
 
@@ -1601,7 +1752,26 @@ out:
 	return ret;
 }
 
-#if !defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
+static unsigned int natflow_l7_url_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS)
+{
+	return natflow_l7_consume_common(NATFLOW_L7_URL_CONSUMER_CALL_ARGS,
+	                                 natflow_l7_active_consumer_mask());
+}
+
+#if defined(CONFIG_NATFLOW_DPI) && defined(CONFIG_NATFLOW_URLLOGGER) && defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
+static unsigned int natflow_l7_dpi_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS)
+{
+	unsigned int consumer_mask = 0;
+
+	if (natflow_dpi_consumer_enabled())
+		consumer_mask = NATFLOW_L7_CONSUMER_DPI;
+
+	return natflow_l7_consume_common(NATFLOW_L7_URL_CONSUMER_CALL_ARGS,
+	                                 consumer_mask);
+}
+#endif
+
+#if !defined(CONFIG_NATFLOW_URLLOGGER) || !defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
 #if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_l7_url_hook(unsigned int hooknum,
         struct sk_buff *skb,
@@ -1641,9 +1811,51 @@ static unsigned int natflow_l7_url_hook(void *priv,
 #endif
 }
 #endif
-#endif /* !CONFIG_NATFLOW_URLLOGGER_LOCAL_IN */
+#endif /* !CONFIG_NATFLOW_URLLOGGER || !CONFIG_NATFLOW_URLLOGGER_LOCAL_IN */
 
-#if defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
+#if defined(CONFIG_NATFLOW_DPI) && defined(CONFIG_NATFLOW_URLLOGGER) && defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
+#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
+static unsigned int natflow_l7_dpi_hook(unsigned int hooknum,
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
+{
+	return NATFLOW_L7_DPI_CONSUMER_CALL(hooknum, skb, NULL, in, out);
+}
+#elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
+static unsigned int natflow_l7_dpi_hook(const struct nf_hook_ops *ops,
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
+{
+	return NATFLOW_L7_DPI_CONSUMER_CALL(ops->hooknum, skb, NULL, in, out);
+}
+#elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
+static unsigned int natflow_l7_dpi_hook(const struct nf_hook_ops *ops,
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
+{
+	return NATFLOW_L7_DPI_CONSUMER_CALL(state->hook, skb, state, state->in,
+	                                    state->out);
+}
+#else
+static unsigned int natflow_l7_dpi_hook(void *priv,
+        struct sk_buff *skb,
+        const struct nf_hook_state *state)
+{
+#if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
+	return NATFLOW_L7_DPI_CONSUMER_CALL(state->hook, skb, state, state->in,
+	                                    state->out);
+#else
+	return NATFLOW_L7_DPI_CONSUMER_CALL(state->hook, skb, state, state->in, NULL);
+#endif
+}
+#endif
+#endif
+
+#if defined(CONFIG_NATFLOW_URLLOGGER) && defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
 #if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_l7_url_local_in(unsigned int hooknum,
         struct sk_buff *skb,
@@ -1707,10 +1919,10 @@ static unsigned int natflow_l7_url_local_in(void *priv,
 	return NATFLOW_L7_URL_CONSUMER_CALL(state->hook, skb, state, in, out);
 #endif
 }
-#endif /* CONFIG_NATFLOW_URLLOGGER_LOCAL_IN */
+#endif /* CONFIG_NATFLOW_URLLOGGER && CONFIG_NATFLOW_URLLOGGER_LOCAL_IN */
 
 static struct nf_hook_ops natflow_l7_url_hooks[] = {
-#if defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
+#if defined(CONFIG_NATFLOW_URLLOGGER) && defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
 	{
 #if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
@@ -1720,7 +1932,8 @@ static struct nf_hook_ops natflow_l7_url_hooks[] = {
 		.hooknum = NF_INET_LOCAL_IN,
 		.priority = NF_IP_PRI_FILTER + 5,
 	},
-#else
+#endif
+#if !defined(CONFIG_NATFLOW_URLLOGGER) || !defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
 	{
 #if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
@@ -1749,6 +1962,35 @@ static struct nf_hook_ops natflow_l7_url_hooks[] = {
 		.priority = NF_IP_PRI_FILTER + 5,
 	},
 #endif
+#if defined(CONFIG_NATFLOW_DPI) && defined(CONFIG_NATFLOW_URLLOGGER) && defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
+	{
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_l7_dpi_hook,
+		.pf = PF_INET,
+		.hooknum = NF_INET_FORWARD,
+		.priority = NF_IP_PRI_FILTER + 5,
+	},
+	{
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_l7_dpi_hook,
+		.pf = AF_INET6,
+		.hooknum = NF_INET_FORWARD,
+		.priority = NF_IP_PRI_FILTER + 5,
+	},
+	{
+#if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
+		.owner = THIS_MODULE,
+#endif
+		.hook = natflow_l7_dpi_hook,
+		.pf = NFPROTO_BRIDGE,
+		.hooknum = NF_INET_FORWARD,
+		.priority = NF_IP_PRI_FILTER + 5,
+	},
+#endif
 };
 
 static int natflow_l7_url_hooks_register(void)
@@ -1762,7 +2004,7 @@ static void natflow_l7_url_hooks_unregister(void)
 	nf_unregister_hooks(natflow_l7_url_hooks,
 	                    ARRAY_SIZE(natflow_l7_url_hooks));
 }
-#endif /* CONFIG_NATFLOW_URLLOGGER */
+#endif /* CONFIG_NATFLOW_URLLOGGER || CONFIG_NATFLOW_DPI */
 
 static inline int natflow_l7_has_bytes(unsigned int offset,
         unsigned int bytes, unsigned int len)
@@ -2621,7 +2863,7 @@ int natflow_l7_init(void)
 	if (ret != 0)
 		return ret;
 
-#if defined(CONFIG_NATFLOW_URLLOGGER)
+#if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
 	ret = natflow_l7_tls_cache_init();
 	if (ret != 0)
 		return ret;
@@ -2654,7 +2896,7 @@ void natflow_l7_exit(void)
 	if (!natflow_l7_started)
 		return;
 
-#if defined(CONFIG_NATFLOW_URLLOGGER)
+#if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
 	natflow_l7_url_hooks_unregister();
 	natflow_l7_quic_crypto_cleanup();
 	natflow_l7_quic_cache_cleanup();
