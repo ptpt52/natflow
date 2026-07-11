@@ -7,7 +7,19 @@
 #ifndef _NATFLOW_COMPAT_H_
 #define _NATFLOW_COMPAT_H_
 
+#include <linux/errno.h>
+#include <linux/types.h>
 #include <linux/version.h>
+
+struct file;
+
+static inline loff_t natflow_no_llseek(struct file *file, loff_t offset, int whence)
+{
+	(void)file;
+	(void)offset;
+	(void)whence;
+	return -ESPIPE;
+}
 
 #define NATFLOW_KERNEL_BEFORE(major, minor, patch) \
 	(LINUX_VERSION_CODE < KERNEL_VERSION(major, minor, patch))

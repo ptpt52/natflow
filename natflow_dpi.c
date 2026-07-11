@@ -911,7 +911,7 @@ static const struct file_operations natflow_dpi_queue_fops = {
 	.owner = THIS_MODULE,
 	.read = natflow_dpi_queue_read,
 	.poll = natflow_dpi_queue_poll,
-	.llseek = no_llseek,
+	.llseek = natflow_no_llseek,
 };
 
 #define NATFLOW_DPI_PAYLOAD_INSPECT_MAX 96

@@ -114,6 +114,7 @@ DKMS Makefile：
 - `nf_nat_setup_info`、NAT66、`nf_nat_range` API 差异。
 - ipset state API、新旧 `ip_set_test/add/del` 调用形式。
 - `skb_try_make_writable`、`skb_make_writable`、`nf_reset_ct`、`get_random_u32`、`class_create`、sysctl 注册 API 差异。
+- 非 seek 字符设备使用 `natflow_no_llseek()` 保持 `-ESPIPE` 语义，避免依赖不同内核是否暴露 `no_llseek` 符号。
 
 内核版本适配是模块设计的一部分。重建实现时不能只面向单一新内核 API，除非明确放弃旧内核支持。
 
