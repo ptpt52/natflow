@@ -7,6 +7,7 @@
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include "natflow_common.h"
 #include "natflow_l7.h"
@@ -516,6 +517,236 @@ enum natflow_l7_tls_search_result natflow_l7_tls_sni_search(unsigned char *data,
 
 need_more:
 	return NATFLOW_L7_TLS_SEARCH_NEED_MORE;
+}
+
+#define NATFLOW_L7_QUIC_V1_VERSION 0x00000001u
+#define NATFLOW_L7_QUIC_MAX_PACKET_NUMBER_LEN 4
+#define NATFLOW_L7_QUIC_INITIAL_TAG_LEN 16
+#define NATFLOW_L7_QUIC_HP_SAMPLE_LEN 16
+#define NATFLOW_L7_QUIC_CRYPTO_DATA_LIMIT (32 * 1024)
+
+int natflow_l7_quic_has_bytes(unsigned int offset,
+        unsigned int bytes, unsigned int len)
+{
+	return offset <= len && bytes <= len - offset;
+}
+
+static int natflow_l7_quic_read_varint(const unsigned char *data,
+        unsigned int data_len, unsigned int *offset, u64 *value)
+{
+	unsigned int pos = *offset;
+	unsigned int len;
+	unsigned int i;
+
+	if (!natflow_l7_quic_has_bytes(pos, 1, data_len))
+		return -EINVAL;
+
+	len = 1u << (data[pos] >> 6);
+	if (!natflow_l7_quic_has_bytes(pos, len, data_len))
+		return -EINVAL;
+
+	*value = data[pos] & 0x3f;
+	for (i = 1; i < len; i++)
+		*value = (*value << 8) | data[pos + i];
+
+	*offset = pos + len;
+	return 0;
+}
+
+int natflow_l7_quic_initial_parse_info(const unsigned char *data,
+        unsigned int data_len, struct natflow_l7_quic_initial_info *info)
+{
+	unsigned int offset = 0;
+	unsigned int scid_len;
+	u64 token_len;
+	u64 packet_len;
+
+	if (!info || !natflow_l7_quic_has_bytes(offset, 1 + 4 + 1, data_len))
+		return -EINVAL;
+
+	if ((data[offset] & 0x80) == 0 || (data[offset] & 0x40) == 0)
+		return -ENOENT;
+	if ((data[offset] & 0x30) != 0)
+		return -ENOENT;
+	offset++;
+
+	info->version = ntohl(get_byte4(data + offset));
+	offset += 4;
+	if (info->version != NATFLOW_L7_QUIC_V1_VERSION)
+		return -ENOENT;
+
+	info->dcid_len = data[offset++];
+	if (info->dcid_len == 0 || info->dcid_len > NATFLOW_L7_QUIC_MAX_CID_LEN)
+		return -EINVAL;
+	if (!natflow_l7_quic_has_bytes(offset, info->dcid_len + 1, data_len))
+		return -EINVAL;
+	memcpy(info->dcid, data + offset, info->dcid_len);
+	offset += info->dcid_len;
+
+	scid_len = data[offset++];
+	if (scid_len > NATFLOW_L7_QUIC_MAX_CID_LEN)
+		return -EINVAL;
+	if (!natflow_l7_quic_has_bytes(offset, scid_len, data_len))
+		return -EINVAL;
+	offset += scid_len;
+
+	if (natflow_l7_quic_read_varint(data, data_len, &offset, &token_len) != 0)
+		return -EINVAL;
+	if (token_len > UINT_MAX ||
+	        !natflow_l7_quic_has_bytes(offset, (unsigned int)token_len, data_len))
+		return -EINVAL;
+	offset += (unsigned int)token_len;
+
+	if (natflow_l7_quic_read_varint(data, data_len, &offset, &packet_len) != 0)
+		return -EINVAL;
+	if (packet_len > UINT_MAX ||
+	        !natflow_l7_quic_has_bytes(offset, (unsigned int)packet_len, data_len))
+		return -EINVAL;
+	if (packet_len < NATFLOW_L7_QUIC_MAX_PACKET_NUMBER_LEN + NATFLOW_L7_QUIC_INITIAL_TAG_LEN)
+		return -EINVAL;
+
+	info->pn_offset = offset;
+	info->packet_len = offset + (unsigned int)packet_len;
+	if (!natflow_l7_quic_has_bytes(info->pn_offset + NATFLOW_L7_QUIC_MAX_PACKET_NUMBER_LEN,
+	                               NATFLOW_L7_QUIC_HP_SAMPLE_LEN,
+	                               info->packet_len))
+		return -EINVAL;
+
+	return 0;
+}
+
+static int natflow_l7_quic_crypto_data_merge(unsigned char **crypto_data,
+        unsigned int *crypto_len, u64 offset,
+        const unsigned char *data, unsigned int data_len)
+{
+	unsigned char *new_data;
+	unsigned int new_len;
+	unsigned int copy_offset;
+
+	if (offset > NATFLOW_L7_QUIC_CRYPTO_DATA_LIMIT ||
+	        data_len > NATFLOW_L7_QUIC_CRYPTO_DATA_LIMIT ||
+	        offset + data_len > NATFLOW_L7_QUIC_CRYPTO_DATA_LIMIT)
+		return -ENOSPC;
+
+	if (offset > *crypto_len)
+		return -EAGAIN;
+
+	new_len = (unsigned int)offset + data_len;
+	if (new_len <= *crypto_len)
+		return 0;
+
+	new_data = kmalloc(new_len, GFP_ATOMIC);
+	if (new_data == NULL)
+		return -ENOMEM;
+
+	if (*crypto_data != NULL && *crypto_len > 0)
+		memcpy(new_data, *crypto_data, *crypto_len);
+
+	copy_offset = *crypto_len - (unsigned int)offset;
+	memcpy(new_data + *crypto_len, data + copy_offset, data_len - copy_offset);
+
+	kfree(*crypto_data);
+	*crypto_data = new_data;
+	*crypto_len = new_len;
+	return 0;
+}
+
+static int natflow_l7_quic_skip_ack_frame(const unsigned char *data,
+        unsigned int data_len, unsigned int *offset, unsigned char frame_type)
+{
+	u64 ack_range_count;
+	u64 value;
+	u64 i;
+
+	if (natflow_l7_quic_read_varint(data, data_len, offset, &value) != 0 ||
+	        natflow_l7_quic_read_varint(data, data_len, offset, &value) != 0 ||
+	        natflow_l7_quic_read_varint(data, data_len, offset, &ack_range_count) != 0 ||
+	        natflow_l7_quic_read_varint(data, data_len, offset, &value) != 0) {
+		return -EINVAL;
+	}
+
+	for (i = 0; i < ack_range_count; i++) {
+		if (natflow_l7_quic_read_varint(data, data_len, offset, &value) != 0 ||
+		        natflow_l7_quic_read_varint(data, data_len, offset, &value) != 0) {
+			return -EINVAL;
+		}
+	}
+
+	if (frame_type == 0x03) {
+		if (natflow_l7_quic_read_varint(data, data_len, offset, &value) != 0 ||
+		        natflow_l7_quic_read_varint(data, data_len, offset, &value) != 0 ||
+		        natflow_l7_quic_read_varint(data, data_len, offset, &value) != 0) {
+			return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+
+enum natflow_l7_tls_search_result natflow_l7_quic_crypto_frames_search(const unsigned char *data,
+        unsigned int data_len,
+        unsigned char **crypto_data,
+        unsigned int *crypto_len,
+        unsigned char **host,
+        int *host_len)
+{
+	enum natflow_l7_tls_search_result sni_result = NATFLOW_L7_TLS_SEARCH_NEED_MORE;
+	unsigned int offset = 0;
+	int has_crypto = 0;
+
+	while (offset < data_len) {
+		unsigned char frame_type = data[offset++];
+
+		switch (frame_type) {
+		case 0x00:
+		case 0x01:
+			break;
+		case 0x02:
+		case 0x03:
+			if (natflow_l7_quic_skip_ack_frame(data, data_len, &offset, frame_type) != 0)
+				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+			break;
+		case 0x06: {
+			u64 crypto_offset;
+			u64 crypto_frame_len;
+			int merge_ret;
+
+			if (natflow_l7_quic_read_varint(data, data_len, &offset, &crypto_offset) != 0 ||
+			        natflow_l7_quic_read_varint(data, data_len, &offset, &crypto_frame_len) != 0) {
+				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+			}
+			if (crypto_frame_len > UINT_MAX ||
+			        !natflow_l7_quic_has_bytes(offset, (unsigned int)crypto_frame_len, data_len))
+				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+
+			merge_ret = natflow_l7_quic_crypto_data_merge(crypto_data, crypto_len, crypto_offset,
+			            data + offset, (unsigned int)crypto_frame_len);
+			offset += (unsigned int)crypto_frame_len;
+			if (merge_ret == -EAGAIN) {
+				has_crypto = 1;
+				continue;
+			}
+			if (merge_ret != 0)
+				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
+
+			has_crypto = 1;
+			*host_len = *crypto_len;
+			sni_result = natflow_l7_tls_client_hello_search(*crypto_data, host_len, host);
+			if (sni_result != NATFLOW_L7_TLS_SEARCH_NEED_MORE)
+				return sni_result;
+			break;
+		}
+		default:
+			return has_crypto ? sni_result : NATFLOW_L7_TLS_SEARCH_NO_SNI;
+		}
+	}
+
+	if (*crypto_data != NULL && *crypto_len > 0) {
+		*host_len = *crypto_len;
+		sni_result = natflow_l7_tls_client_hello_search(*crypto_data, host_len, host);
+	}
+
+	return has_crypto ? sni_result : NATFLOW_L7_TLS_SEARCH_NO_SNI;
 }
 
 int natflow_l7_init(void)

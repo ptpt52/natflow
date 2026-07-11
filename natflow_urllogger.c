@@ -1227,8 +1227,7 @@ static inline unsigned char *urllogger_sni_cache_detach6(struct in6_addr *src_ip
 	return data;
 }
 
-#define QUIC_V1_VERSION 0x00000001u
-#define QUIC_MAX_CID_LEN 20
+#define QUIC_MAX_CID_LEN NATFLOW_L7_QUIC_MAX_CID_LEN
 #define QUIC_INITIAL_SECRET_LEN 32
 #define QUIC_INITIAL_KEY_LEN 16
 #define QUIC_INITIAL_IV_LEN 12
@@ -1262,14 +1261,6 @@ struct urllogger_quic_crypto_ctx {
 	char desc_buf[sizeof(struct shash_desc) + HASH_MAX_DESCSIZE] __aligned(__alignof__(struct shash_desc));
 };
 
-struct quic_initial_info {
-	unsigned int version;
-	unsigned int dcid_len;
-	unsigned char dcid[QUIC_MAX_CID_LEN];
-	unsigned int pn_offset;
-	unsigned int packet_len;
-};
-
 struct urllogger_quic_cache_node {
 	unsigned long active_jiffies;
 	union {
@@ -1294,92 +1285,6 @@ static unsigned int urllogger_quic_crypto_cpu_num;
 static int urllogger_quic_crypto_ready;
 static struct urllogger_quic_cache_node (*urllogger_quic_cache)[MAX_URLLOGGER_SNI_CACHE_NODE];
 static unsigned int urllogger_quic_cache_cpu_num;
-
-static inline int quic_has_bytes(unsigned int offset, unsigned int bytes, unsigned int len)
-{
-	return offset <= len && bytes <= len - offset;
-}
-
-static int quic_read_varint(const unsigned char *data, unsigned int data_len, unsigned int *offset, u64 *value)
-{
-	unsigned int len;
-	unsigned int i;
-	unsigned int pos = *offset;
-	unsigned char first;
-	u64 v;
-
-	if (!quic_has_bytes(pos, 1, data_len))
-		return -EINVAL;
-
-	first = data[pos];
-	len = 1u << (first >> 6);
-	if (!quic_has_bytes(pos, len, data_len))
-		return -EINVAL;
-
-	v = first & 0x3f;
-	for (i = 1; i < len; i++)
-		v = (v << 8) | data[pos + i];
-
-	*offset = pos + len;
-	*value = v;
-	return 0;
-}
-
-static int quic_initial_parse_info(const unsigned char *data, unsigned int data_len, struct quic_initial_info *info)
-{
-	unsigned int offset = 0;
-	unsigned int scid_len;
-	u64 token_len;
-	u64 packet_len;
-
-	if (!quic_has_bytes(offset, 1 + 4 + 1, data_len))
-		return -EINVAL;
-	if ((data[offset] & 0x80) == 0 || (data[offset] & 0x40) == 0)
-		return -ENOENT;
-	if ((data[offset] & 0x30) != 0)
-		return -ENOENT;
-	offset++;
-
-	info->version = ntohl(get_byte4(data + offset));
-	offset += 4;
-	if (info->version != QUIC_V1_VERSION)
-		return -ENOENT;
-
-	info->dcid_len = data[offset++];
-	if (info->dcid_len == 0 || info->dcid_len > QUIC_MAX_CID_LEN)
-		return -EINVAL;
-	if (!quic_has_bytes(offset, info->dcid_len + 1, data_len))
-		return -EINVAL;
-	memcpy(info->dcid, data + offset, info->dcid_len);
-	offset += info->dcid_len;
-
-	scid_len = data[offset++];
-	if (scid_len > QUIC_MAX_CID_LEN)
-		return -EINVAL;
-	if (!quic_has_bytes(offset, scid_len, data_len))
-		return -EINVAL;
-	offset += scid_len;
-
-	if (quic_read_varint(data, data_len, &offset, &token_len) != 0)
-		return -EINVAL;
-	if (token_len > UINT_MAX || !quic_has_bytes(offset, (unsigned int)token_len, data_len))
-		return -EINVAL;
-	offset += (unsigned int)token_len;
-
-	if (quic_read_varint(data, data_len, &offset, &packet_len) != 0)
-		return -EINVAL;
-	if (packet_len > UINT_MAX || !quic_has_bytes(offset, (unsigned int)packet_len, data_len))
-		return -EINVAL;
-	if (packet_len < QUIC_MAX_PACKET_NUMBER_LEN + QUIC_INITIAL_TAG_LEN)
-		return -EINVAL;
-
-	info->pn_offset = offset;
-	info->packet_len = offset + (unsigned int)packet_len;
-	if (!quic_has_bytes(info->pn_offset + QUIC_MAX_PACKET_NUMBER_LEN, QUIC_HP_SAMPLE_LEN, info->packet_len))
-		return -EINVAL;
-
-	return 0;
-}
 
 static int quic_hmac_sha256(struct urllogger_quic_crypto_ctx *ctx,
                             const unsigned char *key, unsigned int key_len,
@@ -1555,140 +1460,8 @@ out:
 	return ret;
 }
 
-static int quic_crypto_data_merge(unsigned char **crypto_data, unsigned int *crypto_len,
-                                  u64 offset, const unsigned char *data, unsigned int data_len)
-{
-	unsigned char *new_data;
-	unsigned int new_len;
-	unsigned int copy_offset;
-
-	if (offset > URLLOGGER_SNI_CACHE_DATA_LIMIT ||
-	        data_len > URLLOGGER_SNI_CACHE_DATA_LIMIT ||
-	        offset + data_len > URLLOGGER_SNI_CACHE_DATA_LIMIT)
-		return -ENOSPC;
-
-	if (offset > *crypto_len)
-		return -EAGAIN;
-
-	new_len = (unsigned int)offset + data_len;
-	if (new_len <= *crypto_len)
-		return 0;
-
-	new_data = kmalloc(new_len, GFP_ATOMIC);
-	if (new_data == NULL)
-		return -ENOMEM;
-
-	if (*crypto_data != NULL && *crypto_len > 0)
-		memcpy(new_data, *crypto_data, *crypto_len);
-
-	copy_offset = *crypto_len - (unsigned int)offset;
-	memcpy(new_data + *crypto_len, data + copy_offset, data_len - copy_offset);
-
-	kfree(*crypto_data);
-	*crypto_data = new_data;
-	*crypto_len = new_len;
-	return 0;
-}
-
-static int quic_skip_ack_frame(const unsigned char *data, unsigned int data_len,
-                               unsigned int *offset, unsigned char frame_type)
-{
-	u64 ack_range_count;
-	u64 value;
-	u64 i;
-
-	if (quic_read_varint(data, data_len, offset, &value) != 0 ||
-	        quic_read_varint(data, data_len, offset, &value) != 0 ||
-	        quic_read_varint(data, data_len, offset, &ack_range_count) != 0 ||
-	        quic_read_varint(data, data_len, offset, &value) != 0) {
-		return -EINVAL;
-	}
-
-	for (i = 0; i < ack_range_count; i++) {
-		if (quic_read_varint(data, data_len, offset, &value) != 0 ||
-		        quic_read_varint(data, data_len, offset, &value) != 0) {
-			return -EINVAL;
-		}
-	}
-
-	if (frame_type == 0x03) {
-		if (quic_read_varint(data, data_len, offset, &value) != 0 ||
-		        quic_read_varint(data, data_len, offset, &value) != 0 ||
-		        quic_read_varint(data, data_len, offset, &value) != 0) {
-			return -EINVAL;
-		}
-	}
-
-	return 0;
-}
-
-static enum natflow_l7_tls_search_result quic_crypto_frames_search(const unsigned char *data,
-        unsigned int data_len,
-        unsigned char **crypto_data,
-        unsigned int *crypto_len,
-        unsigned char **host,
-        int *host_len)
-{
-	enum natflow_l7_tls_search_result sni_result = NATFLOW_L7_TLS_SEARCH_NEED_MORE;
-	unsigned int offset = 0;
-	int has_crypto = 0;
-
-	while (offset < data_len) {
-		unsigned char frame_type = data[offset++];
-
-		switch (frame_type) {
-		case 0x00: /* PADDING */
-		case 0x01: /* PING */
-			break;
-		case 0x02: /* ACK */
-		case 0x03: /* ACK with ECN */
-			if (quic_skip_ack_frame(data, data_len, &offset, frame_type) != 0)
-				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
-			break;
-		case 0x06: { /* CRYPTO */
-			u64 crypto_offset;
-			u64 crypto_frame_len;
-			int merge_ret;
-
-			if (quic_read_varint(data, data_len, &offset, &crypto_offset) != 0 ||
-			        quic_read_varint(data, data_len, &offset, &crypto_frame_len) != 0) {
-				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
-			}
-			if (crypto_frame_len > UINT_MAX || !quic_has_bytes(offset, (unsigned int)crypto_frame_len, data_len))
-				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
-
-			merge_ret = quic_crypto_data_merge(crypto_data, crypto_len, crypto_offset,
-			                                   data + offset, (unsigned int)crypto_frame_len);
-			offset += (unsigned int)crypto_frame_len;
-			if (merge_ret == -EAGAIN) {
-				has_crypto = 1;
-				continue;
-			}
-			if (merge_ret != 0)
-				return NATFLOW_L7_TLS_SEARCH_MALFORMED;
-
-			has_crypto = 1;
-			*host_len = *crypto_len;
-			sni_result = natflow_l7_tls_client_hello_search(*crypto_data, host_len, host);
-			if (sni_result != NATFLOW_L7_TLS_SEARCH_NEED_MORE)
-				return sni_result;
-			break;
-		}
-		default:
-			return has_crypto ? sni_result : NATFLOW_L7_TLS_SEARCH_NO_SNI;
-		}
-	}
-
-	if (*crypto_data != NULL && *crypto_len > 0) {
-		*host_len = *crypto_len;
-		sni_result = natflow_l7_tls_client_hello_search(*crypto_data, host_len, host);
-	}
-
-	return has_crypto ? sni_result : NATFLOW_L7_TLS_SEARCH_NO_SNI;
-}
-
 static enum natflow_l7_tls_search_result quic_initial_sni_search(const unsigned char *data,
-        const struct quic_initial_info *info,
+        const struct natflow_l7_quic_initial_info *info,
         unsigned char **crypto_data,
         unsigned int *crypto_len,
         unsigned char **host,
@@ -1732,7 +1505,7 @@ static enum natflow_l7_tls_search_result quic_initial_sni_search(const unsigned 
 
 	packet[0] ^= ctx->mask[0] & 0x0f;
 	pn_len = (packet[0] & 0x03) + 1;
-	if (!quic_has_bytes(info->pn_offset, pn_len, info->packet_len))
+	if (!natflow_l7_quic_has_bytes(info->pn_offset, pn_len, info->packet_len))
 		goto malformed;
 
 	for (i = 0; i < pn_len; i++) {
@@ -1752,7 +1525,7 @@ static enum natflow_l7_tls_search_result quic_initial_sni_search(const unsigned 
 	memzero_explicit(ctx->mask, sizeof(ctx->mask));
 	memzero_explicit(ctx->nonce, sizeof(ctx->nonce));
 
-	ret = quic_crypto_frames_search(payload, payload_len, crypto_data, crypto_len, host, host_len);
+	ret = natflow_l7_quic_crypto_frames_search(payload, payload_len, crypto_data, crypto_len, host, host_len);
 	return ret;
 
 malformed:
@@ -1796,7 +1569,7 @@ static inline void urllogger_quic_cache_cleanup(void)
 static inline int urllogger_quic_cache_match(const struct urllogger_quic_cache_node *node,
         __be32 src_ip, __be16 src_port,
         __be32 dst_ip, __be16 dst_port,
-        const struct quic_initial_info *info)
+        const struct natflow_l7_quic_initial_info *info)
 {
 	return node->crypto_data != NULL &&
 	       node->src_ip == src_ip &&
@@ -1811,7 +1584,7 @@ static inline int urllogger_quic_cache_match(const struct urllogger_quic_cache_n
 static inline int urllogger_quic_cache_match6(const struct urllogger_quic_cache_node *node,
         const struct in6_addr *src_ip, __be16 src_port,
         const struct in6_addr *dst_ip, __be16 dst_port,
-        const struct quic_initial_info *info)
+        const struct natflow_l7_quic_initial_info *info)
 {
 	return node->crypto_data != NULL &&
 	       memcmp(&node->src_ipv6, src_ip, 16) == 0 &&
@@ -1825,7 +1598,7 @@ static inline int urllogger_quic_cache_match6(const struct urllogger_quic_cache_
 
 static inline int urllogger_quic_cache_attach(__be32 src_ip, __be16 src_port,
         __be32 dst_ip, __be16 dst_port,
-        const struct quic_initial_info *info,
+        const struct natflow_l7_quic_initial_info *info,
         unsigned char *crypto_data,
         unsigned int crypto_len)
 {
@@ -1867,7 +1640,7 @@ static inline int urllogger_quic_cache_attach(__be32 src_ip, __be16 src_port,
 
 static inline int urllogger_quic_cache_attach6(const struct in6_addr *src_ip, __be16 src_port,
         const struct in6_addr *dst_ip, __be16 dst_port,
-        const struct quic_initial_info *info,
+        const struct natflow_l7_quic_initial_info *info,
         unsigned char *crypto_data,
         unsigned int crypto_len)
 {
@@ -1909,7 +1682,7 @@ static inline int urllogger_quic_cache_attach6(const struct in6_addr *src_ip, __
 
 static inline unsigned char *urllogger_quic_cache_detach(__be32 src_ip, __be16 src_port,
         __be32 dst_ip, __be16 dst_port,
-        const struct quic_initial_info *info,
+        const struct natflow_l7_quic_initial_info *info,
         unsigned int *crypto_len)
 {
 	int i = smp_processor_id();
@@ -1937,7 +1710,7 @@ static inline unsigned char *urllogger_quic_cache_detach(__be32 src_ip, __be16 s
 
 static inline unsigned char *urllogger_quic_cache_detach6(const struct in6_addr *src_ip, __be16 src_port,
         const struct in6_addr *dst_ip, __be16 dst_port,
-        const struct quic_initial_info *info,
+        const struct natflow_l7_quic_initial_info *info,
         unsigned int *crypto_len)
 {
 	int i = smp_processor_id();
@@ -1966,7 +1739,7 @@ static inline unsigned char *urllogger_quic_cache_detach6(const struct in6_addr 
 static noinline unsigned int urllogger_quic4(URLLOGGER_HOOK_CTX_ARGS,
         struct sk_buff *skb, struct nf_conn *ct)
 {
-	struct quic_initial_info quic_info;
+	struct natflow_l7_quic_initial_info quic_info;
 	enum natflow_l7_tls_search_result sni_result;
 	unsigned char *host = NULL;
 	unsigned char *crypto_data = NULL;
@@ -2000,7 +1773,7 @@ static noinline unsigned int urllogger_quic4(URLLOGGER_HOOK_CTX_ARGS,
 	l4 = (void *)iph + iph->ihl * 4;
 	data = skb->data + iph->ihl * 4 + sizeof(struct udphdr);
 
-	quic_ret = quic_initial_parse_info(data, data_len, &quic_info);
+	quic_ret = natflow_l7_quic_initial_parse_info(data, data_len, &quic_info);
 	if (quic_ret != 0)
 		goto skip;
 
@@ -2092,7 +1865,7 @@ done:
 static noinline unsigned int urllogger_quic6(URLLOGGER_HOOK_CTX_ARGS,
         struct sk_buff *skb, struct nf_conn *ct)
 {
-	struct quic_initial_info quic_info;
+	struct natflow_l7_quic_initial_info quic_info;
 	enum natflow_l7_tls_search_result sni_result;
 	unsigned char *host = NULL;
 	unsigned char *crypto_data = NULL;
@@ -2126,7 +1899,7 @@ static noinline unsigned int urllogger_quic6(URLLOGGER_HOOK_CTX_ARGS,
 	l4 = (void *)ip6h + sizeof(struct ipv6hdr);
 	data = skb->data + sizeof(struct ipv6hdr) + sizeof(struct udphdr);
 
-	quic_ret = quic_initial_parse_info(data, data_len, &quic_info);
+	quic_ret = natflow_l7_quic_initial_parse_info(data, data_len, &quic_info);
 	if (quic_ret != 0)
 		goto skip;
 

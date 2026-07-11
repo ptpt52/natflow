@@ -11,6 +11,7 @@ struct sk_buff;
 
 #define NATFLOW_L7_HOST_MAX_LEN 253
 #define NATFLOW_L7_HOST_ALLOW_PORT 0x01
+#define NATFLOW_L7_QUIC_MAX_CID_LEN 20
 
 enum natflow_l7_feature_source {
 	NATFLOW_L7_SOURCE_NONE = 0,
@@ -65,6 +66,14 @@ struct natflow_l7_feature {
 	unsigned char host[NATFLOW_L7_HOST_MAX_LEN + 1];
 };
 
+struct natflow_l7_quic_initial_info {
+	unsigned int version;
+	unsigned int packet_len;
+	unsigned int pn_offset;
+	unsigned char dcid_len;
+	unsigned char dcid[NATFLOW_L7_QUIC_MAX_CID_LEN];
+};
+
 extern ssize_t natflow_l7_copy_host_tolower(unsigned char *dst,
                                             const unsigned char *src,
                                             ssize_t n,
@@ -85,6 +94,18 @@ extern enum natflow_l7_tls_search_result natflow_l7_tls_client_hello_search(unsi
         int *data_len, unsigned char **host);
 extern enum natflow_l7_tls_search_result natflow_l7_tls_sni_search(unsigned char *data,
         int *data_len, unsigned char **host);
+extern int natflow_l7_quic_has_bytes(unsigned int offset,
+                                     unsigned int bytes,
+                                     unsigned int len);
+extern int natflow_l7_quic_initial_parse_info(const unsigned char *data,
+        unsigned int data_len,
+        struct natflow_l7_quic_initial_info *info);
+extern enum natflow_l7_tls_search_result natflow_l7_quic_crypto_frames_search(const unsigned char *data,
+        unsigned int data_len,
+        unsigned char **crypto_data,
+        unsigned int *crypto_len,
+        unsigned char **host,
+        int *host_len);
 extern int natflow_l7_init(void);
 extern void natflow_l7_exit(void);
 

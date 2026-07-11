@@ -899,7 +899,7 @@ classid 模式：
 
 实现边界：
 
-- `natflow_l7_copy_host_tolower()` 是 L7 共享 hostname normalize/validate 层；HTTP Host 解析已由 `natflow_l7_http_parse()` 产出共享 feature，TLS ClientHello/SNI 搜索已迁移到 `natflow_l7_tls_*()`，QUIC Initial 解密和 crypto frame 拼接仍在 legacy URL logger parser 中。ASCII 大写转小写，去除末尾 root dot；HTTP Host 允许并剥离合法十进制 `:port`；总长度限制为 1..253，单 label 限制为 1..63，只允许 `[a-z0-9.-]`，拒绝空 label、label 开头或结尾的 `-`、NUL、控制字符、空白、逗号、冒号等非 DNS hostname 字节。
+- `natflow_l7_copy_host_tolower()` 是 L7 共享 hostname normalize/validate 层；HTTP Host 解析已由 `natflow_l7_http_parse()` 产出共享 feature，TLS ClientHello/SNI 搜索已迁移到 `natflow_l7_tls_*()`，QUIC Initial header、CRYPTO frame 拼接和 SNI 搜索已迁移到 `natflow_l7_quic_*()`；QUIC AES/HKDF crypto context 和分片 cache 的初始化/清理仍由 legacy URL logger 持有，以保持 crypto 初始化失败只禁用 QUIC hostname parser、不导致 URL logger 初始化失败的旧语义。ASCII 大写转小写，去除末尾 root dot；HTTP Host 允许并剥离合法十进制 `:port`；总长度限制为 1..253，单 label 限制为 1..63，只允许 `[a-z0-9.-]`，拒绝空 label、label 开头或结尾的 `-`、NUL、控制字符、空白、逗号、冒号等非 DNS hostname 字节。
 - URL 记录创建前会先完成 hostname/URI 校验，并限制 `normalized_host + uri + NUL <= URLLOGGER_DATALEN`，避免按畸形输入长度做过大的 `GFP_ATOMIC` 分配。
 - Host ACL 失败路径使用 `urllogger_acl_lookup` 栈上视图复用同一 hostname normalize 规则，不依赖 URL store record 分配成功。
 - TLS/QUIC SNI server_name type 0 的内容会按 DNS hostname 规则校验后使用；严格校验会拒绝包含 `_`、非 ASCII U-label、通配符、IPv6 literal 或其他非标准 DNS hostname 的输入。
