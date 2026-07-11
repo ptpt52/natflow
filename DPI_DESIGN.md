@@ -4,7 +4,7 @@
 
 更新时间：2026-07-11
 
-实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，增加了 `natflow_l7` hook 生命周期骨架，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue 骨架；但还没有数据面 DPI consumer、detector、规则匹配或非 0 `app_id` 写入，也还没有把 URL parser 迁移到统一 L7 feature core。URL/SNI 记录和 Host ACL 仍由 `natflow_urllogger.c` 实现。
+实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，增加了 `natflow_l7` hook 生命周期骨架，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、match event producer 和 `app_id` 写入。当前 M1b 数据面 consumer 仍复用 `natflow_urllogger.c` 已解析出的 HTTP Host、TLS SNI 和 QUIC SNI，并未完成共享 L7 feature core 或 protocol-only detector。
 
 ## 1. 总体结论
 
@@ -627,10 +627,11 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 ### M1b：HTTP/TLS/QUIC 和 domain rules
 
-- 删除临时重复 parser；URL、Host ACL 和 DPI 消费同一次 parser 结果。
-- 实现 domain exact/suffix matcher 和 app/domain snapshot。
-- 输出 `DIRECT_SUFFIX`、`DIRECT_EXACT` 和 `NO_RULE` event。
-- 默认关闭，unknown/error fail-open，不执行 app ACL/QoS。
+- 已完成 MVP：DPI 复用 legacy URL logger 已解析出的 HTTP Host、TLS SNI、QUIC v1 Initial SNI，不重复解析包。
+- 已完成 MVP：实现 RCU 发布的 domain exact/suffix ruleset，命中时写 `natflow_t.app_id` 并输出固定头 match event。
+- 已完成 MVP：URL record 分配失败时，DPI 与 Host ACL 一样消费 `urllogger_acl_lookup` 的最小 host 视图。
+- 仍未完成：把 URL、Host ACL 和 DPI 迁移到真正共享的 `natflow_l7` feature core。
+- 当前只输出 match event；未命中不输出 `NO_RULE`，也不执行 app ACL/QoS。
 
 ### M1c：首批 protocol-only detector
 

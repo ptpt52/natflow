@@ -6,8 +6,11 @@
 
 #include <linux/types.h>
 
+struct nf_conn;
+
 #define NATFLOW_DPI_CTL_MAX_LINE 512
 #define NATFLOW_DPI_EVENT_VERSION 1
+#define NATFLOW_DPI_HOST_MAX_LEN 253
 
 enum natflow_dpi_event_reason {
 	NATFLOW_DPI_REASON_NONE = 0,
@@ -16,6 +19,13 @@ enum natflow_dpi_event_reason {
 	NATFLOW_DPI_REASON_CACHE_FULL = 3,
 	NATFLOW_DPI_REASON_NOT_ELIGIBLE = 4,
 	NATFLOW_DPI_REASON_MODULE_EXIT = 5,
+	NATFLOW_DPI_REASON_MATCHED = 6,
+};
+
+enum natflow_dpi_host_source {
+	NATFLOW_DPI_HOST_SOURCE_HTTP = 1,
+	NATFLOW_DPI_HOST_SOURCE_TLS = 2,
+	NATFLOW_DPI_HOST_SOURCE_QUIC = 3,
 };
 
 struct natflow_dpi_event_hdr {
@@ -33,5 +43,9 @@ struct natflow_dpi_event_hdr {
 
 extern int natflow_dpi_init(void);
 extern void natflow_dpi_exit(void);
+extern void natflow_dpi_classify_host(struct nf_conn *ct,
+                                      const unsigned char *host,
+                                      unsigned short host_len,
+                                      unsigned int source);
 
 #endif /* _NATFLOW_DPI_H_ */
