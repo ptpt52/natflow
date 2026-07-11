@@ -47,17 +47,6 @@ int natflow_l7_consumer_active(unsigned int consumer)
 }
 
 #if defined(CONFIG_NATFLOW_URLLOGGER)
-static unsigned int natflow_l7_pending_consumer_mask(const struct nf_conn *ct,
-        unsigned int consumer_mask)
-{
-	if ((ct->status & IPS_NATFLOW_URLLOGGER_HANDLED))
-		consumer_mask &= ~NATFLOW_L7_CONSUMER_URL;
-	if ((ct->status & IPS_NATFLOW_L7_DPI_HANDLED))
-		consumer_mask &= ~NATFLOW_L7_CONSUMER_DPI;
-
-	return consumer_mask;
-}
-
 #if NATFLOW_HAVE_IP_SET_STATE_API
 #define NATFLOW_L7_URL_CONSUMER_ARGS \
 	unsigned int hooknum, const struct nf_hook_state *state, struct sk_buff *skb
@@ -144,8 +133,7 @@ static unsigned int natflow_l7_url_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS)
 	}
 	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
 		goto out;
-	consumer_mask = natflow_l7_pending_consumer_mask(ct, consumer_mask);
-	if (consumer_mask == 0)
+	if ((ct->status & IPS_NATFLOW_L7_HANDLED))
 		goto out;
 
 	view.ct = ct;

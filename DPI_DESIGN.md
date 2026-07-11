@@ -101,8 +101,7 @@ MVP 是审计和机会性分类能力。`UNKNOWN`、`ERROR`、预算耗尽、不
 | `/dev/hostacl_ctl` | 保持命令、32 个 ACL 槽位、ipset 命名和四种 action。 |
 | `/proc/sys/urllogger_store/*` | 保持路径、字段名和语义。尤其 `enable=0` 表示 URL CSV 和 Host ACL 都不执行。 |
 | `CONFIG_NATFLOW_URLLOGGER` | 继续表示启用 legacy URL logger、Host ACL 和 sysctl。 |
-| `IPS_NATFLOW_URLLOGGER_HANDLED` | 只表示 legacy URL consumer 已处理，不代表 DPI terminal。 |
-| `IPS_NATFLOW_L7_DPI_HANDLED` | 只表示 L7 DPI host consumer 已处理，不代表 legacy URL consumer。 |
+| `IPS_NATFLOW_L7_HANDLED` | 统一 L7 one-shot 标记，表示本连接的 URL/DPI shared L7 入口已处理；consumer mask 只决定本次 fan-out。 |
 
 可以在内部把实现文件拆分或把符号改成 `natflow_l7_url_*`，但不在 M0/M1 迁移用户可见名字。若未来需要新增 alias，例如 `/dev/natflow_l7_url_queue`，也必须保持旧节点长期可用，并把 alias 作为独立 ABI 任务。
 

@@ -1810,10 +1810,7 @@ static noinline unsigned int urllogger_quic4(URLLOGGER_HOOK_CTX_ARGS,
 	}
 
 skip:
-	if (url_consumer)
-		set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
-	if (dpi_consumer)
-		set_bit(IPS_NATFLOW_L7_DPI_HANDLED_BIT, &ct->status);
+	set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &ct->status);
 	if (nf && (nf->status & NF_FF_URLLOGGER_USE))
 		simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
 
@@ -1953,10 +1950,7 @@ static noinline unsigned int urllogger_quic6(URLLOGGER_HOOK_CTX_ARGS,
 	}
 
 skip:
-	if (url_consumer)
-		set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
-	if (dpi_consumer)
-		set_bit(IPS_NATFLOW_L7_DPI_HANDLED_BIT, &ct->status);
+	set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &ct->status);
 	if (nf && (nf->status & NF_FF_URLLOGGER_USE))
 		simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
 
@@ -2275,10 +2269,7 @@ unsigned int natflow_urllogger_consume_url_view(unsigned int hooknum,
 
 __urllogger_ip_skip:
 		/* check one packet only */
-		if (url_consumer)
-			set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
-		if (dpi_consumer)
-			set_bit(IPS_NATFLOW_L7_DPI_HANDLED_BIT, &ct->status);
+		set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &ct->status);
 		if (nf && (nf->status & NF_FF_URLLOGGER_USE)) {
 			/* tell FF -urllogger- has finished it's job */
 			simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);
@@ -2609,10 +2600,7 @@ urllogger_hook_ipv6_main:
 
 __urllogger_ipv6_skip:
 		/* check one packet only */
-		if (url_consumer)
-			set_bit(IPS_NATFLOW_URLLOGGER_HANDLED_BIT, &ct->status);
-		if (dpi_consumer)
-			set_bit(IPS_NATFLOW_L7_DPI_HANDLED_BIT, &ct->status);
+		set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &ct->status);
 		if (nf && (nf->status & NF_FF_URLLOGGER_USE)) {
 			/* tell FF -urllogger- has finished it's job */
 			simple_clear_bit(NF_FF_URLLOGGER_USE_BIT, &nf->status);

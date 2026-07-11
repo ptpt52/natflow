@@ -580,9 +580,8 @@ Natflow 复用 `ct->status` 的高位和扩展位：
 - `IPS_NATFLOW_CT_DROP`：bit 17，用在普通 ct 上表示该连接应丢弃；与上一个宏同 bit，不同上下文使用。
 - `IPS_NATFLOW_USER_BYPASS`：bit 15。
 - `IPS_NATFLOW_FF_STOP`：bit 18，永久停止该 ct 的 fast path。
-- `IPS_NATFLOW_URLLOGGER_HANDLED`：bit 19，legacy URL consumer one-shot 标记。
+- `IPS_NATFLOW_L7_HANDLED`：bit 19，L7 one-shot 标记，控制 URL/DPI shared L7 入口只处理一次。
 - `IPS_NATFLOW_SKIP_BRIDGE`：bit 20，用于 bridge/non-bridge 双 hook 去重。
-- `IPS_NATFLOW_L7_DPI_HANDLED`：bit 21，L7 DPI host consumer one-shot 标记。
 - NATCAP 相关位保留用于兼容。
 
 AI 重建时必须注意 bit 17 在 fakeuser 和普通 ct 上语义不同，不能简单合并成一个枚举。
@@ -864,7 +863,7 @@ classid 模式：
 
 1. 若 URL consumer 和 DPI host consumer 都未激活，则直接 accept；`/proc/sys/urllogger_store/enable=1` 激活 URL/HostACL consumer，DPI `enable=1` 且存在 domain rule 激活 DPI host consumer。
 2. 跳过已设置 `IPS_NATFLOW_CT_DROP` 的连接。
-3. 只处理 original 方向，且至少有一个 active consumer 未设置对应 handled bit：URL consumer 使用 `IPS_NATFLOW_URLLOGGER_HANDLED`，DPI host consumer 使用 `IPS_NATFLOW_L7_DPI_HANDLED`。
+3. 只处理 original 方向，且未设置 `IPS_NATFLOW_L7_HANDLED`；URL/DPI consumer mask 只决定本次解析后的 fan-out，不再分别控制入口 one-shot。
 4. 设置 `NF_FF_URLLOGGER_USE` 暂停 fast path。
 5. 解析 HTTP：
    - 方法只识别 `GET `、`POST `、`HEAD `。
@@ -895,7 +894,7 @@ classid 模式：
    - 不解析 HTTP/3 `:authority` 或 path，不支持 ECH 内层真实 SNI。
    - QUIC crypto 初始化失败时，URL logger 仍可加载，但 QUIC hostname parser 被禁用。
 8. 命中 host 后按 active consumer fan-out：URL consumer 执行 URL CSV 和 Host ACL，正常路径复用 URL record；若 URL record 分配失败，则退到最小 ACL view 尽量执行 ACL，但不会生成对应 `/dev/urllogger_queue` 记录。DPI host consumer 调用 domain classifier，写入 `app_id` 并输出 match event；DPI-only 时不创建 URL record、不执行 Host ACL。
-9. 处理完成后分别设置 active consumer 的 handled bit。
+9. 处理完成后设置 `IPS_NATFLOW_L7_HANDLED`。
 10. URL logger 不会因为固定域名命中而自动添加任何全局 ipset；host ACL 只测试 `host_acl_rule<id>_ipv4/ipv6/mac` 这类用户态配置的过滤集合。
 
 实现边界：
