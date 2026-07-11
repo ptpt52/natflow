@@ -645,6 +645,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成 MVP：增加 STUN/TURN 子集，识别 STUN header、length、magic cookie，并按 TURN 方法区分 TURN。
 - 已完成 MVP：增加 BitTorrent TCP handshake，以及 UDP uTP v1 header 和 DHT bencode token 前缀窗口子集；uTP 会校验版本、类型和扩展号。
 - 已完成 MVP：`/dev/natflow_dpi_ctl` status 输出 HTTP/TLS/QUIC/DNS/SSH/WireGuard/STUN/TURN/BitTorrent source counters 和 `events_lost`。
+- 已完成 MVP：增加 `events_clear` 测试辅助命令，用于清空已排队 match event 并重置 `events*` shadow 统计，不改变 ruleset、enable 状态或 generation。
 - 仍未完成：更完整的 reason counters、payload TLV、IPv6 extension header 解析、误判 corpus 和生产 shadow 数据采集。
 
 ### M2：生产 shadow
@@ -700,7 +701,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 ### 19.5 ABI 与资源
 
-- DPI ctl line 长度、未知命令、事务冲突、generation 回放。
+- DPI ctl line 长度、未知命令、事务冲突、generation 回放、`events_clear` 后队列和统计归零。
 - DPI queue 小 buffer、poll、event lost、record_len 跳过。
 - ruleset memory、retired generation、hash collision、suffix probes。
 - malformed packet 不刷日志。

@@ -476,6 +476,18 @@ static void natflow_dpi_event_purge(void)
 		kfree(node);
 }
 
+static void natflow_dpi_events_clear(void)
+{
+	int i;
+
+	natflow_dpi_event_purge();
+	atomic64_set(&natflow_dpi_events, 0);
+	atomic64_set(&natflow_dpi_events_lost, 0);
+	for (i = 0; i <= NATFLOW_DPI_EVENT_SOURCE_MAX; i++)
+		atomic64_set(&natflow_dpi_source_events[i], 0);
+	wake_up_interruptible(&natflow_dpi_wait);
+}
+
 static int natflow_dpi_rules_begin(void)
 {
 	struct natflow_dpi_ruleset *pending;
@@ -665,6 +677,7 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             "#    rules_commit\n"
 	             "#    rules_abort\n"
 	             "#    rules_clear\n"
+	             "#    events_clear\n"
 	             "# Event ABI:\n"
 	             "#    version=%u header_len=%u\n"
 	             "\n"
@@ -783,6 +796,8 @@ static int natflow_dpi_ctl_apply_line(char *data)
 		err = natflow_dpi_rules_clear();
 		if (err != 0)
 			goto out;
+	} else if (strcmp(data, "events_clear") == 0) {
+		natflow_dpi_events_clear();
 	} else {
 		err = -EINVAL;
 	}

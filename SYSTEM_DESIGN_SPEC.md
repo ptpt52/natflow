@@ -928,8 +928,9 @@ classid 模式：
 
 `CONFIG_NATFLOW_DPI` 当前启用默认关闭的控制面、domain exact/suffix ruleset、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、source counters 和 match event 队列：
 
-- `/dev/natflow_dpi_ctl` 使用 seq_file 输出状态，支持 `enable=0|1`、`enable`、`disable`、`rules_begin`、`domain id=<rule_id> app=<app_id> kind=exact|suffix host=<host>`、`proto id=<rule_id> app=<app_id> proto=dns|ssh|wireguard|stun|turn|bittorrent`、`rules_commit`、`rules_abort` 和 `rules_clear`。
+- `/dev/natflow_dpi_ctl` 使用 seq_file 输出状态，支持 `enable=0|1`、`enable`、`disable`、`rules_begin`、`domain id=<rule_id> app=<app_id> kind=exact|suffix host=<host>`、`proto id=<rule_id> app=<app_id> proto=dns|ssh|wireguard|stun|turn|bittorrent`、`rules_commit`、`rules_abort`、`rules_clear` 和 `events_clear`。
 - `rules_begin` 分配 pending ruleset，`domain ...` 和 `proto ...` 只能在事务中写入；`rules_commit` 用 RCU 原子发布完整 ruleset 并递增 generation；`rules_abort` 丢弃 pending；`rules_clear` 发布空 ruleset。
+- `events_clear` 清空 `/dev/natflow_dpi_queue` 中已排队事件，并把 `events`、`events_lost` 和 `events_*` source counters 归零；不改变 enable 状态、ruleset 或 generation。持续流量下可能立刻产生新事件，单项测试前应先暂停流量或临时禁用 DPI。
 - 单个 ruleset 当前最多 128 条 domain 规则和 32 条 proto 规则。`id` 和 `app` 必须非 0，同一事务内 `id` 不能重复；`host` 会转小写、去掉末尾点，并校验 DNS label；`kind=suffix` 匹配完全相同 host 或带点边界的子域名。
 - `proto` 当前支持 `dns`、`ssh`、`wireguard`/`wg`、`stun`、`turn`、`bittorrent`/`bt`。
 - 端口型 detector 当前按 original direction 的目标端口识别：DNS TCP/UDP 53，SSH TCP 22，WireGuard UDP 51820。
