@@ -2083,12 +2083,12 @@ static void urllogger_quic_crypto_cleanup(void)
 	urllogger_quic_crypto_cpu_num = 0;
 }
 
-int natflow_urllogger_is_enabled(void)
+int natflow_urllogger_url_enabled(void)
 {
 	return READ_ONCE(urllogger_store_enable) != 0;
 }
 
-unsigned int natflow_urllogger_consume_skb(unsigned int hooknum,
+unsigned int natflow_urllogger_consume_url_view(unsigned int hooknum,
         URLLOGGER_HOOK_CTX_ARGS,
         const struct natflow_l7_packet_view *view)
 {

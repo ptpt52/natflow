@@ -24,7 +24,7 @@ static int natflow_l7_started;
 #define NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, state, in, out) \
 	natflow_l7_url_consume_common(hooknum, state, skb)
 #define NATFLOW_L7_URLLOGGER_CONSUME(view) \
-	natflow_urllogger_consume_skb(hooknum, state, view)
+	natflow_urllogger_consume_url_view(hooknum, state, view)
 #else
 #define NATFLOW_L7_URL_CONSUMER_ARGS \
 	unsigned int hooknum, const struct net_device *in, \
@@ -32,7 +32,7 @@ static int natflow_l7_started;
 #define NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, state, in, out) \
 	natflow_l7_url_consume_common(hooknum, in, out, skb)
 #define NATFLOW_L7_URLLOGGER_CONSUME(view) \
-	natflow_urllogger_consume_skb(hooknum, in, out, view)
+	natflow_urllogger_consume_url_view(hooknum, in, out, view)
 #endif
 
 static unsigned int natflow_l7_url_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS)
@@ -42,7 +42,7 @@ static unsigned int natflow_l7_url_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS)
 	struct nf_conn *ct;
 	unsigned int ret = NF_ACCEPT;
 
-	if (!natflow_urllogger_is_enabled())
+	if (!natflow_urllogger_url_enabled())
 		return NF_ACCEPT;
 
 	memset(&view, 0, sizeof(view));
@@ -180,7 +180,7 @@ static unsigned int natflow_l7_url_local_in(void *priv,
 	struct nf_conn *ct;
 	struct iphdr *iph;
 
-	if (!natflow_urllogger_is_enabled())
+	if (!natflow_urllogger_url_enabled())
 		return NF_ACCEPT;
 
 	ct = nf_ct_get(skb, &ctinfo);
