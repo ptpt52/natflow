@@ -4,7 +4,7 @@
 
 更新时间：2026-07-11
 
-实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，并增加了 `natflow_l7` hook 生命周期骨架；但还没有提供 DPI 控制/事件 ABI，也还没有把 URL parser 迁移到统一 L7 feature core。URL/SNI 记录和 Host ACL 仍由 `natflow_urllogger.c` 实现。
+实现状态：本文描述目标架构。当前源码已经预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，增加了 `natflow_l7` hook 生命周期骨架，并让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行；但还没有提供 DPI 控制/事件 ABI，也还没有把 URL parser 迁移到统一 L7 feature core。URL/SNI 记录和 Host ACL 仍由 `natflow_urllogger.c` 实现。
 
 ## 1. 总体结论
 
@@ -51,7 +51,7 @@ natflow_l7 core
 - 当前 `urllogger_store_enable=0` 时 hook 入口直接 accept，因此 Host ACL 也不会执行。
 - 当前 HTTP Host/URI、TLS SNI、QUIC v1 Initial SNI parser 都是 `natflow_urllogger.c` 内部静态实现，并和 URL record 分配、Host ACL、队列输出混在同一 hook。
 - 当前 TLS/QUIC 跨包 cache 按 CPU 存储。RPS/RFS 或调度变化导致同一 flow 后续包落到其他 CPU 时，可能找不到之前 prefix。
-- 当前 Host ACL 在 URL record 分配成功后才执行；URL 日志对象分配失败会同时跳过 ACL。
+- 当前 Host ACL 已不依赖 URL record 分配成功；URL 日志对象分配失败时不会生成 CSV 记录，但会尽量基于同一 host normalize 规则执行 ACL。
 - 当前 `nf->status` 的 `simple_set_bit()` 和 `simple_clear_bit()` 是非原子 read-modify-write。维护者接受这个已知风险，DPI 不引入 path 侧 repair，也不在本设计中迁移整个状态字。
 - 当前 `natflow_session_init()` 使用共享 conntrack extension 尾部布局，并依赖脆弱的 `krealloc()`/offset 假设；源码已增加 layout guard，但后续 DPI/L7 hook 注册仍必须在 guard 成功后执行。
 
@@ -507,7 +507,7 @@ legacy consumer 的目标是行为兼容，不是顺手修语义：
 - `host_acl_rule<id>_ipv4`、`host_acl_rule<id>_ipv6`、`host_acl_rule<id>_mac` ipset 命名保持不变。
 - `/proc/sys/urllogger_store/enable=0` 时 URL CSV 和 Host ACL 都不执行，即使 DPI 已启用。
 - `/proc/sys/urllogger_store/enable=1` 时 URL/HostACL consumer 加入 L7 active consumer mask。
-- Host ACL 决策不能依赖 URL record 分配成功；应使用 parser feature 上的最小 ACL view。
+- 已完成：Host ACL 决策不再依赖 URL record 分配成功；当前使用 `urllogger_acl_lookup` 最小 host 视图，后续迁移到 parser feature。
 - reset/redirect/drop 动作仍由 legacy URL consumer 执行。DPI MVP 不提供 redirect。
 - PPPoE/bridge 场景下必须保留 skb 状态恢复；目标 read-only packet view 应减少临时 pull/restore。
 
@@ -611,7 +611,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 建立 parser corpus 和现有 URL/Host ACL 行为测试。
 - 抽出 read-only packet view、hostname normalize、HTTP/TLS/QUIC parser API 和 bounded prefix helper。
 - legacy URL logger 改为消费 shared features，保持设备、CSV、sysctl 和 Host ACL ABI。
-- Host ACL 与 URL record 分配解耦。
+- 已完成：Host ACL 与 URL record 分配解耦。
 - 建立 L7 control mutex、consumer mask 和 custom `urllogger_store/enable` handler。
 - 不新增 DPI 对外 ABI，不宣称应用分类。
 

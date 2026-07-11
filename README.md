@@ -506,6 +506,7 @@ echo 'add acl=<id>,<act>,<host>' >/dev/hostacl_ctl
 - 同一槽位可追加多个 host。
 - 可选 ipset 过滤集合名：`host_acl_rule<id>_ipv4`、`host_acl_rule<id>_ipv6`、`host_acl_rule<id>_mac`。
 - Host ACL 依赖 URL logger 解析，排障时先开启 `/proc/sys/urllogger_store/enable`。
+- Host ACL 使用解析出的最小 host 视图执行；即使 URL store 记录分配失败，也会尽量执行 ACL 动作，但不会生成对应 `/dev/urllogger_queue` 记录。
 
 ## URL logger
 

@@ -336,6 +336,30 @@ struct acl_rule {
 /* 0: accept/record, 1: drop, 2: reset, 3: redirect */
 static int acl_action_default = URLINFO_ACL_ACTION_RECORD;
 static const char * const acl_action_names[] = {"accept", "drop", "reset", "redirect"};
+struct urllogger_acl_lookup {
+	unsigned short host_len;
+	unsigned char acl_idx;
+	unsigned char acl_action;
+	unsigned char data[URLINFO_HOST_MAX_LEN + 1];
+};
+
+static int urllogger_acl_lookup_init(struct urllogger_acl_lookup *lookup,
+        const unsigned char *host, int host_len, unsigned int host_flags)
+{
+	ssize_t copied_host_len;
+
+	copied_host_len = urlinfo_copy_host_tolower(lookup->data, host, host_len, host_flags);
+	if (copied_host_len < 0)
+		return -EINVAL;
+
+	lookup->host_len = copied_host_len;
+	lookup->data[copied_host_len] = 0;
+	lookup->acl_idx = 64;
+	lookup->acl_action = acl_action_default;
+
+	return 0;
+}
+
 struct acl_redirect_config {
 	char url[256];
 	char payload[512];
@@ -544,6 +568,58 @@ __done:
 	return ret;
 }
 
+static int urllogger_acl_lookup_rule(struct urllogger_acl_lookup *lookup, int rule_id)
+{
+	int ret = 0;
+	unsigned char backup_c;
+	unsigned char *acl_buffer;
+
+	backup_c = lookup->data[lookup->host_len];
+	lookup->data[lookup->host_len] = 0;
+
+	rcu_read_lock();
+	acl_buffer = rcu_dereference(acl_rule_node[rule_id].acl_buffer);
+
+	if (lookup->host_len >= 1 && acl_buffer != NULL) {
+		int i = 0;
+		unsigned char b;
+		unsigned char *ptr = NULL;
+
+		while (ptr == NULL) {
+			ptr = strstr(acl_buffer, lookup->data + i);
+			while (ptr != NULL) {
+				b = *(ptr - 1);
+				if (((ptr[lookup->host_len - i] & 0x80) != 0 || ptr[lookup->host_len - i] == 0) && (b & 0x80) != 0) {
+					lookup->acl_idx = (b & 0x1f);
+					ret = ((b & 0x60) >> 5);
+					lookup->acl_action = ret;
+					ret = 1;
+					goto __done;
+				}
+				if (ptr[lookup->host_len - i] == 0) {
+					ptr = NULL;
+					break;
+				}
+				ptr = strstr(ptr + lookup->host_len - i, lookup->data + i);
+			}
+			while (lookup->host_len >= i + 1 && lookup->data[i] != '.') {
+				i++;
+			}
+			if (lookup->data[i] != '.') {
+				break;
+			}
+			i++;
+			if (lookup->host_len < i + 1) {
+				break;
+			}
+		}
+	}
+__done:
+	rcu_read_unlock();
+	lookup->data[lookup->host_len] = backup_c;
+	return ret;
+}
+
 #if NATFLOW_HAVE_IP_SET_STATE_API
 #define URLLOGGER_HOOK_CTX_ARGS const struct nf_hook_state *state
 #define URLLOGGER_HOOK_CTX_PASS state
@@ -589,6 +665,52 @@ static noinline void urllogger_apply_host_acl(URLLOGGER_HOOK_CTX_ARGS,
 		}
 		if (rule_id < acl_rule_max) {
 			if (urllogger_acl(url, rule_id) == 1)
+				break;
+		} else {
+			break;
+		}
+
+		rule_id++;
+	} while (1);
+}
+
+static noinline void urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_ARGS,
+        struct sk_buff *skb, struct urllogger_acl_lookup *lookup, int l3num)
+{
+	const char *ipset_family = l3num == AF_INET6 ? "ipv6" : "ipv4";
+	int rule_id = 0;
+	char ipset_name[IPSET_MAXNAMELEN];
+
+	do {
+		int ret_ip;
+		int ret_mac;
+
+		for (; rule_id < acl_rule_max; ) {
+			snprintf(ipset_name, sizeof(ipset_name), "host_acl_rule%u_%s", rule_id, ipset_family);
+#if NATFLOW_HAVE_IP_SET_STATE_API
+			ret_ip = IP_SET_test_src_ip(state, NULL, NULL, skb, ipset_name);
+#else
+			ret_ip = IP_SET_test_src_ip(state, in, out, skb, ipset_name);
+#endif
+			if (ret_ip > 0)
+				break;
+
+			snprintf(ipset_name, sizeof(ipset_name), "host_acl_rule%u_mac", rule_id);
+#if NATFLOW_HAVE_IP_SET_STATE_API
+			ret_mac = IP_SET_test_src_mac(state, NULL, NULL, skb, ipset_name);
+#else
+			ret_mac = IP_SET_test_src_mac(state, in, out, skb, ipset_name);
+#endif
+			if (ret_mac > 0)
+				break;
+
+			if (ret_ip == -EINVAL && ret_mac == -EINVAL)
+				break;
+
+			rule_id++;
+		}
+		if (rule_id < acl_rule_max) {
+			if (urllogger_acl_lookup_rule(lookup, rule_id) == 1)
 				break;
 		} else {
 			break;
@@ -2318,8 +2440,20 @@ skip:
 
 	if (host) {
 		struct urlinfo *url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
-		if (!url)
+		if (!url) {
+			struct urllogger_acl_lookup acl;
+
+			if (urllogger_acl_lookup_init(&acl, host, host_len, 0) == 0) {
+				urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET);
+				if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
+					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+					ret = NF_DROP;
+					if (nf && !(nf->status & NF_FF_USER_USE))
+						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+				}
+			}
 			goto done;
+		}
 
 		if (urllogger_store_tuple_type == 0) {
 			url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
@@ -2430,8 +2564,20 @@ skip:
 
 	if (host) {
 		struct urlinfo *url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
-		if (!url)
+		if (!url) {
+			struct urllogger_acl_lookup acl;
+
+			if (urllogger_acl_lookup_init(&acl, host, host_len, 0) == 0) {
+				urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET6);
+				if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
+					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+					ret = NF_DROP;
+					if (nf && !(nf->status & NF_FF_USER_USE))
+						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+				}
+			}
 			goto done;
+		}
 
 		if (urllogger_store_tuple_type == 0) {
 			url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
@@ -2772,6 +2918,29 @@ __urllogger_ip_skip:
 		if (host) {
 			struct urlinfo *url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
 			if (!url) {
+				struct urllogger_acl_lookup acl;
+
+				if (urllogger_acl_lookup_init(&acl, host, host_len, 0) == 0) {
+					urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET);
+					if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
+						set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+						ret = NF_DROP;
+						/* tell FF do not emit pkts */
+						if (nf && !(nf->status & NF_FF_USER_USE)) {
+							/* tell FF -user- need to use this conn */
+							simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+						}
+						if (acl.acl_action == URLINFO_ACL_ACTION_RESET) {
+							natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+							natflow_auth_convert_tcprst(skb);
+							ret = NF_ACCEPT;
+						} else if (acl.acl_action == URLINFO_ACL_ACTION_REDIRECT) {
+							natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+							natflow_auth_convert_tcprst(skb);
+							ret = NF_ACCEPT;
+						}
+					}
+				}
 				if (prev_data) kfree(prev_data);
 				goto out;
 			}
@@ -2841,8 +3010,36 @@ __urllogger_ip_skip:
 			host_len = data_len;
 			if (http_url_search(data, &host_len, &host, &uri_len, &uri, &http_method) > 0) {
 				struct urlinfo *url = urlinfo_alloc_record(host, host_len, URLINFO_HOST_ALLOW_PORT, uri, uri_len);
-				if (!url)
+				if (!url) {
+					struct urllogger_acl_lookup acl;
+
+					if (urllogger_acl_lookup_init(&acl, host, host_len, URLINFO_HOST_ALLOW_PORT) == 0) {
+						urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET);
+						if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
+							set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+							ret = NF_DROP;
+							/* tell FF do not emit pkts */
+							if (nf && !(nf->status & NF_FF_USER_USE)) {
+								/* tell FF -user- need to use this conn */
+								simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+							}
+							if (acl.acl_action == URLINFO_ACL_ACTION_RESET) {
+								natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+								natflow_auth_convert_tcprst(skb);
+								ret = NF_ACCEPT;
+							} else if (acl.acl_action == URLINFO_ACL_ACTION_REDIRECT) {
+								if (http_method == NATFLOW_HTTP_GET || http_method == NATFLOW_HTTP_POST) {
+									natflow_urllogger_tcp_reply_302(in, skb, ct, bridge);
+								} else {
+									natflow_urllogger_tcp_reply_rstack(in, skb, ct, bridge);
+								}
+								natflow_auth_convert_tcprst(skb);
+								ret = NF_ACCEPT;
+							}
+						}
+					}
 					goto out;
+				}
 				if (urllogger_store_tuple_type == 0) {
 					/* 0: dir0-src dir0-dst */
 					url->sip = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
@@ -3022,6 +3219,25 @@ __urllogger_ipv6_skip:
 		if (host) {
 			struct urlinfo *url = urlinfo_alloc_record(host, host_len, 0, NULL, 0);
 			if (!url) {
+				struct urllogger_acl_lookup acl;
+
+				if (urllogger_acl_lookup_init(&acl, host, host_len, 0) == 0) {
+					urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET6);
+					if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
+						set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+						ret = NF_DROP;
+						/* tell FF do not emit pkts */
+						if (nf && !(nf->status & NF_FF_USER_USE)) {
+							/* tell FF -user- need to use this conn */
+							simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+						}
+						if (acl.acl_action == URLINFO_ACL_ACTION_RESET) {
+							natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
+							natflow_auth_convert_tcprst6(skb);
+							ret = NF_ACCEPT;
+						}
+					}
+				}
 				if (prev_data) kfree(prev_data);
 				goto out;
 			}
@@ -3084,8 +3300,36 @@ __urllogger_ipv6_skip:
 			host_len = data_len;
 			if (http_url_search(data, &host_len, &host, &uri_len, &uri, &http_method) > 0) {
 				struct urlinfo *url = urlinfo_alloc_record(host, host_len, URLINFO_HOST_ALLOW_PORT, uri, uri_len);
-				if (!url)
+				if (!url) {
+					struct urllogger_acl_lookup acl;
+
+					if (urllogger_acl_lookup_init(&acl, host, host_len, URLINFO_HOST_ALLOW_PORT) == 0) {
+						urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl, AF_INET6);
+						if (acl.acl_action != URLINFO_ACL_ACTION_RECORD) {
+							set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
+							ret = NF_DROP;
+							/* tell FF do not emit pkts */
+							if (nf && !(nf->status & NF_FF_USER_USE)) {
+								/* tell FF -user- need to use this conn */
+								simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
+							}
+							if (acl.acl_action == URLINFO_ACL_ACTION_RESET) {
+								natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
+								natflow_auth_convert_tcprst6(skb);
+								ret = NF_ACCEPT;
+							} else if (acl.acl_action == URLINFO_ACL_ACTION_REDIRECT) {
+								if (http_method == NATFLOW_HTTP_GET || http_method == NATFLOW_HTTP_POST) {
+									natflow_urllogger_tcp_reply_302_v6(in, skb, ct, bridge);
+								} else {
+									natflow_urllogger_tcp_reply_rstack6(in, skb, ct, bridge);
+								}
+								natflow_auth_convert_tcprst6(skb);
+								ret = NF_ACCEPT;
+							}
+						}
+					}
 					goto out;
+				}
 				if (urllogger_store_tuple_type == 0) {
 					/* 0: dir0-src dir0-dst */
 					url->sipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
