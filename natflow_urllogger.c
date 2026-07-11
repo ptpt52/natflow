@@ -1211,7 +1211,7 @@ static inline void urllogger_source_acl_reply(enum natflow_l7_feature_source sou
 	}
 }
 
-static unsigned int urllogger_consume_host_view(URLLOGGER_HOOK_CTX_ARGS,
+static unsigned int urllogger_consume_host_view_internal(URLLOGGER_HOOK_CTX_ARGS,
         const struct net_device *reply_dev, struct sk_buff *skb,
         struct nf_conn *ct, natflow_t *nf,
         const struct natflow_l7_host_view *host_view, int l3num, int bridge,
@@ -1293,176 +1293,33 @@ static unsigned int urllogger_consume_host_view(URLLOGGER_HOOK_CTX_ARGS,
 	return ret;
 }
 
-static noinline unsigned int urllogger_quic4(URLLOGGER_HOOK_CTX_ARGS,
-        struct sk_buff *skb, struct nf_conn *ct, unsigned int consumer_mask)
+unsigned int natflow_urllogger_consume_host_view(unsigned int hooknum,
+        URLLOGGER_HOOK_CTX_ARGS,
+        const struct natflow_l7_packet_view *view,
+        const struct natflow_l7_host_view *host_view,
+        const struct net_device *reply_dev,
+        int bridge)
 {
-	struct natflow_l7_quic_initial_info quic_info;
-	enum natflow_l7_tls_search_result sni_result;
-	unsigned char *host = NULL;
-	unsigned char *crypto_data = NULL;
-	natflow_t *nf = NULL;
-	struct iphdr *iph;
-	void *l4;
-	unsigned int crypto_len = 0;
-	unsigned int udp_len;
-	int host_len = 0;
-	int data_len;
-	int quic_ret;
-	unsigned char *data;
-	int url_consumer = (consumer_mask & NATFLOW_L7_CONSUMER_URL) != 0;
-	int dpi_consumer = (consumer_mask & NATFLOW_L7_CONSUMER_DPI) != 0;
-	unsigned int ret = NF_ACCEPT;
+	natflow_t *nf;
+	unsigned int consumer_mask;
+	int url_consumer;
+	int dpi_consumer;
 
-	if (skb_try_make_writable(skb, ip_hdr(skb)->ihl * 4 + sizeof(struct udphdr)))
-		return ret;
-	iph = ip_hdr(skb);
-	l4 = (void *)iph + iph->ihl * 4;
-	if (UDPH(l4)->dest != __constant_htons(443))
-		return ret;
+	if (!view || !view->skb || !view->ct || !host_view)
+		return NF_ACCEPT;
 
-	udp_len = ntohs(UDPH(l4)->len);
-	if (udp_len <= sizeof(struct udphdr))
-		goto skip;
+	consumer_mask = view->consumer_mask;
+	url_consumer = (consumer_mask & NATFLOW_L7_CONSUMER_URL) != 0;
+	dpi_consumer = (consumer_mask & NATFLOW_L7_CONSUMER_DPI) != 0;
+	if (!url_consumer && !dpi_consumer)
+		return NF_ACCEPT;
 
-	data_len = udp_len - sizeof(struct udphdr);
-	if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr) + data_len))
-		return ret;
-
-	iph = ip_hdr(skb);
-	l4 = (void *)iph + iph->ihl * 4;
-	data = skb->data + iph->ihl * 4 + sizeof(struct udphdr);
-
-	quic_ret = natflow_l7_quic_initial_parse_info(data, data_len, &quic_info);
-	if (quic_ret != 0)
-		goto skip;
-
-	nf = natflow_session_get(ct);
-	if (nf && !(nf->status & NF_FF_L7_USE))
-		simple_set_bit(NF_FF_L7_USE_BIT, &nf->status);
-
-	crypto_data = natflow_l7_quic_cache_detach(iph->saddr, UDPH(l4)->source,
-	              iph->daddr, UDPH(l4)->dest, &quic_info, &crypto_len);
-	sni_result = natflow_l7_quic_initial_sni_search(data, &quic_info,
-	                                                &crypto_data,
-	                                                &crypto_len,
-	                                                &host, &host_len);
-	if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
-		if (crypto_data != NULL && crypto_len > 0 &&
-		        natflow_l7_quic_cache_attach(iph->saddr, UDPH(l4)->source,
-		                                     iph->daddr, UDPH(l4)->dest,
-		                                     &quic_info, crypto_data, crypto_len) == 0) {
-			crypto_data = NULL;
-			goto done;
-		}
-		kfree(crypto_data);
-		crypto_data = NULL;
-	}
-
-skip:
-	set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &ct->status);
-	if (nf && (nf->status & NF_FF_L7_USE))
-		simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
-
-	if (host) {
-		struct natflow_l7_host_view host_view;
-
-		if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_QUIC,
-		                              host, host_len, 0) == 0)
-			ret = urllogger_consume_host_view(URLLOGGER_HOOK_CTX_PASS,
-			                                  NULL, skb, ct, nf,
-			                                  &host_view, AF_INET, 0,
-			                                  url_consumer, dpi_consumer);
-	}
-
-done:
-	kfree(crypto_data);
-	return ret;
-}
-
-static noinline unsigned int urllogger_quic6(URLLOGGER_HOOK_CTX_ARGS,
-        struct sk_buff *skb, struct nf_conn *ct, unsigned int consumer_mask)
-{
-	struct natflow_l7_quic_initial_info quic_info;
-	enum natflow_l7_tls_search_result sni_result;
-	unsigned char *host = NULL;
-	unsigned char *crypto_data = NULL;
-	natflow_t *nf = NULL;
-	struct ipv6hdr *ip6h;
-	void *l4;
-	unsigned int crypto_len = 0;
-	unsigned int udp_len;
-	int host_len = 0;
-	int data_len;
-	int quic_ret;
-	unsigned char *data;
-	int url_consumer = (consumer_mask & NATFLOW_L7_CONSUMER_URL) != 0;
-	int dpi_consumer = (consumer_mask & NATFLOW_L7_CONSUMER_DPI) != 0;
-	unsigned int ret = NF_ACCEPT;
-
-	if (skb_try_make_writable(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr)))
-		return ret;
-	ip6h = ipv6_hdr(skb);
-	l4 = (void *)ip6h + sizeof(struct ipv6hdr);
-	if (UDPH(l4)->dest != __constant_htons(443))
-		return ret;
-
-	udp_len = ntohs(UDPH(l4)->len);
-	if (udp_len <= sizeof(struct udphdr))
-		goto skip;
-
-	data_len = udp_len - sizeof(struct udphdr);
-	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr) + data_len))
-		return ret;
-
-	ip6h = ipv6_hdr(skb);
-	l4 = (void *)ip6h + sizeof(struct ipv6hdr);
-	data = skb->data + sizeof(struct ipv6hdr) + sizeof(struct udphdr);
-
-	quic_ret = natflow_l7_quic_initial_parse_info(data, data_len, &quic_info);
-	if (quic_ret != 0)
-		goto skip;
-
-	nf = natflow_session_get(ct);
-	if (nf && !(nf->status & NF_FF_L7_USE))
-		simple_set_bit(NF_FF_L7_USE_BIT, &nf->status);
-
-	crypto_data = natflow_l7_quic_cache_detach6(&ip6h->saddr, UDPH(l4)->source,
-	              &ip6h->daddr, UDPH(l4)->dest, &quic_info, &crypto_len);
-	sni_result = natflow_l7_quic_initial_sni_search(data, &quic_info,
-	                                                &crypto_data,
-	                                                &crypto_len,
-	                                                &host, &host_len);
-	if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
-		if (crypto_data != NULL && crypto_len > 0 &&
-		        natflow_l7_quic_cache_attach6(&ip6h->saddr, UDPH(l4)->source,
-		                                      &ip6h->daddr, UDPH(l4)->dest,
-		                                      &quic_info, crypto_data, crypto_len) == 0) {
-			crypto_data = NULL;
-			goto done;
-		}
-		kfree(crypto_data);
-		crypto_data = NULL;
-	}
-
-skip:
-	set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &ct->status);
-	if (nf && (nf->status & NF_FF_L7_USE))
-		simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
-
-	if (host) {
-		struct natflow_l7_host_view host_view;
-
-		if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_QUIC,
-		                              host, host_len, 0) == 0)
-			ret = urllogger_consume_host_view(URLLOGGER_HOOK_CTX_PASS,
-			                                  NULL, skb, ct, nf,
-			                                  &host_view, AF_INET6, 0,
-			                                  url_consumer, dpi_consumer);
-	}
-
-done:
-	kfree(crypto_data);
-	return ret;
+	nf = natflow_session_get(view->ct);
+	return urllogger_consume_host_view_internal(URLLOGGER_HOOK_CTX_PASS,
+	                                            reply_dev, view->skb,
+	                                            view->ct, nf, host_view,
+	                                            view->l3num, bridge,
+	                                            url_consumer, dpi_consumer);
 }
 
 int natflow_urllogger_url_enabled(void)
@@ -1508,11 +1365,6 @@ unsigned int natflow_urllogger_consume_url_view(unsigned int hooknum,
 		goto out;
 	}
 	iph = ip_hdr(skb);
-	if (iph->protocol == IPPROTO_UDP) {
-		ret = urllogger_quic4(URLLOGGER_HOOK_CTX_PASS, skb, ct,
-		                       consumer_mask);
-		goto out;
-	}
 	if (iph->protocol != IPPROTO_TCP) {
 		goto out;
 	}
@@ -1625,11 +1477,11 @@ __urllogger_ip_skip:
 
 			if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_TLS,
 			                              host, host_len, 0) == 0)
-				ret = urllogger_consume_host_view(URLLOGGER_HOOK_CTX_PASS,
-				                                  in, skb, ct, nf,
-				                                  &host_view, AF_INET,
-				                                  bridge, url_consumer,
-				                                  dpi_consumer);
+				ret = urllogger_consume_host_view_internal(URLLOGGER_HOOK_CTX_PASS,
+				                                           in, skb, ct, nf,
+				                                           &host_view, AF_INET,
+				                                           bridge, url_consumer,
+				                                           dpi_consumer);
 			if (prev_data)
 				kfree(prev_data);
 			goto out;
@@ -1646,11 +1498,11 @@ __urllogger_ip_skip:
 
 				if (natflow_l7_host_view_from_feature(&host_view,
 				                                      &feature) == 0)
-					ret = urllogger_consume_host_view(URLLOGGER_HOOK_CTX_PASS,
-					                                  in, skb, ct, nf,
-					                                  &host_view, AF_INET,
-					                                  bridge, url_consumer,
-					                                  dpi_consumer);
+					ret = urllogger_consume_host_view_internal(URLLOGGER_HOOK_CTX_PASS,
+					                                           in, skb, ct, nf,
+					                                           &host_view, AF_INET,
+					                                           bridge, url_consumer,
+					                                           dpi_consumer);
 			}
 		}
 	}
@@ -1662,11 +1514,6 @@ urllogger_hook_ipv6_main:
 	}
 	iph = (void *)ipv6_hdr(skb);
 	if (IPV6H->version != 6) {
-		goto out;
-	}
-	if (IPV6H->nexthdr == IPPROTO_UDP) {
-		ret = urllogger_quic6(URLLOGGER_HOOK_CTX_PASS, skb, ct,
-		                       consumer_mask);
 		goto out;
 	}
 	if (IPV6H->nexthdr != IPPROTO_TCP) {
@@ -1781,11 +1628,11 @@ __urllogger_ipv6_skip:
 
 			if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_TLS,
 			                              host, host_len, 0) == 0)
-				ret = urllogger_consume_host_view(URLLOGGER_HOOK_CTX_PASS,
-				                                  in, skb, ct, nf,
-				                                  &host_view, AF_INET6,
-				                                  bridge, url_consumer,
-				                                  dpi_consumer);
+				ret = urllogger_consume_host_view_internal(URLLOGGER_HOOK_CTX_PASS,
+				                                           in, skb, ct, nf,
+				                                           &host_view, AF_INET6,
+				                                           bridge, url_consumer,
+				                                           dpi_consumer);
 			if (prev_data)
 				kfree(prev_data);
 			goto out;
@@ -1802,11 +1649,11 @@ __urllogger_ipv6_skip:
 
 				if (natflow_l7_host_view_from_feature(&host_view,
 				                                      &feature) == 0)
-					ret = urllogger_consume_host_view(URLLOGGER_HOOK_CTX_PASS,
-					                                  in, skb, ct, nf,
-					                                  &host_view, AF_INET6,
-					                                  bridge, url_consumer,
-					                                  dpi_consumer);
+					ret = urllogger_consume_host_view_internal(URLLOGGER_HOOK_CTX_PASS,
+					                                           in, skb, ct, nf,
+					                                           &host_view, AF_INET6,
+					                                           bridge, url_consumer,
+					                                           dpi_consumer);
 			}
 		}
 	}

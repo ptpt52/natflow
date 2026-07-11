@@ -6,6 +6,7 @@
 #define _NATFLOW_URLLOGGER_H_
 
 struct net_device;
+struct natflow_l7_host_view;
 struct natflow_l7_packet_view;
 struct nf_hook_state;
 struct sk_buff;
@@ -17,11 +18,24 @@ extern int natflow_urllogger_url_enabled(void);
 extern unsigned int natflow_urllogger_consume_url_view(unsigned int hooknum,
         const struct nf_hook_state *state,
         const struct natflow_l7_packet_view *view);
+extern unsigned int natflow_urllogger_consume_host_view(unsigned int hooknum,
+        const struct nf_hook_state *state,
+        const struct natflow_l7_packet_view *view,
+        const struct natflow_l7_host_view *host_view,
+        const struct net_device *reply_dev,
+        int bridge);
 #else
 extern unsigned int natflow_urllogger_consume_url_view(unsigned int hooknum,
         const struct net_device *in,
         const struct net_device *out,
         const struct natflow_l7_packet_view *view);
+extern unsigned int natflow_urllogger_consume_host_view(unsigned int hooknum,
+        const struct net_device *in,
+        const struct net_device *out,
+        const struct natflow_l7_packet_view *view,
+        const struct natflow_l7_host_view *host_view,
+        const struct net_device *reply_dev,
+        int bridge);
 #endif
 
 #endif /* _NATFLOW_URLLOGGER_H_ */

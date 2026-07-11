@@ -918,6 +918,8 @@ unsigned char *natflow_l7_quic_cache_detach6(const struct in6_addr *src_ip,
 	natflow_l7_url_consume_common(hooknum, state, skb)
 #define NATFLOW_L7_DISPATCH_URL_VIEW(view, consumer_mask) \
 	natflow_l7_dispatch_url_view(hooknum, state, view, consumer_mask)
+#define NATFLOW_L7_DISPATCH_HOST_VIEW(view, host_view, reply_dev, bridge) \
+	natflow_l7_dispatch_host_view(hooknum, state, view, host_view, reply_dev, bridge)
 #else
 #define NATFLOW_L7_URL_CONSUMER_ARGS \
 	unsigned int hooknum, const struct net_device *in, \
@@ -926,7 +928,210 @@ unsigned char *natflow_l7_quic_cache_detach6(const struct in6_addr *src_ip,
 	natflow_l7_url_consume_common(hooknum, in, out, skb)
 #define NATFLOW_L7_DISPATCH_URL_VIEW(view, consumer_mask) \
 	natflow_l7_dispatch_url_view(hooknum, in, out, view, consumer_mask)
+#define NATFLOW_L7_DISPATCH_HOST_VIEW(view, host_view, reply_dev, bridge) \
+	natflow_l7_dispatch_host_view(hooknum, in, out, view, host_view, reply_dev, bridge)
 #endif
+
+#if NATFLOW_HAVE_IP_SET_STATE_API
+static unsigned int natflow_l7_dispatch_host_view(unsigned int hooknum,
+        const struct nf_hook_state *state,
+        const struct natflow_l7_packet_view *view,
+        const struct natflow_l7_host_view *host_view,
+        const struct net_device *reply_dev,
+        int bridge)
+#else
+static unsigned int natflow_l7_dispatch_host_view(unsigned int hooknum,
+        const struct net_device *in,
+        const struct net_device *out,
+        const struct natflow_l7_packet_view *view,
+        const struct natflow_l7_host_view *host_view,
+        const struct net_device *reply_dev,
+        int bridge)
+#endif
+{
+	if (!view ||
+	        !(view->consumer_mask & (NATFLOW_L7_CONSUMER_URL |
+	                                 NATFLOW_L7_CONSUMER_DPI)))
+		return NF_ACCEPT;
+
+#if NATFLOW_HAVE_IP_SET_STATE_API
+	return natflow_urllogger_consume_host_view(hooknum, state, view,
+	                                           host_view, reply_dev, bridge);
+#else
+	return natflow_urllogger_consume_host_view(hooknum, in, out, view,
+	                                           host_view, reply_dev, bridge);
+#endif
+}
+
+static noinline unsigned int natflow_l7_quic4(NATFLOW_L7_URL_CONSUMER_ARGS,
+        const struct natflow_l7_packet_view *view)
+{
+	struct natflow_l7_quic_initial_info quic_info;
+	enum natflow_l7_tls_search_result sni_result;
+	unsigned char *host = NULL;
+	unsigned char *crypto_data = NULL;
+	natflow_t *nf = NULL;
+	struct iphdr *iph;
+	void *l4;
+	unsigned int crypto_len = 0;
+	unsigned int udp_len;
+	int host_len = 0;
+	int data_len;
+	int quic_ret;
+	unsigned char *data;
+	unsigned int ret = NF_ACCEPT;
+
+	if (!view || !view->ct)
+		return ret;
+
+	if (skb_try_make_writable(skb, ip_hdr(skb)->ihl * 4 + sizeof(struct udphdr)))
+		return ret;
+	iph = ip_hdr(skb);
+	l4 = (void *)iph + iph->ihl * 4;
+	if (UDPH(l4)->dest != __constant_htons(443))
+		return ret;
+
+	udp_len = ntohs(UDPH(l4)->len);
+	if (udp_len <= sizeof(struct udphdr))
+		goto skip;
+
+	data_len = udp_len - sizeof(struct udphdr);
+	if (!pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr) + data_len))
+		return ret;
+
+	iph = ip_hdr(skb);
+	l4 = (void *)iph + iph->ihl * 4;
+	data = skb->data + iph->ihl * 4 + sizeof(struct udphdr);
+
+	quic_ret = natflow_l7_quic_initial_parse_info(data, data_len, &quic_info);
+	if (quic_ret != 0)
+		goto skip;
+
+	nf = natflow_session_get(view->ct);
+	if (nf && !(nf->status & NF_FF_L7_USE))
+		simple_set_bit(NF_FF_L7_USE_BIT, &nf->status);
+
+	crypto_data = natflow_l7_quic_cache_detach(iph->saddr, UDPH(l4)->source,
+	              iph->daddr, UDPH(l4)->dest, &quic_info, &crypto_len);
+	sni_result = natflow_l7_quic_initial_sni_search(data, &quic_info,
+	                                                &crypto_data,
+	                                                &crypto_len,
+	                                                &host, &host_len);
+	if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
+		if (crypto_data != NULL && crypto_len > 0 &&
+		        natflow_l7_quic_cache_attach(iph->saddr, UDPH(l4)->source,
+		                                     iph->daddr, UDPH(l4)->dest,
+		                                     &quic_info, crypto_data, crypto_len) == 0) {
+			crypto_data = NULL;
+			goto done;
+		}
+		kfree(crypto_data);
+		crypto_data = NULL;
+	}
+
+skip:
+	set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &view->ct->status);
+	if (nf && (nf->status & NF_FF_L7_USE))
+		simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
+
+	if (host) {
+		struct natflow_l7_host_view host_view;
+
+		if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_QUIC,
+		                              host, host_len, 0) == 0)
+			ret = NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
+			                                    NULL, 0);
+	}
+
+done:
+	kfree(crypto_data);
+	return ret;
+}
+
+static noinline unsigned int natflow_l7_quic6(NATFLOW_L7_URL_CONSUMER_ARGS,
+        const struct natflow_l7_packet_view *view)
+{
+	struct natflow_l7_quic_initial_info quic_info;
+	enum natflow_l7_tls_search_result sni_result;
+	unsigned char *host = NULL;
+	unsigned char *crypto_data = NULL;
+	natflow_t *nf = NULL;
+	struct ipv6hdr *ip6h;
+	void *l4;
+	unsigned int crypto_len = 0;
+	unsigned int udp_len;
+	int host_len = 0;
+	int data_len;
+	int quic_ret;
+	unsigned char *data;
+	unsigned int ret = NF_ACCEPT;
+
+	if (!view || !view->ct)
+		return ret;
+
+	if (skb_try_make_writable(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr)))
+		return ret;
+	ip6h = ipv6_hdr(skb);
+	l4 = (void *)ip6h + sizeof(struct ipv6hdr);
+	if (UDPH(l4)->dest != __constant_htons(443))
+		return ret;
+
+	udp_len = ntohs(UDPH(l4)->len);
+	if (udp_len <= sizeof(struct udphdr))
+		goto skip;
+
+	data_len = udp_len - sizeof(struct udphdr);
+	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr) + data_len))
+		return ret;
+
+	ip6h = ipv6_hdr(skb);
+	l4 = (void *)ip6h + sizeof(struct ipv6hdr);
+	data = skb->data + sizeof(struct ipv6hdr) + sizeof(struct udphdr);
+
+	quic_ret = natflow_l7_quic_initial_parse_info(data, data_len, &quic_info);
+	if (quic_ret != 0)
+		goto skip;
+
+	nf = natflow_session_get(view->ct);
+	if (nf && !(nf->status & NF_FF_L7_USE))
+		simple_set_bit(NF_FF_L7_USE_BIT, &nf->status);
+
+	crypto_data = natflow_l7_quic_cache_detach6(&ip6h->saddr, UDPH(l4)->source,
+	              &ip6h->daddr, UDPH(l4)->dest, &quic_info, &crypto_len);
+	sni_result = natflow_l7_quic_initial_sni_search(data, &quic_info,
+	                                                &crypto_data,
+	                                                &crypto_len,
+	                                                &host, &host_len);
+	if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
+		if (crypto_data != NULL && crypto_len > 0 &&
+		        natflow_l7_quic_cache_attach6(&ip6h->saddr, UDPH(l4)->source,
+		                                      &ip6h->daddr, UDPH(l4)->dest,
+		                                      &quic_info, crypto_data, crypto_len) == 0) {
+			crypto_data = NULL;
+			goto done;
+		}
+		kfree(crypto_data);
+		crypto_data = NULL;
+	}
+
+skip:
+	set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &view->ct->status);
+	if (nf && (nf->status & NF_FF_L7_USE))
+		simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
+
+	if (host) {
+		struct natflow_l7_host_view host_view;
+
+		if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_QUIC,
+		                              host, host_len, 0) == 0)
+			ret = NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
+			                                    NULL, 0);
+	}
+
+done:
+	kfree(crypto_data);
+	return ret;
+}
 
 #if NATFLOW_HAVE_IP_SET_STATE_API
 static unsigned int natflow_l7_dispatch_url_view(unsigned int hooknum,
@@ -941,8 +1146,43 @@ static unsigned int natflow_l7_dispatch_url_view(unsigned int hooknum,
         unsigned int consumer_mask)
 #endif
 {
+	struct sk_buff *skb;
+
 	if (!(consumer_mask & (NATFLOW_L7_CONSUMER_URL | NATFLOW_L7_CONSUMER_DPI)))
 		return NF_ACCEPT;
+	if (!view || !view->skb)
+		return NF_ACCEPT;
+
+	skb = view->skb;
+	if (view->l3num == AF_INET6) {
+		struct ipv6hdr *ip6h;
+
+		if (!pskb_may_pull(skb, sizeof(struct ipv6hdr)))
+			return NF_ACCEPT;
+		ip6h = ipv6_hdr(skb);
+		if (ip6h->version != 6)
+			return NF_ACCEPT;
+		if (ip6h->nexthdr == IPPROTO_UDP) {
+#if NATFLOW_HAVE_IP_SET_STATE_API
+			return natflow_l7_quic6(hooknum, state, skb, view);
+#else
+			return natflow_l7_quic6(hooknum, in, out, skb, view);
+#endif
+		}
+	} else {
+		struct iphdr *iph;
+
+		if (!pskb_may_pull(skb, sizeof(struct iphdr)))
+			return NF_ACCEPT;
+		iph = ip_hdr(skb);
+		if (iph->protocol == IPPROTO_UDP) {
+#if NATFLOW_HAVE_IP_SET_STATE_API
+			return natflow_l7_quic4(hooknum, state, skb, view);
+#else
+			return natflow_l7_quic4(hooknum, in, out, skb, view);
+#endif
+		}
+	}
 
 #if NATFLOW_HAVE_IP_SET_STATE_API
 	return natflow_urllogger_consume_url_view(hooknum, state, view);
