@@ -1148,219 +1148,84 @@ static unsigned int natflow_dpi_detect_udp(__be16 dport)
 	return 0;
 }
 
-static void natflow_dpi_detect_ipv4(struct sk_buff *skb, struct nf_conn *ct)
+unsigned int natflow_dpi_packet_view_pull_len(unsigned char l4proto,
+        __be16 dport, unsigned int payload_len)
 {
-	struct iphdr *iph;
-	unsigned char *payload;
-	void *l4;
-	unsigned int ihl;
-	unsigned int l4_len;
-	unsigned int payload_len;
-	unsigned int inspect_len;
-	unsigned int dns_inspect_len;
-	unsigned int total_len;
-	unsigned int proto = 0;
+	unsigned int proto;
 
-	if (!pskb_may_pull(skb, sizeof(struct iphdr)))
-		return;
+	if (payload_len == 0)
+		return 0;
 
-	iph = ip_hdr(skb);
-	if (iph->version != 4 || iph->ihl < 5)
-		return;
-	ihl = iph->ihl * 4;
-	if (!pskb_may_pull(skb, ihl))
-		return;
+	if (l4proto == IPPROTO_TCP)
+		proto = natflow_dpi_detect_tcp(dport);
+	else if (l4proto == IPPROTO_UDP)
+		proto = natflow_dpi_detect_udp(dport);
+	else
+		return 0;
 
-	iph = ip_hdr(skb);
-	total_len = ntohs(iph->tot_len);
-	if (total_len < ihl)
-		return;
-	if (iph->protocol == IPPROTO_TCP) {
-		if (!pskb_may_pull(skb, ihl + sizeof(struct tcphdr)))
-			return;
-		iph = ip_hdr(skb);
-		l4 = (void *)iph + ihl;
-		if (TCPH(l4)->doff < 5)
-			return;
-		l4_len = TCPH(l4)->doff * 4;
-		if (total_len < ihl + l4_len)
-			return;
-		if (!pskb_may_pull(skb, ihl + l4_len))
-			return;
-		iph = ip_hdr(skb);
-		l4 = (void *)iph + ihl;
-		proto = natflow_dpi_detect_tcp(TCPH(l4)->dest);
-		payload_len = total_len - ihl - l4_len;
-		if (proto == NATFLOW_DPI_PROTO_DNS) {
-			dns_inspect_len = payload_len > NATFLOW_DPI_DNS_INSPECT_MAX ?
-			                  NATFLOW_DPI_DNS_INSPECT_MAX : payload_len;
-			if (dns_inspect_len > 0 &&
-			        pskb_may_pull(skb, ihl + l4_len + dns_inspect_len)) {
-				iph = ip_hdr(skb);
-				l4 = (void *)iph + ihl;
-				payload = (unsigned char *)l4 + l4_len;
-				natflow_dpi_classify_dns_query(ct, payload,
-				                               dns_inspect_len, IPPROTO_TCP);
-			}
-		} else if (!proto && READ_ONCE(natflow_dpi_proto_rules) != 0) {
-			inspect_len = payload_len > NATFLOW_DPI_PAYLOAD_INSPECT_MAX ?
-			              NATFLOW_DPI_PAYLOAD_INSPECT_MAX : payload_len;
-			if (inspect_len > 0 &&
-			        pskb_may_pull(skb, ihl + l4_len + inspect_len)) {
-				iph = ip_hdr(skb);
-				l4 = (void *)iph + ihl;
-				payload = (unsigned char *)l4 + l4_len;
-				proto = natflow_dpi_detect_payload(payload, payload_len,
-				                                   inspect_len, IPPROTO_TCP);
-			}
-		}
-	} else if (iph->protocol == IPPROTO_UDP) {
-		if (!pskb_may_pull(skb, ihl + sizeof(struct udphdr)))
-			return;
-		iph = ip_hdr(skb);
-		l4 = (void *)iph + ihl;
-		l4_len = ntohs(UDPH(l4)->len);
-		if (l4_len < sizeof(struct udphdr) || total_len < ihl + l4_len)
-			return;
-		proto = natflow_dpi_detect_udp(UDPH(l4)->dest);
-		payload_len = l4_len - sizeof(struct udphdr);
-		if (proto == NATFLOW_DPI_PROTO_DNS) {
-			dns_inspect_len = payload_len > NATFLOW_DPI_DNS_INSPECT_MAX ?
-			                  NATFLOW_DPI_DNS_INSPECT_MAX : payload_len;
-			if (dns_inspect_len > 0 &&
-			        pskb_may_pull(skb, ihl + sizeof(struct udphdr) + dns_inspect_len)) {
-				iph = ip_hdr(skb);
-				l4 = (void *)iph + ihl;
-				payload = (unsigned char *)l4 + sizeof(struct udphdr);
-				natflow_dpi_classify_dns_query(ct, payload,
-				                               dns_inspect_len, IPPROTO_UDP);
-			}
-		} else if (!proto && READ_ONCE(natflow_dpi_proto_rules) != 0) {
-			inspect_len = payload_len > NATFLOW_DPI_PAYLOAD_INSPECT_MAX ?
-			              NATFLOW_DPI_PAYLOAD_INSPECT_MAX : payload_len;
-			if (inspect_len > 0 &&
-			        pskb_may_pull(skb, ihl + sizeof(struct udphdr) + inspect_len)) {
-				iph = ip_hdr(skb);
-				l4 = (void *)iph + ihl;
-				payload = (unsigned char *)l4 + sizeof(struct udphdr);
-				proto = natflow_dpi_detect_payload(payload, payload_len,
-				                                   inspect_len, IPPROTO_UDP);
-			}
-		}
-	}
+	if (proto == NATFLOW_DPI_PROTO_DNS)
+		return payload_len > NATFLOW_DPI_DNS_INSPECT_MAX ?
+		       NATFLOW_DPI_DNS_INSPECT_MAX : payload_len;
+	if (proto != 0)
+		return 0;
+	if (READ_ONCE(natflow_dpi_proto_rules) == 0)
+		return 0;
 
-	if (proto && READ_ONCE(natflow_dpi_proto_rules) != 0)
-		natflow_dpi_classify_proto(ct, proto);
-}
-
-static void natflow_dpi_detect_ipv6(struct sk_buff *skb, struct nf_conn *ct)
-{
-	struct ipv6hdr *ip6h;
-	unsigned char *payload;
-	void *l4;
-	unsigned int l4_len;
-	unsigned int payload_len;
-	unsigned int inspect_len;
-	unsigned int dns_inspect_len;
-	unsigned int total_len;
-	unsigned int proto = 0;
-
-	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr)))
-		return;
-
-	ip6h = ipv6_hdr(skb);
-	if (ip6h->version != 6)
-		return;
-	total_len = ntohs(ip6h->payload_len);
-	if (ip6h->nexthdr == IPPROTO_TCP) {
-		if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct tcphdr)))
-			return;
-		ip6h = ipv6_hdr(skb);
-		l4 = (void *)ip6h + sizeof(struct ipv6hdr);
-		if (TCPH(l4)->doff < 5)
-			return;
-		l4_len = TCPH(l4)->doff * 4;
-		if (total_len < l4_len)
-			return;
-		if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + l4_len))
-			return;
-		ip6h = ipv6_hdr(skb);
-		l4 = (void *)ip6h + sizeof(struct ipv6hdr);
-		proto = natflow_dpi_detect_tcp(TCPH(l4)->dest);
-		payload_len = total_len - l4_len;
-		if (proto == NATFLOW_DPI_PROTO_DNS) {
-			dns_inspect_len = payload_len > NATFLOW_DPI_DNS_INSPECT_MAX ?
-			                  NATFLOW_DPI_DNS_INSPECT_MAX : payload_len;
-			if (dns_inspect_len > 0 &&
-			        pskb_may_pull(skb, sizeof(struct ipv6hdr) + l4_len + dns_inspect_len)) {
-				ip6h = ipv6_hdr(skb);
-				l4 = (void *)ip6h + sizeof(struct ipv6hdr);
-				payload = (unsigned char *)l4 + l4_len;
-				natflow_dpi_classify_dns_query(ct, payload,
-				                               dns_inspect_len, IPPROTO_TCP);
-			}
-		} else if (!proto && READ_ONCE(natflow_dpi_proto_rules) != 0) {
-			inspect_len = payload_len > NATFLOW_DPI_PAYLOAD_INSPECT_MAX ?
-			              NATFLOW_DPI_PAYLOAD_INSPECT_MAX : payload_len;
-			if (inspect_len > 0 &&
-			        pskb_may_pull(skb, sizeof(struct ipv6hdr) + l4_len + inspect_len)) {
-				ip6h = ipv6_hdr(skb);
-				l4 = (void *)ip6h + sizeof(struct ipv6hdr);
-				payload = (unsigned char *)l4 + l4_len;
-				proto = natflow_dpi_detect_payload(payload, payload_len,
-				                                   inspect_len, IPPROTO_TCP);
-			}
-		}
-	} else if (ip6h->nexthdr == IPPROTO_UDP) {
-		if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr)))
-			return;
-		ip6h = ipv6_hdr(skb);
-		l4 = (void *)ip6h + sizeof(struct ipv6hdr);
-		l4_len = ntohs(UDPH(l4)->len);
-		if (l4_len < sizeof(struct udphdr) || total_len < l4_len)
-			return;
-		proto = natflow_dpi_detect_udp(UDPH(l4)->dest);
-		payload_len = l4_len - sizeof(struct udphdr);
-		if (proto == NATFLOW_DPI_PROTO_DNS) {
-			dns_inspect_len = payload_len > NATFLOW_DPI_DNS_INSPECT_MAX ?
-			                  NATFLOW_DPI_DNS_INSPECT_MAX : payload_len;
-			if (dns_inspect_len > 0 &&
-			        pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr) + dns_inspect_len)) {
-				ip6h = ipv6_hdr(skb);
-				l4 = (void *)ip6h + sizeof(struct ipv6hdr);
-				payload = (unsigned char *)l4 + sizeof(struct udphdr);
-				natflow_dpi_classify_dns_query(ct, payload,
-				                               dns_inspect_len, IPPROTO_UDP);
-			}
-		} else if (!proto && READ_ONCE(natflow_dpi_proto_rules) != 0) {
-			inspect_len = payload_len > NATFLOW_DPI_PAYLOAD_INSPECT_MAX ?
-			              NATFLOW_DPI_PAYLOAD_INSPECT_MAX : payload_len;
-			if (inspect_len > 0 &&
-			        pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr) + inspect_len)) {
-				ip6h = ipv6_hdr(skb);
-				l4 = (void *)ip6h + sizeof(struct ipv6hdr);
-				payload = (unsigned char *)l4 + sizeof(struct udphdr);
-				proto = natflow_dpi_detect_payload(payload, payload_len,
-				                                   inspect_len, IPPROTO_UDP);
-			}
-		}
-	}
-
-	if (proto && READ_ONCE(natflow_dpi_proto_rules) != 0)
-		natflow_dpi_classify_proto(ct, proto);
+	return payload_len > NATFLOW_DPI_PAYLOAD_INSPECT_MAX ?
+	       NATFLOW_DPI_PAYLOAD_INSPECT_MAX : payload_len;
 }
 
 void natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view *view)
 {
-	if (!view || !view->skb || !view->ct)
+	const unsigned char *payload;
+	unsigned int payload_linear_len;
+	unsigned int dns_inspect_len;
+	unsigned int inspect_len;
+	unsigned int proto = 0;
+	__be16 dport;
+
+	if (!view || !view->ct || !view->l4)
 		return;
 	if (!natflow_dpi_consumer_enabled())
 		return;
+	if (view->l4proto == IPPROTO_TCP) {
+		dport = TCPH(view->l4)->dest;
+		proto = natflow_dpi_detect_tcp(dport);
+	} else if (view->l4proto == IPPROTO_UDP) {
+		dport = UDPH(view->l4)->dest;
+		proto = natflow_dpi_detect_udp(dport);
+	} else {
+		return;
+	}
 
-	if (view->l3num == AF_INET6)
-		natflow_dpi_detect_ipv6(view->skb, view->ct);
-	else if (view->l3num == AF_INET)
-		natflow_dpi_detect_ipv4(view->skb, view->ct);
+	payload = view->payload;
+	payload_linear_len = view->payload_linear_len;
+	if (payload_linear_len > view->payload_len)
+		payload_linear_len = view->payload_len;
+
+	if (proto == NATFLOW_DPI_PROTO_DNS) {
+		dns_inspect_len = view->payload_len > NATFLOW_DPI_DNS_INSPECT_MAX ?
+		                  NATFLOW_DPI_DNS_INSPECT_MAX : view->payload_len;
+		if (dns_inspect_len > payload_linear_len)
+			dns_inspect_len = payload_linear_len;
+		if (dns_inspect_len > 0 && payload)
+			natflow_dpi_classify_dns_query(view->ct, payload,
+			                               dns_inspect_len,
+			                               view->l4proto);
+	} else if (!proto && READ_ONCE(natflow_dpi_proto_rules) != 0) {
+		inspect_len = view->payload_len > NATFLOW_DPI_PAYLOAD_INSPECT_MAX ?
+		              NATFLOW_DPI_PAYLOAD_INSPECT_MAX : view->payload_len;
+		if (inspect_len > payload_linear_len)
+			inspect_len = payload_linear_len;
+		if (inspect_len > 0 && payload)
+			proto = natflow_dpi_detect_payload(payload,
+			                                   view->payload_len,
+			                                   inspect_len,
+			                                   view->l4proto);
+	}
+
+	if (proto && READ_ONCE(natflow_dpi_proto_rules) != 0)
+		natflow_dpi_classify_proto(view->ct, proto);
 }
 
 static int natflow_dpi_ctl_device_init(void)

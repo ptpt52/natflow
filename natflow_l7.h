@@ -61,6 +61,7 @@ struct natflow_l7_packet_view {
 	void *l4;
 	unsigned char *payload;
 	unsigned int payload_len;
+	unsigned int payload_linear_len;
 };
 
 struct natflow_l7_feature {
