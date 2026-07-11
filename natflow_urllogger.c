@@ -1150,30 +1150,116 @@ static inline unsigned int urllogger_reply_acl_action(URLLOGGER_HOOK_CTX_ARGS,
 	return ret;
 }
 
-static unsigned int urllogger_consume_host(URLLOGGER_HOOK_CTX_ARGS,
-        const struct net_device *reply_dev, struct sk_buff *skb,
-        struct nf_conn *ct, natflow_t *nf, const unsigned char *host,
-        int host_len, unsigned int host_flags, const unsigned char *uri,
-        int uri_len, unsigned int url_flags, unsigned char http_method,
-        unsigned int dpi_source, int l3num, int bridge, int url_consumer,
-        int dpi_consumer, int reset_reply,
-        enum urllogger_redirect_reply redirect_reply)
+static inline int urllogger_source_to_url_flags(enum natflow_l7_feature_source source,
+        int l3num, unsigned int *url_flags)
 {
+	unsigned int flags;
+
+	switch (source) {
+	case NATFLOW_L7_SOURCE_HTTP:
+		flags = 0;
+		break;
+	case NATFLOW_L7_SOURCE_TLS:
+		flags = URLINFO_HTTPS;
+		break;
+	case NATFLOW_L7_SOURCE_QUIC:
+		flags = URLINFO_QUIC;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (l3num == AF_INET6)
+		flags |= URLINFO_IPV6;
+
+	*url_flags = flags;
+	return 0;
+}
+
+static inline int urllogger_source_to_dpi_source(enum natflow_l7_feature_source source,
+        unsigned int *dpi_source)
+{
+	switch (source) {
+	case NATFLOW_L7_SOURCE_HTTP:
+		*dpi_source = NATFLOW_DPI_EVENT_SOURCE_HTTP;
+		return 0;
+	case NATFLOW_L7_SOURCE_TLS:
+		*dpi_source = NATFLOW_DPI_EVENT_SOURCE_TLS;
+		return 0;
+	case NATFLOW_L7_SOURCE_QUIC:
+		*dpi_source = NATFLOW_DPI_EVENT_SOURCE_QUIC;
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
+static inline void urllogger_source_acl_reply(enum natflow_l7_feature_source source,
+        int l3num, int *reset_reply,
+        enum urllogger_redirect_reply *redirect_reply)
+{
+	*reset_reply = 0;
+	*redirect_reply = URLLOGGER_REDIRECT_DROP;
+
+	switch (source) {
+	case NATFLOW_L7_SOURCE_HTTP:
+		*reset_reply = 1;
+		*redirect_reply = URLLOGGER_REDIRECT_HTTP;
+		break;
+	case NATFLOW_L7_SOURCE_TLS:
+		*reset_reply = 1;
+		if (l3num == AF_INET)
+			*redirect_reply = URLLOGGER_REDIRECT_RST;
+		break;
+	default:
+		break;
+	}
+}
+
+static unsigned int urllogger_consume_host_view(URLLOGGER_HOOK_CTX_ARGS,
+        const struct net_device *reply_dev, struct sk_buff *skb,
+        struct nf_conn *ct, natflow_t *nf,
+        const struct natflow_l7_host_view *host_view, int l3num, int bridge,
+        int url_consumer, int dpi_consumer)
+{
+	const unsigned char *host;
+	const unsigned char *uri;
 	struct urlinfo *url;
 	unsigned int ret = NF_ACCEPT;
+	unsigned int url_flags;
+	unsigned int dpi_source;
+	unsigned char http_method;
+	int reset_reply;
+	enum urllogger_redirect_reply redirect_reply;
+
+	if (!host_view ||
+	        urllogger_source_to_url_flags(host_view->source, l3num,
+	                                      &url_flags) != 0 ||
+	        urllogger_source_to_dpi_source(host_view->source,
+	                                       &dpi_source) != 0)
+		return ret;
+
+	host = host_view->host.data;
+	uri = host_view->uri.data;
+	http_method = host_view->http_method;
+	urllogger_source_acl_reply(host_view->source, l3num, &reset_reply,
+	                           &redirect_reply);
 
 	if (!url_consumer) {
 		if (dpi_consumer)
-			urllogger_dpi_classify_raw_host(ct, host, host_len,
+			urllogger_dpi_classify_raw_host(ct, host, host_view->host.len,
 			                                dpi_source);
 		return ret;
 	}
 
-	url = urlinfo_alloc_record(host, host_len, host_flags, uri, uri_len);
+	url = urlinfo_alloc_record(host, host_view->host.len,
+	                           host_view->host_flags, uri,
+	                           host_view->uri.len);
 	if (!url) {
 		struct urllogger_acl_lookup acl;
 
-		if (urllogger_acl_lookup_init(&acl, host, host_len, host_flags) == 0) {
+		if (urllogger_acl_lookup_init(&acl, host, host_view->host.len,
+		                              host_view->host_flags) == 0) {
 			if (dpi_consumer)
 				urllogger_dpi_classify_lookup(ct, &acl,
 				                              dpi_source);
@@ -1988,15 +2074,16 @@ skip:
 	if (nf && (nf->status & NF_FF_L7_USE))
 		simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
 
-	if (host)
-		ret = urllogger_consume_host(URLLOGGER_HOOK_CTX_PASS,
-		                             NULL, skb, ct, nf, host, host_len,
-		                             0, NULL, 0, URLINFO_QUIC,
-		                             NATFLOW_HTTP_NONE,
-		                             NATFLOW_DPI_EVENT_SOURCE_QUIC,
-		                             AF_INET, 0, url_consumer,
-		                             dpi_consumer, 0,
-		                             URLLOGGER_REDIRECT_DROP);
+	if (host) {
+		struct natflow_l7_host_view host_view;
+
+		if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_QUIC,
+		                              host, host_len, 0) == 0)
+			ret = urllogger_consume_host_view(URLLOGGER_HOOK_CTX_PASS,
+			                                  NULL, skb, ct, nf,
+			                                  &host_view, AF_INET, 0,
+			                                  url_consumer, dpi_consumer);
+	}
 
 done:
 	kfree(crypto_data);
@@ -2072,16 +2159,16 @@ skip:
 	if (nf && (nf->status & NF_FF_L7_USE))
 		simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
 
-	if (host)
-		ret = urllogger_consume_host(URLLOGGER_HOOK_CTX_PASS,
-		                             NULL, skb, ct, nf, host, host_len,
-		                             0, NULL, 0,
-		                             URLINFO_QUIC | URLINFO_IPV6,
-		                             NATFLOW_HTTP_NONE,
-		                             NATFLOW_DPI_EVENT_SOURCE_QUIC,
-		                             AF_INET6, 0, url_consumer,
-		                             dpi_consumer, 0,
-		                             URLLOGGER_REDIRECT_DROP);
+	if (host) {
+		struct natflow_l7_host_view host_view;
+
+		if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_QUIC,
+		                              host, host_len, 0) == 0)
+			ret = urllogger_consume_host_view(URLLOGGER_HOOK_CTX_PASS,
+			                                  NULL, skb, ct, nf,
+			                                  &host_view, AF_INET6, 0,
+			                                  url_consumer, dpi_consumer);
+	}
 
 done:
 	kfree(crypto_data);
@@ -2338,15 +2425,15 @@ __urllogger_ip_skip:
 		}
 
 		if (host) {
-			ret = urllogger_consume_host(URLLOGGER_HOOK_CTX_PASS,
-			                             in, skb, ct, nf, host,
-			                             host_len, 0, NULL, 0,
-			                             URLINFO_HTTPS,
-			                             NATFLOW_HTTP_NONE,
-			                             NATFLOW_DPI_EVENT_SOURCE_TLS,
-			                             AF_INET, bridge,
-			                             url_consumer, dpi_consumer,
-			                             1, URLLOGGER_REDIRECT_RST);
+			struct natflow_l7_host_view host_view;
+
+			if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_TLS,
+			                              host, host_len, 0) == 0)
+				ret = urllogger_consume_host_view(URLLOGGER_HOOK_CTX_PASS,
+				                                  in, skb, ct, nf,
+				                                  &host_view, AF_INET,
+				                                  bridge, url_consumer,
+				                                  dpi_consumer);
 			if (prev_data)
 				kfree(prev_data);
 			goto out;
@@ -2359,17 +2446,15 @@ __urllogger_ip_skip:
 			}
 			data = skb->data + iph->ihl * 4 + TCPH(l4)->doff * 4;
 			if (natflow_l7_http_parse(data, data_len, &feature) > 0) {
-				ret = urllogger_consume_host(URLLOGGER_HOOK_CTX_PASS,
-				                             in, skb, ct, nf,
-				                             feature.host,
-				                             feature.host_len, 0,
-				                             feature.raw_uri.data,
-				                             feature.raw_uri.len, 0,
-				                             feature.http_method,
-				                             NATFLOW_DPI_EVENT_SOURCE_HTTP,
-				                             AF_INET, bridge,
-				                             url_consumer, dpi_consumer,
-				                             1, URLLOGGER_REDIRECT_HTTP);
+				struct natflow_l7_host_view host_view;
+
+				if (natflow_l7_host_view_from_feature(&host_view,
+				                                      &feature) == 0)
+					ret = urllogger_consume_host_view(URLLOGGER_HOOK_CTX_PASS,
+					                                  in, skb, ct, nf,
+					                                  &host_view, AF_INET,
+					                                  bridge, url_consumer,
+					                                  dpi_consumer);
 			}
 		}
 	}
@@ -2496,15 +2581,15 @@ __urllogger_ipv6_skip:
 		}
 
 		if (host) {
-			ret = urllogger_consume_host(URLLOGGER_HOOK_CTX_PASS,
-			                             in, skb, ct, nf, host,
-			                             host_len, 0, NULL, 0,
-			                             URLINFO_HTTPS | URLINFO_IPV6,
-			                             NATFLOW_HTTP_NONE,
-			                             NATFLOW_DPI_EVENT_SOURCE_TLS,
-			                             AF_INET6, bridge,
-			                             url_consumer, dpi_consumer,
-			                             1, URLLOGGER_REDIRECT_DROP);
+			struct natflow_l7_host_view host_view;
+
+			if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_TLS,
+			                              host, host_len, 0) == 0)
+				ret = urllogger_consume_host_view(URLLOGGER_HOOK_CTX_PASS,
+				                                  in, skb, ct, nf,
+				                                  &host_view, AF_INET6,
+				                                  bridge, url_consumer,
+				                                  dpi_consumer);
 			if (prev_data)
 				kfree(prev_data);
 			goto out;
@@ -2517,18 +2602,15 @@ __urllogger_ipv6_skip:
 			}
 			data = skb->data + sizeof(struct ipv6hdr) + TCPH(l4)->doff * 4;
 			if (natflow_l7_http_parse(data, data_len, &feature) > 0) {
-				ret = urllogger_consume_host(URLLOGGER_HOOK_CTX_PASS,
-				                             in, skb, ct, nf,
-				                             feature.host,
-				                             feature.host_len, 0,
-				                             feature.raw_uri.data,
-				                             feature.raw_uri.len,
-				                             URLINFO_IPV6,
-				                             feature.http_method,
-				                             NATFLOW_DPI_EVENT_SOURCE_HTTP,
-				                             AF_INET6, bridge,
-				                             url_consumer, dpi_consumer,
-				                             1, URLLOGGER_REDIRECT_HTTP);
+				struct natflow_l7_host_view host_view;
+
+				if (natflow_l7_host_view_from_feature(&host_view,
+				                                      &feature) == 0)
+					ret = urllogger_consume_host_view(URLLOGGER_HOOK_CTX_PASS,
+					                                  in, skb, ct, nf,
+					                                  &host_view, AF_INET6,
+					                                  bridge, url_consumer,
+					                                  dpi_consumer);
 			}
 		}
 	}

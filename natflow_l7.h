@@ -75,6 +75,14 @@ struct natflow_l7_feature {
 	unsigned char host[NATFLOW_L7_HOST_MAX_LEN + 1];
 };
 
+struct natflow_l7_host_view {
+	enum natflow_l7_feature_source source;
+	enum natflow_l7_http_method http_method;
+	unsigned int host_flags;
+	struct natflow_l7_data_view host;
+	struct natflow_l7_data_view uri;
+};
+
 struct natflow_l7_quic_initial_info {
 	unsigned int version;
 	unsigned int packet_len;
@@ -97,6 +105,13 @@ extern int natflow_l7_feature_set_host(struct natflow_l7_feature *feature,
 extern int natflow_l7_feature_set_uri(struct natflow_l7_feature *feature,
                                       const unsigned char *uri,
                                       int uri_len);
+extern int natflow_l7_host_view_init(struct natflow_l7_host_view *view,
+                                     enum natflow_l7_feature_source source,
+                                     const unsigned char *host,
+                                     int host_len,
+                                     unsigned int host_flags);
+extern int natflow_l7_host_view_from_feature(struct natflow_l7_host_view *view,
+                                             const struct natflow_l7_feature *feature);
 extern int natflow_l7_http_parse(unsigned char *data, int data_len,
                                  struct natflow_l7_feature *feature);
 extern enum natflow_l7_tls_search_result natflow_l7_tls_client_hello_search(unsigned char *data,

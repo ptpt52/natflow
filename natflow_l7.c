@@ -480,6 +480,43 @@ int natflow_l7_feature_set_uri(struct natflow_l7_feature *feature,
 	return 0;
 }
 
+int natflow_l7_host_view_init(struct natflow_l7_host_view *view,
+        enum natflow_l7_feature_source source, const unsigned char *host,
+        int host_len, unsigned int host_flags)
+{
+	if (!view || !host || host_len <= 0)
+		return -EINVAL;
+
+	memset(view, 0, sizeof(*view));
+	view->source = source;
+	view->http_method = NATFLOW_L7_HTTP_NONE;
+	view->host.data = host;
+	view->host.len = host_len;
+	view->host_flags = host_flags;
+
+	return 0;
+}
+
+int natflow_l7_host_view_from_feature(struct natflow_l7_host_view *view,
+        const struct natflow_l7_feature *feature)
+{
+	int ret;
+
+	if (!feature || !(feature->flags & NATFLOW_L7_FEATURE_HOST))
+		return -EINVAL;
+
+	ret = natflow_l7_host_view_init(view, feature->source, feature->host,
+	                                feature->host_len, 0);
+	if (ret != 0)
+		return ret;
+
+	view->http_method = feature->http_method;
+	if (feature->flags & NATFLOW_L7_FEATURE_URI)
+		view->uri = feature->raw_uri;
+
+	return 0;
+}
+
 /* Simple request-line + Host header parser matching legacy URL logger behavior. */
 int natflow_l7_http_parse(unsigned char *data, int data_len,
         struct natflow_l7_feature *feature)
