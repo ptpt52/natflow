@@ -441,7 +441,7 @@ echo 'set-token-ctrl <ip_or_ipv6> <rxbytes> <txbytes>' >/dev/userinfo_ctl
 - 队列为空时 `read()` 返回 0；`poll()` 在有事件时返回 readable。
 - `read()` 不返回半条事件；用户 buffer 小于 `sizeof(struct natflow_userinfo_event_hdr)` 时返回 `-EINVAL`。
 - 同一时间只允许一个 reader，第二个打开会返回 `-EBUSY`。
-- 默认不缓存；事件只在 reader 已打开且写入正数 `cache=N\n` 后入队，队列满时丢弃新事件。
+- 默认不缓存；reader 打开时会清空残留事件，事件只在 reader 已打开且写入正数 `cache=N\n` 后入队，队列满时丢弃新事件。
 - 写入 `cache=0\n` 会关闭缓存并清空未读事件；reader 关闭时也会清空未读事件。
 - 写接口只接受 `cache=N`，N 为十进制无符号整数；未知命令返回 `-EINVAL`。
 

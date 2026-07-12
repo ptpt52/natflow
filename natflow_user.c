@@ -77,9 +77,7 @@ struct userinfo_event {
 	spinlock_t lock;
 	struct list_head head;
 	wait_queue_head_t wait;
-#define USERINFO_EVENT_STOPPED 0
-#define USERINFO_EVENT_RUNNING 1
-	unsigned int stage;
+	unsigned int readers;
 	unsigned int cache_limit;
 	unsigned int count;
 };
@@ -92,27 +90,41 @@ static inline void userinfo_event_store_init(void)
 	spin_lock_init(&userinfo_event_store.lock);
 	INIT_LIST_HEAD(&userinfo_event_store.head);
 	init_waitqueue_head(&userinfo_event_store.wait);
-	WRITE_ONCE(userinfo_event_store.stage, USERINFO_EVENT_STOPPED);
+	WRITE_ONCE(userinfo_event_store.readers, 0);
 	WRITE_ONCE(userinfo_event_store.cache_limit, 0);
 	userinfo_event_store.count = 0;
 }
 
-static inline void userinfo_event_store_purge(void)
+static inline void userinfo_event_store_purge_locked(struct list_head *free_list)
+{
+	list_splice_init(&userinfo_event_store.head, free_list);
+	userinfo_event_store.count = 0;
+}
+
+static inline void userinfo_event_store_free_list(struct list_head *free_list)
 {
 	struct userinfo *user_i, *n;
 
-	spin_lock_bh(&userinfo_event_store.lock);
-	list_for_each_entry_safe(user_i, n, &userinfo_event_store.head, list) {
+	list_for_each_entry_safe(user_i, n, free_list, list) {
 		list_del(&user_i->list);
 		kfree(user_i);
 	}
-	userinfo_event_store.count = 0;
+}
+
+static inline void userinfo_event_store_purge(void)
+{
+	LIST_HEAD(free_list);
+
+	spin_lock_bh(&userinfo_event_store.lock);
+	userinfo_event_store_purge_locked(&free_list);
 	spin_unlock_bh(&userinfo_event_store.lock);
+
+	userinfo_event_store_free_list(&free_list);
 }
 
 static inline void userinfo_event_store_exit(void)
 {
-	WRITE_ONCE(userinfo_event_store.stage, USERINFO_EVENT_STOPPED);
+	WRITE_ONCE(userinfo_event_store.readers, 0);
 	WRITE_ONCE(userinfo_event_store.cache_limit, 0);
 	userinfo_event_store_purge();
 }
@@ -133,7 +145,7 @@ static inline void userinfo_event_queue(natflow_fakeuser_t *user)
 	struct fakeuser_data_t *fud;
 	struct userinfo *user_i;
 
-	if (READ_ONCE(userinfo_event_store.stage) != USERINFO_EVENT_RUNNING ||
+	if (READ_ONCE(userinfo_event_store.readers) == 0 ||
 	        READ_ONCE(userinfo_event_store.cache_limit) == 0)
 		return;
 
@@ -199,7 +211,7 @@ static inline void userinfo_event_queue(natflow_fakeuser_t *user)
 	} while (0);
 
 	spin_lock_bh(&userinfo_event_store.lock);
-	if (READ_ONCE(userinfo_event_store.stage) != USERINFO_EVENT_RUNNING ||
+	if (userinfo_event_store.readers == 0 ||
 	        READ_ONCE(userinfo_event_store.cache_limit) == 0 ||
 	        userinfo_event_store.count >= userinfo_event_store.cache_limit) {
 		spin_unlock_bh(&userinfo_event_store.lock);
@@ -4050,7 +4062,7 @@ static void userinfo_event_hdr_fill(struct natflow_userinfo_event_hdr *hdr,
 static void userinfo_event_cache_set(unsigned int cache_limit)
 {
 	LIST_HEAD(free_list);
-	struct userinfo *user_i, *n;
+	struct userinfo *user_i;
 
 	WRITE_ONCE(userinfo_event_store.cache_limit, cache_limit);
 	if (cache_limit == 0) {
@@ -4069,10 +4081,7 @@ static void userinfo_event_cache_set(unsigned int cache_limit)
 	}
 	spin_unlock_bh(&userinfo_event_store.lock);
 
-	list_for_each_entry_safe(user_i, n, &free_list, list) {
-		list_del(&user_i->list);
-		kfree(user_i);
-	}
+	userinfo_event_store_free_list(&free_list);
 }
 
 static ssize_t userinfo_event_read(struct file *file, char __user *buf,
@@ -4124,28 +4133,32 @@ out:
 
 static int userinfo_event_open(struct inode *inode, struct file *file)
 {
+	LIST_HEAD(free_list);
 	struct userinfo_event_reader *reader;
 
-	/* just allow one user to read */
-	if (cmpxchg(&userinfo_event_store.stage, USERINFO_EVENT_STOPPED,
-	            USERINFO_EVENT_RUNNING) != USERINFO_EVENT_STOPPED)
+	reader = kmalloc(sizeof(*reader), GFP_KERNEL);
+	if (!reader)
+		return -ENOMEM;
+
+	mutex_init(&reader->lock);
+
+	spin_lock_bh(&userinfo_event_store.lock);
+	if (userinfo_event_store.readers != 0) {
+		spin_unlock_bh(&userinfo_event_store.lock);
+		mutex_destroy(&reader->lock);
+		kfree(reader);
 		return -EBUSY;
+	}
+	WRITE_ONCE(userinfo_event_store.readers, 1);
 	WRITE_ONCE(userinfo_event_store.cache_limit, 0);
 	userinfo_event_write_state.data_left = 0;
+	userinfo_event_store_purge_locked(&free_list);
+	spin_unlock_bh(&userinfo_event_store.lock);
 
-	reader = kmalloc(sizeof(*reader), GFP_KERNEL);
-	if (!reader) {
-		WRITE_ONCE(userinfo_event_store.stage, USERINFO_EVENT_STOPPED);
-		WRITE_ONCE(userinfo_event_store.cache_limit, 0);
-		wake_up(&userinfo_event_store.wait);
-		userinfo_event_store_purge();
-		return -ENOMEM;
-	}
+	userinfo_event_store_free_list(&free_list);
 
 	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
-
-	mutex_init(&reader->lock);
 
 	file->private_data = reader;
 	return 0;
@@ -4153,19 +4166,25 @@ static int userinfo_event_open(struct inode *inode, struct file *file)
 
 static int userinfo_event_release(struct inode *inode, struct file *file)
 {
+	LIST_HEAD(free_list);
 	struct userinfo_event_reader *reader = file->private_data;
 
-	WRITE_ONCE(userinfo_event_store.stage, USERINFO_EVENT_STOPPED);
+	spin_lock_bh(&userinfo_event_store.lock);
+	WRITE_ONCE(userinfo_event_store.readers, 0);
 	WRITE_ONCE(userinfo_event_store.cache_limit, 0);
 	userinfo_event_write_state.data_left = 0;
+	userinfo_event_store_purge_locked(&free_list);
+	spin_unlock_bh(&userinfo_event_store.lock);
+
+	userinfo_event_store_free_list(&free_list);
 	wake_up(&userinfo_event_store.wait);
-	userinfo_event_store_purge();
 
 	if (!reader)
 		return 0;
 
 	mutex_destroy(&reader->lock);
 	kfree(reader);
+	file->private_data = NULL;
 
 	return 0;
 }

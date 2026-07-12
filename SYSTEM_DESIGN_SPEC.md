@@ -384,12 +384,12 @@ ip_or_ipv6,mac,auth_type_hex,auth_status_hex,rule_id,idle_time,rx_pkts:rx_bytes,
 
 行为：
 
-- `open` 时通过 `cmpxchg()` 把全局 `stage` 从 STOPPED 切到 RUNNING，只允许一个 reader；已有 reader 时返回 `-EBUSY`。
-- `open` 后 cache 默认为 0，并清空 queue 写半行缓存；事件只在 reader 已打开、`stage == RUNNING` 且 cache limit 为正数时入队，最多缓存 reader 设置的条数；入队前和持有队列锁后都会检查 `stage/cache`，避免 close 或关闭 cache 竞态后继续挂入全局队列。
+- `open` 时持有队列锁检查全局 reader 计数，只允许一个 reader；已有 reader 时返回 `-EBUSY`。成功打开后把 reader 计数置 1、cache 置 0、清空 queue 写半行缓存并清空残留队列，行为与 `natflow_urllogger_queue`、`natflow_dpi_queue` 对齐。
+- 事件只在 reader 已打开且 cache limit 为正数时入队，最多缓存 reader 设置的条数；入队前和持有队列锁后都会检查 `readers/cache`，避免 close 或关闭 cache 竞态后继续挂入全局队列。
 - `write` 只接受 `cache=N`；正数 N 设置最多缓存 N 条新事件，`cache=0` 关闭缓存并清空未读事件，未知命令返回 `-EINVAL`。
 - `read` 从全局队列取出一个或多个事件并输出连续的版本化二进制固定头事件；用户 buffer 小于固定头时返回 `-EINVAL`，剩余 buffer 放不下下一条时停止并返回已拷贝字节数，队列为空时返回 0，不挂起。
 - `poll` 在有事件时返回 readable；长期 reader 应保持 fd 打开，并使用 `poll()`、`select()` 或 `epoll` 等待可读。
-- `release` 会把 `stage` 置回 STOPPED、cache 置 0、清空 queue 写半行缓存，唤醒等待中的 poller，并清空全局待消费事件队列。
+- `release` 会把 reader 计数置 0、cache 置 0、清空 queue 写半行缓存，唤醒等待中的 poller，并清空全局待消费事件队列。
 - 用户 buffer 小于 `sizeof(struct natflow_userinfo_event_hdr)` 时返回 `-EINVAL`。
 - 固定头为：
 
