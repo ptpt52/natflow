@@ -3417,13 +3417,13 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 			auth_open_weixin_reply = !!a;
 			goto done;
 		}
-	} else if (strncmp(data, "https_redirect_port=", 18) == 0) {
-		unsigned int a;
-		n = sscanf(data, "https_redirect_port=%u", &a);
-		if (n == 1) {
-			https_redirect_port = htons(a);
+	} else if (strncmp(data, "https_redirect_port=", sizeof("https_redirect_port=") - 1) == 0) {
+		u16 port;
+		if (kstrtou16(data + sizeof("https_redirect_port=") - 1, 10, &port) == 0) {
+			https_redirect_port = htons(port);
 			goto done;
 		}
+		err = -EINVAL;
 	}
 
 	NATFLOW_println("ignoring line: [%s]", data);

@@ -368,7 +368,7 @@ cat /dev/natflow_user_ctl
 | `redirect_ip6=<ipv6_addr>` | 设置 portal/redirect 目的 IPv6。如果未设置（默认为 `::`），IPv6 重定向请求将回滚使用 `redirect_ip` 提供的 IPv4 地址作为目标。 |
 | `no_flow_timeout=<seconds>` | 设置无流量用户超时。 |
 | `https_redirect_en=0/1` | 开启或关闭 HTTPS redirect。 |
-| `https_redirect_port=<port>` | 设置 HTTPS redirect 端口。 |
+| `https_redirect_port=<port>` | 设置 HTTPS redirect 端口，合法范围 `0..65535`。 |
 | `auth_open_weixin_reply=0/1` | 控制微信相关自动 portal 回复逻辑。 |
 
 认证规则限制：

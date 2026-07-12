@@ -171,6 +171,14 @@ static const char *const tcp_conntrack_names[] = {
 	"SYN_SENT2",
 };
 
+static const char *conntrack_state_name(const char *const *names, unsigned int count, unsigned int state)
+{
+	if (state < count && names[state])
+		return names[state];
+
+	return "UNKNOWN";
+}
+
 static const char* l3proto_name(u16 proto)
 {
 	switch (proto) {
@@ -319,8 +327,9 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 					break;
 				case IPPROTO_TCP:
 					ct_i->len += sprintf(ct_i->data + ct_i->len, "%s ",
-					                     ct->proto.tcp.state < ARRAY_SIZE(tcp_conntrack_names) ?
-					                     tcp_conntrack_names[ct->proto.tcp.state] : "UNKNOWN");
+					                     conntrack_state_name(tcp_conntrack_names,
+					                                          ARRAY_SIZE(tcp_conntrack_names),
+					                                          ct->proto.tcp.state));
 					switch (tuple->src.l3num) {
 					case NFPROTO_IPV4:
 						ct_i->len += sprintf(ct_i->data + ct_i->len, "src=%pI4 dst=%pI4 ",
@@ -356,7 +365,10 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 					                     ntohs(tuple->dst.u.udp.port));
 					break;
 				case IPPROTO_DCCP:
-					ct_i->len += sprintf(ct_i->data + ct_i->len, "%s ", dccp_state_names[ct->proto.tcp.state]);
+					ct_i->len += sprintf(ct_i->data + ct_i->len, "%s ",
+					                     conntrack_state_name(dccp_state_names,
+					                                          ARRAY_SIZE(dccp_state_names),
+					                                          ct->proto.dccp.state));
 					switch (tuple->src.l3num) {
 					case NFPROTO_IPV4:
 						ct_i->len += sprintf(ct_i->data + ct_i->len, "src=%pI4 dst=%pI4 ",
@@ -374,7 +386,10 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 					                     ntohs(tuple->dst.u.dccp.port));
 					break;
 				case IPPROTO_SCTP:
-					ct_i->len += sprintf(ct_i->data + ct_i->len, "%s ", sctp_conntrack_names[ct->proto.tcp.state]);
+					ct_i->len += sprintf(ct_i->data + ct_i->len, "%s ",
+					                     conntrack_state_name(sctp_conntrack_names,
+					                                          ARRAY_SIZE(sctp_conntrack_names),
+					                                          ct->proto.sctp.state));
 					switch (tuple->src.l3num) {
 					case NFPROTO_IPV4:
 						ct_i->len += sprintf(ct_i->data + ct_i->len, "src=%pI4 dst=%pI4 ",
