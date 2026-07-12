@@ -34,7 +34,7 @@
 - [x] Host ACL 的 `redirect` action 当前没有完整重定向实现。（已实现基于 302 的拦截与配置）
 - `conntrackinfo_ctl` 的 `kickall` 当前没有实际清理行为。
 - `/dev/userinfo_event_ctl` 写接口当前返回 `-ENOSYS`。
-- `userinfo_ctl`、`userinfo_event_ctl`、`urllogger_queue` 小 buffer read 当前返回 `-EINVAL`，不是 partial read。
+- `userinfo_ctl`、`userinfo_event_ctl`、`natflow_urllogger_queue` 小 buffer read 当前返回 `-EINVAL`，不是 partial read。
 
 退出条件：
 
@@ -47,7 +47,7 @@
 
 状态：Planned
 
-目标：把 `userinfo_ctl`、`userinfo_event_ctl`、`urllogger_queue` 的小 buffer 读取从直接 `-EINVAL` 改为更兼容的 partial read 或 per-open buffer 行为。
+目标：把 `userinfo_ctl`、`userinfo_event_ctl`、`natflow_urllogger_queue` 的小 buffer 读取从直接 `-EINVAL` 改为更兼容的 partial read 或 per-open buffer 行为。
 
 注意：这是用户可见行为变化，必须同步文档。
 

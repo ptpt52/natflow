@@ -12,15 +12,15 @@
 4. 修复自审发现的问题后再提交。
 5. 人工流量验证、生产 shadow 和需要外部用户态工具的测试可以暂时跳过，但必须记录未执行原因。
 
-## Legacy URL logger 基线
+## URL logger 基线
 
-M0/M1 期间必须保持：
+实现期间必须保持：
 
-- `/dev/urllogger_queue` 设备名、读取方式和 CSV 字段兼容。
+- `/dev/natflow_urllogger_queue` 设备名、单 reader 语义、二进制事件头和 payload 格式兼容。
 - `/proc/sys/urllogger_store/enable=0` 仍同时关闭 URL 记录和 Host ACL 处理。
 - `/proc/sys/urllogger_store/*` 其他节点路径、默认值和读写语义兼容。
-- `CONFIG_NATFLOW_URLLOGGER` 仍独立控制 legacy URL logger 和 Host ACL 能力。
-- `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 的 legacy local-in 行为不能影响 DPI 的 forward/bridge hook 目标。
+- `CONFIG_NATFLOW_URLLOGGER` 仍独立控制 URL logger 和 Host ACL 能力。
+- `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 的 URL local-in 行为不能影响 DPI 的 forward/bridge hook 目标。
 
 ## Host ACL 基线
 

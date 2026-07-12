@@ -49,7 +49,7 @@
 static int urllogger_major = 0;
 static int urllogger_minor = 0;
 static struct cdev urllogger_cdev;
-static const char * const urllogger_dev_name = "urllogger_queue";
+static const char * const urllogger_dev_name = "natflow_urllogger_queue";
 static struct class *urllogger_class;
 static struct device *urllogger_dev;
 
@@ -90,19 +90,19 @@ struct urlinfo {
 #define URLINFO_QUIC URLINFO_SOURCE_QUIC
 #define URLINFO_IPV6 0x80
 	unsigned char flags;
-#define NATFLOW_HTTP_NONE 0
-#define NATFLOW_HTTP_GET 1
-#define NATFLOW_HTTP_POST 2
-#define NATFLOW_HTTP_HEAD 3
+#define NATFLOW_HTTP_NONE NATFLOW_URLLOGGER_METHOD_NONE
+#define NATFLOW_HTTP_GET NATFLOW_URLLOGGER_METHOD_GET
+#define NATFLOW_HTTP_POST NATFLOW_URLLOGGER_METHOD_POST
+#define NATFLOW_HTTP_HEAD NATFLOW_URLLOGGER_METHOD_HEAD
 	unsigned char http_method;
 	unsigned short hits;
 	unsigned short data_len;
 	unsigned short host_len;
 	unsigned char acl_idx;
-#define URLINFO_ACL_ACTION_RECORD 0
-#define URLINFO_ACL_ACTION_DROP 1
-#define URLINFO_ACL_ACTION_RESET 2
-#define URLINFO_ACL_ACTION_REDIRECT 3
+#define URLINFO_ACL_ACTION_RECORD NATFLOW_URLLOGGER_ACL_ACTION_RECORD
+#define URLINFO_ACL_ACTION_DROP NATFLOW_URLLOGGER_ACL_ACTION_DROP
+#define URLINFO_ACL_ACTION_RESET NATFLOW_URLLOGGER_ACL_ACTION_RESET
+#define URLINFO_ACL_ACTION_REDIRECT NATFLOW_URLLOGGER_ACL_ACTION_REDIRECT
 	unsigned char acl_action;
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
 	unsigned char data[];
@@ -117,23 +117,16 @@ static struct urlinfo *urlinfo_alloc_record(const unsigned char *host, int host_
         unsigned int host_flags,
         const unsigned char *uri, int uri_len);
 
-static const char * const natflow_http_method_names[] = {
-	[NATFLOW_HTTP_NONE] = "NONE",
-	[NATFLOW_HTTP_GET] = "GET",
-	[NATFLOW_HTTP_POST] = "POST",
-	[NATFLOW_HTTP_HEAD] = "HEAD",
-};
-
-static inline const char *urlinfo_source_name(const struct urlinfo *url)
+static inline unsigned char urlinfo_event_source(const struct urlinfo *url)
 {
 	switch (url->flags & URLINFO_SOURCE_MASK) {
 	case URLINFO_SOURCE_HTTPS:
-		return "HTTPS";
+		return NATFLOW_URLLOGGER_EVENT_SOURCE_TLS;
 	case URLINFO_SOURCE_QUIC:
-		return "QUIC";
+		return NATFLOW_URLLOGGER_EVENT_SOURCE_QUIC;
 	case URLINFO_SOURCE_HTTP:
 	default:
-		return "HTTP";
+		return NATFLOW_URLLOGGER_EVENT_SOURCE_HTTP;
 	}
 }
 
@@ -1395,16 +1388,7 @@ int natflow_urllogger_url_enabled(void)
 	return READ_ONCE(urllogger_store_enable) != 0;
 }
 
-struct urllogger_user {
-	struct mutex lock;
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
-	unsigned char data[];
-#else
-	unsigned char data[0];
-#endif
-};
-#define URLLOGGER_MEMSIZE ALIGN(sizeof(struct urllogger_user), 2048)
-#define URLLOGGER_DATALEN (URLLOGGER_MEMSIZE - sizeof(struct urllogger_user))
+#define URLLOGGER_DATALEN 2048
 
 static struct urlinfo *urlinfo_alloc_record(const unsigned char *host, int host_len,
         unsigned int host_flags,
@@ -1448,52 +1432,6 @@ static struct urlinfo *urlinfo_alloc_record(const unsigned char *host, int host_
 	url->data_len = data_len;
 
 	return url;
-}
-
-static size_t urllogger_csv_field_len(const unsigned char *data, unsigned short data_len)
-{
-	unsigned int field_len = data_len > 0 ? data_len - 1 : 0;
-	size_t len = field_len;
-	unsigned int i;
-	int quoted = 0;
-
-	for (i = 0; i < field_len; i++) {
-		if (data[i] == '"') {
-			len++;
-			quoted = 1;
-		} else if (data[i] == ',' || data[i] == '\r' || data[i] == '\n') {
-			quoted = 1;
-		}
-	}
-
-	return quoted ? len + 2 : len;
-}
-
-static size_t urllogger_csv_field_write(char *dst, const unsigned char *data, unsigned short data_len)
-{
-	unsigned int field_len = data_len > 0 ? data_len - 1 : 0;
-	unsigned int i;
-	size_t len = 0;
-	int quoted = 0;
-
-	for (i = 0; i < field_len; i++) {
-		if (data[i] == '"' || data[i] == ',' || data[i] == '\r' || data[i] == '\n') {
-			quoted = 1;
-			break;
-		}
-	}
-
-	if (quoted)
-		dst[len++] = '"';
-	for (i = 0; i < field_len; i++) {
-		if (data[i] == '"')
-			dst[len++] = '"';
-		dst[len++] = data[i];
-	}
-	if (quoted)
-		dst[len++] = '"';
-
-	return len;
 }
 
 static ssize_t urllogger_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
@@ -1555,21 +1493,24 @@ done:
 static ssize_t urllogger_read(struct file *file, char __user *buf,
                               size_t count, loff_t *ppos)
 {
-	size_t len = 0;
+	struct natflow_urllogger_event_hdr hdr;
+	size_t payload_len;
+	size_t record_len;
 	ssize_t ret;
 	struct urlinfo *url;
-	struct urllogger_user *user = file->private_data;
 
-	if (!user)
-		return -EBADF;
-
-	ret = mutex_lock_interruptible(&user->lock);
-	if (ret)
-		return ret;
+	if (count < sizeof(struct natflow_urllogger_event_hdr))
+		return -EINVAL;
 
 	spin_lock_bh(&urllogger_store_lock);
 	url = list_first_entry_or_null(&urllogger_store_list, struct urlinfo, list);
 	if (url && urllogger_store_ready_locked()) {
+		payload_len = url->data_len > 0 ? url->data_len - 1 : 0;
+		record_len = sizeof(hdr) + payload_len;
+		if (count < record_len) {
+			spin_unlock_bh(&urllogger_store_lock);
+			return -EINVAL;
+		}
 		urllogger_store_memsize -= ALIGN(sizeof(struct urlinfo) + url->data_len, __URLINFO_ALIGN);
 		urllogger_store_count--;
 		list_del(&url->list);
@@ -1578,74 +1519,54 @@ static ssize_t urllogger_read(struct file *file, char __user *buf,
 	}
 	spin_unlock_bh(&urllogger_store_lock);
 
-	if (url) {
-		size_t data_csv_len = urllogger_csv_field_len(url->data, url->data_len);
-		int prefix_len;
+	if (!url)
+		return 0;
 
-		/* timestamp, mac,              sip,            sport,dip,            dport,hits, meth,type,acl_idx,acl_action, url\n
-		   4294967295,FF:AA:BB:CC:DD:EE,123.123.123.123,65535,111.111.111.111,65535,65535,POST,HTTP,64,1,url\n
-		   ------------------------------------------------------------------------------------------------96bytes + 48bytes(if ipv6)
-		 */
-		if (data_csv_len + 2 /* \n + NUL */ <= URLLOGGER_DATALEN) {
-			if ((url->flags & URLINFO_IPV6)) {
-				prefix_len = snprintf(user->data, URLLOGGER_DATALEN,
-				                      "%u,%02X:%02X:%02X:%02X:%02X:%02X,%pI6,%u,%pI6,%u,%u,%s,%s,%u,%u,",
-				                      url->timestamp, url->mac[0], url->mac[1], url->mac[2], url->mac[3], url->mac[4], url->mac[5],
-				                      &url->sipv6, ntohs(url->sport), &url->dipv6, ntohs(url->dport), url->hits,
-				                      natflow_http_method_names[url->http_method], urlinfo_source_name(url), url->acl_idx, url->acl_action);
-			} else {
-				prefix_len = snprintf(user->data, URLLOGGER_DATALEN,
-				                      "%u,%02X:%02X:%02X:%02X:%02X:%02X,%pI4,%u,%pI4,%u,%u,%s,%s,%u,%u,",
-				                      url->timestamp, url->mac[0], url->mac[1], url->mac[2], url->mac[3], url->mac[4], url->mac[5],
-				                      &url->sip, ntohs(url->sport), &url->dip, ntohs(url->dport), url->hits,
-				                      natflow_http_method_names[url->http_method], urlinfo_source_name(url), url->acl_idx, url->acl_action);
-			}
-			if (prefix_len >= 0 && prefix_len < URLLOGGER_DATALEN &&
-			        (size_t)prefix_len + data_csv_len + 2 <= URLLOGGER_DATALEN) {
-				len = prefix_len;
-				len += urllogger_csv_field_write(user->data + len, url->data, url->data_len);
-				user->data[len++] = '\n';
-				user->data[len] = 0;
-			} else {
-				len = 0;
-			}
-			/*
-			 * FIXME: Returning -EINVAL when len > count breaks single-byte reads
-			 * (e.g. `while read` in shell scripts). It should be refactored to
-			 * handle partial reads like conntrackinfo_read() or use seq_file.
-			 */
-			if (len > count) {
-				ret = -EINVAL;
-				goto out;
-			}
-			if (copy_to_user(buf, user->data, len)) {
-				ret = -EFAULT;
-				goto out;
-			}
-			ret = len;
-		}
+	memset(&hdr, 0, sizeof(hdr));
+	hdr.version = NATFLOW_URLLOGGER_EVENT_VERSION;
+	hdr.header_len = (__u16)sizeof(hdr);
+	hdr.record_len = (__u16)record_len;
+	hdr.family = (url->flags & URLINFO_IPV6) ? AF_INET6 : AF_INET;
+	hdr.timestamp = url->timestamp;
+	hdr.sport = ntohs(url->sport);
+	hdr.dport = ntohs(url->dport);
+	hdr.hits = url->hits;
+	hdr.host_len = url->host_len;
+	hdr.method = url->http_method;
+	hdr.source = urlinfo_event_source(url);
+	hdr.acl_idx = url->acl_idx;
+	hdr.acl_action = url->acl_action;
+	memcpy(hdr.mac, url->mac, sizeof(hdr.mac));
+	if ((url->flags & URLINFO_IPV6)) {
+		memcpy(hdr.sip, &url->sipv6, sizeof(hdr.sip));
+		memcpy(hdr.dip, &url->dipv6, sizeof(hdr.dip));
+	} else {
+		memcpy(hdr.sip, &url->sip, sizeof(url->sip));
+		memcpy(hdr.dip, &url->dip, sizeof(url->dip));
 	}
 
+	if (copy_to_user(buf, &hdr, sizeof(hdr)) != 0) {
+		ret = -EFAULT;
+		goto out;
+	}
+	if (payload_len > 0 && copy_to_user(buf + sizeof(hdr), url->data, payload_len) != 0) {
+		ret = -EFAULT;
+		goto out;
+	}
+	ret = record_len;
+
 out:
-	if (url)
-		urlinfo_release(url);
-	mutex_unlock(&user->lock);
+	urlinfo_release(url);
 	return ret;
 }
 
 static int urllogger_open(struct inode *inode, struct file *file)
 {
-	struct urllogger_user *user;
 	LIST_HEAD(free_list);
-
-	user = kmalloc(URLLOGGER_MEMSIZE, GFP_KERNEL);
-	if (!user)
-		return -ENOMEM;
 
 	spin_lock_bh(&urllogger_store_lock);
 	if (urllogger_store_readers != 0) {
 		spin_unlock_bh(&urllogger_store_lock);
-		kfree(user);
 		return -EBUSY;
 	}
 	WRITE_ONCE(urllogger_store_readers, 1);
@@ -1657,15 +1578,11 @@ static int urllogger_open(struct inode *inode, struct file *file)
 	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
-	mutex_init(&user->lock);
-
-	file->private_data = user;
 	return 0;
 }
 
 static int urllogger_release(struct inode *inode, struct file *file)
 {
-	struct urllogger_user *user = file->private_data;
 	LIST_HEAD(free_list);
 
 	spin_lock_bh(&urllogger_store_lock);
@@ -1675,12 +1592,6 @@ static int urllogger_release(struct inode *inode, struct file *file)
 
 	urllogger_store_free_list(&free_list);
 	wake_up_interruptible(&urllogger_wait);
-
-	if (!user)
-		return 0;
-
-	mutex_destroy(&user->lock);
-	kfree(user);
 	return 0;
 }
 

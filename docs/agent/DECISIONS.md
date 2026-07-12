@@ -60,29 +60,29 @@ DPI 能力采用有界 L7 detector 框架：
 - M1 默认 audit-only 和 fail-open；drop/reset/QoS 必须等 shadow 数据证明误判可控后再分阶段开放。
 - 这个决策改变的是目标设计，不代表当前源码已经提供 DPI ABI 或应用识别行为。
 
-## ADR-0003：L7 统一命名和 legacy URL/HostACL ABI 保留
+## ADR-0003：L7 统一命名和 URL/HostACL ABI
 
 日期：2026-07-11
 
-状态：Accepted
+状态：Amended 2026-07-12
 
 ### 背景
 
-现有 `natflow_urllogger.c` 同时承担 HTTP/TLS/QUIC 元数据提取、URL CSV 存储、Host ACL、reset/redirect/drop 动作和 sysctl 控制。后续 DPI 需要复用这些 parser，但不能把现有用户接口直接改名为 DPI，也不能让 URL logger 和 DPI 并行重复解析同一 payload。
+现有 `natflow_urllogger.c` 同时承担 HTTP/TLS/QUIC 元数据提取、URL event 存储、Host ACL、reset/redirect/drop 动作和 sysctl 控制。后续 DPI 需要复用这些 parser，但不能把现有用户接口直接改名为 DPI，也不能让 URL logger 和 DPI 并行重复解析同一 payload。
 
 ### 决策
 
 内部统一抽象命名为 `natflow_l7`：
 
 - `natflow_l7` 负责 read-only packet view、bounded prefix、HTTP/TLS/QUIC parser、hostname normalize、共享 context、consumer fan-out 和资源生命周期。
-- legacy URL logger 与 Host ACL 是 L7 的 URL consumer，继续保留 `/dev/urllogger_queue`、`/dev/hostacl_ctl`、`/proc/sys/urllogger_store/*` 和 `CONFIG_NATFLOW_URLLOGGER`。
+- legacy URL logger 与 Host ACL 是 L7 的 URL consumer，继续保留 `/dev/hostacl_ctl`、`/proc/sys/urllogger_store/*` 和 `CONFIG_NATFLOW_URLLOGGER`；URL queue 用户接口为 `/dev/natflow_urllogger_queue`，输出版本化二进制 URL event。
 - DPI 是 L7 的 classifier consumer，新增 `/dev/natflow_dpi_ctl`、`/dev/natflow_dpi_queue` 和 `CONFIG_NATFLOW_DPI`。
-- `/proc/sys/urllogger_store/enable=0` 仍表示 URL CSV 和 Host ACL 都不执行；DPI host consumer 可独立使用 HTTP/TLS/QUIC host parser，但 DPI enable 不能让 Host ACL 悄悄生效。
+- `/proc/sys/urllogger_store/enable=0` 仍表示 URL event 和 Host ACL 都不执行；DPI host consumer 可独立使用 HTTP/TLS/QUIC host parser，但 DPI enable 不能让 Host ACL 悄悄生效。
 - M1 阶段 DPI protocol-only hook 继续由 `natflow_dpi.c` 独立持有，不合并进 L7 URL common path，也不受 `urllogger_store/enable` 控制；只有在 L7 dispatcher、consumer mask 和 DPI context 生命周期落地后，才重新评审统一入口。
 - MVP 常驻 flow result 仍只有 `app_id`，其他分类细节进入 terminal event。
 
 ### 后果
 
 - 实现应先拆出 L7 core，再迁移 legacy URL logger 消费 shared features，最后接入 DPI consumer。
-- 可以调整内部文件和函数名，但不能在 M0/M1 破坏 legacy 设备节点、sysctl 路径、CSV 格式或 Host ACL 命令。
-- 若未来增加新的 L7/URL alias 设备，也必须长期保留旧 ABI，并作为单独兼容任务设计。
+- 可以调整内部文件和函数名，但不能破坏当前 URL/Host ACL 命令、sysctl 路径或事件格式。
+- URL queue 已从旧 CSV ABI 迁移到 `/dev/natflow_urllogger_queue` 二进制 ABI；后续审查以源码、`README.md` 和 `SYSTEM_DESIGN_SPEC.md` 的当前 ABI 为准。

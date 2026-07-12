@@ -222,8 +222,8 @@ echo 1 >/proc/sys/urllogger_store/enable
 - 一条命令必须以 `\n` 结束。
 - `cat /dev/*_ctl` 通常会输出 usage 和可重放配置。
 - 未识别命令多数情况下只写内核日志并返回已消费字节。
-- `userinfo_ctl`、`userinfo_event_ctl`、`urllogger_queue` 不支持小 buffer partial read；用户态应使用足够大的读缓冲。
-- `/dev/urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应保持 fd 打开，并用 `poll()`、`select()` 或 `epoll` 等待可读。
+- `userinfo_ctl`、`userinfo_event_ctl`、`natflow_urllogger_queue` 不支持小 buffer partial read；用户态应使用足够大的读缓冲。
+- `/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应保持 fd 打开，并用 `poll()`、`select()` 或 `epoll` 等待可读。
 - 多个 writer 并发写同一控制设备时，半行缓存可能互相干扰；生产脚本应串行写入。
 
 ## 对外接口总览
@@ -237,7 +237,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 | `/dev/userinfo_event_ctl` | char device | 阻塞式认证事件流，只允许一个 reader。 |
 | `/dev/qos_ctl` | char device | 全局 QoS 规则和 `tc_classid_mode`。 |
 | `/dev/hostacl_ctl` | char device | Host ACL 规则和默认动作。 |
-| `/dev/urllogger_queue` | char device | URL/SNI/ACL 命中记录队列，只允许一个 reader。 |
+| `/dev/natflow_urllogger_queue` | char device | URL/SNI/ACL 命中二进制事件队列，只允许一个 reader。 |
 | `/dev/natflow_dpi_ctl` | char device | DPI enable 状态、domain/proto ruleset 事务和统计。 |
 | `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列，只允许一个 reader，当前输出 domain/proto match 固定头事件。 |
 | `/dev/conntrackinfo_ctl` | char device | conntrack 文本快照。 |
@@ -510,7 +510,7 @@ echo 'add acl=<id>,<act>,<host>' >/dev/hostacl_ctl
 - 同一槽位可追加多个 host。
 - 可选 ipset 过滤集合名：`host_acl_rule<id>_ipv4`、`host_acl_rule<id>_ipv6`、`host_acl_rule<id>_mac`。
 - Host ACL 依赖 URL logger 解析，排障时先开启 `/proc/sys/urllogger_store/enable`。
-- Host ACL 使用解析出的最小 host 视图执行；即使 URL store 记录分配失败，也会尽量执行 ACL 动作，但不会生成对应 `/dev/urllogger_queue` 记录。
+- Host ACL 使用解析出的最小 host 视图执行；即使 URL store 记录分配失败，也会尽量执行 ACL 动作，但不会生成对应 `/dev/natflow_urllogger_queue` 记录。
 
 ## URL logger
 
@@ -526,39 +526,180 @@ sysctl：
 | `/proc/sys/urllogger_store/timestamp_freq` | 10 | 相同 URL 合并窗口，也是读出前的最小老化秒数。 |
 | `/proc/sys/urllogger_store/tuple_type` | 0 | 记录 tuple 方向：0=`dir0-src dir0-dst`，1=`dir0-src dir1-src`，2=`dir1-dst dir1-src`。 |
 
-开启并读取：
+开启流程：
 
 ```sh
+# 1. 先启动并保持下面的 reader 程序
+# 2. 再启用 URL logger/Host ACL
 echo 1 >/proc/sys/urllogger_store/enable
 ```
 
-`/dev/urllogger_queue` 只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 时，URL/SNI record 直接丢弃，不缓存到 URL store；reader 打开时会先清空残留记录，关闭时也会清空未读记录。`read()` 在没有可读记录时返回 0；因为 `timestamp_freq` 同时是相同 URL 合并窗口和读出前的最小老化秒数，用户态应保持 fd 打开，使用 `poll()`、`select()` 或 `epoll` 等待可读后再读取。不要用 `cat /dev/urllogger_queue` 做长期采集；空队列会让 `cat` 退出，后续记录会因没有 reader 而被丢弃。
+`/dev/natflow_urllogger_queue` 只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 时，URL/SNI record 直接丢弃，不缓存到 URL store；reader 打开时会先清空残留记录，关闭时也会清空未读记录。`read()` 在没有可读记录时返回 0；因为 `timestamp_freq` 同时是相同 URL 合并窗口和读出前的最小老化秒数，用户态应保持 fd 打开，使用 `poll()`、`select()` 或 `epoll` 等待可读后再读取。不要用 `cat /dev/natflow_urllogger_queue` 做长期采集；空队列会让 `cat` 退出，后续记录会因没有 reader 而被丢弃。
 
-每次 `read()` 最多返回一条 CSV 记录。如果同一个 fd 上 `read()` 返回 0，表示当前没有已老化到可读状态的记录；reader 应继续保持 fd 打开并重新进入 `poll()` 等待，而不是关闭后反复重开。使用无限期 `poll()` 时需要注意：已有记录只会在新记录入队或清理事件发生时唤醒；如果业务依赖 `timestamp_freq` 到期后立刻读出，应在用户态给 `poll()` 设置不大于 `timestamp_freq` 的超时并定期重试。
+每次 `read()` 最多返回一条版本化二进制记录。如果同一个 fd 上 `read()` 返回 0，表示当前没有已老化到可读状态的记录；reader 应继续保持 fd 打开并重新进入 `poll()` 等待，而不是关闭后反复重开。使用无限期 `poll()` 时需要注意：已有记录只会在新记录入队或清理事件发生时唤醒；如果业务依赖 `timestamp_freq` 到期后立刻读出，应在用户态给 `poll()` 设置不大于 `timestamp_freq` 的超时并定期重试。
 
-输出格式：
+固定头为：
 
-```text
-timestamp,mac,sip,sport,dip,dport,hits,method,type,acl_idx,acl_action,url
+```c
+struct natflow_urllogger_event_hdr {
+	__u16 version;
+	__u16 header_len;
+	__u16 record_len;
+	__u16 family;
+	__u32 timestamp;
+	__u16 sport;
+	__u16 dport;
+	__u16 hits;
+	__u16 host_len;
+	__u8 method;
+	__u8 source;
+	__u8 acl_idx;
+	__u8 acl_action;
+	__u8 mac[6];
+	__u8 sip[16];
+	__u8 dip[16];
+} __packed;
 ```
 
 字段说明：
 
+- `version=1`，`header_len=sizeof(struct natflow_urllogger_event_hdr)`，`record_len` 是固定头加 payload 的总长度。
+- 除地址字节数组外，整数按内核本机端序输出；用户态 reader 与内核运行在同一机器时直接按结构体读取即可。
+- `family` 是 `AF_INET` 或 `AF_INET6`；IPv4 地址放在 `sip[0..3]`、`dip[0..3]`，IPv6 地址使用完整 16 字节。
 - `timestamp` 是基于系统 uptime 的秒数，不是 Unix epoch。
-- `method` 是 HTTP method；非 HTTP 通常为 `NONE`。
-- `type` 是来源协议：`HTTP`、`HTTPS` 或 `QUIC`。
+- `method`：0=`NONE`，1=`GET`，2=`POST`，3=`HEAD`；非 HTTP 通常为 0。
+- `source`：1=`HTTP`，2=`TLS/HTTPS SNI`，3=`QUIC`。
 - `acl_idx=64` 表示未命中 ACL。
-- `url` 字段按 CSV 规则转义，用户态应使用 CSV parser。
+- `acl_action`：0=`record/accept`，1=`drop`，2=`reset`，3=`redirect`。
+- payload 紧跟固定头，长度为 `record_len - header_len`，内容是 `host + uri`，不带结尾 `NUL`；`host_len` 给出 host 部分长度，剩余部分是 HTTP URI。TLS/QUIC 记录通常只有 host，没有 URI。
+
+C 读者样例：
+
+```c
+#include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#define URLLOGGER_QUEUE "/dev/natflow_urllogger_queue"
+
+struct natflow_urllogger_event_hdr {
+	uint16_t version;
+	uint16_t header_len;
+	uint16_t record_len;
+	uint16_t family;
+	uint32_t timestamp;
+	uint16_t sport;
+	uint16_t dport;
+	uint16_t hits;
+	uint16_t host_len;
+	uint8_t method;
+	uint8_t source;
+	uint8_t acl_idx;
+	uint8_t acl_action;
+	uint8_t mac[6];
+	uint8_t sip[16];
+	uint8_t dip[16];
+} __attribute__((packed));
+
+static const char *source_name(uint8_t source)
+{
+	switch (source) {
+	case 1: return "HTTP";
+	case 2: return "HTTPS";
+	case 3: return "QUIC";
+	default: return "UNKNOWN";
+	}
+}
+
+int main(void)
+{
+	int fd = open(URLLOGGER_QUEUE, O_RDONLY | O_CLOEXEC);
+	if (fd < 0) {
+		perror("open " URLLOGGER_QUEUE);
+		return 1;
+	}
+
+	for (;;) {
+		struct pollfd pfd = { .fd = fd, .events = POLLIN };
+		int n = poll(&pfd, 1, 1000);
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			perror("poll");
+			break;
+		}
+
+		for (;;) {
+			unsigned char buf[4096];
+			struct natflow_urllogger_event_hdr *h;
+			char sip[INET6_ADDRSTRLEN];
+			char dip[INET6_ADDRSTRLEN];
+			unsigned char *payload;
+			unsigned int payload_len;
+			unsigned int host_len;
+			ssize_t len = read(fd, buf, sizeof(buf));
+
+			if (len < 0) {
+				if (errno == EINTR)
+					continue;
+				perror("read");
+				close(fd);
+				return 1;
+			}
+			if (len == 0)
+				break;
+			if ((size_t)len < sizeof(*h))
+				continue;
+
+			h = (struct natflow_urllogger_event_hdr *)buf;
+			if (h->version != 1 || h->header_len < sizeof(*h) ||
+			    h->record_len != (uint16_t)len || h->record_len < h->header_len)
+				continue;
+
+			payload = buf + h->header_len;
+			payload_len = h->record_len - h->header_len;
+			host_len = h->host_len <= payload_len ? h->host_len : payload_len;
+
+			if (h->family == AF_INET6) {
+				inet_ntop(AF_INET6, h->sip, sip, sizeof(sip));
+				inet_ntop(AF_INET6, h->dip, dip, sizeof(dip));
+			} else {
+				inet_ntop(AF_INET, h->sip, sip, sizeof(sip));
+				inet_ntop(AF_INET, h->dip, dip, sizeof(dip));
+			}
+
+			printf("%u %02x:%02x:%02x:%02x:%02x:%02x %s:%u -> %s:%u "
+			       "hits=%u method=%u source=%s acl=%u/%u host=%.*s uri=%.*s\n",
+			       h->timestamp,
+			       h->mac[0], h->mac[1], h->mac[2],
+			       h->mac[3], h->mac[4], h->mac[5],
+			       sip, h->sport, dip, h->dport, h->hits, h->method,
+			       source_name(h->source), h->acl_idx, h->acl_action,
+			       (int)host_len, (char *)payload,
+			       (int)(payload_len - host_len), (char *)(payload + host_len));
+		}
+	}
+
+	close(fd);
+	return 1;
+}
+```
 
 清空队列：
 
 ```sh
-echo 'clear' >/dev/urllogger_queue
+echo 'clear' >/dev/natflow_urllogger_queue
 ```
 
 ## DPI rules and protocol detectors
 
-需要编译 `CONFIG_NATFLOW_DPI`。当前 DPI 默认关闭，支持 domain exact/suffix ruleset、DNS QNAME domain 分类和 DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset，命中规则时写入 `natflow_t.app_id` 和输出二进制事件。DPI `enable=1` 且存在 domain/proto 规则时会分别激活 L7 DPI domain/packet consumer，不要求 `/proc/sys/urllogger_store/enable=1`。`/proc/sys/urllogger_store/enable=0` 仍只表示 URL CSV 和 Host ACL 不执行；HTTP Host、TLS SNI、QUIC v1 Initial SNI、DNS QNAME domain 分类和 protocol-only detector 都由 L7 shared hook 入口调度，DPI-only 构建也可以使用这些 DPI 分类输入。URL、DPI domain 和 DPI packet 的 L7 终态分别记录在 `natflow_t.status` 中：URL 失败不会关闭 DPI，DPI packet 结束不会关闭仍在等待 SNI/DNS QNAME 的 DPI domain，DPI domain 完成也不会影响 URL；当前 active consumer 全部完成后才释放 fast path，并设置 `IPS_NATFLOW_L7_HANDLED` 作为后续包的 L7_SKIP 快速短路 hint。
+需要编译 `CONFIG_NATFLOW_DPI`。当前 DPI 默认关闭，支持 domain exact/suffix ruleset、DNS QNAME domain 分类和 DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset，命中规则时写入 `natflow_t.app_id` 和输出二进制事件。DPI `enable=1` 且存在 domain/proto 规则时会分别激活 L7 DPI domain/packet consumer，不要求 `/proc/sys/urllogger_store/enable=1`。`/proc/sys/urllogger_store/enable=0` 仍只表示 URL logger 事件和 Host ACL 不执行；HTTP Host、TLS SNI、QUIC v1 Initial SNI、DNS QNAME domain 分类和 protocol-only detector 都由 L7 shared hook 入口调度，DPI-only 构建也可以使用这些 DPI 分类输入。URL、DPI domain 和 DPI packet 的 L7 终态分别记录在 `natflow_t.status` 中：URL 失败不会关闭 DPI，DPI packet 结束不会关闭仍在等待 SNI/DNS QNAME 的 DPI domain，DPI domain 完成也不会影响 URL；当前 active consumer 全部完成后才释放 fast path，并设置 `IPS_NATFLOW_L7_HANDLED` 作为后续包的 L7_SKIP 快速短路 hint。
 
 当前 DPI 仍是 audit-only：不执行 drop/reset/QoS，不覆盖 Host ACL、认证或 conntrack drop 结果；未命中、禁用、无对应 parser 或无法创建 natflow session 时 fail-open。L7 shared hook 在解析前会统一调用 `natflow_session_in()` 确保 URL/DPI 共享同一个 `natflow_t.status` 终态存储；若 confirmed、内存或布局限制导致 session 不存在，则跳过本次 L7 解析，不输出无状态 DPI match event，也不写入 `app_id`。protocol-only 命中要求 `app_id=0`，用于避免每包重复事件。
 
@@ -669,10 +810,10 @@ echo 'kickall' >/dev/conntrackinfo_ctl
 
 ## 排障建议
 
-1. 先确认模块是否加载、设备节点是否存在：`ls -l /dev/*natflow* /dev/*info* /dev/*acl* /dev/urllogger_queue`。
+1. 先确认模块是否加载、设备节点是否存在：`ls -l /dev/*natflow* /dev/*info* /dev/*acl*`。
 2. 写命令无效时，确认命令带换行，且没有超过 256 字节。
 3. fast path 不生效时，检查 `disabled=0`、zone 是否刷新、`debug` 日志、conntrack 是否存在。
-4. URL/Host ACL 不生效时，确认 `echo 1 >/proc/sys/urllogger_store/enable`，再看 `/dev/urllogger_queue` 是否输出目标 host。
+4. URL/Host ACL 不生效时，确认 `echo 1 >/proc/sys/urllogger_store/enable`，再看 `/dev/natflow_urllogger_queue` 是否输出目标 host。
 5. QoS 不生效时，先 `cat /dev/qos_ctl` 确认规则已加载，再检查是否已有连接缓存了旧规则；生产变更建议配合重新建连或刷新相关连接状态。
 6. 老内核如果不能正确处理 ingress hook 的 `NF_STOLEN`，需要内核侧补丁；详细实现约束见 `SYSTEM_DESIGN_SPEC.md`。
 
