@@ -53,7 +53,7 @@ typedef struct fakeuser_data_t {
 
 typedef struct nf_conn natflow_fakeuser_t;
 
-#define NATFLOW_USERINFO_EVENT_VERSION 1
+#define NATFLOW_USERINFO_EVENT_VERSION 2
 
 struct natflow_userinfo_event_hdr {
 	__u16 version;
@@ -61,11 +61,11 @@ struct natflow_userinfo_event_hdr {
 	__u16 record_len;
 	__u16 family;
 	__u32 idle_time;
+	__u8 ip[16];
 	__u8 mac[ETH_ALEN];
 	__u8 auth_type;
 	__u8 auth_status;
 	__u16 auth_rule_id;
-	__u8 ip[16];
 	__u64 rx_packets;
 	__u64 rx_bytes;
 	__u64 tx_packets;

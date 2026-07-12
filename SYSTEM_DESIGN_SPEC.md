@@ -398,11 +398,11 @@ struct natflow_userinfo_event_hdr {
 	__u16 record_len;
 	__u16 family;
 	__u32 idle_time;
+	__u8 ip[16];
 	__u8 mac[6];
 	__u8 auth_type;
 	__u8 auth_status;
 	__u16 auth_rule_id;
-	__u8 ip[16];
 	__u64 rx_packets;
 	__u64 rx_bytes;
 	__u64 tx_packets;
@@ -414,7 +414,7 @@ struct natflow_userinfo_event_hdr {
 } __packed;
 ```
 
-- `version=1`，`header_len=record_len=sizeof(struct natflow_userinfo_event_hdr)`。
+- `version=2`，`header_len=record_len=sizeof(struct natflow_userinfo_event_hdr)`。
 - 除地址字节数组外，整数按内核本机端序输出；`family` 为 `AF_INET` 或 `AF_INET6`，IPv4 地址存放在 `ip[0..3]`，IPv6 地址使用完整 16 字节。
 - `idle_time`、认证字段、计数和速度字段语义与 `/dev/userinfo_ctl` 文本输出一致。
 
@@ -462,21 +462,21 @@ struct natflow_urllogger_event_hdr {
 	__u32 timestamp;
 	__u16 sport;
 	__u16 dport;
+	__u8 sip[16];
+	__u8 dip[16];
+	__u8 mac[6];
 	__u16 hits;
 	__u16 host_len;
 	__u8 method;
 	__u8 source;
 	__u8 acl_idx;
 	__u8 acl_action;
-	__u8 mac[6];
-	__u8 sip[16];
-	__u8 dip[16];
 } __packed;
 ```
 
 字段说明：
 
-- `version=1`，`header_len=sizeof(struct natflow_urllogger_event_hdr)`，`record_len` 为固定头加 payload 的总长度。
+- `version=2`，`header_len=sizeof(struct natflow_urllogger_event_hdr)`，`record_len` 为固定头加 payload 的总长度。
 - 除地址字节数组外，整数按内核本机端序输出；地址字段保持网络字节序字节数组。
 - `family` 为 `AF_INET` 或 `AF_INET6`；IPv4 地址存放在 `sip/dip` 的前 4 字节，IPv6 地址使用完整 16 字节。
 - `timestamp` 仍为 uptime 秒数。
@@ -999,7 +999,7 @@ classid 模式：
 - domain/proto 命中时写入当前连接的 `natflow_t.app_id` 并输出 match event；L7 入口已经在解析前统一确保 natflow session。若 session 创建失败，则本次 L7 解析整体跳过，因此不会输出无状态 match event。protocol-only 命中要求 `app_id==0`，用于避免每包重复事件。
 - `/dev/natflow_dpi_queue` 输出固定头二进制事件，只允许一个 reader，第二个 reader 打开返回 `-EBUSY`；没有 reader 时 match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时清空残留事件，关闭时清空未读事件。队列为空时 `read()` 返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。有 reader 期间队列最多缓存 1024 条事件，溢出或分配失败增加 `events_lost`。
 - `/dev/natflow_dpi_ctl` status 输出已成功入队的 `events_*` source counters，按 HTTP/TLS/QUIC/DNS/SSH/WireGuard/STUN/TURN/BitTorrent 统计 match event；同时输出 `proto_no_session`、`proto_app_exists` 和 `proto_no_rule`，用于解释 protocol-only detector 已识别但未产生 match event 的原因。
-- 固定事件头为 packed `struct natflow_dpi_event_hdr`，`version=1`，包含 `header_len`、`record_len`、`reason`、`generation`、`app_id`、`category_id`、`rule_id`、`flags` 和 `timestamp`。当前 match event 使用 `reason=6`，`category_id=0`，`flags` 表示来源：1=HTTP、2=TLS、3=QUIC、4=DNS、5=SSH、6=WireGuard、7=STUN、8=TURN、9=BitTorrent，`timestamp` 为 uptime 秒数，与 URL logger 事件语义一致。
+- 固定事件头为 packed `struct natflow_dpi_event_hdr`，`version=2`，包含 `header_len`、`record_len`、`reason`、`generation`、`app_id`、`category_id`、`rule_id`、`flags`、`timestamp` 和 original tuple。当前 match event 使用 `reason=6`，`category_id=0`，`flags` 表示来源：1=HTTP、2=TLS、3=QUIC、4=DNS、5=SSH、6=WireGuard、7=STUN、8=TURN、9=BitTorrent，`timestamp` 为 uptime 秒数，与 URL logger 事件语义一致。tuple 字段固定取 `IP_CT_DIR_ORIGINAL`，`family` 为 `AF_INET` 或 `AF_INET6`，`l4proto` 为 L4 protocol，`sport`/`dport` 为主机字节序端口，`sip`/`dip` 为地址字节数组；IPv4 使用前 4 字节，IPv6 使用完整 16 字节。
 - 当前不会执行 drop/reset/QoS，不覆盖认证、Host ACL 或 conntrack drop 结果；未命中、禁用、无 parser、无法创建 session 或事件队列丢失都 fail-open。
 
 ## 16. Zone 设计

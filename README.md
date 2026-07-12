@@ -222,7 +222,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 - 一条命令必须以 `\n` 结束。
 - `cat /dev/*_ctl` 通常会输出 usage 和可重放配置。
 - 未识别命令多数情况下只写内核日志并返回已消费字节。
-- `userinfo_ctl`、`natflow_userinfo_queue`、`natflow_urllogger_queue` 不支持小 buffer partial read；用户态应使用足够大的读缓冲。
+- `userinfo_ctl`、`natflow_userinfo_queue`、`natflow_urllogger_queue`、`natflow_dpi_queue` 不支持小 buffer partial read；用户态应使用足够大的读缓冲。
 - `/dev/natflow_userinfo_queue`、`/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应保持 fd 打开。
 - 多个 writer 并发写同一控制设备时，半行缓存可能互相干扰；生产脚本应串行写入。
 
@@ -239,7 +239,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 | `/dev/hostacl_ctl` | char device | Host ACL 规则和默认动作。 |
 | `/dev/natflow_urllogger_queue` | char device | URL/SNI/ACL 命中二进制事件队列，只允许一个 reader。 |
 | `/dev/natflow_dpi_ctl` | char device | DPI enable 状态、domain/proto ruleset 事务和统计。 |
-| `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列，只允许一个 reader，当前输出 domain/proto match 固定头事件。 |
+| `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列，只允许一个 reader，当前输出 domain/proto match v2 固定头事件和 original tuple。 |
 | `/dev/conntrackinfo_ctl` | char device | conntrack 文本快照。 |
 | `/proc/sys/urllogger_store/*` | sysctl | URL logger 开关、容量和合并窗口。 |
 
@@ -452,11 +452,11 @@ struct natflow_userinfo_event_hdr {
 	__u16 record_len;
 	__u16 family;
 	__u32 idle_time;
+	__u8 ip[16];
 	__u8 mac[6];
 	__u8 auth_type;
 	__u8 auth_status;
 	__u16 auth_rule_id;
-	__u8 ip[16];
 	__u64 rx_packets;
 	__u64 rx_bytes;
 	__u64 tx_packets;
@@ -470,7 +470,7 @@ struct natflow_userinfo_event_hdr {
 
 字段说明：
 
-- `version=1`，`header_len=record_len=sizeof(struct natflow_userinfo_event_hdr)`。
+- `version=2`，`header_len=record_len=sizeof(struct natflow_userinfo_event_hdr)`。
 - 除地址字节数组外，整数按内核本机端序输出；用户态 reader 与内核运行在同一机器时直接按结构体读取即可。
 - `family` 是 `AF_INET` 或 `AF_INET6`；IPv4 地址放在 `ip[0..3]`，IPv6 地址使用完整 16 字节。
 - `idle_time` 是该 fakeuser 内部活动时间戳至今经过的秒数。
@@ -496,11 +496,11 @@ struct natflow_userinfo_event_hdr {
 	uint16_t record_len;
 	uint16_t family;
 	uint32_t idle_time;
+	uint8_t ip[16];
 	uint8_t mac[6];
 	uint8_t auth_type;
 	uint8_t auth_status;
 	uint16_t auth_rule_id;
-	uint8_t ip[16];
 	uint64_t rx_packets;
 	uint64_t rx_bytes;
 	uint64_t tx_packets;
@@ -534,7 +534,7 @@ int main(void)
 			continue;
 		if ((size_t)len != sizeof(ev))
 			continue;
-		if (ev.version != 1 ||
+		if (ev.version != 2 ||
 		    ev.header_len != sizeof(ev) ||
 		    ev.record_len != sizeof(ev))
 			continue;
@@ -666,21 +666,21 @@ struct natflow_urllogger_event_hdr {
 	__u32 timestamp;
 	__u16 sport;
 	__u16 dport;
+	__u8 sip[16];
+	__u8 dip[16];
+	__u8 mac[6];
 	__u16 hits;
 	__u16 host_len;
 	__u8 method;
 	__u8 source;
 	__u8 acl_idx;
 	__u8 acl_action;
-	__u8 mac[6];
-	__u8 sip[16];
-	__u8 dip[16];
 } __packed;
 ```
 
 字段说明：
 
-- `version=1`，`header_len=sizeof(struct natflow_urllogger_event_hdr)`，`record_len` 是固定头加 payload 的总长度。
+- `version=2`，`header_len=sizeof(struct natflow_urllogger_event_hdr)`，`record_len` 是固定头加 payload 的总长度。
 - 除地址字节数组外，整数按内核本机端序输出；用户态 reader 与内核运行在同一机器时直接按结构体读取即可。
 - `family` 是 `AF_INET` 或 `AF_INET6`；IPv4 地址放在 `sip[0..3]`、`dip[0..3]`，IPv6 地址使用完整 16 字节。
 - `timestamp` 是基于系统 uptime 的秒数，不是 Unix epoch。
@@ -713,15 +713,15 @@ struct natflow_urllogger_event_hdr {
 	uint32_t timestamp;
 	uint16_t sport;
 	uint16_t dport;
+	uint8_t sip[16];
+	uint8_t dip[16];
+	uint8_t mac[6];
 	uint16_t hits;
 	uint16_t host_len;
 	uint8_t method;
 	uint8_t source;
 	uint8_t acl_idx;
 	uint8_t acl_action;
-	uint8_t mac[6];
-	uint8_t sip[16];
-	uint8_t dip[16];
 } __attribute__((packed));
 
 static const char *source_name(uint8_t source)
@@ -775,7 +775,7 @@ int main(void)
 				continue;
 
 			h = (struct natflow_urllogger_event_hdr *)buf;
-			if (h->version != 1 || h->header_len < sizeof(*h) ||
+			if (h->version != 2 || h->header_len < sizeof(*h) ||
 			    h->record_len != (uint16_t)len || h->record_len < h->header_len)
 				continue;
 
@@ -856,7 +856,7 @@ echo events_clear >/dev/natflow_dpi_ctl
 - 有界 payload detector：TCP original direction 的 SSH banner 识别 `SSH-<version>-` identification string，可覆盖部分非 22 端口 SSH 客户端 banner；STUN/TURN 识别 STUN header、length 和 magic cookie，并按 TURN 方法区分 TURN；BitTorrent 的 TCP 分支识别标准 handshake，UDP 分支识别 uTP v1 header 和 DHT bencode token 前缀窗口，其中 uTP 会校验版本、类型和扩展号。
 - `cat /dev/natflow_dpi_ctl` 会输出已成功入队的 `events_*` source counters 和 `proto_no_session`、`proto_app_exists`、`proto_no_rule` protocol-only reason counters，可用于 shadow 统计和解释 detector 已识别但未产生 match event 的原因。
 
-`/dev/natflow_dpi_queue` 使用版本化二进制记录，只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 时，match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时会先清空残留事件，关闭时也会清空未读事件。当前 record 只有固定头；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。有 reader 期间队列最多缓存 1024 条事件，溢出或分配失败会增加 `events_lost`。
+`/dev/natflow_dpi_queue` 使用版本化二进制记录，只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 时，match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时会先清空残留事件，关闭时也会清空未读事件。当前 record 是 v2 固定头，包含规则命中摘要和 original direction tuple；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。有 reader 期间队列最多缓存 1024 条事件，溢出或分配失败会增加 `events_lost`。
 
 读者用法：
 
@@ -872,32 +872,44 @@ struct natflow_dpi_event_hdr {
 	__u16 version;
 	__u16 header_len;
 	__u16 record_len;
+	__u16 family;
+	__u64 timestamp;
+	__u8 l4proto;
+	__u8 tuple_dir;
 	__u16 reason;
+	__u16 sport;
+	__u16 dport;
+	__u8 sip[16];
+	__u8 dip[16];
 	__u32 generation;
 	__u32 app_id;
 	__u32 category_id;
 	__u32 rule_id;
 	__u32 flags;
-	__u64 timestamp;
 } __packed;
 ```
 
 当前 match event 字段含义：
 
-- `version=1`，`header_len=record_len=sizeof(struct natflow_dpi_event_hdr)`。
+- `version=2`，`header_len=record_len=sizeof(struct natflow_dpi_event_hdr)`。
 - `reason=6` 表示 rule matched。
 - `generation` 是命中时的 ruleset generation。
 - `app_id` 和 `rule_id` 来自命中的 domain 或 proto rule。
 - `category_id=0` 预留。
 - `flags` 当前记录事件来源：1=`HTTP`，2=`TLS`，3=`QUIC`，4=`DNS`，5=`SSH`，6=`WireGuard`，7=`STUN`，8=`TURN`，9=`BitTorrent`。
 - `timestamp` 是基于系统 uptime 的秒数，不是 Unix epoch，与 URL logger 事件语义一致。
+- `family` 是 original tuple 的 L3 family，当前为 `AF_INET` 或 `AF_INET6`；`l4proto` 是 original tuple 的 L4 protocol；`tuple_dir=0` 表示 `IP_CT_DIR_ORIGINAL`。
+- `sport` 和 `dport` 是 original tuple 的源/目的端口，按主机字节序输出；非端口型协议为 0。
+- `sip` 和 `dip` 是 original tuple 的源/目的地址字节数组；IPv4 使用前 4 字节，IPv6 使用完整 16 字节。
 
 C 读者样例：
 
 ```c
+#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -909,13 +921,20 @@ struct natflow_dpi_event_hdr {
 	uint16_t version;
 	uint16_t header_len;
 	uint16_t record_len;
+	uint16_t family;
+	uint64_t timestamp;
+	uint8_t l4proto;
+	uint8_t tuple_dir;
 	uint16_t reason;
+	uint16_t sport;
+	uint16_t dport;
+	uint8_t sip[16];
+	uint8_t dip[16];
 	uint32_t generation;
 	uint32_t app_id;
 	uint32_t category_id;
 	uint32_t rule_id;
 	uint32_t flags;
-	uint64_t timestamp;
 } __attribute__((packed));
 
 static const char *source_name(uint32_t source)
@@ -932,6 +951,37 @@ static const char *source_name(uint32_t source)
 	case 9: return "BitTorrent";
 	default: return "UNKNOWN";
 	}
+}
+
+static const char *l4proto_name(uint8_t proto)
+{
+	switch (proto) {
+	case IPPROTO_TCP: return "tcp";
+	case IPPROTO_UDP: return "udp";
+	default: return "l4";
+	}
+}
+
+static const char *addr_text(uint16_t family, const uint8_t addr[16],
+			     char *buf, size_t len)
+{
+	const void *src = NULL;
+	int af = 0;
+
+	if (family == AF_INET) {
+		af = AF_INET;
+		src = addr;
+	} else if (family == AF_INET6) {
+		af = AF_INET6;
+		src = addr;
+	} else {
+		snprintf(buf, len, "family-%u", family);
+		return buf;
+	}
+
+	if (!inet_ntop(af, src, buf, len))
+		snprintf(buf, len, "?");
+	return buf;
 }
 
 int main(void)
@@ -954,6 +1004,8 @@ int main(void)
 
 		for (;;) {
 			struct natflow_dpi_event_hdr ev;
+			char sip[INET6_ADDRSTRLEN];
+			char dip[INET6_ADDRSTRLEN];
 			ssize_t len = read(fd, &ev, sizeof(ev));
 
 			if (len < 0) {
@@ -967,15 +1019,21 @@ int main(void)
 				break;
 			if ((size_t)len != sizeof(ev))
 				continue;
-			if (ev.version != 1 ||
+			if (ev.version != 2 ||
 			    ev.header_len != sizeof(ev) ||
 			    ev.record_len != sizeof(ev))
 				continue;
 
 			printf("ts=%" PRIu64 " generation=%u app=%u rule=%u "
-			       "reason=%u source=%s category=%u\n",
+			       "reason=%u source=%s category=%u "
+			       "tuple=%s %s:%u -> %s:%u dir=%u\n",
 			       ev.timestamp, ev.generation, ev.app_id, ev.rule_id,
-			       ev.reason, source_name(ev.flags), ev.category_id);
+			       ev.reason, source_name(ev.flags), ev.category_id,
+			       l4proto_name(ev.l4proto),
+			       addr_text(ev.family, ev.sip, sip, sizeof(sip)),
+			       ev.sport,
+			       addr_text(ev.family, ev.dip, dip, sizeof(dip)),
+			       ev.dport, ev.tuple_dir);
 		}
 	}
 

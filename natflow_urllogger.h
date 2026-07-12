@@ -12,7 +12,7 @@ struct natflow_l7_host_view;
 struct natflow_l7_packet_view;
 struct nf_hook_state;
 
-#define NATFLOW_URLLOGGER_EVENT_VERSION 1
+#define NATFLOW_URLLOGGER_EVENT_VERSION 2
 
 enum natflow_urllogger_event_source {
 	NATFLOW_URLLOGGER_EVENT_SOURCE_HTTP = 1,
@@ -43,15 +43,15 @@ struct natflow_urllogger_event_hdr {
 	__u32 timestamp;
 	__u16 sport;
 	__u16 dport;
+	__u8 sip[16];
+	__u8 dip[16];
+	__u8 mac[6];
 	__u16 hits;
 	__u16 host_len;
 	__u8 method;
 	__u8 source;
 	__u8 acl_idx;
 	__u8 acl_action;
-	__u8 mac[6];
-	__u8 sip[16];
-	__u8 dip[16];
 } __packed;
 
 extern int natflow_urllogger_init(void);

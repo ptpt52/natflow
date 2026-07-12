@@ -428,7 +428,48 @@ static bool natflow_dpi_domain_rule_match(const struct natflow_dpi_domain_rule *
 	return memcmp(host + host_len - rule->host_len, rule->host, rule->host_len) == 0;
 }
 
-static void natflow_dpi_event_queue(unsigned int reason, unsigned int generation,
+static void natflow_dpi_event_fill_tuple(struct natflow_dpi_event_hdr *hdr,
+                                         const struct nf_conn *ct)
+{
+	const struct nf_conntrack_tuple *tuple;
+
+	if (!ct)
+		return;
+
+	tuple = &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
+	hdr->family = tuple->src.l3num;
+	hdr->l4proto = tuple->dst.protonum;
+	hdr->tuple_dir = IP_CT_DIR_ORIGINAL;
+
+	switch (tuple->src.l3num) {
+	case AF_INET:
+		memcpy(hdr->sip, &tuple->src.u3.ip, sizeof(tuple->src.u3.ip));
+		memcpy(hdr->dip, &tuple->dst.u3.ip, sizeof(tuple->dst.u3.ip));
+		break;
+	case AF_INET6:
+		memcpy(hdr->sip, tuple->src.u3.ip6, sizeof(hdr->sip));
+		memcpy(hdr->dip, tuple->dst.u3.ip6, sizeof(hdr->dip));
+		break;
+	default:
+		break;
+	}
+
+	switch (tuple->dst.protonum) {
+	case IPPROTO_TCP:
+	case IPPROTO_UDP:
+	case IPPROTO_UDPLITE:
+	case IPPROTO_SCTP:
+	case IPPROTO_DCCP:
+		hdr->sport = ntohs(tuple->src.u.all);
+		hdr->dport = ntohs(tuple->dst.u.all);
+		break;
+	default:
+		break;
+	}
+}
+
+static void natflow_dpi_event_queue(const struct nf_conn *ct,
+                                    unsigned int reason, unsigned int generation,
                                     unsigned int app_id, unsigned int rule_id,
                                     unsigned int flags)
 {
@@ -453,6 +494,7 @@ static void natflow_dpi_event_queue(unsigned int reason, unsigned int generation
 	node->hdr.rule_id = rule_id;
 	node->hdr.flags = flags;
 	node->hdr.timestamp = NATFLOW_DPI_EVENT_TIMESTAMP_NOW;
+	natflow_dpi_event_fill_tuple(&node->hdr, ct);
 
 	spin_lock_bh(&natflow_dpi_event_lock);
 	if (natflow_dpi_queue_readers == 0) {
@@ -621,7 +663,7 @@ static void natflow_dpi_classify_normalized_host_match(struct nf_conn *ct,
 		nf = natflow_session_get(ct);
 		if (nf)
 			WRITE_ONCE(nf->app_id, rule->app_id);
-		natflow_dpi_event_queue(NATFLOW_DPI_REASON_MATCHED,
+		natflow_dpi_event_queue(ct, NATFLOW_DPI_REASON_MATCHED,
 		                        ruleset->generation, rule->app_id,
 		                        rule->rule_id, source);
 		break;
@@ -733,7 +775,7 @@ static void natflow_dpi_classify_proto(struct nf_conn *ct, unsigned int proto)
 			continue;
 
 		WRITE_ONCE(nf->app_id, rule->app_id);
-		natflow_dpi_event_queue(NATFLOW_DPI_REASON_MATCHED,
+		natflow_dpi_event_queue(ct, NATFLOW_DPI_REASON_MATCHED,
 		                        ruleset->generation, rule->app_id,
 		                        rule->rule_id, source);
 		rcu_read_unlock();
