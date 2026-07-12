@@ -83,6 +83,31 @@ int natflow_ct_ext_layout_validate(void)
 		return -EINVAL;
 	}
 
+	if (NF_FF_L7_URL_DONE_BIT != 22) {
+		NATFLOW_ERROR("unexpected NF_FF_L7_URL_DONE_BIT=%u\n",
+		              NF_FF_L7_URL_DONE_BIT);
+		return -EINVAL;
+	}
+
+	if (NF_FF_L7_DPI_DOMAIN_DONE_BIT != 23) {
+		NATFLOW_ERROR("unexpected NF_FF_L7_DPI_DOMAIN_DONE_BIT=%u\n",
+		              NF_FF_L7_DPI_DOMAIN_DONE_BIT);
+		return -EINVAL;
+	}
+
+	if (NF_FF_L7_DPI_PACKET_DONE_BIT != 24) {
+		NATFLOW_ERROR("unexpected NF_FF_L7_DPI_PACKET_DONE_BIT=%u\n",
+		              NF_FF_L7_DPI_PACKET_DONE_BIT);
+		return -EINVAL;
+	}
+
+	if (NF_FF_BUSY_USE & (NF_FF_L7_URL_DONE |
+	                      NF_FF_L7_DPI_DOMAIN_DONE |
+	                      NF_FF_L7_DPI_PACKET_DONE)) {
+		NATFLOW_ERROR("L7 done bits must not be part of NF_FF_BUSY_USE\n");
+		return -EINVAL;
+	}
+
 	if (layout.nat_key_off > NATCAP_MAX_OFF) {
 		NATFLOW_ERROR("nat_key_off=%u exceeds NATCAP_MAX_OFF=%u\n",
 		              layout.nat_key_off, NATCAP_MAX_OFF);

@@ -124,7 +124,7 @@ make
 | --- | --- |
 | `CONFIG_NATFLOW_PATH` | 启用 fast path、vline/relay、硬件 offload 相关控制。 |
 | `CONFIG_NATFLOW_URLLOGGER` | 启用 URL logger、Host ACL 和 `/proc/sys/urllogger_store`。 |
-| `CONFIG_NATFLOW_DPI` | 启用 DPI 控制/事件接口、domain exact/suffix 规则、DNS QNAME domain 分类、protocol-only 规则和 `/dev/natflow_dpi_queue`；默认关闭。DPI enabled 且存在任意规则时会激活 L7 shared hook 的 DPI consumer；HTTP/TLS/QUIC host、DNS QNAME 和 DNS/SSH/WireGuard/STUN/TURN/BitTorrent proto detector 都从同一 L7 入口识别，不依赖 `/proc/sys/urllogger_store/enable`。 |
+| `CONFIG_NATFLOW_DPI` | 启用 DPI 控制/事件接口、domain exact/suffix 规则、DNS QNAME domain 分类、protocol-only 规则和 `/dev/natflow_dpi_queue`；默认关闭。DPI enabled 且存在 domain/proto 规则时会分别激活 L7 shared hook 的 DPI domain/packet consumer；HTTP/TLS/QUIC host、DNS QNAME 和 DNS/SSH/WireGuard/STUN/TURN/BitTorrent proto detector 都从同一 L7 入口识别，不依赖 `/proc/sys/urllogger_store/enable`。 |
 | `CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH` | MTK 外部设备硬件 offload 使用 VLAN hash 模式；会影响 bridge VLAN filter。 |
 | `CONFIG_HWNAT_EXTDEV_DISABLED` | 禁用部分外部设备硬件 offload 分支。 |
 | `NO_DEBUG=1` | 追加 `-DNO_DEBUG -Os`，编译期关闭日志宏。 |
@@ -554,9 +554,9 @@ echo 'clear' >/dev/urllogger_queue
 
 ## DPI rules and protocol detectors
 
-需要编译 `CONFIG_NATFLOW_DPI`。当前 DPI 默认关闭，支持 domain exact/suffix ruleset、DNS QNAME domain 分类和 DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset，命中规则时写入 `natflow_t.app_id` 和输出二进制事件。DPI `enable=1` 且存在任意规则时会独立激活 L7 DPI consumer，不要求 `/proc/sys/urllogger_store/enable=1`。`/proc/sys/urllogger_store/enable=0` 仍只表示 URL CSV 和 Host ACL 不执行；HTTP Host、TLS SNI、QUIC v1 Initial SNI、DNS QNAME domain 分类和 protocol-only detector 都由 L7 shared hook 入口调度，DPI-only 构建也可以使用这些 DPI 分类输入。
+需要编译 `CONFIG_NATFLOW_DPI`。当前 DPI 默认关闭，支持 domain exact/suffix ruleset、DNS QNAME domain 分类和 DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset，命中规则时写入 `natflow_t.app_id` 和输出二进制事件。DPI `enable=1` 且存在任意规则时会独立激活 L7 DPI consumer，不要求 `/proc/sys/urllogger_store/enable=1`。`/proc/sys/urllogger_store/enable=0` 仍只表示 URL CSV 和 Host ACL 不执行；HTTP Host、TLS SNI、QUIC v1 Initial SNI、DNS QNAME domain 分类和 protocol-only detector 都由 L7 shared hook 入口调度，DPI-only 构建也可以使用这些 DPI 分类输入。URL、DPI domain 和 DPI packet 的 L7 终态分别记录在 `natflow_t.status` 中：URL 失败不会关闭 DPI，DPI packet 结束不会关闭仍在等待 SNI/DNS QNAME 的 DPI domain，DPI domain 完成也不会影响 URL；当前 active consumer 全部完成后才释放 fast path。
 
-当前 DPI 仍是 audit-only：不执行 drop/reset/QoS，不覆盖 Host ACL、认证或 conntrack drop 结果；未命中、禁用、无对应 parser 或没有 natflow session 时 fail-open。domain host 命中时若当前连接没有 natflow session，DPI 仍可输出 match event，但不会创建 session 或写入 `app_id`；protocol-only 命中要求已有 natflow session 且 `app_id=0`。
+当前 DPI 仍是 audit-only：不执行 drop/reset/QoS，不覆盖 Host ACL、认证或 conntrack drop 结果；未命中、禁用、无对应 parser 或无法创建 natflow session 时 fail-open。L7 shared hook 在解析前会统一调用 `natflow_session_in()` 确保 URL/DPI 共享同一个 `natflow_t.status` 终态存储；若 confirmed、内存或布局限制导致 session 不存在，则跳过本次 L7 解析，不输出无状态 DPI match event，也不写入 `app_id`。protocol-only 命中要求 `app_id=0`，用于避免每包重复事件。
 
 控制：
 

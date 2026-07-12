@@ -568,6 +568,12 @@ int natflow_dpi_host_consumer_enabled(void)
 	       READ_ONCE(natflow_dpi_domain_rules) != 0;
 }
 
+int natflow_dpi_packet_consumer_enabled(void)
+{
+	return READ_ONCE(natflow_dpi_state) == NATFLOW_DPI_STATE_ENABLED &&
+	       READ_ONCE(natflow_dpi_proto_rules) != 0;
+}
+
 void natflow_dpi_classify_host(struct nf_conn *ct, const unsigned char *host,
                                unsigned short host_len, unsigned int source)
 {
@@ -1175,19 +1181,26 @@ unsigned int natflow_dpi_packet_view_pull_len(unsigned char l4proto,
 	       NATFLOW_DPI_PAYLOAD_INSPECT_MAX : payload_len;
 }
 
-void natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view *view)
+unsigned int natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view *view)
 {
 	const unsigned char *payload;
 	unsigned int payload_linear_len;
 	unsigned int dns_inspect_len;
 	unsigned int inspect_len;
+	unsigned int done_mask = 0;
+	unsigned int consumer_mask;
 	unsigned int proto = 0;
 	__be16 dport;
 
 	if (!view || !view->ct || !view->l4)
-		return;
+		return 0;
 	if (!natflow_dpi_consumer_enabled())
-		return;
+		return 0;
+
+	consumer_mask = view->consumer_mask & NATFLOW_L7_CONSUMER_DPI;
+	if (!consumer_mask)
+		return 0;
+
 	if (view->l4proto == IPPROTO_TCP) {
 		dport = TCPH(view->l4)->dest;
 		proto = natflow_dpi_detect_tcp(dport);
@@ -1195,7 +1208,7 @@ void natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view *view)
 		dport = UDPH(view->l4)->dest;
 		proto = natflow_dpi_detect_udp(dport);
 	} else {
-		return;
+		return 0;
 	}
 
 	payload = view->payload;
@@ -1203,7 +1216,8 @@ void natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view *view)
 	if (payload_linear_len > view->payload_len)
 		payload_linear_len = view->payload_len;
 
-	if (proto == NATFLOW_DPI_PROTO_DNS) {
+	if ((consumer_mask & NATFLOW_L7_CONSUMER_DPI_DOMAIN) &&
+	        proto == NATFLOW_DPI_PROTO_DNS) {
 		dns_inspect_len = view->payload_len > NATFLOW_DPI_DNS_INSPECT_MAX ?
 		                  NATFLOW_DPI_DNS_INSPECT_MAX : view->payload_len;
 		if (dns_inspect_len > payload_linear_len)
@@ -1212,7 +1226,14 @@ void natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view *view)
 			natflow_dpi_classify_dns_query(view->ct, payload,
 			                               dns_inspect_len,
 			                               view->l4proto);
-	} else if (!proto && READ_ONCE(natflow_dpi_proto_rules) != 0) {
+		done_mask |= NATFLOW_L7_CONSUMER_DPI_DOMAIN;
+	}
+
+	if (!(consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET) ||
+	        READ_ONCE(natflow_dpi_proto_rules) == 0)
+		return done_mask;
+
+	if (!proto) {
 		inspect_len = view->payload_len > NATFLOW_DPI_PAYLOAD_INSPECT_MAX ?
 		              NATFLOW_DPI_PAYLOAD_INSPECT_MAX : view->payload_len;
 		if (inspect_len > payload_linear_len)
@@ -1226,6 +1247,9 @@ void natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view *view)
 
 	if (proto && READ_ONCE(natflow_dpi_proto_rules) != 0)
 		natflow_dpi_classify_proto(view->ct, proto);
+
+	done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
+	return done_mask;
 }
 
 static int natflow_dpi_ctl_device_init(void)

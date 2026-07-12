@@ -4,7 +4,7 @@
 
 更新时间：2026-07-12
 
-实现状态：本文描述目标架构。当前源码已经把 bit 19 收敛为 `NF_FF_L7_USE` shared L7 fast-path pause 位，预留 `NF_FF_DPI_USE`、`app_id` 和 shared conntrack extension layout guard，增加了 `natflow_l7` hook 生命周期和共享 feature core，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、match event producer、source counters 和 `app_id` 写入。当前 HTTP/TLS/QUIC、DNS QNAME 和 protocol-only detector 均由 `natflow_l7` shared hook 入口调度；DPI packet consumer 直接消费 L7 producer 填好的 L4/payload 指针和有界线性 payload 窗口，不再自行重解析 IPv4/IPv6 skb；protocol-only detector 仍是端口/payload 子集 MVP。
+实现状态：本文描述目标架构。当前源码已经把 bit 19 收敛为 `NF_FF_L7_USE` shared L7 fast-path pause 位，预留 `NF_FF_DPI_USE`，使用 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE` 在 `natflow_t.status` 中分别记录 URL、DPI domain 与 DPI packet 终态，并保留 `app_id` 和 shared conntrack extension layout guard；已增加 `natflow_l7` hook 生命周期和共享 feature core，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、match event producer、source counters 和 `app_id` 写入。当前 HTTP/TLS/QUIC、DNS QNAME 和 protocol-only detector 均由 `natflow_l7` shared hook 入口调度；DPI packet consumer 直接消费 L7 producer 填好的 L4/payload 指针和有界线性 payload 窗口，不再自行重解析 IPv4/IPv6 skb；protocol-only detector 仍是端口/payload 子集 MVP。
 
 ## 1. 总体结论
 
@@ -44,10 +44,10 @@ natflow_l7 core
 
 统一设计必须从当前源码出发，而不是从目标接口假设出发：
 
-- 当前 `NF_FF_BUSY_USE` 已包含 `NF_FF_USER_USE | NF_FF_L7_USE | NF_FF_DPI_USE`。shared HTTP/TLS/QUIC L7 parser 使用 `NF_FF_L7_USE` 暂停 fast path；`NF_FF_DPI_USE` 仍预留给后续独立 DPI context，当前源码还没有 DPI consumer 设置或清除该 bit。
-- 当前 `natflow_t` 已在尾部追加常驻 `app_id`，domain/proto classifier 命中时已写入非 0 应用结果。
+- 当前 `NF_FF_BUSY_USE` 已包含 `NF_FF_USER_USE | NF_FF_L7_USE | NF_FF_DPI_USE`。shared HTTP/TLS/QUIC L7 parser 使用 `NF_FF_L7_USE` 暂停 fast path；URL、DPI domain 与 DPI packet consumer 终态分别写入 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE`；`NF_FF_DPI_USE` 仍预留给后续独立 DPI context，当前源码还没有 DPI consumer 设置或清除该 bit。
+- 当前 `natflow_t` 已在尾部追加常驻 `app_id`，L7 shared hook 在解析前统一尝试创建 natflow session，domain/proto classifier 命中时已写入非 0 应用结果；若 session 创建失败，则 L7 fail-open 跳过解析，不产生无状态 DPI 事件。
 - 当前 fast path 在建软件 fastnat 或硬件 offload 前检查 `nf->status & NF_FF_BUSY_USE`；DPI 必须沿用这个 mask 阻止首段流量被提前接管。
-- 当前 shared L7 hook 的生命周期由 `natflow_l7_init()/exit()` 触发，URL/DPI hook ops、内核 hook 签名兼容包装、PPPoE normalize/restore、基础 conntrack 过滤、packet view 构造、`NATFLOW_L7_CONSUMER_URL/DPI` mask 和 packet dispatcher 已由 `natflow_l7.c` 持有：默认注册 IPv4、IPv6 和 bridge `FORWARD` hook，优先级 `NF_IP_PRI_FILTER + 5`；可选 `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 只把 URL logger 改为 IPv4 `LOCAL_IN`，若同时编译 DPI，会额外注册 DPI-only FORWARD/bridge hook。当前 active mask 按 `urllogger_store/enable` 发布 URL consumer，按 DPI enable 和任意 DPI 规则发布 DPI consumer；底层数据面中，L7 dispatcher 已直接处理 TCP HTTP/TLS producer、UDP/443 QUIC producer 和 DPI packet-view consumer，并通过 `natflow_urllogger_consume_host_view()` 或 DPI-only host classifier fan-out。HTTP/TLS/QUIC host fan-out 已通过 `natflow_l7_host_view` 固化 source、host、URI 和 HTTP method 输入 contract，legacy URL consumer 只在本地映射 URL flags、DPI event source 和 ACL 回复策略。DPI packet-view consumer 的 L4/payload 输入由 L7 producer 统一填充，包含 payload 总长度和已线性化的有界前缀长度。
+- 当前 shared L7 hook 的生命周期由 `natflow_l7_init()/exit()` 触发，URL/DPI hook ops、内核 hook 签名兼容包装、PPPoE normalize/restore、基础 conntrack 过滤、packet view 构造、`NATFLOW_L7_CONSUMER_URL/DPI_DOMAIN/DPI_PACKET` mask 和 packet dispatcher 已由 `natflow_l7.c` 持有：默认注册 IPv4、IPv6 和 bridge `FORWARD` hook，优先级 `NF_IP_PRI_FILTER + 5`；可选 `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 只把 URL logger 改为 IPv4 `LOCAL_IN`，若同时编译 DPI，会额外注册 DPI-only FORWARD/bridge hook。当前 active mask 按 `urllogger_store/enable` 发布 URL consumer，按 DPI domain/proto 规则分别发布 DPI domain 与 DPI packet consumer；入口先用 `natflow_session_in()` 统一确保 URL/DPI 共享同一个 `natflow_t.status`，再扣除对应 done bit 并分发。底层数据面中，L7 dispatcher 已直接处理 TCP HTTP/TLS producer、UDP/443 QUIC producer 和 DPI packet-view consumer，并通过 `natflow_urllogger_consume_host_view()` 或 DPI-only host classifier fan-out。HTTP/TLS/QUIC host fan-out 已通过 `natflow_l7_host_view` 固化 source、host、URI 和 HTTP method 输入 contract，legacy URL consumer 只在本地映射 URL flags、DPI event source 和 ACL 回复策略。DPI packet-view consumer 的 L4/payload 输入由 L7 producer 统一填充，包含 payload 总长度和已线性化的有界前缀长度。
 - 当前 `urllogger_store_enable=0` 时 URL consumer 不加入 active mask，因此 URL CSV 和 Host ACL 不会执行；若 DPI enabled 且存在 domain rule，DPI host consumer 仍可复用同一 L7 hook 解析 HTTP/TLS/QUIC host。
 - 当前 HTTP Host/URI、TLS SNI、QUIC v1 Initial SNI parser API、TCP HTTP/TLS packet producer、TCP TLS SNI cache、QUIC cache、QUIC crypto ctx 和 QUIC UDP packet producer 已迁移到 `natflow_l7` 生命周期；legacy URL consumer 仍持有 URL record 分配、Host ACL、队列输出和 ACL 回复策略。
 - 当前 TCP TLS cache 和 QUIC cache 都按 CPU 存储。RPS/RFS 或调度变化导致同一 flow 后续包落到其他 CPU 时，可能找不到之前 prefix。
@@ -87,7 +87,7 @@ MVP 是审计和机会性分类能力。`UNKNOWN`、`ERROR`、预算耗尽、不
 - 共享代码使用 `natflow_l7_*` 前缀。
 - 共享 flow context 使用 `natflow_l7_flow_ctx`。
 - URL/Host ACL consumer 使用 `NATFLOW_L7_CONSUMER_URL`。
-- DPI consumer 使用 `NATFLOW_L7_CONSUMER_DPI`。
+- DPI domain consumer 使用 `NATFLOW_L7_CONSUMER_DPI_DOMAIN`；DPI packet consumer 使用 `NATFLOW_L7_CONSUMER_DPI_PACKET`；`NATFLOW_L7_CONSUMER_DPI` 是二者组合。
 - HTTP/TLS/QUIC parser 输出统一 `natflow_l7_features`。
 
 ### 4.2 外部兼容
@@ -100,7 +100,7 @@ MVP 是审计和机会性分类能力。`UNKNOWN`、`ERROR`、预算耗尽、不
 | `/dev/hostacl_ctl` | 保持命令、32 个 ACL 槽位、ipset 命名和四种 action。 |
 | `/proc/sys/urllogger_store/*` | 保持路径、字段名和语义。尤其 `enable=0` 表示 URL CSV 和 Host ACL 都不执行。 |
 | `CONFIG_NATFLOW_URLLOGGER` | 继续表示启用 legacy URL logger、Host ACL 和 sysctl。 |
-| `IPS_NATFLOW_L7_HANDLED` | 统一 L7 one-shot 标记，表示本连接的 URL/DPI shared L7 入口已处理；consumer mask 只决定本次 fan-out。 |
+| `NF_FF_L7_URL_DONE` / `NF_FF_L7_DPI_DOMAIN_DONE` / `NF_FF_L7_DPI_PACKET_DONE` | URL、DPI domain、DPI packet 独立终态标记，保存在 `natflow_t.status`；任一终态不关闭其他仍 pending 的 consumer。 |
 
 可以在内部把实现文件拆分或把符号改成 `natflow_l7_url_*`，但不在 M0/M1 迁移用户可见名字。若未来需要新增 alias，例如 `/dev/natflow_l7_url_queue`，也必须保持旧节点长期可用，并把 alias 作为独立 ABI 任务。
 
@@ -185,7 +185,7 @@ bounded parser/detector
 3. layout guard 已在注册 path 或 shared L7 hook 前完成；后续 L7/DPI hook 必须继续遵守该顺序。
 4. `natflow_l7` 已成为 URL hook lifecycle owner，并持有 URL hook ops、签名兼容包装、PPPoE normalize/restore 和 packet view 构造；但还没有共享 context pool 或 crypto capability。
 5. URL consumer 初始化 legacy 设备和 sysctl，再由 L7 core 注册 hook，避免 hook 进入未初始化的 URL 资源。
-6. DPI consumer 默认 `enable=0`，只初始化控制设备、规则和事件状态；数据面由 L7 shared hook 在存在任意 DPI 规则时调度 `natflow_dpi_consume_packet_view()`。
+6. DPI consumer 默认 `enable=0`，只初始化控制设备、规则和事件状态；数据面由 L7 shared hook 在存在 domain/proto 规则时分别调度 DPI domain/packet consumer，`natflow_dpi_consume_packet_view()` 返回本次可终态的子 mask。
 
 退出顺序反向执行：先阻止新 hook/新 arm，再 drain active context，写 terminal event，清 owner bit，唤醒 reader，最后释放规则、cache、crypto 和设备。
 
@@ -200,6 +200,12 @@ shared L7 与 DPI busy bits：
 #define NF_FF_L7_USE (1 << NF_FF_L7_USE_BIT)
 #define NF_FF_DPI_USE_BIT 21
 #define NF_FF_DPI_USE (1 << NF_FF_DPI_USE_BIT)
+#define NF_FF_L7_URL_DONE_BIT 22
+#define NF_FF_L7_URL_DONE (1 << NF_FF_L7_URL_DONE_BIT)
+#define NF_FF_L7_DPI_DOMAIN_DONE_BIT 23
+#define NF_FF_L7_DPI_DOMAIN_DONE (1 << NF_FF_L7_DPI_DOMAIN_DONE_BIT)
+#define NF_FF_L7_DPI_PACKET_DONE_BIT 24
+#define NF_FF_L7_DPI_PACKET_DONE (1 << NF_FF_L7_DPI_PACKET_DONE_BIT)
 #define NF_FF_BUSY_USE (NF_FF_USER_USE | NF_FF_L7_USE | NF_FF_DPI_USE)
 ```
 
@@ -209,7 +215,7 @@ shared L7 与 DPI busy bits：
 - `NF_FF_DPI_USE_BIT` 必须在当前 `nf->status` bit map 中空闲。
 - 编译期和 init 时都要检查该 bit 未与既有 bit 冲突。
 - 所有 fast path 建表和硬件 offload 入口必须继续用 `NF_FF_BUSY_USE` 判断。
-- shared L7 parser 在 selected flow arm 成功后设置 `NF_FF_L7_USE`，terminal 后清除；后续独立 DPI context 若需要跨包等待，再设置 `NF_FF_DPI_USE` 并在 terminal 后清除。
+- shared L7 parser 在 selected flow arm 成功后设置 `NF_FF_L7_USE`，URL/DPI-domain/DPI-packet consumer terminal 后分别设置对应 done bit，当前 active consumer 均 done 后再清 `NF_FF_L7_USE`；后续独立 DPI context 若需要跨包等待，再设置 `NF_FF_DPI_USE` 并在 terminal 后清除。
 - 继续接受 `nf->status` 非原子 writer 风险，不增加 path 侧 repair，但必须保留 lost-owner/early-fastpath 计数和并发压测。
 
 ### 7.2 `natflow_t` 尾部结果
@@ -230,7 +236,7 @@ struct natflow_dpi_flow {
 - `rule_id`、`ruleset_generation`、`category_id`、`proto_id`、`detector_id`、`evidence`、`confidence`、`reason`、packet/byte counter 和 policy action 都只进入 active context 或 terminal event。
 - 不在 flow 中保存 host、URI、payload、证书、名称字符串或指针。
 - 不使用 `skb->mark` 或 `ct->mark` 保存 DPI 结果，避免覆盖 QoS、tc 和用户态既有语义。
-- writer 在 matched 结果时先写 `app_id`，再写 terminal state，最后清对应 busy bit。当前 shared HTTP/TLS/QUIC host path 清 `NF_FF_L7_USE`；后续独立 DPI context 清 `NF_FF_DPI_USE`。unknown/error/disabled 保持 `app_id=0`。
+- writer 在 matched 结果时先写 `app_id`，再写 terminal state，最后清对应 busy bit。当前 shared HTTP/TLS/QUIC host path 按 consumer 分别写 URL/domain/packet done bit，active consumer 全部 done 后清 `NF_FF_L7_USE`；后续独立 DPI context 清 `NF_FF_DPI_USE`。unknown/error/disabled 保持 `app_id=0`。
 
 追加字段前必须验证 `nat_key_t.len`、`natflow_off`、`NATCAP_MAX_OFF`、`__ALIGN_64BITS` 和 NATCAP 组合布局。验证不通过时，`CONFIG_NATFLOW_DPI` build 必须拒绝启用，不能静默切换到长期 side-table 模型。
 
@@ -622,7 +628,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 ### M1a：DPI gate、状态和 ABI 骨架
 
 - 已完成：增加 `CONFIG_NATFLOW_DPI`。
-- 已完成：增加 `NF_FF_L7_USE`、`NF_FF_DPI_USE` 和扩展后的 `NF_FF_BUSY_USE`。
+- 已完成：增加 `NF_FF_L7_USE`、`NF_FF_DPI_USE`、`NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE`、`NF_FF_L7_DPI_PACKET_DONE` 和扩展后的 `NF_FF_BUSY_USE`。
 - 已完成：在 `natflow_t` 尾部追加 `app_id`，并完成 shared conntrack extension layout guard。
 - 增加最小 context registry、terminal state、drain 和 reason counter。
 - 已完成骨架：实现 `/dev/natflow_dpi_ctl` 的 status、enable/disable、空 ruleset 事务。
@@ -740,7 +746,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 - 内部实现统一为 L7 core，URL 和 DPI 不重复解析 HTTP/TLS/QUIC。
 - legacy URL logger、Host ACL、sysctl 和 CSV 行为不回退。
-- `NF_FF_L7_USE` 正常阻止 fast path 提前接管 shared HTTP/TLS/QUIC selected flow；后续独立 DPI context 使用 `NF_FF_DPI_USE`。
+- `NF_FF_L7_USE` 正常阻止 fast path 提前接管 shared HTTP/TLS/QUIC selected flow，URL/DPI-domain/DPI-packet done bit 保证任一 consumer 失败或完成不会提前关闭另一个 consumer；后续独立 DPI context 使用 `NF_FF_DPI_USE`。
 - 所有 terminal/error/disable/exit 路径都写 reason 并清 DPI owner bit。
 - flow 常驻结果只有 `app_id`，其他细节在 event 中输出。
 - unknown/error/resource exhaustion 默认 fail-open。

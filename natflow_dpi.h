@@ -52,9 +52,11 @@ extern int natflow_dpi_init(void);
 extern void natflow_dpi_exit(void);
 extern int natflow_dpi_consumer_enabled(void);
 extern int natflow_dpi_host_consumer_enabled(void);
+extern int natflow_dpi_packet_consumer_enabled(void);
 extern unsigned int natflow_dpi_packet_view_pull_len(unsigned char l4proto,
         __be16 dport, unsigned int payload_len);
-extern void natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view *view);
+extern unsigned int natflow_dpi_consume_packet_view(
+        const struct natflow_l7_packet_view *view);
 extern void natflow_dpi_classify_host(struct nf_conn *ct,
                                       const unsigned char *host,
                                       unsigned short host_len,

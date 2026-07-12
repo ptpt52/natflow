@@ -26,7 +26,10 @@ enum natflow_l7_feature_source {
 
 enum natflow_l7_consumer {
 	NATFLOW_L7_CONSUMER_URL = 0x01,
-	NATFLOW_L7_CONSUMER_DPI = 0x02,
+	NATFLOW_L7_CONSUMER_DPI_DOMAIN = 0x02,
+	NATFLOW_L7_CONSUMER_DPI_PACKET = 0x04,
+	NATFLOW_L7_CONSUMER_DPI = NATFLOW_L7_CONSUMER_DPI_DOMAIN |
+	                          NATFLOW_L7_CONSUMER_DPI_PACKET,
 };
 
 enum natflow_l7_http_method {

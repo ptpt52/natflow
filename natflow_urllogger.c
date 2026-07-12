@@ -1310,7 +1310,7 @@ unsigned int natflow_urllogger_consume_host_view(unsigned int hooknum,
 
 	consumer_mask = view->consumer_mask;
 	url_consumer = (consumer_mask & NATFLOW_L7_CONSUMER_URL) != 0;
-	dpi_consumer = (consumer_mask & NATFLOW_L7_CONSUMER_DPI) != 0;
+	dpi_consumer = (consumer_mask & NATFLOW_L7_CONSUMER_DPI_DOMAIN) != 0;
 	if (!url_consumer && !dpi_consumer)
 		return NF_ACCEPT;
 
