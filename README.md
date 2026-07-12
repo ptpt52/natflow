@@ -222,8 +222,8 @@ echo 1 >/proc/sys/urllogger_store/enable
 - 一条命令必须以 `\n` 结束。
 - `cat /dev/*_ctl` 通常会输出 usage 和可重放配置。
 - 未识别命令多数情况下只写内核日志并返回已消费字节。
-- `userinfo_ctl`、`natflow_userinfo_event_queue`、`natflow_urllogger_queue` 不支持小 buffer partial read；用户态应使用足够大的读缓冲。
-- `/dev/natflow_userinfo_event_queue`、`/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应保持 fd 打开。
+- `userinfo_ctl`、`natflow_userinfo_queue`、`natflow_urllogger_queue` 不支持小 buffer partial read；用户态应使用足够大的读缓冲。
+- `/dev/natflow_userinfo_queue`、`/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应保持 fd 打开。
 - 多个 writer 并发写同一控制设备时，半行缓存可能互相干扰；生产脚本应串行写入。
 
 ## 对外接口总览
@@ -234,7 +234,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 | `/dev/natflow_zone_ctl` | char device | LAN/WAN zone 配置和刷新。 |
 | `/dev/natflow_user_ctl` | char device | 认证规则、认证开关、portal 重定向和 bypass ipset。 |
 | `/dev/userinfo_ctl` | char device | 用户状态读取、踢用户、设置认证状态、单用户限速。 |
-| `/dev/natflow_userinfo_event_queue` | char device | 阻塞式认证二进制事件流，只允许一个 reader。 |
+| `/dev/natflow_userinfo_queue` | char device | 阻塞式认证二进制事件流，只允许一个 reader。 |
 | `/dev/qos_ctl` | char device | 全局 QoS 规则和 `tc_classid_mode`。 |
 | `/dev/hostacl_ctl` | char device | Host ACL 规则和默认动作。 |
 | `/dev/natflow_urllogger_queue` | char device | URL/SNI/ACL 命中二进制事件队列，只允许一个 reader。 |
@@ -430,7 +430,7 @@ echo 'set-token-ctrl <ip_or_ipv6> <rxbytes> <txbytes>' >/dev/userinfo_ctl
 - `kick`、`set-status`、`set-token-ctrl` 找不到用户时返回 `-ENOENT`。
 - `set-token-ctrl` 单位是 Bytes/s；rx 或 tx 非 0 时启用该用户 token control，两者都为 0 时关闭。
 
-## `/dev/natflow_userinfo_event_queue`
+## `/dev/natflow_userinfo_queue`
 
 读取方式：
 
@@ -488,7 +488,7 @@ C 读者样例：
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define USERINFO_EVENT_QUEUE "/dev/natflow_userinfo_event_queue"
+#define USERINFO_QUEUE "/dev/natflow_userinfo_queue"
 
 struct natflow_userinfo_event_hdr {
 	uint16_t version;
@@ -513,9 +513,9 @@ struct natflow_userinfo_event_hdr {
 
 int main(void)
 {
-	int fd = open(USERINFO_EVENT_QUEUE, O_RDONLY | O_CLOEXEC);
+	int fd = open(USERINFO_QUEUE, O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
-		perror("open " USERINFO_EVENT_QUEUE);
+		perror("open " USERINFO_QUEUE);
 		return 1;
 	}
 

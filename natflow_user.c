@@ -4148,7 +4148,7 @@ static const struct file_operations userinfo_event_fops = {
 static int userinfo_event_major = 0;
 static int userinfo_event_minor = 0;
 static struct cdev userinfo_event_cdev;
-static const char * const userinfo_event_dev_name = "natflow_userinfo_event_queue";
+static const char * const userinfo_event_dev_name = "natflow_userinfo_queue";
 static struct class *userinfo_event_class;
 static struct device *userinfo_event_dev;
 
