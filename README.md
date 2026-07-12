@@ -234,7 +234,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 | `/dev/natflow_zone_ctl` | char device | LAN/WAN zone 配置和刷新。 |
 | `/dev/natflow_user_ctl` | char device | 认证规则、认证开关、portal 重定向和 bypass ipset。 |
 | `/dev/userinfo_ctl` | char device | 用户状态读取、踢用户、设置认证状态、单用户限速。 |
-| `/dev/natflow_userinfo_queue` | char device | 阻塞式认证二进制事件流，只允许一个 reader。 |
+| `/dev/natflow_userinfo_queue` | char device | 认证二进制事件队列，只允许一个 reader，空读返回 0，支持 `poll()`。 |
 | `/dev/qos_ctl` | char device | 全局 QoS 规则和 `tc_classid_mode`。 |
 | `/dev/hostacl_ctl` | char device | Host ACL 规则和默认动作。 |
 | `/dev/natflow_urllogger_queue` | char device | URL/SNI/ACL 命中二进制事件队列，只允许一个 reader。 |
@@ -434,11 +434,11 @@ echo 'set-token-ctrl <ip_or_ipv6> <rxbytes> <txbytes>' >/dev/userinfo_ctl
 
 读取方式：
 
-该设备是阻塞式事件流。用户态应打开并保持 fd，直接循环 `read()` 固定头事件；不要用 `cat` 作为长期采集程序。
+用户态应打开并保持 fd，使用 `poll()`、`select()` 或 `epoll` 等待可读后循环 `read()` 固定头事件；不要用 `cat` 作为长期采集程序。
 
 行为：
 
-- 阻塞等待认证相关事件。
+- 队列为空时 `read()` 返回 0；`poll()` 在有事件时返回 readable。
 - 同一时间只允许一个 reader，第二个打开会返回 `-EBUSY`。
 - 事件只在 reader 打开期间入队；reader 关闭时会清空未读事件。
 - 写接口未实现，返回 `-ENOSYS`。
@@ -483,6 +483,7 @@ C 读者样例：
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/socket.h>
@@ -520,41 +521,53 @@ int main(void)
 	}
 
 	for (;;) {
-		struct natflow_userinfo_event_hdr ev;
-		char ip[INET6_ADDRSTRLEN];
-		ssize_t len = read(fd, &ev, sizeof(ev));
-
-		if (len < 0) {
+		struct pollfd pfd = { .fd = fd, .events = POLLIN };
+		int n = poll(&pfd, 1, -1);
+		if (n < 0) {
 			if (errno == EINTR)
 				continue;
-			perror("read");
+			perror("poll");
 			break;
 		}
-		if (len == 0)
-			continue;
-		if ((size_t)len != sizeof(ev))
-			continue;
-		if (ev.version != 2 ||
-		    ev.header_len != sizeof(ev) ||
-		    ev.record_len != sizeof(ev))
-			continue;
 
-		if (ev.family == AF_INET6)
-			inet_ntop(AF_INET6, ev.ip, ip, sizeof(ip));
-		else
-			inet_ntop(AF_INET, ev.ip, ip, sizeof(ip));
+		for (;;) {
+			struct natflow_userinfo_event_hdr ev;
+			char ip[INET6_ADDRSTRLEN];
+			ssize_t len = read(fd, &ev, sizeof(ev));
 
-		printf("%s %02x:%02x:%02x:%02x:%02x:%02x "
-		       "auth=0x%x status=0x%x rule=%u idle=%u "
-		       "rx=%" PRIu64 ":%" PRIu64 " tx=%" PRIu64 ":%" PRIu64 " "
-		       "rx_speed=%u:%u tx_speed=%u:%u\n",
-		       ip,
-		       ev.mac[0], ev.mac[1], ev.mac[2],
-		       ev.mac[3], ev.mac[4], ev.mac[5],
-		       ev.auth_type, ev.auth_status, ev.auth_rule_id, ev.idle_time,
-		       ev.rx_packets, ev.rx_bytes, ev.tx_packets, ev.tx_bytes,
-		       ev.rx_speed_packets, ev.rx_speed_bytes,
-		       ev.tx_speed_packets, ev.tx_speed_bytes);
+			if (len < 0) {
+				if (errno == EINTR)
+					continue;
+				perror("read");
+				close(fd);
+				return 1;
+			}
+			if (len == 0)
+				break;
+			if ((size_t)len != sizeof(ev))
+				continue;
+			if (ev.version != 2 ||
+			    ev.header_len != sizeof(ev) ||
+			    ev.record_len != sizeof(ev))
+				continue;
+
+			if (ev.family == AF_INET6)
+				inet_ntop(AF_INET6, ev.ip, ip, sizeof(ip));
+			else
+				inet_ntop(AF_INET, ev.ip, ip, sizeof(ip));
+
+			printf("%s %02x:%02x:%02x:%02x:%02x:%02x "
+			       "auth=0x%x status=0x%x rule=%u idle=%u "
+			       "rx=%" PRIu64 ":%" PRIu64 " tx=%" PRIu64 ":%" PRIu64 " "
+			       "rx_speed=%u:%u tx_speed=%u:%u\n",
+			       ip,
+			       ev.mac[0], ev.mac[1], ev.mac[2],
+			       ev.mac[3], ev.mac[4], ev.mac[5],
+			       ev.auth_type, ev.auth_status, ev.auth_rule_id, ev.idle_time,
+			       ev.rx_packets, ev.rx_bytes, ev.tx_packets, ev.tx_bytes,
+			       ev.rx_speed_packets, ev.rx_speed_bytes,
+			       ev.tx_speed_packets, ev.tx_speed_bytes);
+		}
 	}
 
 	close(fd);

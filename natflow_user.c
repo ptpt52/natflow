@@ -18,6 +18,7 @@
 #include <linux/moduleparam.h>
 #include <linux/netdevice.h>
 #include <linux/inetdevice.h>
+#include <linux/poll.h>
 #include <linux/skbuff.h>
 #include <linux/string.h>
 #include <linux/tcp.h>
@@ -4003,7 +4004,6 @@ static ssize_t userinfo_event_write(struct file *file, const char __user *buf, s
 
 struct userinfo_event_reader {
 	struct mutex lock;
-	struct list_head head;
 };
 
 static void userinfo_event_hdr_fill(struct natflow_userinfo_event_hdr *hdr,
@@ -4049,37 +4049,25 @@ static ssize_t userinfo_event_read(struct file *file, char __user *buf,
 	ret = mutex_lock_interruptible(&reader->lock);
 	if (ret != 0)
 		return -EAGAIN;
-	if (list_empty(&reader->head)) {
-		struct userinfo *n;
 
-		if (list_empty(&userinfo_event_store.head)) {
-			/* Wait for queued events. */
-			ret = wait_event_interruptible(userinfo_event_store.wait,
-			                               !list_empty(&userinfo_event_store.head) ||
-			                               READ_ONCE(userinfo_event_store.stage) != USERINFO_EVENT_RUNNING);
-			if (ret != 0)
-				goto out;
-		}
-		spin_lock_bh(&userinfo_event_store.lock);
-		list_for_each_entry_safe(user_i, n, &userinfo_event_store.head, list) {
-			list_del(&user_i->list);
-			list_add_tail(&user_i->list, &reader->head);
-		}
-		spin_unlock_bh(&userinfo_event_store.lock);
-	}
+	spin_lock_bh(&userinfo_event_store.lock);
+	user_i = list_first_entry_or_null(&userinfo_event_store.head,
+	                                  struct userinfo, list);
+	if (user_i)
+		list_del(&user_i->list);
+	spin_unlock_bh(&userinfo_event_store.lock);
 
-	user_i = list_first_entry_or_null(&reader->head, struct userinfo, list);
 	if (user_i) {
 		userinfo_event_hdr_fill(&hdr, user_i);
 		if (copy_to_user(buf, &hdr, sizeof(hdr))) {
 			ret = -EFAULT;
+			kfree(user_i);
 			goto out;
 		}
 		ret = sizeof(hdr);
-		list_del(&user_i->list);
 		kfree(user_i);
 	} else {
-		ret = -EAGAIN;
+		ret = 0;
 	}
 
 out:
@@ -4108,7 +4096,6 @@ static int userinfo_event_open(struct inode *inode, struct file *file)
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
 	mutex_init(&reader->lock);
-	INIT_LIST_HEAD(&reader->head);
 
 	file->private_data = reader;
 	return 0;
@@ -4116,7 +4103,6 @@ static int userinfo_event_open(struct inode *inode, struct file *file)
 
 static int userinfo_event_release(struct inode *inode, struct file *file)
 {
-	struct userinfo *user_i;
 	struct userinfo_event_reader *reader = file->private_data;
 
 	WRITE_ONCE(userinfo_event_store.stage, USERINFO_EVENT_STOPPED);
@@ -4126,21 +4112,33 @@ static int userinfo_event_release(struct inode *inode, struct file *file)
 	if (!reader)
 		return 0;
 
-	while ((user_i = list_first_entry_or_null(&reader->head, struct userinfo, list))) {
-		list_del(&user_i->list);
-		kfree(user_i);
-	}
-
 	mutex_destroy(&reader->lock);
 	kfree(reader);
 
 	return 0;
 }
 
+static unsigned int userinfo_event_poll(struct file *file, poll_table *wait)
+{
+	struct userinfo_event_reader *reader = file->private_data;
+	unsigned int mask = 0;
+
+	if (!reader)
+		return POLLERR;
+
+	poll_wait(file, &userinfo_event_store.wait, wait);
+	spin_lock_bh(&userinfo_event_store.lock);
+	if (!list_empty(&userinfo_event_store.head))
+		mask = POLLIN | POLLRDNORM;
+	spin_unlock_bh(&userinfo_event_store.lock);
+	return mask;
+}
+
 static const struct file_operations userinfo_event_fops = {
 	.open = userinfo_event_open,
 	.read = userinfo_event_read,
 	.write = userinfo_event_write,
+	.poll = userinfo_event_poll,
 	.release = userinfo_event_release,
 	.llseek = natflow_no_llseek,
 };
