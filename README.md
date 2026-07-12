@@ -890,7 +890,7 @@ struct natflow_dpi_event_hdr {
 - `app_id` 和 `rule_id` 来自命中的 domain 或 proto rule。
 - `category_id=0` 预留。
 - `flags` 当前记录事件来源：1=`HTTP`，2=`TLS`，3=`QUIC`，4=`DNS`，5=`SSH`，6=`WireGuard`，7=`STUN`，8=`TURN`，9=`BitTorrent`。
-- `timestamp` 是 `ktime_get_ns()` 的内核单调时间纳秒值。
+- `timestamp` 是基于系统 uptime 的秒数，不是 Unix epoch，与 URL logger 事件语义一致。
 
 C 读者样例：
 

@@ -999,7 +999,7 @@ classid 模式：
 - domain/proto 命中时写入当前连接的 `natflow_t.app_id` 并输出 match event；L7 入口已经在解析前统一确保 natflow session。若 session 创建失败，则本次 L7 解析整体跳过，因此不会输出无状态 match event。protocol-only 命中要求 `app_id==0`，用于避免每包重复事件。
 - `/dev/natflow_dpi_queue` 输出固定头二进制事件，只允许一个 reader，第二个 reader 打开返回 `-EBUSY`；没有 reader 时 match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时清空残留事件，关闭时清空未读事件。队列为空时 `read()` 返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。有 reader 期间队列最多缓存 1024 条事件，溢出或分配失败增加 `events_lost`。
 - `/dev/natflow_dpi_ctl` status 输出已成功入队的 `events_*` source counters，按 HTTP/TLS/QUIC/DNS/SSH/WireGuard/STUN/TURN/BitTorrent 统计 match event；同时输出 `proto_no_session`、`proto_app_exists` 和 `proto_no_rule`，用于解释 protocol-only detector 已识别但未产生 match event 的原因。
-- 固定事件头为 packed `struct natflow_dpi_event_hdr`，`version=1`，包含 `header_len`、`record_len`、`reason`、`generation`、`app_id`、`category_id`、`rule_id`、`flags` 和 `timestamp`。当前 match event 使用 `reason=6`，`category_id=0`，`flags` 表示来源：1=HTTP、2=TLS、3=QUIC、4=DNS、5=SSH、6=WireGuard、7=STUN、8=TURN、9=BitTorrent，`timestamp` 为 `ktime_get_ns()`。
+- 固定事件头为 packed `struct natflow_dpi_event_hdr`，`version=1`，包含 `header_len`、`record_len`、`reason`、`generation`、`app_id`、`category_id`、`rule_id`、`flags` 和 `timestamp`。当前 match event 使用 `reason=6`，`category_id=0`，`flags` 表示来源：1=HTTP、2=TLS、3=QUIC、4=DNS、5=SSH、6=WireGuard、7=STUN、8=TURN、9=BitTorrent，`timestamp` 为 uptime 秒数，与 URL logger 事件语义一致。
 - 当前不会执行 drop/reset/QoS，不覆盖认证、Host ACL 或 conntrack drop 结果；未命中、禁用、无 parser、无法创建 session 或事件队列丢失都 fail-open。
 
 ## 16. Zone 设计

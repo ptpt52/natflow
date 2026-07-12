@@ -6,7 +6,7 @@
 #include <linux/device.h>
 #include <linux/fs.h>
 #include <linux/init.h>
-#include <linux/ktime.h>
+#include <linux/jiffies.h>
 #include <linux/list.h>
 #include <linux/module.h>
 #include <linux/poll.h>
@@ -29,6 +29,7 @@ enum natflow_dpi_state {
 #define NATFLOW_DPI_DOMAIN_RULE_MAX 128
 #define NATFLOW_DPI_PROTO_RULE_MAX 32
 #define NATFLOW_DPI_EVENT_MAX 1024
+#define NATFLOW_DPI_EVENT_TIMESTAMP_NOW ((u64)((jiffies - INITIAL_JIFFIES) / HZ))
 
 enum natflow_dpi_domain_kind {
 	NATFLOW_DPI_DOMAIN_EXACT = 0,
@@ -451,7 +452,7 @@ static void natflow_dpi_event_queue(unsigned int reason, unsigned int generation
 	node->hdr.category_id = 0;
 	node->hdr.rule_id = rule_id;
 	node->hdr.flags = flags;
-	node->hdr.timestamp = ktime_get_ns();
+	node->hdr.timestamp = NATFLOW_DPI_EVENT_TIMESTAMP_NOW;
 
 	spin_lock_bh(&natflow_dpi_event_lock);
 	if (natflow_dpi_queue_readers == 0) {
