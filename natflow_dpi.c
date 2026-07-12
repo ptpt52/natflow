@@ -1091,29 +1091,32 @@ static ssize_t natflow_dpi_queue_read(struct file *file, char __user *buf,
                                       size_t count, loff_t *ppos)
 {
 	struct natflow_dpi_event_node *node;
-	ssize_t ret;
+	size_t copied = 0;
 
 	if (count < sizeof(struct natflow_dpi_event_hdr))
 		return -EINVAL;
 
-	spin_lock_bh(&natflow_dpi_event_lock);
-	if (list_empty(&natflow_dpi_event_list)) {
+	while (count - copied >= sizeof(struct natflow_dpi_event_hdr)) {
+		spin_lock_bh(&natflow_dpi_event_lock);
+		if (list_empty(&natflow_dpi_event_list)) {
+			spin_unlock_bh(&natflow_dpi_event_lock);
+			break;
+		}
+
+		node = list_first_entry(&natflow_dpi_event_list,
+		                        struct natflow_dpi_event_node, list);
+		list_del(&node->list);
+		natflow_dpi_event_count--;
 		spin_unlock_bh(&natflow_dpi_event_lock);
-		return 0;
+
+		if (copy_to_user(buf + copied, &node->hdr, sizeof(node->hdr)) != 0) {
+			kfree(node);
+			return copied > 0 ? (ssize_t)copied : -EFAULT;
+		}
+		copied += sizeof(node->hdr);
+		kfree(node);
 	}
-
-	node = list_first_entry(&natflow_dpi_event_list,
-	                        struct natflow_dpi_event_node, list);
-	list_del(&node->list);
-	natflow_dpi_event_count--;
-	spin_unlock_bh(&natflow_dpi_event_lock);
-
-	if (copy_to_user(buf, &node->hdr, sizeof(node->hdr)) != 0)
-		ret = -EFAULT;
-	else
-		ret = sizeof(node->hdr);
-	kfree(node);
-	return ret;
+	return copied;
 }
 
 static ssize_t natflow_dpi_queue_write(struct file *file, const char __user *buf,

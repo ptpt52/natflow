@@ -222,7 +222,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 - 一条命令必须以 `\n` 结束。
 - `cat /dev/*_ctl` 通常会输出 usage 和可重放配置。
 - 未识别命令多数情况下只写内核日志并返回已消费字节；三个 `natflow_*_queue` 的写接口只接受 `cache=N`，未识别命令返回 `-EINVAL`。
-- `userinfo_ctl`、`natflow_userinfo_queue`、`natflow_urllogger_queue`、`natflow_dpi_queue` 不支持小 buffer partial read；用户态应使用足够大的读缓冲。
+- `userinfo_ctl` 不支持小 buffer partial read。三个 `natflow_*_queue` 不会拆分单条记录；用户 buffer 小于单条记录时返回 `-EINVAL`，buffer 足够时一次 `read()` 可返回多条完整记录。
 - `/dev/natflow_userinfo_queue`、`/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应以 `O_RDWR` 打开并保持 fd，写入 `cache=N\n` 设置最多缓存 N 条事件后才会缓存新事件；写入 `cache=0\n` 会关闭缓存并清空未读事件。
 - 多个 writer 并发写同一控制设备时，半行缓存可能互相干扰；生产脚本应串行写入。
 
@@ -434,11 +434,12 @@ echo 'set-token-ctrl <ip_or_ipv6> <rxbytes> <txbytes>' >/dev/userinfo_ctl
 
 读取方式：
 
-用户态应以 `O_RDWR` 打开并保持 fd，先向同一个 fd 写入 `cache=N\n` 设置最多缓存 N 条事件，再使用 `poll()`、`select()` 或 `epoll` 等待可读后循环 `read()` 固定头事件；不要用 `cat` 作为长期采集程序。
+用户态应以 `O_RDWR` 打开并保持 fd，先向同一个 fd 写入 `cache=N\n` 设置最多缓存 N 条事件，再使用 `poll()`、`select()` 或 `epoll` 等待可读后循环 `read()` 固定头事件；如果读缓冲能容纳多条固定头，单次 `read()` 会尽量返回多条完整事件。不要用 `cat` 作为长期采集程序。
 
 行为：
 
 - 队列为空时 `read()` 返回 0；`poll()` 在有事件时返回 readable。
+- `read()` 不返回半条事件；用户 buffer 小于 `sizeof(struct natflow_userinfo_event_hdr)` 时返回 `-EINVAL`。
 - 同一时间只允许一个 reader，第二个打开会返回 `-EBUSY`。
 - 默认不缓存；事件只在 reader 已打开且写入正数 `cache=N\n` 后入队，队列满时丢弃新事件。
 - 写入 `cache=0\n` 会关闭缓存并清空未读事件；reader 关闭时也会清空未读事件。
@@ -589,9 +590,10 @@ int main(void)
 			continue;
 
 		for (;;) {
-			struct natflow_userinfo_event_hdr ev;
-			char ip[INET6_ADDRSTRLEN];
-			ssize_t len = read(fd, &ev, sizeof(ev));
+			struct natflow_userinfo_event_hdr events[32];
+			size_t i;
+			size_t event_count;
+			ssize_t len = read(fd, events, sizeof(events));
 
 			if (len < 0) {
 				if (errno == EINTR)
@@ -602,38 +604,46 @@ int main(void)
 			}
 			if (len == 0)
 				break;
-			if ((size_t)len != sizeof(ev)) {
-				fprintf(stderr, "skip short userinfo event: %zd\n", len);
+			if ((size_t)len % sizeof(events[0]) != 0) {
+				fprintf(stderr, "skip partial userinfo batch: %zd\n", len);
 				continue;
 			}
-			if (ev.version != 2 ||
-			    ev.header_len != sizeof(ev) ||
-			    ev.record_len != sizeof(ev)) {
-				fprintf(stderr, "skip unsupported userinfo event\n");
-				continue;
-			}
+			event_count = (size_t)len / sizeof(events[0]);
 
-			if (ev.family == AF_INET6) {
-				if (!inet_ntop(AF_INET6, ev.ip, ip, sizeof(ip)))
-					snprintf(ip, sizeof(ip), "?");
-			} else if (ev.family == AF_INET) {
-				if (!inet_ntop(AF_INET, ev.ip, ip, sizeof(ip)))
-					snprintf(ip, sizeof(ip), "?");
-			} else {
-				snprintf(ip, sizeof(ip), "family-%u", ev.family);
-			}
+			for (i = 0; i < event_count; i++) {
+				const struct natflow_userinfo_event_hdr *ev = &events[i];
+				char ip[INET6_ADDRSTRLEN];
 
-			printf("%s %02x:%02x:%02x:%02x:%02x:%02x "
-			       "auth=0x%x status=0x%x rule=%u idle=%u "
-			       "rx=%" PRIu64 ":%" PRIu64 " tx=%" PRIu64 ":%" PRIu64 " "
-			       "rx_speed=%u:%u tx_speed=%u:%u\n",
-			       ip,
-			       ev.mac[0], ev.mac[1], ev.mac[2],
-			       ev.mac[3], ev.mac[4], ev.mac[5],
-			       ev.auth_type, ev.auth_status, ev.auth_rule_id, ev.idle_time,
-			       ev.rx_packets, ev.rx_bytes, ev.tx_packets, ev.tx_bytes,
-			       ev.rx_speed_packets, ev.rx_speed_bytes,
-			       ev.tx_speed_packets, ev.tx_speed_bytes);
+				if (ev->version != 2 ||
+				    ev->header_len != sizeof(*ev) ||
+				    ev->record_len != sizeof(*ev)) {
+					fprintf(stderr, "skip unsupported userinfo event\n");
+					continue;
+				}
+
+				if (ev->family == AF_INET6) {
+					if (!inet_ntop(AF_INET6, ev->ip, ip, sizeof(ip)))
+						snprintf(ip, sizeof(ip), "?");
+				} else if (ev->family == AF_INET) {
+					if (!inet_ntop(AF_INET, ev->ip, ip, sizeof(ip)))
+						snprintf(ip, sizeof(ip), "?");
+				} else {
+					snprintf(ip, sizeof(ip), "family-%u", ev->family);
+				}
+
+				printf("%s %02x:%02x:%02x:%02x:%02x:%02x "
+				       "auth=0x%x status=0x%x rule=%u idle=%u "
+				       "rx=%" PRIu64 ":%" PRIu64 " tx=%" PRIu64 ":%" PRIu64 " "
+				       "rx_speed=%u:%u tx_speed=%u:%u\n",
+				       ip,
+				       ev->mac[0], ev->mac[1], ev->mac[2],
+				       ev->mac[3], ev->mac[4], ev->mac[5],
+				       ev->auth_type, ev->auth_status, ev->auth_rule_id,
+				       ev->idle_time, ev->rx_packets, ev->rx_bytes,
+				       ev->tx_packets, ev->tx_bytes,
+				       ev->rx_speed_packets, ev->rx_speed_bytes,
+				       ev->tx_speed_packets, ev->tx_speed_bytes);
+			}
 		}
 	}
 
@@ -730,7 +740,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 
 `/dev/natflow_urllogger_queue` 只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 或 reader 未写入正数 `cache=N\n` 时，URL/SNI record 直接丢弃，不缓存到 URL store；reader 打开时 cache 默认为 0 并会先清空残留记录，写入 `cache=N\n` 后最多缓存 N 条新记录，队列满时丢弃新记录；写入 `cache=0\n` 或关闭 fd 会关闭缓存并清空未读记录。`read()` 在没有可读记录时返回 0；因为 `timestamp_freq` 同时是相同 URL 合并窗口和读出前的最小老化秒数，用户态应以 `O_RDWR` 打开并保持 fd，先写入 `cache=N\n`，再使用 `poll()`、`select()` 或 `epoll` 等待可读后读取。不要用 `cat /dev/natflow_urllogger_queue` 做长期采集；空队列会让 `cat` 退出，后续记录会因没有 reader 或未开启缓存而被丢弃。
 
-每次 `read()` 最多返回一条版本化二进制记录。如果同一个 fd 上 `read()` 返回 0，表示当前没有已老化到可读状态的记录；reader 应继续保持 fd 打开并重新进入 `poll()` 等待，而不是关闭后反复重开。使用无限期 `poll()` 时需要注意：已有记录只会在新记录入队或清理事件发生时唤醒；如果业务依赖 `timestamp_freq` 到期后立刻读出，应在用户态给 `poll()` 设置不大于 `timestamp_freq` 的超时并定期重试。
+如果用户 buffer 能容纳多条版本化二进制记录，单次 `read()` 会按 `record_len` 拼接返回多条完整记录；不会返回半条记录。如果同一个 fd 上 `read()` 返回 0，表示当前没有已老化到可读状态的记录；reader 应继续保持 fd 打开并重新进入 `poll()` 等待，而不是关闭后反复重开。使用无限期 `poll()` 时需要注意：已有记录只会在新记录入队或清理事件发生时唤醒；如果业务依赖 `timestamp_freq` 到期后立刻读出，应在用户态给 `poll()` 设置不大于 `timestamp_freq` 的超时并定期重试。
 
 固定头为：
 
@@ -781,6 +791,7 @@ C 读者样例：
 #include <unistd.h>
 
 #define URLLOGGER_QUEUE "/dev/natflow_urllogger_queue"
+#define READ_BUF_LEN 65536
 
 struct natflow_urllogger_event_hdr {
 	uint16_t version;
@@ -887,13 +898,8 @@ int main(void)
 			continue;
 
 		for (;;) {
-			unsigned char buf[4096];
-			struct natflow_urllogger_event_hdr *h;
-			char sip[INET6_ADDRSTRLEN];
-			char dip[INET6_ADDRSTRLEN];
-			unsigned char *payload;
-			unsigned int payload_len;
-			unsigned int host_len;
+			unsigned char buf[READ_BUF_LEN];
+			size_t off = 0;
 			ssize_t len = read(fd, buf, sizeof(buf));
 
 			if (len < 0) {
@@ -905,47 +911,60 @@ int main(void)
 			}
 			if (len == 0)
 				break;
-			if ((size_t)len < sizeof(*h)) {
-				fprintf(stderr, "skip short urllogger event: %zd\n", len);
-				continue;
+
+			while (off < (size_t)len) {
+				struct natflow_urllogger_event_hdr *h;
+				char sip[INET6_ADDRSTRLEN];
+				char dip[INET6_ADDRSTRLEN];
+				unsigned char *payload;
+				unsigned int payload_len;
+				unsigned int host_len;
+				size_t remaining = (size_t)len - off;
+
+				if (remaining < sizeof(*h)) {
+					fprintf(stderr, "skip partial urllogger tail: %zu\n",
+						remaining);
+					break;
+				}
+
+				h = (struct natflow_urllogger_event_hdr *)(buf + off);
+				if (h->version != 2 || h->header_len < sizeof(*h) ||
+				    h->record_len < h->header_len ||
+				    h->record_len > remaining) {
+					fprintf(stderr, "skip unsupported urllogger event\n");
+					break;
+				}
+
+				payload = buf + off + h->header_len;
+				payload_len = h->record_len - h->header_len;
+				host_len = h->host_len <= payload_len ? h->host_len : payload_len;
+
+				if (h->family == AF_INET6) {
+					if (!inet_ntop(AF_INET6, h->sip, sip, sizeof(sip)))
+						snprintf(sip, sizeof(sip), "?");
+					if (!inet_ntop(AF_INET6, h->dip, dip, sizeof(dip)))
+						snprintf(dip, sizeof(dip), "?");
+				} else if (h->family == AF_INET) {
+					if (!inet_ntop(AF_INET, h->sip, sip, sizeof(sip)))
+						snprintf(sip, sizeof(sip), "?");
+					if (!inet_ntop(AF_INET, h->dip, dip, sizeof(dip)))
+						snprintf(dip, sizeof(dip), "?");
+				} else {
+					snprintf(sip, sizeof(sip), "family-%u", h->family);
+					snprintf(dip, sizeof(dip), "family-%u", h->family);
+				}
+
+				printf("%u %02x:%02x:%02x:%02x:%02x:%02x %s:%u -> %s:%u "
+				       "hits=%u method=%u source=%s acl=%u/%u host=%.*s uri=%.*s\n",
+				       h->timestamp,
+				       h->mac[0], h->mac[1], h->mac[2],
+				       h->mac[3], h->mac[4], h->mac[5],
+				       sip, h->sport, dip, h->dport, h->hits, h->method,
+				       source_name(h->source), h->acl_idx, h->acl_action,
+				       (int)host_len, (char *)payload,
+				       (int)(payload_len - host_len), (char *)(payload + host_len));
+				off += h->record_len;
 			}
-
-			h = (struct natflow_urllogger_event_hdr *)buf;
-			if (h->version != 2 || h->header_len < sizeof(*h) ||
-			    h->record_len != (uint16_t)len ||
-			    h->record_len < h->header_len) {
-				fprintf(stderr, "skip unsupported urllogger event\n");
-				continue;
-			}
-
-			payload = buf + h->header_len;
-			payload_len = h->record_len - h->header_len;
-			host_len = h->host_len <= payload_len ? h->host_len : payload_len;
-
-			if (h->family == AF_INET6) {
-				if (!inet_ntop(AF_INET6, h->sip, sip, sizeof(sip)))
-					snprintf(sip, sizeof(sip), "?");
-				if (!inet_ntop(AF_INET6, h->dip, dip, sizeof(dip)))
-					snprintf(dip, sizeof(dip), "?");
-			} else if (h->family == AF_INET) {
-				if (!inet_ntop(AF_INET, h->sip, sip, sizeof(sip)))
-					snprintf(sip, sizeof(sip), "?");
-				if (!inet_ntop(AF_INET, h->dip, dip, sizeof(dip)))
-					snprintf(dip, sizeof(dip), "?");
-			} else {
-				snprintf(sip, sizeof(sip), "family-%u", h->family);
-				snprintf(dip, sizeof(dip), "family-%u", h->family);
-			}
-
-			printf("%u %02x:%02x:%02x:%02x:%02x:%02x %s:%u -> %s:%u "
-			       "hits=%u method=%u source=%s acl=%u/%u host=%.*s uri=%.*s\n",
-			       h->timestamp,
-			       h->mac[0], h->mac[1], h->mac[2],
-			       h->mac[3], h->mac[4], h->mac[5],
-			       sip, h->sport, dip, h->dport, h->hits, h->method,
-			       source_name(h->source), h->acl_idx, h->acl_action,
-			       (int)host_len, (char *)payload,
-			       (int)(payload_len - host_len), (char *)(payload + host_len));
 		}
 	}
 
@@ -1004,7 +1023,7 @@ echo events_clear >/dev/natflow_dpi_ctl
 
 - 用户态应以 `O_RDWR` 先打开并保持 `/dev/natflow_dpi_queue` fd，写入正数 `cache=N\n` 后再启用 DPI 或开始采集流量；fd 关闭或 cache 关闭期间产生的 match event 会被直接丢弃。
 - 不建议用 `cat /dev/natflow_dpi_queue` 做长期采集；如果打开时队列为空，`read()` 会返回 0，`cat` 会退出，后续事件又会因没有 reader 或未开启缓存而被丢弃。
-- 推荐使用 `poll()`、`select()` 或 `epoll` 等待 fd 可读；可读后按 `sizeof(struct natflow_dpi_event_hdr)` 读取记录。每次 `read()` 最多返回一条固定头事件。
+- 推荐使用 `poll()`、`select()` 或 `epoll` 等待 fd 可读；可读后用足够大的 buffer 读取记录。单次 `read()` 可返回多条 `sizeof(struct natflow_dpi_event_hdr)` 固定头事件，不返回半条事件。
 - 如果同一个 fd 上 `read()` 返回 0，表示当前队列已空；reader 应继续保持 fd 打开并重新进入 `poll()` 等待，而不是关闭后反复重开。
 
 固定头为：
@@ -1202,10 +1221,10 @@ int main(void)
 			continue;
 
 		for (;;) {
-			struct natflow_dpi_event_hdr ev;
-			char sip[INET6_ADDRSTRLEN];
-			char dip[INET6_ADDRSTRLEN];
-			ssize_t len = read(fd, &ev, sizeof(ev));
+			struct natflow_dpi_event_hdr events[32];
+			size_t event_count;
+			size_t i;
+			ssize_t len = read(fd, events, sizeof(events));
 
 			if (len < 0) {
 				if (errno == EINTR)
@@ -1216,27 +1235,34 @@ int main(void)
 			}
 			if (len == 0)
 				break;
-			if ((size_t)len != sizeof(ev)) {
-				fprintf(stderr, "skip short dpi event: %zd\n", len);
+			if ((size_t)len % sizeof(events[0]) != 0) {
+				fprintf(stderr, "skip partial dpi batch: %zd\n", len);
 				continue;
 			}
-			if (ev.version != 2 ||
-			    ev.header_len != sizeof(ev) ||
-			    ev.record_len != sizeof(ev)) {
-				fprintf(stderr, "skip unsupported dpi event\n");
-				continue;
-			}
+			event_count = (size_t)len / sizeof(events[0]);
+			for (i = 0; i < event_count; i++) {
+				const struct natflow_dpi_event_hdr *ev = &events[i];
+				char sip[INET6_ADDRSTRLEN];
+				char dip[INET6_ADDRSTRLEN];
 
-			printf("ts=%" PRIu64 " generation=%u app=%u rule=%u "
-			       "reason=%u source=%s category=%u "
-			       "tuple=%s %s:%u -> %s:%u dir=%u\n",
-			       ev.timestamp, ev.generation, ev.app_id, ev.rule_id,
-			       ev.reason, source_name(ev.flags), ev.category_id,
-			       l4proto_name(ev.l4proto),
-			       addr_text(ev.family, ev.sip, sip, sizeof(sip)),
-			       ev.sport,
-			       addr_text(ev.family, ev.dip, dip, sizeof(dip)),
-			       ev.dport, ev.tuple_dir);
+				if (ev->version != 2 ||
+				    ev->header_len != sizeof(*ev) ||
+				    ev->record_len != sizeof(*ev)) {
+					fprintf(stderr, "skip unsupported dpi event\n");
+					continue;
+				}
+
+				printf("ts=%" PRIu64 " generation=%u app=%u rule=%u "
+				       "reason=%u source=%s category=%u "
+				       "tuple=%s %s:%u -> %s:%u dir=%u\n",
+				       ev->timestamp, ev->generation, ev->app_id,
+				       ev->rule_id, ev->reason, source_name(ev->flags),
+				       ev->category_id, l4proto_name(ev->l4proto),
+				       addr_text(ev->family, ev->sip, sip, sizeof(sip)),
+				       ev->sport,
+				       addr_text(ev->family, ev->dip, dip, sizeof(dip)),
+				       ev->dport, ev->tuple_dir);
+			}
 		}
 	}
 

@@ -1468,74 +1468,73 @@ static ssize_t urllogger_write(struct file *file, const char __user *buf, size_t
 	                                 offset, urllogger_store_cache_set);
 }
 
-/* read one and clear one */
 static ssize_t urllogger_read(struct file *file, char __user *buf,
                               size_t count, loff_t *ppos)
 {
 	struct natflow_urllogger_event_hdr hdr;
 	size_t payload_len;
 	size_t record_len;
-	ssize_t ret;
+	size_t copied = 0;
 	struct urlinfo *url;
 
 	if (count < sizeof(struct natflow_urllogger_event_hdr))
 		return -EINVAL;
 
-	spin_lock_bh(&urllogger_store_lock);
-	url = list_first_entry_or_null(&urllogger_store_list, struct urlinfo, list);
-	if (url && urllogger_store_ready_locked()) {
+	while (count - copied >= sizeof(struct natflow_urllogger_event_hdr)) {
+		spin_lock_bh(&urllogger_store_lock);
+		url = list_first_entry_or_null(&urllogger_store_list,
+		                               struct urlinfo, list);
+		if (!url || !urllogger_store_ready_locked()) {
+			spin_unlock_bh(&urllogger_store_lock);
+			break;
+		}
+
 		payload_len = url->data_len > 0 ? url->data_len - 1 : 0;
 		record_len = sizeof(hdr) + payload_len;
-		if (count < record_len) {
+		if (count - copied < record_len) {
 			spin_unlock_bh(&urllogger_store_lock);
-			return -EINVAL;
+			return copied > 0 ? (ssize_t)copied : -EINVAL;
 		}
 		urllogger_store_count--;
 		list_del(&url->list);
-	} else {
-		url = NULL;
-	}
-	spin_unlock_bh(&urllogger_store_lock);
+		spin_unlock_bh(&urllogger_store_lock);
 
-	if (!url)
-		return 0;
+		memset(&hdr, 0, sizeof(hdr));
+		hdr.version = NATFLOW_URLLOGGER_EVENT_VERSION;
+		hdr.header_len = (__u16)sizeof(hdr);
+		hdr.record_len = (__u16)record_len;
+		hdr.family = (url->flags & URLINFO_IPV6) ? AF_INET6 : AF_INET;
+		hdr.timestamp = url->timestamp;
+		hdr.sport = ntohs(url->sport);
+		hdr.dport = ntohs(url->dport);
+		hdr.hits = url->hits;
+		hdr.host_len = url->host_len;
+		hdr.method = url->http_method;
+		hdr.source = urlinfo_event_source(url);
+		hdr.acl_idx = url->acl_idx;
+		hdr.acl_action = url->acl_action;
+		memcpy(hdr.mac, url->mac, sizeof(hdr.mac));
+		if ((url->flags & URLINFO_IPV6)) {
+			memcpy(hdr.sip, &url->sipv6, sizeof(hdr.sip));
+			memcpy(hdr.dip, &url->dipv6, sizeof(hdr.dip));
+		} else {
+			memcpy(hdr.sip, &url->sip, sizeof(url->sip));
+			memcpy(hdr.dip, &url->dip, sizeof(url->dip));
+		}
 
-	memset(&hdr, 0, sizeof(hdr));
-	hdr.version = NATFLOW_URLLOGGER_EVENT_VERSION;
-	hdr.header_len = (__u16)sizeof(hdr);
-	hdr.record_len = (__u16)record_len;
-	hdr.family = (url->flags & URLINFO_IPV6) ? AF_INET6 : AF_INET;
-	hdr.timestamp = url->timestamp;
-	hdr.sport = ntohs(url->sport);
-	hdr.dport = ntohs(url->dport);
-	hdr.hits = url->hits;
-	hdr.host_len = url->host_len;
-	hdr.method = url->http_method;
-	hdr.source = urlinfo_event_source(url);
-	hdr.acl_idx = url->acl_idx;
-	hdr.acl_action = url->acl_action;
-	memcpy(hdr.mac, url->mac, sizeof(hdr.mac));
-	if ((url->flags & URLINFO_IPV6)) {
-		memcpy(hdr.sip, &url->sipv6, sizeof(hdr.sip));
-		memcpy(hdr.dip, &url->dipv6, sizeof(hdr.dip));
-	} else {
-		memcpy(hdr.sip, &url->sip, sizeof(url->sip));
-		memcpy(hdr.dip, &url->dip, sizeof(url->dip));
+		if (copy_to_user(buf + copied, &hdr, sizeof(hdr)) != 0) {
+			urlinfo_release(url);
+			return copied > 0 ? (ssize_t)copied : -EFAULT;
+		}
+		if (payload_len > 0 &&
+		        copy_to_user(buf + copied + sizeof(hdr), url->data, payload_len) != 0) {
+			urlinfo_release(url);
+			return copied > 0 ? (ssize_t)copied : -EFAULT;
+		}
+		copied += record_len;
+		urlinfo_release(url);
 	}
-
-	if (copy_to_user(buf, &hdr, sizeof(hdr)) != 0) {
-		ret = -EFAULT;
-		goto out;
-	}
-	if (payload_len > 0 && copy_to_user(buf + sizeof(hdr), url->data, payload_len) != 0) {
-		ret = -EFAULT;
-		goto out;
-	}
-	ret = record_len;
-
-out:
-	urlinfo_release(url);
-	return ret;
+	return copied;
 }
 
 static int urllogger_open(struct inode *inode, struct file *file)

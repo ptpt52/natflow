@@ -4082,6 +4082,7 @@ static ssize_t userinfo_event_read(struct file *file, char __user *buf,
 	ssize_t ret = 0;
 	struct userinfo *user_i;
 	struct userinfo_event_reader *reader = file->private_data;
+	size_t copied = 0;
 
 	if (!reader)
 		return -EBADF;
@@ -4092,27 +4093,29 @@ static ssize_t userinfo_event_read(struct file *file, char __user *buf,
 	if (ret != 0)
 		return -EAGAIN;
 
-	spin_lock_bh(&userinfo_event_store.lock);
-	user_i = list_first_entry_or_null(&userinfo_event_store.head,
-	                                  struct userinfo, list);
-	if (user_i) {
-		list_del(&user_i->list);
-		userinfo_event_store.count--;
-	}
-	spin_unlock_bh(&userinfo_event_store.lock);
+	while (count - copied >= sizeof(hdr)) {
+		spin_lock_bh(&userinfo_event_store.lock);
+		user_i = list_first_entry_or_null(&userinfo_event_store.head,
+		                                  struct userinfo, list);
+		if (user_i) {
+			list_del(&user_i->list);
+			userinfo_event_store.count--;
+		}
+		spin_unlock_bh(&userinfo_event_store.lock);
 
-	if (user_i) {
+		if (!user_i)
+			break;
+
 		userinfo_event_hdr_fill(&hdr, user_i);
-		if (copy_to_user(buf, &hdr, sizeof(hdr))) {
-			ret = -EFAULT;
+		if (copy_to_user(buf + copied, &hdr, sizeof(hdr))) {
+			ret = copied > 0 ? (ssize_t)copied : -EFAULT;
 			kfree(user_i);
 			goto out;
 		}
-		ret = sizeof(hdr);
+		copied += sizeof(hdr);
 		kfree(user_i);
-	} else {
-		ret = 0;
 	}
+	ret = copied;
 
 out:
 	mutex_unlock(&reader->lock);
