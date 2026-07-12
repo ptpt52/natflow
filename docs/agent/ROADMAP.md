@@ -1,6 +1,6 @@
 # Natflow 开发路线图
 
-更新时间：2026-07-11
+更新时间：2026-07-12
 
 本文记录当前仓库的下一步开发目标。它是智能体和维护者的任务入口，不替代 `SYSTEM_DESIGN_SPEC.md`；具体实现仍以源码为准。
 
@@ -106,7 +106,7 @@
 
 当前设计基线：`DPI_DESIGN.md`。Draft v5 把内部目标统一为 `natflow_l7` core：共享 read-only packet view、bounded prefix、HTTP/TLS/QUIC parser、hostname normalize、consumer fan-out 和资源生命周期；legacy URL logger/Host ACL 作为 URL consumer 保持外部 ABI，DPI 作为 classifier consumer 新增独立控制和事件 ABI。本文档仍是目标设计，不代表源码已实现 DPI ABI 或行为。
 
-实现进度：源码已完成 M0b 的 DPI busy bit、`app_id` 尾增和 layout guard，完成 M0c 的 `natflow_l7` hook lifecycle 骨架、共享 feature/normalize 基础结构、URL/DPI shared hook ops、签名兼容包装迁移、PPPoE normalize/restore 和 packet view/host view 传递、L7 consumer mask/API 与 packet dispatcher、HTTP Host parser、TLS ClientHello/SNI 搜索、TCP HTTP/TLS producer 迁移、TCP TLS SNI cache 生命周期迁移、QUIC Initial header/CRYPTO frame/SNI 搜索迁移、QUIC cache/crypto 生命周期迁移、QUIC UDP producer 迁移、DNS QNAME parser 和 `natflow_l7_host_view` consumer 输入 contract，完成 M0d 的 Host ACL 与 URL record 分配解耦，完成 M1a 的 DPI ctl/queue 设备骨架，完成 M1b 的 domain exact/suffix ruleset、match event producer、DPI host consumer 独立激活和复用 urllogger host 的 `app_id` 写入，完成 M1c 的 DNS QNAME domain 分类和 DNS/SSH/WireGuard protocol-only detector，其中 SSH 支持 TCP 22 和 TCP original-direction `SSH-<version>-` banner，并完成 M1d 的 STUN/TURN、BitTorrent TCP handshake、UDP uTP/DHT 子集、source/reason counters 和 `events_clear` 测试辅助命令；DPI protocol-only detector 已从独立 hook 收敛到 L7 shared hook 的 packet-view consumer；误判 corpus 和生产 shadow 数据尚未实现。
+实现进度：源码已完成 M0b 的 DPI busy bit、`app_id` 尾增和 layout guard，完成 M0c 的 `natflow_l7` hook lifecycle 骨架、共享 feature/normalize 基础结构、URL/DPI shared hook ops、签名兼容包装迁移、PPPoE normalize/restore 和 packet view/host view 传递、L7 consumer mask/API 与 packet dispatcher、HTTP Host parser、TLS ClientHello/SNI 搜索、TCP HTTP/TLS producer 迁移、TCP TLS SNI cache 生命周期迁移、QUIC Initial header/CRYPTO frame/SNI 搜索迁移、QUIC cache/crypto 生命周期迁移、QUIC UDP producer 迁移、DNS QNAME parser 和 `natflow_l7_host_view` consumer 输入 contract，完成 M0d 的 Host ACL 与 URL record 分配解耦，完成 M1a 的 DPI ctl/queue 设备骨架，完成 M1b 的 domain exact/suffix ruleset、match event producer、DPI host consumer 独立激活和复用 urllogger host 的 `app_id` 写入，完成 M1c 的 DNS QNAME domain 分类和 DNS/SSH/WireGuard protocol-only detector，其中 SSH 支持 TCP 22 和 TCP original-direction `SSH-<version>-` banner，并完成 M1d 的 STUN/TURN、BitTorrent TCP handshake、UDP uTP/DHT 子集、source/reason counters 和 `events_clear` 测试辅助命令；DPI protocol-only detector 已从独立 hook 收敛到 L7 shared hook 的 packet-view consumer。2026-07-12 对最新 L7/DPI 收尾提交完成代码审查、串行构建矩阵和维护者真机测试，未发现阻断问题；误判 corpus 和生产 shadow 数据尚未实现。
 
 边界：
 
