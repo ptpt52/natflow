@@ -53,6 +53,29 @@ typedef struct fakeuser_data_t {
 
 typedef struct nf_conn natflow_fakeuser_t;
 
+#define NATFLOW_USERINFO_EVENT_VERSION 1
+
+struct natflow_userinfo_event_hdr {
+	__u16 version;
+	__u16 header_len;
+	__u16 record_len;
+	__u16 family;
+	__u32 idle_time;
+	__u8 mac[ETH_ALEN];
+	__u8 auth_type;
+	__u8 auth_status;
+	__u16 auth_rule_id;
+	__u8 ip[16];
+	__u64 rx_packets;
+	__u64 rx_bytes;
+	__u64 tx_packets;
+	__u64 tx_bytes;
+	__u32 rx_speed_packets;
+	__u32 rx_speed_bytes;
+	__u32 tx_speed_packets;
+	__u32 tx_speed_bytes;
+} __packed;
+
 extern int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf);
 extern int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf);
 

@@ -4000,21 +4000,56 @@ static ssize_t userinfo_event_write(struct file *file, const char __user *buf, s
 {
 	return -ENOSYS;
 }
+
+struct userinfo_event_reader {
+	struct mutex lock;
+	struct list_head head;
+};
+
+static void userinfo_event_hdr_fill(struct natflow_userinfo_event_hdr *hdr,
+                                    const struct userinfo *user)
+{
+	memset(hdr, 0, sizeof(*hdr));
+	hdr->version = NATFLOW_USERINFO_EVENT_VERSION;
+	hdr->header_len = (__u16)sizeof(*hdr);
+	hdr->record_len = (__u16)sizeof(*hdr);
+	hdr->family = user->l2num == 0 ? AF_INET : AF_INET6;
+	hdr->idle_time = user->idle_time;
+	memcpy(hdr->mac, user->macaddr, sizeof(hdr->mac));
+	hdr->auth_type = user->auth_type;
+	hdr->auth_status = user->auth_status;
+	hdr->auth_rule_id = user->auth_rule_id;
+	if (user->l2num == 0)
+		memcpy(hdr->ip, &user->ip, sizeof(user->ip));
+	else
+		memcpy(hdr->ip, &user->ipv6, sizeof(hdr->ip));
+	hdr->rx_packets = user->rx_packets;
+	hdr->rx_bytes = user->rx_bytes;
+	hdr->tx_packets = user->tx_packets;
+	hdr->tx_bytes = user->tx_bytes;
+	hdr->rx_speed_packets = user->rx_speed_packets;
+	hdr->rx_speed_bytes = user->rx_speed_bytes;
+	hdr->tx_speed_packets = user->tx_speed_packets;
+	hdr->tx_speed_bytes = user->tx_speed_bytes;
+}
+
 static ssize_t userinfo_event_read(struct file *file, char __user *buf,
                                    size_t count, loff_t *ppos)
 {
-	size_t len = 0;
+	struct natflow_userinfo_event_hdr hdr;
 	ssize_t ret = 0;
 	struct userinfo *user_i;
-	struct userinfo_user *user = file->private_data;
+	struct userinfo_event_reader *reader = file->private_data;
 
-	if (!user)
+	if (!reader)
 		return -EBADF;
+	if (count < sizeof(struct natflow_userinfo_event_hdr))
+		return -EINVAL;
 
-	ret = mutex_lock_interruptible(&user->lock);
+	ret = mutex_lock_interruptible(&reader->lock);
 	if (ret != 0)
 		return -EAGAIN;
-	if (list_empty(&user->head)) {
+	if (list_empty(&reader->head)) {
 		struct userinfo *n;
 
 		if (list_empty(&userinfo_event_store.head)) {
@@ -4028,63 +4063,41 @@ static ssize_t userinfo_event_read(struct file *file, char __user *buf,
 		spin_lock_bh(&userinfo_event_store.lock);
 		list_for_each_entry_safe(user_i, n, &userinfo_event_store.head, list) {
 			list_del(&user_i->list);
-			list_add_tail(&user_i->list, &user->head);
+			list_add_tail(&user_i->list, &reader->head);
 		}
 		spin_unlock_bh(&userinfo_event_store.lock);
 	}
 
-	user_i = list_first_entry_or_null(&user->head, struct userinfo, list);
+	user_i = list_first_entry_or_null(&reader->head, struct userinfo, list);
 	if (user_i) {
-		if (user_i->l2num == 0) {
-			len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
-			              &user_i->ip, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
-			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->idle_time,
-			              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
-			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
-		} else {
-			len = sprintf(user->data, "%pI6,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
-			              &user_i->ipv6, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
-			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->idle_time,
-			              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
-			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
-		}
-		/*
-		 * FIXME: Returning -EINVAL when len > count breaks single-byte reads
-		 * (e.g. `while read` in shell scripts). It should be refactored to
-		 * handle partial reads like conntrackinfo_read() or use seq_file.
-		 */
-		if (len > count) {
-			ret = -EINVAL;
-			goto out;
-		}
-		if (copy_to_user(buf, user->data, len)) {
+		userinfo_event_hdr_fill(&hdr, user_i);
+		if (copy_to_user(buf, &hdr, sizeof(hdr))) {
 			ret = -EFAULT;
 			goto out;
 		}
-		ret = len;
+		ret = sizeof(hdr);
 		list_del(&user_i->list);
 		kfree(user_i);
-		user->count--;
 	} else {
 		ret = -EAGAIN;
 	}
 
 out:
-	mutex_unlock(&user->lock);
+	mutex_unlock(&reader->lock);
 	return ret;
 }
 
 static int userinfo_event_open(struct inode *inode, struct file *file)
 {
-	struct userinfo_user *user;
+	struct userinfo_event_reader *reader;
 
 	/* just allow one user to read */
 	if (cmpxchg(&userinfo_event_store.stage, USERINFO_EVENT_STOPPED,
 	            USERINFO_EVENT_RUNNING) != USERINFO_EVENT_STOPPED)
 		return -EBUSY;
 
-	user = kmalloc(USERINFO_MEMSIZE, GFP_KERNEL);
-	if (!user) {
+	reader = kmalloc(sizeof(*reader), GFP_KERNEL);
+	if (!reader) {
 		WRITE_ONCE(userinfo_event_store.stage, USERINFO_EVENT_STOPPED);
 		wake_up(&userinfo_event_store.wait);
 		userinfo_event_store_purge();
@@ -4094,35 +4107,32 @@ static int userinfo_event_open(struct inode *inode, struct file *file)
 	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
-	mutex_init(&user->lock);
-	user->next_bucket = 0;
-	user->count = 0;
-	user->status = 0;
-	INIT_LIST_HEAD(&user->head);
+	mutex_init(&reader->lock);
+	INIT_LIST_HEAD(&reader->head);
 
-	file->private_data = user;
+	file->private_data = reader;
 	return 0;
 }
 
 static int userinfo_event_release(struct inode *inode, struct file *file)
 {
 	struct userinfo *user_i;
-	struct userinfo_user *user = file->private_data;
+	struct userinfo_event_reader *reader = file->private_data;
 
 	WRITE_ONCE(userinfo_event_store.stage, USERINFO_EVENT_STOPPED);
 	wake_up(&userinfo_event_store.wait);
 	userinfo_event_store_purge();
 
-	if (!user)
+	if (!reader)
 		return 0;
 
-	while ((user_i = list_first_entry_or_null(&user->head, struct userinfo, list))) {
+	while ((user_i = list_first_entry_or_null(&reader->head, struct userinfo, list))) {
 		list_del(&user_i->list);
 		kfree(user_i);
 	}
 
-	mutex_destroy(&user->lock);
-	kfree(user);
+	mutex_destroy(&reader->lock);
+	kfree(reader);
 
 	return 0;
 }
@@ -4132,12 +4142,13 @@ static const struct file_operations userinfo_event_fops = {
 	.read = userinfo_event_read,
 	.write = userinfo_event_write,
 	.release = userinfo_event_release,
+	.llseek = natflow_no_llseek,
 };
 
 static int userinfo_event_major = 0;
 static int userinfo_event_minor = 0;
 static struct cdev userinfo_event_cdev;
-static const char * const userinfo_event_dev_name = "userinfo_event_ctl";
+static const char * const userinfo_event_dev_name = "natflow_userinfo_event_queue";
 static struct class *userinfo_event_class;
 static struct device *userinfo_event_dev;
 

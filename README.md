@@ -222,8 +222,8 @@ echo 1 >/proc/sys/urllogger_store/enable
 - 一条命令必须以 `\n` 结束。
 - `cat /dev/*_ctl` 通常会输出 usage 和可重放配置。
 - 未识别命令多数情况下只写内核日志并返回已消费字节。
-- `userinfo_ctl`、`userinfo_event_ctl`、`natflow_urllogger_queue` 不支持小 buffer partial read；用户态应使用足够大的读缓冲。
-- `/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应保持 fd 打开，并用 `poll()`、`select()` 或 `epoll` 等待可读。
+- `userinfo_ctl`、`natflow_userinfo_event_queue`、`natflow_urllogger_queue` 不支持小 buffer partial read；用户态应使用足够大的读缓冲。
+- `/dev/natflow_userinfo_event_queue`、`/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应保持 fd 打开。
 - 多个 writer 并发写同一控制设备时，半行缓存可能互相干扰；生产脚本应串行写入。
 
 ## 对外接口总览
@@ -234,7 +234,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 | `/dev/natflow_zone_ctl` | char device | LAN/WAN zone 配置和刷新。 |
 | `/dev/natflow_user_ctl` | char device | 认证规则、认证开关、portal 重定向和 bypass ipset。 |
 | `/dev/userinfo_ctl` | char device | 用户状态读取、踢用户、设置认证状态、单用户限速。 |
-| `/dev/userinfo_event_ctl` | char device | 阻塞式认证事件流，只允许一个 reader。 |
+| `/dev/natflow_userinfo_event_queue` | char device | 阻塞式认证二进制事件流，只允许一个 reader。 |
 | `/dev/qos_ctl` | char device | 全局 QoS 规则和 `tc_classid_mode`。 |
 | `/dev/hostacl_ctl` | char device | Host ACL 规则和默认动作。 |
 | `/dev/natflow_urllogger_queue` | char device | URL/SNI/ACL 命中二进制事件队列，只允许一个 reader。 |
@@ -430,20 +430,137 @@ echo 'set-token-ctrl <ip_or_ipv6> <rxbytes> <txbytes>' >/dev/userinfo_ctl
 - `kick`、`set-status`、`set-token-ctrl` 找不到用户时返回 `-ENOENT`。
 - `set-token-ctrl` 单位是 Bytes/s；rx 或 tx 非 0 时启用该用户 token control，两者都为 0 时关闭。
 
-## `/dev/userinfo_event_ctl`
+## `/dev/natflow_userinfo_event_queue`
 
-读取：
+读取方式：
 
-```sh
-cat /dev/userinfo_event_ctl
-```
+该设备是阻塞式事件流。用户态应打开并保持 fd，直接循环 `read()` 固定头事件；不要用 `cat` 作为长期采集程序。
 
 行为：
 
 - 阻塞等待认证相关事件。
 - 同一时间只允许一个 reader，第二个打开会返回 `-EBUSY`。
-- 输出格式与 `/dev/userinfo_ctl` 相同。
+- 事件只在 reader 打开期间入队；reader 关闭时会清空未读事件。
 - 写接口未实现，返回 `-ENOSYS`。
+
+固定头为：
+
+```c
+struct natflow_userinfo_event_hdr {
+	__u16 version;
+	__u16 header_len;
+	__u16 record_len;
+	__u16 family;
+	__u32 idle_time;
+	__u8 mac[6];
+	__u8 auth_type;
+	__u8 auth_status;
+	__u16 auth_rule_id;
+	__u8 ip[16];
+	__u64 rx_packets;
+	__u64 rx_bytes;
+	__u64 tx_packets;
+	__u64 tx_bytes;
+	__u32 rx_speed_packets;
+	__u32 rx_speed_bytes;
+	__u32 tx_speed_packets;
+	__u32 tx_speed_bytes;
+} __packed;
+```
+
+字段说明：
+
+- `version=1`，`header_len=record_len=sizeof(struct natflow_userinfo_event_hdr)`。
+- 除地址字节数组外，整数按内核本机端序输出；用户态 reader 与内核运行在同一机器时直接按结构体读取即可。
+- `family` 是 `AF_INET` 或 `AF_INET6`；IPv4 地址放在 `ip[0..3]`，IPv6 地址使用完整 16 字节。
+- `idle_time` 是该 fakeuser 内部活动时间戳至今经过的秒数。
+- 计数字段与 `/dev/userinfo_ctl` 文本输出一致；速度字段来自 4 个 2 秒窗口，超过 8 秒无更新时为 0。
+
+C 读者样例：
+
+```c
+#include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <inttypes.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#define USERINFO_EVENT_QUEUE "/dev/natflow_userinfo_event_queue"
+
+struct natflow_userinfo_event_hdr {
+	uint16_t version;
+	uint16_t header_len;
+	uint16_t record_len;
+	uint16_t family;
+	uint32_t idle_time;
+	uint8_t mac[6];
+	uint8_t auth_type;
+	uint8_t auth_status;
+	uint16_t auth_rule_id;
+	uint8_t ip[16];
+	uint64_t rx_packets;
+	uint64_t rx_bytes;
+	uint64_t tx_packets;
+	uint64_t tx_bytes;
+	uint32_t rx_speed_packets;
+	uint32_t rx_speed_bytes;
+	uint32_t tx_speed_packets;
+	uint32_t tx_speed_bytes;
+} __attribute__((packed));
+
+int main(void)
+{
+	int fd = open(USERINFO_EVENT_QUEUE, O_RDONLY | O_CLOEXEC);
+	if (fd < 0) {
+		perror("open " USERINFO_EVENT_QUEUE);
+		return 1;
+	}
+
+	for (;;) {
+		struct natflow_userinfo_event_hdr ev;
+		char ip[INET6_ADDRSTRLEN];
+		ssize_t len = read(fd, &ev, sizeof(ev));
+
+		if (len < 0) {
+			if (errno == EINTR)
+				continue;
+			perror("read");
+			break;
+		}
+		if (len == 0)
+			continue;
+		if ((size_t)len != sizeof(ev))
+			continue;
+		if (ev.version != 1 ||
+		    ev.header_len != sizeof(ev) ||
+		    ev.record_len != sizeof(ev))
+			continue;
+
+		if (ev.family == AF_INET6)
+			inet_ntop(AF_INET6, ev.ip, ip, sizeof(ip));
+		else
+			inet_ntop(AF_INET, ev.ip, ip, sizeof(ip));
+
+		printf("%s %02x:%02x:%02x:%02x:%02x:%02x "
+		       "auth=0x%x status=0x%x rule=%u idle=%u "
+		       "rx=%" PRIu64 ":%" PRIu64 " tx=%" PRIu64 ":%" PRIu64 " "
+		       "rx_speed=%u:%u tx_speed=%u:%u\n",
+		       ip,
+		       ev.mac[0], ev.mac[1], ev.mac[2],
+		       ev.mac[3], ev.mac[4], ev.mac[5],
+		       ev.auth_type, ev.auth_status, ev.auth_rule_id, ev.idle_time,
+		       ev.rx_packets, ev.rx_bytes, ev.tx_packets, ev.tx_bytes,
+		       ev.rx_speed_packets, ev.rx_speed_bytes,
+		       ev.tx_speed_packets, ev.tx_speed_bytes);
+	}
+
+	close(fd);
+	return 1;
+}
+```
 
 ## `/dev/qos_ctl`
 
