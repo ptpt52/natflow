@@ -537,6 +537,37 @@ static int set_cache_limit(int fd)
 	return 0;
 }
 
+static int wait_queue_readable(int fd, int timeout_ms)
+{
+	for (;;) {
+		struct pollfd pfd = {
+			.fd = fd,
+			.events = POLLIN | POLLRDNORM,
+		};
+		int ret = poll(&pfd, 1, timeout_ms);
+
+		if (ret < 0) {
+			if (errno == EINTR)
+				continue;
+			perror("poll");
+			return -1;
+		}
+		if (ret == 0)
+			return 0;
+		if (pfd.revents & POLLNVAL) {
+			fprintf(stderr, "poll: invalid queue fd\n");
+			return -1;
+		}
+		if (pfd.revents & (POLLERR | POLLHUP)) {
+			fprintf(stderr, "poll: queue error revents=0x%x\n",
+				pfd.revents);
+			return -1;
+		}
+		if (pfd.revents & (POLLIN | POLLRDNORM))
+			return 1;
+	}
+}
+
 int main(void)
 {
 	int fd = open(USERINFO_QUEUE, O_RDWR | O_CLOEXEC);
@@ -550,14 +581,12 @@ int main(void)
 	}
 
 	for (;;) {
-		struct pollfd pfd = { .fd = fd, .events = POLLIN };
-		int n = poll(&pfd, 1, -1);
-		if (n < 0) {
-			if (errno == EINTR)
-				continue;
-			perror("poll");
+		int ready = wait_queue_readable(fd, -1);
+
+		if (ready < 0)
 			break;
-		}
+		if (ready == 0)
+			continue;
 
 		for (;;) {
 			struct natflow_userinfo_event_hdr ev;
@@ -573,17 +602,26 @@ int main(void)
 			}
 			if (len == 0)
 				break;
-			if ((size_t)len != sizeof(ev))
+			if ((size_t)len != sizeof(ev)) {
+				fprintf(stderr, "skip short userinfo event: %zd\n", len);
 				continue;
+			}
 			if (ev.version != 2 ||
 			    ev.header_len != sizeof(ev) ||
-			    ev.record_len != sizeof(ev))
+			    ev.record_len != sizeof(ev)) {
+				fprintf(stderr, "skip unsupported userinfo event\n");
 				continue;
+			}
 
-			if (ev.family == AF_INET6)
-				inet_ntop(AF_INET6, ev.ip, ip, sizeof(ip));
-			else
-				inet_ntop(AF_INET, ev.ip, ip, sizeof(ip));
+			if (ev.family == AF_INET6) {
+				if (!inet_ntop(AF_INET6, ev.ip, ip, sizeof(ip)))
+					snprintf(ip, sizeof(ip), "?");
+			} else if (ev.family == AF_INET) {
+				if (!inet_ntop(AF_INET, ev.ip, ip, sizeof(ip)))
+					snprintf(ip, sizeof(ip), "?");
+			} else {
+				snprintf(ip, sizeof(ip), "family-%u", ev.family);
+			}
 
 			printf("%s %02x:%02x:%02x:%02x:%02x:%02x "
 			       "auth=0x%x status=0x%x rule=%u idle=%u "
@@ -787,6 +825,37 @@ static int set_cache_limit(int fd)
 	return 0;
 }
 
+static int wait_queue_readable(int fd, int timeout_ms)
+{
+	for (;;) {
+		struct pollfd pfd = {
+			.fd = fd,
+			.events = POLLIN | POLLRDNORM,
+		};
+		int ret = poll(&pfd, 1, timeout_ms);
+
+		if (ret < 0) {
+			if (errno == EINTR)
+				continue;
+			perror("poll");
+			return -1;
+		}
+		if (ret == 0)
+			return 0;
+		if (pfd.revents & POLLNVAL) {
+			fprintf(stderr, "poll: invalid queue fd\n");
+			return -1;
+		}
+		if (pfd.revents & (POLLERR | POLLHUP)) {
+			fprintf(stderr, "poll: queue error revents=0x%x\n",
+				pfd.revents);
+			return -1;
+		}
+		if (pfd.revents & (POLLIN | POLLRDNORM))
+			return 1;
+	}
+}
+
 static const char *source_name(uint8_t source)
 {
 	switch (source) {
@@ -810,14 +879,12 @@ int main(void)
 	}
 
 	for (;;) {
-		struct pollfd pfd = { .fd = fd, .events = POLLIN };
-		int n = poll(&pfd, 1, 1000);
-		if (n < 0) {
-			if (errno == EINTR)
-				continue;
-			perror("poll");
+		int ready = wait_queue_readable(fd, 1000);
+
+		if (ready < 0)
 			break;
-		}
+		if (ready == 0)
+			continue;
 
 		for (;;) {
 			unsigned char buf[4096];
@@ -838,24 +905,36 @@ int main(void)
 			}
 			if (len == 0)
 				break;
-			if ((size_t)len < sizeof(*h))
+			if ((size_t)len < sizeof(*h)) {
+				fprintf(stderr, "skip short urllogger event: %zd\n", len);
 				continue;
+			}
 
 			h = (struct natflow_urllogger_event_hdr *)buf;
 			if (h->version != 2 || h->header_len < sizeof(*h) ||
-			    h->record_len != (uint16_t)len || h->record_len < h->header_len)
+			    h->record_len != (uint16_t)len ||
+			    h->record_len < h->header_len) {
+				fprintf(stderr, "skip unsupported urllogger event\n");
 				continue;
+			}
 
 			payload = buf + h->header_len;
 			payload_len = h->record_len - h->header_len;
 			host_len = h->host_len <= payload_len ? h->host_len : payload_len;
 
 			if (h->family == AF_INET6) {
-				inet_ntop(AF_INET6, h->sip, sip, sizeof(sip));
-				inet_ntop(AF_INET6, h->dip, dip, sizeof(dip));
+				if (!inet_ntop(AF_INET6, h->sip, sip, sizeof(sip)))
+					snprintf(sip, sizeof(sip), "?");
+				if (!inet_ntop(AF_INET6, h->dip, dip, sizeof(dip)))
+					snprintf(dip, sizeof(dip), "?");
+			} else if (h->family == AF_INET) {
+				if (!inet_ntop(AF_INET, h->sip, sip, sizeof(sip)))
+					snprintf(sip, sizeof(sip), "?");
+				if (!inet_ntop(AF_INET, h->dip, dip, sizeof(dip)))
+					snprintf(dip, sizeof(dip), "?");
 			} else {
-				inet_ntop(AF_INET, h->sip, sip, sizeof(sip));
-				inet_ntop(AF_INET, h->dip, dip, sizeof(dip));
+				snprintf(sip, sizeof(sip), "family-%u", h->family);
+				snprintf(dip, sizeof(dip), "family-%u", h->family);
 			}
 
 			printf("%u %02x:%02x:%02x:%02x:%02x:%02x %s:%u -> %s:%u "
@@ -1024,6 +1103,37 @@ static int set_cache_limit(int fd)
 	return 0;
 }
 
+static int wait_queue_readable(int fd, int timeout_ms)
+{
+	for (;;) {
+		struct pollfd pfd = {
+			.fd = fd,
+			.events = POLLIN | POLLRDNORM,
+		};
+		int ret = poll(&pfd, 1, timeout_ms);
+
+		if (ret < 0) {
+			if (errno == EINTR)
+				continue;
+			perror("poll");
+			return -1;
+		}
+		if (ret == 0)
+			return 0;
+		if (pfd.revents & POLLNVAL) {
+			fprintf(stderr, "poll: invalid queue fd\n");
+			return -1;
+		}
+		if (pfd.revents & (POLLERR | POLLHUP)) {
+			fprintf(stderr, "poll: queue error revents=0x%x\n",
+				pfd.revents);
+			return -1;
+		}
+		if (pfd.revents & (POLLIN | POLLRDNORM))
+			return 1;
+	}
+}
+
 static const char *source_name(uint32_t source)
 {
 	switch (source) {
@@ -1084,14 +1194,12 @@ int main(void)
 	}
 
 	for (;;) {
-		struct pollfd pfd = { .fd = fd, .events = POLLIN };
-		int n = poll(&pfd, 1, -1);
-		if (n < 0) {
-			if (errno == EINTR)
-				continue;
-			perror("poll");
+		int ready = wait_queue_readable(fd, -1);
+
+		if (ready < 0)
 			break;
-		}
+		if (ready == 0)
+			continue;
 
 		for (;;) {
 			struct natflow_dpi_event_hdr ev;
@@ -1108,12 +1216,16 @@ int main(void)
 			}
 			if (len == 0)
 				break;
-			if ((size_t)len != sizeof(ev))
+			if ((size_t)len != sizeof(ev)) {
+				fprintf(stderr, "skip short dpi event: %zd\n", len);
 				continue;
+			}
 			if (ev.version != 2 ||
 			    ev.header_len != sizeof(ev) ||
-			    ev.record_len != sizeof(ev))
+			    ev.record_len != sizeof(ev)) {
+				fprintf(stderr, "skip unsupported dpi event\n");
 				continue;
+			}
 
 			printf("ts=%" PRIu64 " generation=%u app=%u rule=%u "
 			       "reason=%u source=%s category=%u "
