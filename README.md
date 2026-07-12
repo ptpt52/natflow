@@ -238,7 +238,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 | `/dev/hostacl_ctl` | char device | Host ACL 规则和默认动作。 |
 | `/dev/urllogger_queue` | char device | URL/SNI/ACL 命中记录队列。 |
 | `/dev/natflow_dpi_ctl` | char device | DPI enable 状态、domain/proto ruleset 事务和统计。 |
-| `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列，当前输出 domain/proto match 固定头事件。 |
+| `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列，只允许一个 reader，当前输出 domain/proto match 固定头事件。 |
 | `/dev/conntrackinfo_ctl` | char device | conntrack 文本快照。 |
 | `/proc/sys/urllogger_store/*` | sysctl | URL logger 开关、容量和合并窗口。 |
 
@@ -592,9 +592,9 @@ echo events_clear >/dev/natflow_dpi_ctl
 - DNS QNAME detector：original direction TCP/UDP 53 标准 query 的第一问 QNAME 会进入 domain exact/suffix ruleset；response、非 query opcode、压缩 QNAME、畸形或前缀不足的报文忽略。
 - 端口型 protocol-only detector：DNS TCP/UDP 53，SSH TCP 22，WireGuard UDP 51820。
 - 有界 payload detector：TCP original direction 的 SSH banner 识别 `SSH-<version>-` identification string，可覆盖部分非 22 端口 SSH 客户端 banner；STUN/TURN 识别 STUN header、length 和 magic cookie，并按 TURN 方法区分 TURN；BitTorrent 的 TCP 分支识别标准 handshake，UDP 分支识别 uTP v1 header 和 DHT bencode token 前缀窗口，其中 uTP 会校验版本、类型和扩展号。
-- `cat /dev/natflow_dpi_ctl` 会输出 `events_*` source counters 和 `proto_no_session`、`proto_app_exists`、`proto_no_rule` protocol-only reason counters，可用于 shadow 统计和解释 detector 已识别但未产生 match event 的原因。
+- `cat /dev/natflow_dpi_ctl` 会输出已成功入队的 `events_*` source counters 和 `proto_no_session`、`proto_app_exists`、`proto_no_rule` protocol-only reason counters，可用于 shadow 统计和解释 detector 已识别但未产生 match event 的原因。
 
-`/dev/natflow_dpi_queue` 使用版本化二进制记录。当前 record 只有固定头；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。队列最多缓存 1024 条事件，溢出或分配失败会增加 `events_lost`。
+`/dev/natflow_dpi_queue` 使用版本化二进制记录，只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 时，match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时会先清空残留事件，关闭时也会清空未读事件。当前 record 只有固定头；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。有 reader 期间队列最多缓存 1024 条事件，溢出或分配失败会增加 `events_lost`。
 
 固定头为：
 

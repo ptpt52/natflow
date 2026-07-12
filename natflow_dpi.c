@@ -94,6 +94,7 @@ static wait_queue_head_t natflow_dpi_wait;
 static LIST_HEAD(natflow_dpi_event_list);
 static DEFINE_SPINLOCK(natflow_dpi_event_lock);
 static unsigned int natflow_dpi_event_count;
+static unsigned int natflow_dpi_queue_readers;
 static struct natflow_dpi_ruleset __rcu *natflow_dpi_active_ruleset;
 static struct natflow_dpi_ruleset *natflow_dpi_pending_ruleset;
 static unsigned int natflow_dpi_state = NATFLOW_DPI_STATE_DISABLED;
@@ -432,6 +433,9 @@ static void natflow_dpi_event_queue(unsigned int reason, unsigned int generation
 {
 	struct natflow_dpi_event_node *node;
 
+	if (READ_ONCE(natflow_dpi_queue_readers) == 0)
+		return;
+
 	node = kzalloc(sizeof(*node), GFP_ATOMIC);
 	if (!node) {
 		atomic64_inc(&natflow_dpi_events_lost);
@@ -450,6 +454,11 @@ static void natflow_dpi_event_queue(unsigned int reason, unsigned int generation
 	node->hdr.timestamp = ktime_get_ns();
 
 	spin_lock_bh(&natflow_dpi_event_lock);
+	if (natflow_dpi_queue_readers == 0) {
+		spin_unlock_bh(&natflow_dpi_event_lock);
+		kfree(node);
+		return;
+	}
 	if (natflow_dpi_event_count >= NATFLOW_DPI_EVENT_MAX) {
 		spin_unlock_bh(&natflow_dpi_event_lock);
 		kfree(node);
@@ -466,19 +475,32 @@ static void natflow_dpi_event_queue(unsigned int reason, unsigned int generation
 	wake_up_interruptible(&natflow_dpi_wait);
 }
 
-static void natflow_dpi_event_purge(void)
+static void natflow_dpi_event_purge_locked(struct list_head *free_list)
+{
+	list_splice_init(&natflow_dpi_event_list, free_list);
+	natflow_dpi_event_count = 0;
+}
+
+static void natflow_dpi_event_free_list(struct list_head *free_list)
 {
 	struct natflow_dpi_event_node *node;
 	struct natflow_dpi_event_node *tmp;
+
+	list_for_each_entry_safe(node, tmp, free_list, list) {
+		list_del(&node->list);
+		kfree(node);
+	}
+}
+
+static void natflow_dpi_event_purge(void)
+{
 	LIST_HEAD(free_list);
 
 	spin_lock_bh(&natflow_dpi_event_lock);
-	list_splice_init(&natflow_dpi_event_list, &free_list);
-	natflow_dpi_event_count = 0;
+	natflow_dpi_event_purge_locked(&free_list);
 	spin_unlock_bh(&natflow_dpi_event_lock);
 
-	list_for_each_entry_safe(node, tmp, &free_list, list)
-		kfree(node);
+	natflow_dpi_event_free_list(&free_list);
 }
 
 static void natflow_dpi_events_clear(void)
@@ -957,6 +979,38 @@ static const struct file_operations natflow_dpi_ctl_fops = {
 	.llseek = seq_lseek,
 };
 
+static int natflow_dpi_queue_open(struct inode *inode, struct file *file)
+{
+	LIST_HEAD(free_list);
+
+	spin_lock_bh(&natflow_dpi_event_lock);
+	if (natflow_dpi_queue_readers != 0) {
+		spin_unlock_bh(&natflow_dpi_event_lock);
+		return -EBUSY;
+	}
+	WRITE_ONCE(natflow_dpi_queue_readers, 1);
+	natflow_dpi_event_purge_locked(&free_list);
+	spin_unlock_bh(&natflow_dpi_event_lock);
+
+	natflow_dpi_event_free_list(&free_list);
+	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
+	return 0;
+}
+
+static int natflow_dpi_queue_release(struct inode *inode, struct file *file)
+{
+	LIST_HEAD(free_list);
+
+	spin_lock_bh(&natflow_dpi_event_lock);
+	WRITE_ONCE(natflow_dpi_queue_readers, 0);
+	natflow_dpi_event_purge_locked(&free_list);
+	spin_unlock_bh(&natflow_dpi_event_lock);
+
+	natflow_dpi_event_free_list(&free_list);
+	wake_up_interruptible(&natflow_dpi_wait);
+	return 0;
+}
+
 static ssize_t natflow_dpi_queue_read(struct file *file, char __user *buf,
                                       size_t count, loff_t *ppos)
 {
@@ -1000,6 +1054,8 @@ static unsigned int natflow_dpi_queue_poll(struct file *file, poll_table *wait)
 
 static const struct file_operations natflow_dpi_queue_fops = {
 	.owner = THIS_MODULE,
+	.open = natflow_dpi_queue_open,
+	.release = natflow_dpi_queue_release,
 	.read = natflow_dpi_queue_read,
 	.poll = natflow_dpi_queue_poll,
 	.llseek = natflow_no_llseek,
@@ -1422,6 +1478,7 @@ int natflow_dpi_init(void)
 	atomic64_set(&natflow_dpi_proto_no_rule, 0);
 	for (i = 0; i <= NATFLOW_DPI_EVENT_SOURCE_MAX; i++)
 		atomic64_set(&natflow_dpi_source_events[i], 0);
+	natflow_dpi_queue_readers = 0;
 	natflow_dpi_generation = 1;
 	natflow_dpi_rules = 0;
 	WRITE_ONCE(natflow_dpi_domain_rules, 0);
