@@ -583,7 +583,7 @@ Natflow 复用 `ct->status` 的高位和扩展位：
 - `IPS_NATFLOW_CT_DROP`：bit 17，用在普通 ct 上表示该连接应丢弃；与上一个宏同 bit，不同上下文使用。
 - `IPS_NATFLOW_USER_BYPASS`：bit 15。
 - `IPS_NATFLOW_FF_STOP`：bit 18，永久停止该 ct 的 fast path。
-- `IPS_NATFLOW_L7_HANDLED`：bit 19，历史 L7 one-shot 标记；当前 URL/DPI shared L7 终态不再依赖该 conntrack status bit，而是使用 `natflow_t.status` 中的 URL、DPI domain 和 DPI packet done bit。
+- `IPS_NATFLOW_L7_HANDLED`：bit 19，当前复用为 L7_SKIP 派生 hint。真实 URL/DPI shared L7 终态仍使用 `natflow_t.status` 中的 URL、DPI domain 和 DPI packet done bit；当这些 done bit 证明当前 active consumer 全部完成后，L7 设置该 conntrack status bit，后续包在 L7 入口快速跳过解析和 session 检查。
 - `IPS_NATFLOW_SKIP_BRIDGE`：bit 20，用于 bridge/non-bridge 双 hook 去重。
 - NATCAP 相关位保留用于兼容。
 
@@ -868,7 +868,7 @@ classid 模式：
 1. 若 URL、DPI domain 和 DPI packet consumer 都未激活，则直接 accept；`/proc/sys/urllogger_store/enable=1` 激活 URL/HostACL consumer，DPI `enable=1` 且存在 domain/proto 规则分别激活 DPI domain/packet consumer。
 2. 跳过已设置 `IPS_NATFLOW_CT_DROP` 的连接。
 3. 只处理 original 方向；进入解析前统一调用 `natflow_session_in()` 确保存在 natflow session。若 confirmed、内存或布局限制导致无法创建 session，则 fail-open 跳过本次 L7 解析，避免在无 `nf->status` 可写时产生无状态 URL/DPI 结果。
-4. 从 active consumer mask 中扣除 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE` 对应 consumer。URL done 不会阻止 DPI 后续解析；DPI packet done 不会关闭仍在等待 SNI/DNS QNAME 的 DPI domain；DPI domain done 也不会阻止 URL consumer 后续解析。若 active consumer 已全部 done，则在入口处跳过所有 L7 解析。
+4. 若 `IPS_NATFLOW_L7_HANDLED` 已设置，则作为 L7_SKIP hint 在入口处快速跳过所有 L7 解析。否则从 active consumer mask 中扣除 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE` 对应 consumer。URL done 不会阻止 DPI 后续解析；DPI packet done 不会关闭仍在等待 SNI/DNS QNAME 的 DPI domain；DPI domain done 也不会阻止 URL consumer 后续解析。若 active consumer 已全部 done，则设置 L7_SKIP hint 并跳过所有 L7 解析。
 5. 设置 `NF_FF_L7_USE` 暂停 fast path。
 6. 解析 HTTP：
    - 方法只识别 `GET `、`POST `、`HEAD `。
@@ -899,7 +899,7 @@ classid 模式：
    - 不解析 HTTP/3 `:authority` 或 path，不支持 ECH 内层真实 SNI。
    - QUIC crypto 初始化失败时，URL logger 仍可加载，但 QUIC hostname parser 被禁用。
 9. 命中 host 后按 active consumer fan-out：URL consumer 执行 URL CSV 和 Host ACL，正常路径复用 URL record；若 URL record 分配失败，则退到最小 ACL view 尽量执行 ACL，但不会生成对应 `/dev/urllogger_queue` 记录。DPI host consumer 调用 domain classifier，写入 `app_id` 并输出 match event；DPI-only 时不创建 URL record、不执行 Host ACL。当前 HTTP/TLS/QUIC packet producer 已收敛到 `natflow_l7.c`，host fan-out 通过 `natflow_l7_host_view` 统一承载 source、host、URI 和 HTTP method，并交给 legacy URL consumer 的公共 helper 处理 URL record、Host ACL 和 DPI classify。
-10. consumer 处理完成后分别设置 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 或 `NF_FF_L7_DPI_PACKET_DONE`；只有当前 active consumer 均完成后才清除 `NF_FF_L7_USE`，允许 fast path 接管。
+10. consumer 处理完成后分别设置 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 或 `NF_FF_L7_DPI_PACKET_DONE`；只有当前 active consumer 均完成后才清除 `NF_FF_L7_USE`，设置 `IPS_NATFLOW_L7_HANDLED` L7_SKIP hint，并允许 fast path 接管。
 11. URL logger 不会因为固定域名命中而自动添加任何全局 ipset；host ACL 只测试 `host_acl_rule<id>_ipv4/ipv6/mac` 这类用户态配置的过滤集合。
 
 实现边界：
@@ -942,7 +942,7 @@ classid 模式：
 - 端口型 protocol-only detector 当前按 original direction 的目标端口识别：DNS TCP/UDP 53，SSH TCP 22，WireGuard UDP 51820。
 - 有界 payload detector 当前覆盖 TCP original direction 的 SSH banner `SSH-<version>-` identification string、STUN/TURN header、length 和 magic cookie，按 TURN 方法区分 TURN；BitTorrent 的 TCP 分支覆盖标准 handshake，UDP 分支覆盖 uTP v1 header 和 DHT bencode token 前缀窗口，其中 uTP 会校验版本、类型和扩展号。IPv6 detector 当前只处理无 extension header 的 TCP/UDP。
 - DPI 默认 `disabled`。`enable=1` 后，domain 规则激活 `NATFLOW_L7_CONSUMER_DPI_DOMAIN`，proto 规则激活 `NATFLOW_L7_CONSUMER_DPI_PACKET`，二者组合为 `NATFLOW_L7_CONSUMER_DPI`。L7 shared hook 构造 packet view 并调度 `natflow_dpi_consume_packet_view()`，该函数返回本次可终态的 DPI domain/packet mask。L7 producer 在 TCP/UDP 分发点统一解析 L3/L4 header，并按 DPI 需要拉取 DNS 或 payload detector 的有界前缀，把 `payload_len` 和 `payload_linear_len` 传给 DPI；DPI consumer 不再自行按 IPv4/IPv6 重解析 skb。HTTP/TLS/QUIC host 分类、DNS QNAME domain 分类和 protocol-only detector 都不依赖 `/proc/sys/urllogger_store/enable`；非 DNS payload detector 只在存在 proto 规则时执行。
-- `natflow_l7` 统一持有 shared hook 入口、`NATFLOW_L7_CONSUMER_URL/DPI_DOMAIN/DPI_PACKET` mask 和 packet dispatcher；active mask 按 `/proc/sys/urllogger_store/enable` 发布 URL consumer，按 domain/proto 规则分别发布 DPI domain 和 DPI packet consumer。L7 入口在解析前统一调用 `natflow_session_in()`，然后使用 `natflow_t.status` 中的 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE` 独立记录终态；若无法创建 session，则 fail-open 跳过解析，不产生无状态 URL/DPI terminal。`CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 只收窄 URL logger 的 local-in hook；若同时编译 DPI，L7 会额外注册 DPI-only FORWARD/bridge hook，避免 protocol-only detector 被 local-in 配置关掉。
+- `natflow_l7` 统一持有 shared hook 入口、`NATFLOW_L7_CONSUMER_URL/DPI_DOMAIN/DPI_PACKET` mask 和 packet dispatcher；active mask 按 `/proc/sys/urllogger_store/enable` 发布 URL consumer，按 domain/proto 规则分别发布 DPI domain 和 DPI packet consumer。L7 入口先检查 `IPS_NATFLOW_L7_HANDLED` L7_SKIP hint，未命中时再统一调用 `natflow_session_in()`，然后使用 `natflow_t.status` 中的 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE` 独立记录终态；若无法创建 session，则 fail-open 跳过解析，不产生无状态 URL/DPI terminal。`IPS_NATFLOW_L7_HANDLED` 只是从当前 active consumer 全部 done 派生出来的短路缓存，不替代 per-consumer done bit；运行时开启新的 URL/DPI consumer 或提交新规则不会自动重新武装已设置 L7_SKIP 的旧连接。`CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 只收窄 URL logger 的 local-in hook；若同时编译 DPI，L7 会额外注册 DPI-only FORWARD/bridge hook，避免 protocol-only detector 被 local-in 配置关掉。
 - HTTP Host、TCP TLS SNI 和 QUIC v1 Initial SNI normalize 成功后都会进入 host consumer；`CONFIG_NATFLOW_URLLOGGER` 存在时通过 `natflow_urllogger_consume_host_view()` 同时保留 URL record、Host ACL 和 DPI host classify，URL record 分配失败时也会通过 `urllogger_acl_lookup` 的最小 host 视图调用 DPI；DPI-only 构建则由 L7 直接调用 `natflow_dpi_classify_host()`。DNS QNAME 由 DPI packet consumer 调用共享 DNS parser 后进入同一 domain classifier。Host ACL 行为和 `/dev/urllogger_queue` CSV 输出不因 DPI 改变。
 - domain/proto 命中时写入当前连接的 `natflow_t.app_id` 并输出 match event；L7 入口已经在解析前统一确保 natflow session。若 session 创建失败，则本次 L7 解析整体跳过，因此不会输出无状态 match event。protocol-only 命中要求 `app_id==0`，用于避免每包重复事件。
 - `/dev/natflow_dpi_queue` 输出固定头二进制事件；队列为空时 `read()` 返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。队列最多缓存 1024 条事件，溢出或分配失败增加 `events_lost`。

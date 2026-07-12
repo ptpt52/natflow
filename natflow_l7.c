@@ -994,6 +994,19 @@ static unsigned int natflow_l7_pending_consumer_mask(natflow_t *nf,
 	return consumer_mask & ~natflow_l7_done_consumer_mask(nf);
 }
 
+static void natflow_l7_update_skip_hint(struct nf_conn *ct, natflow_t *nf)
+{
+	if (!ct || !nf)
+		return;
+
+	if (natflow_l7_pending_consumer_mask(nf, natflow_l7_active_consumer_mask()) != 0)
+		return;
+
+	if (nf->status & NF_FF_L7_USE)
+		simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
+	set_bit(IPS_NATFLOW_L7_HANDLED_BIT, &ct->status);
+}
+
 static void natflow_l7_mark_terminal(const struct natflow_l7_packet_view *view,
                                      unsigned int done_mask)
 {
@@ -1014,9 +1027,7 @@ static void natflow_l7_mark_terminal(const struct natflow_l7_packet_view *view,
 	if (done_mask & NATFLOW_L7_CONSUMER_DPI_PACKET)
 		simple_set_bit(NF_FF_L7_DPI_PACKET_DONE_BIT, &nf->status);
 
-	if ((nf->status & NF_FF_L7_USE) &&
-	        natflow_l7_pending_consumer_mask(nf, natflow_l7_active_consumer_mask()) == 0)
-		simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
+	natflow_l7_update_skip_hint(view->ct, nf);
 }
 
 #if defined(CONFIG_NATFLOW_DPI)
@@ -2030,6 +2041,8 @@ static unsigned int natflow_l7_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS,
 	}
 	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
 		goto out;
+	if (ct->status & IPS_NATFLOW_L7_HANDLED)
+		goto out;
 
 	nf = natflow_session_in(ct);
 	if (!nf)
@@ -2037,8 +2050,7 @@ static unsigned int natflow_l7_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS,
 
 	consumer_mask = natflow_l7_pending_consumer_mask(nf, consumer_mask);
 	if (!(consumer_mask & (NATFLOW_L7_CONSUMER_URL | NATFLOW_L7_CONSUMER_DPI))) {
-		if (nf->status & NF_FF_L7_USE)
-			simple_clear_bit(NF_FF_L7_USE_BIT, &nf->status);
+		natflow_l7_update_skip_hint(ct, nf);
 		goto out;
 	}
 
@@ -2213,6 +2225,8 @@ static unsigned int natflow_l7_url_local_in(void *priv,
 
 	ct = nf_ct_get(skb, &ctinfo);
 	if (!ct || CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
+		return NF_ACCEPT;
+	if (ct->status & IPS_NATFLOW_L7_HANDLED)
 		return NF_ACCEPT;
 	if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num != AF_INET)
 		return NF_ACCEPT;

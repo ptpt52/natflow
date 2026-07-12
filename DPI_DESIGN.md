@@ -215,7 +215,7 @@ shared L7 与 DPI busy bits：
 - `NF_FF_DPI_USE_BIT` 必须在当前 `nf->status` bit map 中空闲。
 - 编译期和 init 时都要检查该 bit 未与既有 bit 冲突。
 - 所有 fast path 建表和硬件 offload 入口必须继续用 `NF_FF_BUSY_USE` 判断。
-- shared L7 parser 在 selected flow arm 成功后设置 `NF_FF_L7_USE`，URL/DPI-domain/DPI-packet consumer terminal 后分别设置对应 done bit，当前 active consumer 均 done 后再清 `NF_FF_L7_USE`；后续独立 DPI context 若需要跨包等待，再设置 `NF_FF_DPI_USE` 并在 terminal 后清除。
+- shared L7 parser 在 selected flow arm 成功后设置 `NF_FF_L7_USE`，URL/DPI-domain/DPI-packet consumer terminal 后分别设置对应 done bit，当前 active consumer 均 done 后再清 `NF_FF_L7_USE` 并设置 `IPS_NATFLOW_L7_HANDLED` 作为 L7_SKIP 派生 hint；后续独立 DPI context 若需要跨包等待，再设置 `NF_FF_DPI_USE` 并在 terminal 后清除。
 - 继续接受 `nf->status` 非原子 writer 风险，不增加 path 侧 repair，但必须保留 lost-owner/early-fastpath 计数和并发压测。
 
 ### 7.2 `natflow_t` 尾部结果
@@ -236,7 +236,7 @@ struct natflow_dpi_flow {
 - `rule_id`、`ruleset_generation`、`category_id`、`proto_id`、`detector_id`、`evidence`、`confidence`、`reason`、packet/byte counter 和 policy action 都只进入 active context 或 terminal event。
 - 不在 flow 中保存 host、URI、payload、证书、名称字符串或指针。
 - 不使用 `skb->mark` 或 `ct->mark` 保存 DPI 结果，避免覆盖 QoS、tc 和用户态既有语义。
-- writer 在 matched 结果时先写 `app_id`，再写 terminal state，最后清对应 busy bit。当前 shared HTTP/TLS/QUIC host path 按 consumer 分别写 URL/domain/packet done bit，active consumer 全部 done 后清 `NF_FF_L7_USE`；后续独立 DPI context 清 `NF_FF_DPI_USE`。unknown/error/disabled 保持 `app_id=0`。
+- writer 在 matched 结果时先写 `app_id`，再写 terminal state，最后清对应 busy bit。当前 shared HTTP/TLS/QUIC host path 按 consumer 分别写 URL/domain/packet done bit，active consumer 全部 done 后清 `NF_FF_L7_USE` 并设置 L7_SKIP hint；后续独立 DPI context 清 `NF_FF_DPI_USE`。unknown/error/disabled 保持 `app_id=0`。
 
 追加字段前必须验证 `nat_key_t.len`、`natflow_off`、`NATCAP_MAX_OFF`、`__ALIGN_64BITS` 和 NATCAP 组合布局。验证不通过时，`CONFIG_NATFLOW_DPI` build 必须拒绝启用，不能静默切换到长期 side-table 模型。
 
