@@ -4,7 +4,10 @@
  */
 #include <linux/module.h>
 #include <linux/mman.h>
+#include <linux/kernel.h>
 #include <linux/spinlock.h>
+#include <linux/string.h>
+#include <linux/uaccess.h>
 #include <linux/rcupdate.h>
 #include <linux/highmem.h>
 #include <linux/udp.h>
@@ -24,6 +27,65 @@
 unsigned int debug = 0;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0=none,1=error,2=warn,4=info,8=debug,16=fixme,32=debug_ratelimited,...,63=all) default=0");
+
+ssize_t natflow_queue_cache_write(struct natflow_queue_cache_write_state *state,
+        const char __user *buf, size_t buf_len, loff_t *offset,
+        natflow_queue_cache_set_fn set_cache)
+{
+	int n, l;
+	int cnt = MAX_IOCTL_LEN;
+
+	if (!state || !set_cache)
+		return -EINVAL;
+
+	cnt -= state->data_left;
+	if (buf_len < cnt)
+		cnt = buf_len;
+
+	if (copy_from_user(state->data + state->data_left, buf, cnt) != 0)
+		return -EACCES;
+
+	n = 0;
+	while (n < cnt && (state->data[n] == ' ' || state->data[n] == '\n' || state->data[n] == '\t')) n++;
+	if (n) {
+		*offset += n;
+		state->data_left = 0;
+		return n;
+	}
+
+	l = 0;
+	while (l < cnt && state->data[l + state->data_left] != '\n') l++;
+	if (l >= cnt) {
+		state->data_left += l;
+		if (state->data_left >= MAX_IOCTL_LEN) {
+			NATFLOW_println("error: queue cache command too long");
+			state->data_left = 0;
+			return -EINVAL;
+		}
+		goto done;
+	}
+
+	state->data[l + state->data_left] = '\0';
+	state->data_left = 0;
+	l++;
+
+	if (strncmp(state->data, "cache=", 6) == 0) {
+		unsigned int cache_limit;
+
+		if (kstrtouint(state->data + 6, 10, &cache_limit) != 0) {
+			NATFLOW_println("invalid queue cache command: [%s]", state->data);
+			return -EINVAL;
+		}
+		set_cache(cache_limit);
+	} else {
+		NATFLOW_println("invalid queue cache command: [%s]", state->data);
+		return -EINVAL;
+	}
+
+done:
+	*offset += l;
+	return l;
+}
 
 #if defined(nf_ct_ext_add)
 void *compat_nf_ct_ext_add(struct nf_conn *ct, int id, gfp_t gfp)

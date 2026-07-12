@@ -152,6 +152,14 @@ extern int natflow_probe_ct_ext(void);
 
 extern int natflow_session_init(struct nf_conn *ct, gfp_t gfp);
 extern struct natflow_t *natflow_session_get(struct nf_conn *ct);
+typedef void (*natflow_queue_cache_set_fn)(unsigned int cache_limit);
+struct natflow_queue_cache_write_state {
+	char data[MAX_IOCTL_LEN];
+	int data_left;
+};
+extern ssize_t natflow_queue_cache_write(struct natflow_queue_cache_write_state *state,
+        const char __user *buf, size_t buf_len, loff_t *offset,
+        natflow_queue_cache_set_fn set_cache);
 static inline struct natflow_t *natflow_session_in(struct nf_conn *ct)
 {
 	struct natflow_t *nf = natflow_session_get(ct);

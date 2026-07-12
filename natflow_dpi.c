@@ -28,7 +28,6 @@ enum natflow_dpi_state {
 
 #define NATFLOW_DPI_DOMAIN_RULE_MAX 128
 #define NATFLOW_DPI_PROTO_RULE_MAX 32
-#define NATFLOW_DPI_EVENT_MAX 1024
 #define NATFLOW_DPI_EVENT_TIMESTAMP_NOW ((u64)((jiffies - INITIAL_JIFFIES) / HZ))
 
 enum natflow_dpi_domain_kind {
@@ -96,6 +95,8 @@ static LIST_HEAD(natflow_dpi_event_list);
 static DEFINE_SPINLOCK(natflow_dpi_event_lock);
 static unsigned int natflow_dpi_event_count;
 static unsigned int natflow_dpi_queue_readers;
+static unsigned int natflow_dpi_queue_cache_limit;
+static struct natflow_queue_cache_write_state natflow_dpi_queue_write_state;
 static struct natflow_dpi_ruleset __rcu *natflow_dpi_active_ruleset;
 static struct natflow_dpi_ruleset *natflow_dpi_pending_ruleset;
 static unsigned int natflow_dpi_state = NATFLOW_DPI_STATE_DISABLED;
@@ -475,7 +476,8 @@ static void natflow_dpi_event_queue(const struct nf_conn *ct,
 {
 	struct natflow_dpi_event_node *node;
 
-	if (READ_ONCE(natflow_dpi_queue_readers) == 0)
+	if (READ_ONCE(natflow_dpi_queue_readers) == 0 ||
+	        READ_ONCE(natflow_dpi_queue_cache_limit) == 0)
 		return;
 
 	node = kzalloc(sizeof(*node), GFP_ATOMIC);
@@ -497,12 +499,13 @@ static void natflow_dpi_event_queue(const struct nf_conn *ct,
 	natflow_dpi_event_fill_tuple(&node->hdr, ct);
 
 	spin_lock_bh(&natflow_dpi_event_lock);
-	if (natflow_dpi_queue_readers == 0) {
+	if (natflow_dpi_queue_readers == 0 ||
+	        natflow_dpi_queue_cache_limit == 0) {
 		spin_unlock_bh(&natflow_dpi_event_lock);
 		kfree(node);
 		return;
 	}
-	if (natflow_dpi_event_count >= NATFLOW_DPI_EVENT_MAX) {
+	if (natflow_dpi_event_count >= natflow_dpi_queue_cache_limit) {
 		spin_unlock_bh(&natflow_dpi_event_lock);
 		kfree(node);
 		atomic64_inc(&natflow_dpi_events_lost);
@@ -559,6 +562,32 @@ static void natflow_dpi_events_clear(void)
 	for (i = 0; i <= NATFLOW_DPI_EVENT_SOURCE_MAX; i++)
 		atomic64_set(&natflow_dpi_source_events[i], 0);
 	wake_up_interruptible(&natflow_dpi_wait);
+}
+
+static void natflow_dpi_queue_cache_set(unsigned int cache_limit)
+{
+	LIST_HEAD(free_list);
+
+	WRITE_ONCE(natflow_dpi_queue_cache_limit, cache_limit);
+	if (cache_limit == 0) {
+		natflow_dpi_event_purge();
+		wake_up_interruptible(&natflow_dpi_wait);
+		return;
+	}
+
+	spin_lock_bh(&natflow_dpi_event_lock);
+	while (natflow_dpi_event_count > cache_limit) {
+		struct natflow_dpi_event_node *node;
+
+		node = list_first_entry(&natflow_dpi_event_list,
+		                        struct natflow_dpi_event_node, list);
+		list_del(&node->list);
+		natflow_dpi_event_count--;
+		list_add_tail(&node->list, &free_list);
+	}
+	spin_unlock_bh(&natflow_dpi_event_lock);
+
+	natflow_dpi_event_free_list(&free_list);
 }
 
 static int natflow_dpi_rules_begin(void)
@@ -1032,6 +1061,8 @@ static int natflow_dpi_queue_open(struct inode *inode, struct file *file)
 		return -EBUSY;
 	}
 	WRITE_ONCE(natflow_dpi_queue_readers, 1);
+	WRITE_ONCE(natflow_dpi_queue_cache_limit, 0);
+	natflow_dpi_queue_write_state.data_left = 0;
 	natflow_dpi_event_purge_locked(&free_list);
 	spin_unlock_bh(&natflow_dpi_event_lock);
 
@@ -1046,6 +1077,8 @@ static int natflow_dpi_queue_release(struct inode *inode, struct file *file)
 
 	spin_lock_bh(&natflow_dpi_event_lock);
 	WRITE_ONCE(natflow_dpi_queue_readers, 0);
+	WRITE_ONCE(natflow_dpi_queue_cache_limit, 0);
+	natflow_dpi_queue_write_state.data_left = 0;
 	natflow_dpi_event_purge_locked(&free_list);
 	spin_unlock_bh(&natflow_dpi_event_lock);
 
@@ -1083,6 +1116,14 @@ static ssize_t natflow_dpi_queue_read(struct file *file, char __user *buf,
 	return ret;
 }
 
+static ssize_t natflow_dpi_queue_write(struct file *file, const char __user *buf,
+                                       size_t buf_len, loff_t *offset)
+{
+	return natflow_queue_cache_write(&natflow_dpi_queue_write_state, buf,
+	                                 buf_len, offset,
+	                                 natflow_dpi_queue_cache_set);
+}
+
 static unsigned int natflow_dpi_queue_poll(struct file *file, poll_table *wait)
 {
 	unsigned int mask = 0;
@@ -1100,6 +1141,7 @@ static const struct file_operations natflow_dpi_queue_fops = {
 	.open = natflow_dpi_queue_open,
 	.release = natflow_dpi_queue_release,
 	.read = natflow_dpi_queue_read,
+	.write = natflow_dpi_queue_write,
 	.poll = natflow_dpi_queue_poll,
 	.llseek = natflow_no_llseek,
 };
@@ -1521,7 +1563,8 @@ int natflow_dpi_init(void)
 	atomic64_set(&natflow_dpi_proto_no_rule, 0);
 	for (i = 0; i <= NATFLOW_DPI_EVENT_SOURCE_MAX; i++)
 		atomic64_set(&natflow_dpi_source_events[i], 0);
-	natflow_dpi_queue_readers = 0;
+	WRITE_ONCE(natflow_dpi_queue_readers, 0);
+	WRITE_ONCE(natflow_dpi_queue_cache_limit, 0);
 	natflow_dpi_generation = 1;
 	natflow_dpi_rules = 0;
 	WRITE_ONCE(natflow_dpi_domain_rules, 0);
@@ -1559,6 +1602,8 @@ void natflow_dpi_exit(void)
 
 	mutex_lock(&natflow_dpi_lock);
 	WRITE_ONCE(natflow_dpi_state, NATFLOW_DPI_STATE_DISABLED);
+	WRITE_ONCE(natflow_dpi_queue_readers, 0);
+	WRITE_ONCE(natflow_dpi_queue_cache_limit, 0);
 	natflow_dpi_pending_free();
 	natflow_dpi_txn_active = 0;
 	ruleset = rcu_dereference_protected(natflow_dpi_active_ruleset, 1);

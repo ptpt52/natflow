@@ -221,9 +221,9 @@ echo 1 >/proc/sys/urllogger_store/enable
 - 单行命令最大 `256` 字节。
 - 一条命令必须以 `\n` 结束。
 - `cat /dev/*_ctl` 通常会输出 usage 和可重放配置。
-- 未识别命令多数情况下只写内核日志并返回已消费字节。
+- 未识别命令多数情况下只写内核日志并返回已消费字节；三个 `natflow_*_queue` 的写接口只接受 `cache=N`，未识别命令返回 `-EINVAL`。
 - `userinfo_ctl`、`natflow_userinfo_queue`、`natflow_urllogger_queue`、`natflow_dpi_queue` 不支持小 buffer partial read；用户态应使用足够大的读缓冲。
-- `/dev/natflow_userinfo_queue`、`/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应保持 fd 打开。
+- `/dev/natflow_userinfo_queue`、`/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应以 `O_RDWR` 打开并保持 fd，写入 `cache=N\n` 设置最多缓存 N 条事件后才会缓存新事件；写入 `cache=0\n` 会关闭缓存并清空未读事件。
 - 多个 writer 并发写同一控制设备时，半行缓存可能互相干扰；生产脚本应串行写入。
 
 ## 对外接口总览
@@ -234,14 +234,14 @@ echo 1 >/proc/sys/urllogger_store/enable
 | `/dev/natflow_zone_ctl` | char device | LAN/WAN zone 配置和刷新。 |
 | `/dev/natflow_user_ctl` | char device | 认证规则、认证开关、portal 重定向和 bypass ipset。 |
 | `/dev/userinfo_ctl` | char device | 用户状态读取、踢用户、设置认证状态、单用户限速。 |
-| `/dev/natflow_userinfo_queue` | char device | 认证二进制事件队列，只允许一个 reader，空读返回 0，支持 `poll()`。 |
+| `/dev/natflow_userinfo_queue` | char device | 认证二进制事件队列，只允许一个 reader，默认不缓存，空读返回 0，支持 `poll()`。 |
 | `/dev/qos_ctl` | char device | 全局 QoS 规则和 `tc_classid_mode`。 |
 | `/dev/hostacl_ctl` | char device | Host ACL 规则和默认动作。 |
-| `/dev/natflow_urllogger_queue` | char device | URL/SNI/ACL 命中二进制事件队列，只允许一个 reader。 |
+| `/dev/natflow_urllogger_queue` | char device | URL/SNI/ACL 命中二进制事件队列，只允许一个 reader，默认不缓存。 |
 | `/dev/natflow_dpi_ctl` | char device | DPI enable 状态、domain/proto ruleset 事务和统计。 |
-| `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列，只允许一个 reader，当前输出 domain/proto match v2 固定头事件和 original tuple。 |
+| `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列，只允许一个 reader，默认不缓存，当前输出 domain/proto match v2 固定头事件和 original tuple。 |
 | `/dev/conntrackinfo_ctl` | char device | conntrack 文本快照。 |
-| `/proc/sys/urllogger_store/*` | sysctl | URL logger 开关、容量和合并窗口。 |
+| `/proc/sys/urllogger_store/*` | sysctl | URL logger 开关、合并窗口和当前队列条数。 |
 
 ## `/dev/natflow_ctl`
 
@@ -434,14 +434,15 @@ echo 'set-token-ctrl <ip_or_ipv6> <rxbytes> <txbytes>' >/dev/userinfo_ctl
 
 读取方式：
 
-用户态应打开并保持 fd，使用 `poll()`、`select()` 或 `epoll` 等待可读后循环 `read()` 固定头事件；不要用 `cat` 作为长期采集程序。
+用户态应以 `O_RDWR` 打开并保持 fd，先向同一个 fd 写入 `cache=N\n` 设置最多缓存 N 条事件，再使用 `poll()`、`select()` 或 `epoll` 等待可读后循环 `read()` 固定头事件；不要用 `cat` 作为长期采集程序。
 
 行为：
 
 - 队列为空时 `read()` 返回 0；`poll()` 在有事件时返回 readable。
 - 同一时间只允许一个 reader，第二个打开会返回 `-EBUSY`。
-- 事件只在 reader 打开期间入队；reader 关闭时会清空未读事件。
-- 写接口未实现，返回 `-ENOSYS`。
+- 默认不缓存；事件只在 reader 已打开且写入正数 `cache=N\n` 后入队，队列满时丢弃新事件。
+- 写入 `cache=0\n` 会关闭缓存并清空未读事件；reader 关闭时也会清空未读事件。
+- 写接口只接受 `cache=N`，N 为十进制无符号整数；未知命令返回 `-EINVAL`。
 
 固定头为：
 
@@ -512,11 +513,39 @@ struct natflow_userinfo_event_hdr {
 	uint32_t tx_speed_bytes;
 } __attribute__((packed));
 
+#define CACHE_LIMIT 256
+
+static int set_cache_limit(int fd)
+{
+	char cmd[32];
+	int cmd_len = snprintf(cmd, sizeof(cmd), "cache=%u\n", CACHE_LIMIT);
+	ssize_t len;
+
+	if (cmd_len < 0 || (size_t)cmd_len >= sizeof(cmd)) {
+		fprintf(stderr, "invalid cache command\n");
+		return -1;
+	}
+	len = write(fd, cmd, cmd_len);
+	if (len < 0) {
+		perror("write cache limit");
+		return -1;
+	}
+	if (len != cmd_len) {
+		fprintf(stderr, "short write cache limit\n");
+		return -1;
+	}
+	return 0;
+}
+
 int main(void)
 {
-	int fd = open(USERINFO_QUEUE, O_RDONLY | O_CLOEXEC);
+	int fd = open(USERINFO_QUEUE, O_RDWR | O_CLOEXEC);
 	if (fd < 0) {
 		perror("open " USERINFO_QUEUE);
+		return 1;
+	}
+	if (set_cache_limit(fd) != 0) {
+		close(fd);
 		return 1;
 	}
 
@@ -649,9 +678,6 @@ sysctl：
 | 路径 | 默认值 | 说明 |
 | --- | --- | --- |
 | `/proc/sys/urllogger_store/enable` | 0 | 是否启用 URL logger/Host ACL 处理。 |
-| `/proc/sys/urllogger_store/memsize_limit` | 10485760 | URL store 内存上限。 |
-| `/proc/sys/urllogger_store/memsize` | 0 | 当前已缓存待读 URL 记录的内存占用，只读。 |
-| `/proc/sys/urllogger_store/count_limit` | 10000 | URL store 记录数上限。 |
 | `/proc/sys/urllogger_store/count` | 0 | 当前已缓存待读 URL 记录数，只读。 |
 | `/proc/sys/urllogger_store/timestamp_freq` | 10 | 相同 URL 合并窗口，也是读出前的最小老化秒数。 |
 | `/proc/sys/urllogger_store/tuple_type` | 0 | 记录 tuple 方向：0=`dir0-src dir0-dst`，1=`dir0-src dir1-src`，2=`dir1-dst dir1-src`。 |
@@ -664,7 +690,7 @@ sysctl：
 echo 1 >/proc/sys/urllogger_store/enable
 ```
 
-`/dev/natflow_urllogger_queue` 只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 时，URL/SNI record 直接丢弃，不缓存到 URL store；reader 打开时会先清空残留记录，关闭时也会清空未读记录。`read()` 在没有可读记录时返回 0；因为 `timestamp_freq` 同时是相同 URL 合并窗口和读出前的最小老化秒数，用户态应保持 fd 打开，使用 `poll()`、`select()` 或 `epoll` 等待可读后再读取。不要用 `cat /dev/natflow_urllogger_queue` 做长期采集；空队列会让 `cat` 退出，后续记录会因没有 reader 而被丢弃。
+`/dev/natflow_urllogger_queue` 只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 或 reader 未写入正数 `cache=N\n` 时，URL/SNI record 直接丢弃，不缓存到 URL store；reader 打开时 cache 默认为 0 并会先清空残留记录，写入 `cache=N\n` 后最多缓存 N 条新记录，队列满时丢弃新记录；写入 `cache=0\n` 或关闭 fd 会关闭缓存并清空未读记录。`read()` 在没有可读记录时返回 0；因为 `timestamp_freq` 同时是相同 URL 合并窗口和读出前的最小老化秒数，用户态应以 `O_RDWR` 打开并保持 fd，先写入 `cache=N\n`，再使用 `poll()`、`select()` 或 `epoll` 等待可读后读取。不要用 `cat /dev/natflow_urllogger_queue` 做长期采集；空队列会让 `cat` 退出，后续记录会因没有 reader 或未开启缓存而被丢弃。
 
 每次 `read()` 最多返回一条版本化二进制记录。如果同一个 fd 上 `read()` 返回 0，表示当前没有已老化到可读状态的记录；reader 应继续保持 fd 打开并重新进入 `poll()` 等待，而不是关闭后反复重开。使用无限期 `poll()` 时需要注意：已有记录只会在新记录入队或清理事件发生时唤醒；如果业务依赖 `timestamp_freq` 到期后立刻读出，应在用户态给 `poll()` 设置不大于 `timestamp_freq` 的超时并定期重试。
 
@@ -737,6 +763,30 @@ struct natflow_urllogger_event_hdr {
 	uint8_t acl_action;
 } __attribute__((packed));
 
+#define CACHE_LIMIT 256
+
+static int set_cache_limit(int fd)
+{
+	char cmd[32];
+	int cmd_len = snprintf(cmd, sizeof(cmd), "cache=%u\n", CACHE_LIMIT);
+	ssize_t len;
+
+	if (cmd_len < 0 || (size_t)cmd_len >= sizeof(cmd)) {
+		fprintf(stderr, "invalid cache command\n");
+		return -1;
+	}
+	len = write(fd, cmd, cmd_len);
+	if (len < 0) {
+		perror("write cache limit");
+		return -1;
+	}
+	if (len != cmd_len) {
+		fprintf(stderr, "short write cache limit\n");
+		return -1;
+	}
+	return 0;
+}
+
 static const char *source_name(uint8_t source)
 {
 	switch (source) {
@@ -749,9 +799,13 @@ static const char *source_name(uint8_t source)
 
 int main(void)
 {
-	int fd = open(URLLOGGER_QUEUE, O_RDONLY | O_CLOEXEC);
+	int fd = open(URLLOGGER_QUEUE, O_RDWR | O_CLOEXEC);
 	if (fd < 0) {
 		perror("open " URLLOGGER_QUEUE);
+		return 1;
+	}
+	if (set_cache_limit(fd) != 0) {
+		close(fd);
 		return 1;
 	}
 
@@ -821,11 +875,7 @@ int main(void)
 }
 ```
 
-清空队列：
-
-```sh
-echo 'clear' >/dev/natflow_urllogger_queue
-```
+关闭缓存并清空未读记录时，对长期 reader 已打开的同一个 `O_RDWR` fd 写入 `cache=0\n`，例如 `write(fd, "cache=0\n", 8)`。
 
 ## DPI rules and protocol detectors
 
@@ -869,12 +919,12 @@ echo events_clear >/dev/natflow_dpi_ctl
 - 有界 payload detector：TCP original direction 的 SSH banner 识别 `SSH-<version>-` identification string，可覆盖部分非 22 端口 SSH 客户端 banner；STUN/TURN 识别 STUN header、length 和 magic cookie，并按 TURN 方法区分 TURN；BitTorrent 的 TCP 分支识别标准 handshake，UDP 分支识别 uTP v1 header 和 DHT bencode token 前缀窗口，其中 uTP 会校验版本、类型和扩展号。
 - `cat /dev/natflow_dpi_ctl` 会输出已成功入队的 `events_*` source counters 和 `proto_no_session`、`proto_app_exists`、`proto_no_rule` protocol-only reason counters，可用于 shadow 统计和解释 detector 已识别但未产生 match event 的原因。
 
-`/dev/natflow_dpi_queue` 使用版本化二进制记录，只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 时，match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时会先清空残留事件，关闭时也会清空未读事件。当前 record 是 v2 固定头，包含规则命中摘要和 original direction tuple；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。有 reader 期间队列最多缓存 1024 条事件，溢出或分配失败会增加 `events_lost`。
+`/dev/natflow_dpi_queue` 使用版本化二进制记录，只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 或 reader 未写入正数 `cache=N\n` 时，match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时 cache 默认为 0 并会先清空残留事件，写入 `cache=N\n` 后最多缓存 N 条新事件，队列满、溢出或分配失败会丢弃新事件并增加 `events_lost`；写入 `cache=0\n` 或关闭 fd 会关闭缓存并清空未读事件。当前 record 是 v2 固定头，包含规则命中摘要和 original direction tuple；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。
 
 读者用法：
 
-- 用户态应先打开并保持 `/dev/natflow_dpi_queue` fd，再启用 DPI 或开始采集流量；fd 关闭期间产生的 match event 会被直接丢弃。
-- 不建议用 `cat /dev/natflow_dpi_queue` 做长期采集；如果打开时队列为空，`read()` 会返回 0，`cat` 会退出，后续事件又会因没有 reader 而被丢弃。
+- 用户态应以 `O_RDWR` 先打开并保持 `/dev/natflow_dpi_queue` fd，写入正数 `cache=N\n` 后再启用 DPI 或开始采集流量；fd 关闭或 cache 关闭期间产生的 match event 会被直接丢弃。
+- 不建议用 `cat /dev/natflow_dpi_queue` 做长期采集；如果打开时队列为空，`read()` 会返回 0，`cat` 会退出，后续事件又会因没有 reader 或未开启缓存而被丢弃。
 - 推荐使用 `poll()`、`select()` 或 `epoll` 等待 fd 可读；可读后按 `sizeof(struct natflow_dpi_event_hdr)` 读取记录。每次 `read()` 最多返回一条固定头事件。
 - 如果同一个 fd 上 `read()` 返回 0，表示当前队列已空；reader 应继续保持 fd 打开并重新进入 `poll()` 等待，而不是关闭后反复重开。
 
@@ -950,6 +1000,30 @@ struct natflow_dpi_event_hdr {
 	uint32_t flags;
 } __attribute__((packed));
 
+#define CACHE_LIMIT 256
+
+static int set_cache_limit(int fd)
+{
+	char cmd[32];
+	int cmd_len = snprintf(cmd, sizeof(cmd), "cache=%u\n", CACHE_LIMIT);
+	ssize_t len;
+
+	if (cmd_len < 0 || (size_t)cmd_len >= sizeof(cmd)) {
+		fprintf(stderr, "invalid cache command\n");
+		return -1;
+	}
+	len = write(fd, cmd, cmd_len);
+	if (len < 0) {
+		perror("write cache limit");
+		return -1;
+	}
+	if (len != cmd_len) {
+		fprintf(stderr, "short write cache limit\n");
+		return -1;
+	}
+	return 0;
+}
+
 static const char *source_name(uint32_t source)
 {
 	switch (source) {
@@ -999,9 +1073,13 @@ static const char *addr_text(uint16_t family, const uint8_t addr[16],
 
 int main(void)
 {
-	int fd = open(DPI_QUEUE, O_RDONLY | O_CLOEXEC);
+	int fd = open(DPI_QUEUE, O_RDWR | O_CLOEXEC);
 	if (fd < 0) {
 		perror("open " DPI_QUEUE);
+		return 1;
+	}
+	if (set_cache_limit(fd) != 0) {
+		close(fd);
 		return 1;
 	}
 
@@ -1093,7 +1171,7 @@ echo 'kickall' >/dev/conntrackinfo_ctl
 1. 先确认模块是否加载、设备节点是否存在：`ls -l /dev/*natflow* /dev/*info* /dev/*acl*`。
 2. 写命令无效时，确认命令带换行，且没有超过 256 字节。
 3. fast path 不生效时，检查 `disabled=0`、zone 是否刷新、`debug` 日志、conntrack 是否存在。
-4. URL/Host ACL 不生效时，确认 `echo 1 >/proc/sys/urllogger_store/enable`，再看 `/dev/natflow_urllogger_queue` 是否输出目标 host。
+4. URL/Host ACL 不生效时，确认 `echo 1 >/proc/sys/urllogger_store/enable`，并让 reader 以 `O_RDWR` 打开 `/dev/natflow_urllogger_queue` 后写入正数 `cache=N`，再看队列是否输出目标 host。
 5. QoS 不生效时，先 `cat /dev/qos_ctl` 确认规则已加载，再检查是否已有连接缓存了旧规则；生产变更建议配合重新建连或刷新相关连接状态。
 6. 老内核如果不能正确处理 ingress hook 的 `NF_STOLEN`，需要内核侧补丁；详细实现约束见 `SYSTEM_DESIGN_SPEC.md`。
 

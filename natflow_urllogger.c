@@ -144,14 +144,13 @@ tuple_type:
 static unsigned int urllogger_store_tuple_type = 0;
 static unsigned int urllogger_store_timestamp_freq = TIMESTAMP_FREQ;
 static unsigned int urllogger_store_enable = 0;
-static unsigned int urllogger_store_memsize_limit = 1024 * 1024 * 10;
-static unsigned int urllogger_store_count_limit = 10000;
-static unsigned int urllogger_store_memsize = 0;
 static unsigned int urllogger_store_count = 0;
 static LIST_HEAD(urllogger_store_list);
 static DEFINE_SPINLOCK(urllogger_store_lock);
 static wait_queue_head_t urllogger_wait;
 static unsigned int urllogger_store_readers;
+static unsigned int urllogger_store_cache_limit;
+static struct natflow_queue_cache_write_state urllogger_write_state;
 
 static inline int urllogger_store_addr_equal(const struct urlinfo *a, const struct urlinfo *b)
 {
@@ -177,7 +176,6 @@ static inline int urllogger_store_ready_locked(void)
 static void urllogger_store_purge_locked(struct list_head *free_list)
 {
 	list_splice_init(&urllogger_store_list, free_list);
-	urllogger_store_memsize = 0;
 	urllogger_store_count = 0;
 }
 
@@ -199,13 +197,14 @@ static void urllogger_store_record(struct urlinfo *url)
 	LIST_HEAD(free_list);
 	int ready;
 
-	if (READ_ONCE(urllogger_store_readers) == 0) {
+	if (READ_ONCE(urllogger_store_readers) == 0 ||
+	        READ_ONCE(urllogger_store_cache_limit) == 0) {
 		urlinfo_release(url);
 		return;
 	}
 
 	spin_lock(&urllogger_store_lock);
-	if (urllogger_store_readers == 0) {
+	if (urllogger_store_readers == 0 || urllogger_store_cache_limit == 0) {
 		spin_unlock(&urllogger_store_lock);
 		urlinfo_release(url);
 		return;
@@ -228,13 +227,16 @@ static void urllogger_store_record(struct urlinfo *url)
 			return;
 		}
 	}
-	urllogger_store_memsize += ALIGN(sizeof(struct urlinfo) + url->data_len, __URLINFO_ALIGN);
+	if (urllogger_store_count >= urllogger_store_cache_limit) {
+		spin_unlock(&urllogger_store_lock);
+		urlinfo_release(url);
+		return;
+	}
 	urllogger_store_count++;
 	list_add_tail(&url->list, &urllogger_store_list);
-	while (urllogger_store_count > urllogger_store_count_limit || urllogger_store_memsize > urllogger_store_memsize_limit) {
+	while (urllogger_store_count > urllogger_store_cache_limit) {
 		pos = urllogger_store_list.next;
 		url_i = list_entry(pos, struct urlinfo, list);
-		urllogger_store_memsize -= ALIGN(sizeof(struct urlinfo) + url_i->data_len, __URLINFO_ALIGN);
 		urllogger_store_count--;
 		list_del(pos);
 		list_add_tail(&url_i->list, &free_list);
@@ -253,6 +255,32 @@ static void urllogger_store_clear(void)
 
 	spin_lock_bh(&urllogger_store_lock);
 	urllogger_store_purge_locked(&free_list);
+	spin_unlock_bh(&urllogger_store_lock);
+
+	urllogger_store_free_list(&free_list);
+}
+
+static void urllogger_store_cache_set(unsigned int cache_limit)
+{
+	LIST_HEAD(free_list);
+	struct list_head *pos;
+	struct urlinfo *url_i;
+
+	WRITE_ONCE(urllogger_store_cache_limit, cache_limit);
+	if (cache_limit == 0) {
+		urllogger_store_clear();
+		wake_up_interruptible(&urllogger_wait);
+		return;
+	}
+
+	spin_lock_bh(&urllogger_store_lock);
+	while (urllogger_store_count > cache_limit) {
+		pos = urllogger_store_list.next;
+		url_i = list_entry(pos, struct urlinfo, list);
+		urllogger_store_count--;
+		list_del(pos);
+		list_add_tail(&url_i->list, &free_list);
+	}
 	spin_unlock_bh(&urllogger_store_lock);
 
 	urllogger_store_free_list(&free_list);
@@ -1436,57 +1464,8 @@ static struct urlinfo *urlinfo_alloc_record(const unsigned char *host, int host_
 
 static ssize_t urllogger_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
 {
-	int err = 0;
-	int n, l;
-	int cnt = MAX_IOCTL_LEN;
-	static char data[MAX_IOCTL_LEN];
-	static int data_left = 0;
-
-	cnt -= data_left;
-	if (buf_len < cnt)
-		cnt = buf_len;
-
-	if (copy_from_user(data + data_left, buf, cnt) != 0)
-		return -EACCES;
-
-	n = 0;
-	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
-	if (n) {
-		*offset += n;
-		data_left = 0;
-		return n;
-	}
-
-	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
-	l = 0;
-	while (l < cnt && data[l + data_left] != '\n') l++;
-	if (l >= cnt) {
-		data_left += l;
-		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("error: line too long");
-			data_left = 0;
-			return -EINVAL;
-		}
-		goto done;
-	} else {
-		data[l + data_left] = '\0';
-		data_left = 0;
-		l++;
-	}
-
-	if (strncmp(data, "clear", 5) == 0) {
-		urllogger_store_clear();
-		goto done;
-	}
-
-	NATFLOW_println("ignoring line: [%s]", data);
-	if (err != 0) {
-		return err;
-	}
-
-done:
-	*offset += l;
-	return l;
+	return natflow_queue_cache_write(&urllogger_write_state, buf, buf_len,
+	                                 offset, urllogger_store_cache_set);
 }
 
 /* read one and clear one */
@@ -1511,7 +1490,6 @@ static ssize_t urllogger_read(struct file *file, char __user *buf,
 			spin_unlock_bh(&urllogger_store_lock);
 			return -EINVAL;
 		}
-		urllogger_store_memsize -= ALIGN(sizeof(struct urlinfo) + url->data_len, __URLINFO_ALIGN);
 		urllogger_store_count--;
 		list_del(&url->list);
 	} else {
@@ -1570,6 +1548,8 @@ static int urllogger_open(struct inode *inode, struct file *file)
 		return -EBUSY;
 	}
 	WRITE_ONCE(urllogger_store_readers, 1);
+	WRITE_ONCE(urllogger_store_cache_limit, 0);
+	urllogger_write_state.data_left = 0;
 	urllogger_store_purge_locked(&free_list);
 	spin_unlock_bh(&urllogger_store_lock);
 
@@ -1587,6 +1567,8 @@ static int urllogger_release(struct inode *inode, struct file *file)
 
 	spin_lock_bh(&urllogger_store_lock);
 	WRITE_ONCE(urllogger_store_readers, 0);
+	WRITE_ONCE(urllogger_store_cache_limit, 0);
+	urllogger_write_state.data_left = 0;
 	urllogger_store_purge_locked(&free_list);
 	spin_unlock_bh(&urllogger_store_lock);
 
@@ -1616,27 +1598,6 @@ static const struct file_operations urllogger_fops = {
 };
 
 static struct ctl_table urllogger_table[] = {
-	{
-		.procname       = "memsize_limit",
-		.data           = &urllogger_store_memsize_limit,
-		.maxlen         = sizeof(unsigned int),
-		.mode           = S_IRUGO|S_IWUSR,
-		.proc_handler   = proc_douintvec,
-	},
-	{
-		.procname       = "memsize",
-		.data           = &urllogger_store_memsize,
-		.maxlen         = sizeof(unsigned int),
-		.mode           = S_IRUGO,
-		.proc_handler   = proc_douintvec,
-	},
-	{
-		.procname       = "count_limit",
-		.data           = &urllogger_store_count_limit,
-		.maxlen         = sizeof(unsigned int),
-		.mode           = S_IRUGO|S_IWUSR,
-		.proc_handler   = proc_douintvec,
-	},
 	{
 		.procname       = "count",
 		.data           = &urllogger_store_count,
@@ -1989,6 +1950,7 @@ int natflow_urllogger_init(void)
 
 	init_waitqueue_head(&urllogger_wait);
 	WRITE_ONCE(urllogger_store_readers, 0);
+	WRITE_ONCE(urllogger_store_cache_limit, 0);
 
 	if (urllogger_major > 0) {
 		devno = MKDEV(urllogger_major, urllogger_minor);
@@ -2057,6 +2019,7 @@ void natflow_urllogger_exit(void)
 	dev_t devno;
 
 	WRITE_ONCE(urllogger_store_readers, 0);
+	WRITE_ONCE(urllogger_store_cache_limit, 0);
 	wake_up_interruptible(&urllogger_wait);
 
 	natflow_hostacl_exit();
