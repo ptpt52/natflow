@@ -27,9 +27,11 @@
 #include <linux/uaccess.h>
 #include <linux/unistd.h>
 #include <linux/mman.h>
+#include <linux/poll.h>
 #include <linux/spinlock.h>
 #include <linux/mutex.h>
 #include <linux/rcupdate.h>
+#include <linux/wait.h>
 #include <linux/highmem.h>
 #include <net/netfilter/nf_conntrack.h>
 #include <linux/netfilter/ipset/ip_set.h>
@@ -155,6 +157,8 @@ static unsigned int urllogger_store_memsize = 0;
 static unsigned int urllogger_store_count = 0;
 static LIST_HEAD(urllogger_store_list);
 static DEFINE_SPINLOCK(urllogger_store_lock);
+static wait_queue_head_t urllogger_wait;
+static unsigned int urllogger_store_readers;
 
 static inline int urllogger_store_addr_equal(const struct urlinfo *a, const struct urlinfo *b)
 {
@@ -169,11 +173,50 @@ static inline int urllogger_store_addr_equal(const struct urlinfo *a, const stru
 	return a->sip == b->sip && a->dip == b->dip;
 }
 
+static inline int urllogger_store_ready_locked(void)
+{
+	struct urlinfo *url;
+
+	url = list_first_entry_or_null(&urllogger_store_list, struct urlinfo, list);
+	return url && uintmindiff(URLINFO_NOW, url->timestamp) > urllogger_store_timestamp_freq;
+}
+
+static void urllogger_store_purge_locked(struct list_head *free_list)
+{
+	list_splice_init(&urllogger_store_list, free_list);
+	urllogger_store_memsize = 0;
+	urllogger_store_count = 0;
+}
+
+static void urllogger_store_free_list(struct list_head *free_list)
+{
+	struct urlinfo *url;
+	struct urlinfo *tmp;
+
+	list_for_each_entry_safe(url, tmp, free_list, list) {
+		list_del(&url->list);
+		urlinfo_release(url);
+	}
+}
+
 static void urllogger_store_record(struct urlinfo *url)
 {
 	struct urlinfo *url_i;
 	struct list_head *pos;
+	LIST_HEAD(free_list);
+	int ready;
+
+	if (READ_ONCE(urllogger_store_readers) == 0) {
+		urlinfo_release(url);
+		return;
+	}
+
 	spin_lock(&urllogger_store_lock);
+	if (urllogger_store_readers == 0) {
+		spin_unlock(&urllogger_store_lock);
+		urlinfo_release(url);
+		return;
+	}
 	list_for_each_prev(pos, &urllogger_store_list) {
 		url_i = list_entry(pos, struct urlinfo, list);
 		/* merge the duplicate url request in 10s */
@@ -184,8 +227,11 @@ static void urllogger_store_record(struct urlinfo *url)
 		        url_i->flags == url->flags &&
 		        url_i->http_method == url->http_method) {
 			url_i->hits++;
+			ready = urllogger_store_ready_locked();
 			spin_unlock(&urllogger_store_lock);
 			urlinfo_release(url);
+			if (ready)
+				wake_up_interruptible(&urllogger_wait);
 			return;
 		}
 	}
@@ -198,24 +244,25 @@ static void urllogger_store_record(struct urlinfo *url)
 		urllogger_store_memsize -= ALIGN(sizeof(struct urlinfo) + url_i->data_len, __URLINFO_ALIGN);
 		urllogger_store_count--;
 		list_del(pos);
-		urlinfo_release(url_i);
+		list_add_tail(&url_i->list, &free_list);
 	}
+	ready = urllogger_store_ready_locked();
 	spin_unlock(&urllogger_store_lock);
+
+	urllogger_store_free_list(&free_list);
+	if (ready)
+		wake_up_interruptible(&urllogger_wait);
 }
 
 static void urllogger_store_clear(void)
 {
-	struct urlinfo *url;
-	struct list_head *pos, *n;
+	LIST_HEAD(free_list);
+
 	spin_lock_bh(&urllogger_store_lock);
-	list_for_each_safe(pos, n, &urllogger_store_list) {
-		url = list_entry(pos, struct urlinfo, list);
-		urllogger_store_memsize -= ALIGN(sizeof(struct urlinfo) + url->data_len, __URLINFO_ALIGN);
-		urllogger_store_count--;
-		list_del(pos);
-		urlinfo_release(url);
-	}
+	urllogger_store_purge_locked(&free_list);
 	spin_unlock_bh(&urllogger_store_lock);
+
+	urllogger_store_free_list(&free_list);
 }
 
 static int hostacl_major = 0;
@@ -1522,7 +1569,7 @@ static ssize_t urllogger_read(struct file *file, char __user *buf,
 
 	spin_lock_bh(&urllogger_store_lock);
 	url = list_first_entry_or_null(&urllogger_store_list, struct urlinfo, list);
-	if (url && uintmindiff(URLINFO_NOW, url->timestamp) > urllogger_store_timestamp_freq) {
+	if (url && urllogger_store_ready_locked()) {
 		urllogger_store_memsize -= ALIGN(sizeof(struct urlinfo) + url->data_len, __URLINFO_ALIGN);
 		urllogger_store_count--;
 		list_del(&url->list);
@@ -1589,10 +1636,23 @@ out:
 static int urllogger_open(struct inode *inode, struct file *file)
 {
 	struct urllogger_user *user;
+	LIST_HEAD(free_list);
 
 	user = kmalloc(URLLOGGER_MEMSIZE, GFP_KERNEL);
 	if (!user)
 		return -ENOMEM;
+
+	spin_lock_bh(&urllogger_store_lock);
+	if (urllogger_store_readers != 0) {
+		spin_unlock_bh(&urllogger_store_lock);
+		kfree(user);
+		return -EBUSY;
+	}
+	WRITE_ONCE(urllogger_store_readers, 1);
+	urllogger_store_purge_locked(&free_list);
+	spin_unlock_bh(&urllogger_store_lock);
+
+	urllogger_store_free_list(&free_list);
 
 	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
@@ -1606,6 +1666,15 @@ static int urllogger_open(struct inode *inode, struct file *file)
 static int urllogger_release(struct inode *inode, struct file *file)
 {
 	struct urllogger_user *user = file->private_data;
+	LIST_HEAD(free_list);
+
+	spin_lock_bh(&urllogger_store_lock);
+	WRITE_ONCE(urllogger_store_readers, 0);
+	urllogger_store_purge_locked(&free_list);
+	spin_unlock_bh(&urllogger_store_lock);
+
+	urllogger_store_free_list(&free_list);
+	wake_up_interruptible(&urllogger_wait);
 
 	if (!user)
 		return 0;
@@ -1615,10 +1684,23 @@ static int urllogger_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
+static unsigned int urllogger_poll(struct file *file, poll_table *wait)
+{
+	unsigned int mask = 0;
+
+	poll_wait(file, &urllogger_wait, wait);
+	spin_lock_bh(&urllogger_store_lock);
+	if (urllogger_store_ready_locked())
+		mask = POLLIN | POLLRDNORM;
+	spin_unlock_bh(&urllogger_store_lock);
+	return mask;
+}
+
 static const struct file_operations urllogger_fops = {
 	.open = urllogger_open,
 	.read = urllogger_read,
 	.write = urllogger_write,
+	.poll = urllogger_poll,
 	.release = urllogger_release,
 };
 
@@ -1994,6 +2076,9 @@ int natflow_urllogger_init(void)
 	int ret = 0;
 	dev_t devno;
 
+	init_waitqueue_head(&urllogger_wait);
+	WRITE_ONCE(urllogger_store_readers, 0);
+
 	if (urllogger_major > 0) {
 		devno = MKDEV(urllogger_major, urllogger_minor);
 		ret = register_chrdev_region(devno, 1, urllogger_dev_name);
@@ -2059,6 +2144,9 @@ cdev_add_failed:
 void natflow_urllogger_exit(void)
 {
 	dev_t devno;
+
+	WRITE_ONCE(urllogger_store_readers, 0);
+	wake_up_interruptible(&urllogger_wait);
 
 	natflow_hostacl_exit();
 

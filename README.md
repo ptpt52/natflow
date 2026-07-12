@@ -223,6 +223,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 - `cat /dev/*_ctl` 通常会输出 usage 和可重放配置。
 - 未识别命令多数情况下只写内核日志并返回已消费字节。
 - `userinfo_ctl`、`userinfo_event_ctl`、`urllogger_queue` 不支持小 buffer partial read；用户态应使用足够大的读缓冲。
+- `/dev/urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应保持 fd 打开，并用 `poll()`、`select()` 或 `epoll` 等待可读。
 - 多个 writer 并发写同一控制设备时，半行缓存可能互相干扰；生产脚本应串行写入。
 
 ## 对外接口总览
@@ -236,7 +237,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 | `/dev/userinfo_event_ctl` | char device | 阻塞式认证事件流，只允许一个 reader。 |
 | `/dev/qos_ctl` | char device | 全局 QoS 规则和 `tc_classid_mode`。 |
 | `/dev/hostacl_ctl` | char device | Host ACL 规则和默认动作。 |
-| `/dev/urllogger_queue` | char device | URL/SNI/ACL 命中记录队列。 |
+| `/dev/urllogger_queue` | char device | URL/SNI/ACL 命中记录队列，只允许一个 reader。 |
 | `/dev/natflow_dpi_ctl` | char device | DPI enable 状态、domain/proto ruleset 事务和统计。 |
 | `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列，只允许一个 reader，当前输出 domain/proto match 固定头事件。 |
 | `/dev/conntrackinfo_ctl` | char device | conntrack 文本快照。 |
@@ -519,9 +520,9 @@ sysctl：
 | --- | --- | --- |
 | `/proc/sys/urllogger_store/enable` | 0 | 是否启用 URL logger/Host ACL 处理。 |
 | `/proc/sys/urllogger_store/memsize_limit` | 10485760 | URL store 内存上限。 |
-| `/proc/sys/urllogger_store/memsize` | 0 | 当前内存占用，只读。 |
+| `/proc/sys/urllogger_store/memsize` | 0 | 当前已缓存待读 URL 记录的内存占用，只读。 |
 | `/proc/sys/urllogger_store/count_limit` | 10000 | URL store 记录数上限。 |
-| `/proc/sys/urllogger_store/count` | 0 | 当前记录数，只读。 |
+| `/proc/sys/urllogger_store/count` | 0 | 当前已缓存待读 URL 记录数，只读。 |
 | `/proc/sys/urllogger_store/timestamp_freq` | 10 | 相同 URL 合并窗口，也是读出前的最小老化秒数。 |
 | `/proc/sys/urllogger_store/tuple_type` | 0 | 记录 tuple 方向：0=`dir0-src dir0-dst`，1=`dir0-src dir1-src`，2=`dir1-dst dir1-src`。 |
 
@@ -529,8 +530,11 @@ sysctl：
 
 ```sh
 echo 1 >/proc/sys/urllogger_store/enable
-cat /dev/urllogger_queue
 ```
+
+`/dev/urllogger_queue` 只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 时，URL/SNI record 直接丢弃，不缓存到 URL store；reader 打开时会先清空残留记录，关闭时也会清空未读记录。`read()` 在没有可读记录时返回 0；因为 `timestamp_freq` 同时是相同 URL 合并窗口和读出前的最小老化秒数，用户态应保持 fd 打开，使用 `poll()`、`select()` 或 `epoll` 等待可读后再读取。不要用 `cat /dev/urllogger_queue` 做长期采集；空队列会让 `cat` 退出，后续记录会因没有 reader 而被丢弃。
+
+每次 `read()` 最多返回一条 CSV 记录。如果同一个 fd 上 `read()` 返回 0，表示当前没有已老化到可读状态的记录；reader 应继续保持 fd 打开并重新进入 `poll()` 等待，而不是关闭后反复重开。使用无限期 `poll()` 时需要注意：已有记录只会在新记录入队或清理事件发生时唤醒；如果业务依赖 `timestamp_freq` 到期后立刻读出，应在用户态给 `poll()` 设置不大于 `timestamp_freq` 的超时并定期重试。
 
 输出格式：
 
