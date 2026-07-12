@@ -310,7 +310,7 @@ struct urllogger_acl_lookup {
 };
 
 static int urllogger_acl_lookup_init(struct urllogger_acl_lookup *lookup,
-        const unsigned char *host, int host_len, unsigned int host_flags)
+                                     const unsigned char *host, int host_len, unsigned int host_flags)
 {
 	ssize_t copied_host_len;
 
@@ -1356,8 +1356,8 @@ static unsigned int urllogger_consume_host_view_internal(URLLOGGER_HOOK_CTX_ARGS
 	                           host_view->uri.len);
 	if (!url)
 		return urllogger_consume_host_view_fallback(URLLOGGER_HOOK_CTX_PASS,
-		       reply_dev, skb, ct, nf, host_view, dpi_source, l3num, bridge,
-		       dpi_consumer, reset_reply, redirect_reply);
+		        reply_dev, skb, ct, nf, host_view, dpi_source, l3num, bridge,
+		        dpi_consumer, reset_reply, redirect_reply);
 
 	urllogger_fill_url_tuple(url, ct, l3num);
 	url->timestamp = URLINFO_NOW;
@@ -1405,10 +1405,10 @@ unsigned int natflow_urllogger_consume_host_view(unsigned int hooknum,
 
 	nf = natflow_session_get(view->ct);
 	return urllogger_consume_host_view_internal(URLLOGGER_HOOK_CTX_PASS,
-	                                            reply_dev, view->skb,
-	                                            view->ct, nf, host_view,
-	                                            view->l3num, bridge,
-	                                            url_consumer, dpi_consumer);
+	        reply_dev, view->skb,
+	        view->ct, nf, host_view,
+	        view->l3num, bridge,
+	        url_consumer, dpi_consumer);
 }
 
 int natflow_urllogger_url_enabled(void)

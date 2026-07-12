@@ -430,7 +430,7 @@ static bool natflow_dpi_domain_rule_match(const struct natflow_dpi_domain_rule *
 }
 
 static void natflow_dpi_event_fill_tuple(struct natflow_dpi_event_hdr *hdr,
-                                         const struct nf_conn *ct)
+        const struct nf_conn *ct)
 {
 	const struct nf_conntrack_tuple *tuple;
 
@@ -1239,7 +1239,7 @@ static unsigned int natflow_dpi_detect_ssh_tcp(const unsigned char *data,
 }
 
 static bool natflow_dpi_payload_is_utp(const unsigned char *data,
-        unsigned int inspect_len)
+                                       unsigned int inspect_len)
 {
 	unsigned char utp_type;
 	unsigned char utp_version;

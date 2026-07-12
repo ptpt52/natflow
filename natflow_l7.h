@@ -98,9 +98,9 @@ struct natflow_l7_quic_initial_info {
 };
 
 extern ssize_t natflow_l7_copy_host_tolower(unsigned char *dst,
-                                            const unsigned char *src,
-                                            ssize_t n,
-                                            unsigned int flags);
+        const unsigned char *src,
+        ssize_t n,
+        unsigned int flags);
 extern int natflow_l7_uri_validate(const unsigned char *uri, int uri_len);
 extern void natflow_l7_feature_init(struct natflow_l7_feature *feature,
                                     enum natflow_l7_feature_source source);
@@ -117,7 +117,7 @@ extern int natflow_l7_host_view_init(struct natflow_l7_host_view *view,
                                      int host_len,
                                      unsigned int host_flags);
 extern int natflow_l7_host_view_from_feature(struct natflow_l7_host_view *view,
-                                             const struct natflow_l7_feature *feature);
+        const struct natflow_l7_feature *feature);
 extern int natflow_l7_http_parse(unsigned char *data, int data_len,
                                  struct natflow_l7_feature *feature);
 extern enum natflow_l7_tls_search_result natflow_l7_tls_client_hello_search(unsigned char *data,
@@ -139,17 +139,17 @@ extern int natflow_l7_tls_cache_attach6(const struct in6_addr *src_ip,
                                         unsigned char *data,
                                         unsigned int data_len);
 extern unsigned char *natflow_l7_tls_cache_detach(__be32 src_ip,
-                                                  __be16 src_port,
-                                                  __be32 dst_ip,
-                                                  __be16 dst_port,
-                                                  __u32 *seq,
-                                                  unsigned int *data_len);
+        __be16 src_port,
+        __be32 dst_ip,
+        __be16 dst_port,
+        __u32 *seq,
+        unsigned int *data_len);
 extern unsigned char *natflow_l7_tls_cache_detach6(const struct in6_addr *src_ip,
-                                                   __be16 src_port,
-                                                   const struct in6_addr *dst_ip,
-                                                   __be16 dst_port,
-                                                   __u32 *seq,
-                                                   unsigned int *data_len);
+        __be16 src_port,
+        const struct in6_addr *dst_ip,
+        __be16 dst_port,
+        __u32 *seq,
+        unsigned int *data_len);
 extern int natflow_l7_quic_has_bytes(unsigned int offset,
                                      unsigned int bytes,
                                      unsigned int len);
@@ -176,24 +176,24 @@ extern int natflow_l7_quic_cache_attach(__be32 src_ip,
                                         unsigned char *crypto_data,
                                         unsigned int crypto_len);
 extern int natflow_l7_quic_cache_attach6(const struct in6_addr *src_ip,
-                                         __be16 src_port,
-                                         const struct in6_addr *dst_ip,
-                                         __be16 dst_port,
-                                         const struct natflow_l7_quic_initial_info *info,
-                                         unsigned char *crypto_data,
-                                         unsigned int crypto_len);
+        __be16 src_port,
+        const struct in6_addr *dst_ip,
+        __be16 dst_port,
+        const struct natflow_l7_quic_initial_info *info,
+        unsigned char *crypto_data,
+        unsigned int crypto_len);
 extern unsigned char *natflow_l7_quic_cache_detach(__be32 src_ip,
-                                                   __be16 src_port,
-                                                   __be32 dst_ip,
-                                                   __be16 dst_port,
-                                                   const struct natflow_l7_quic_initial_info *info,
-                                                   unsigned int *crypto_len);
+        __be16 src_port,
+        __be32 dst_ip,
+        __be16 dst_port,
+        const struct natflow_l7_quic_initial_info *info,
+        unsigned int *crypto_len);
 extern unsigned char *natflow_l7_quic_cache_detach6(const struct in6_addr *src_ip,
-                                                    __be16 src_port,
-                                                    const struct in6_addr *dst_ip,
-                                                    __be16 dst_port,
-                                                    const struct natflow_l7_quic_initial_info *info,
-                                                    unsigned int *crypto_len);
+        __be16 src_port,
+        const struct in6_addr *dst_ip,
+        __be16 dst_port,
+        const struct natflow_l7_quic_initial_info *info,
+        unsigned int *crypto_len);
 extern int natflow_l7_dns_parse(const unsigned char *data,
                                 unsigned int data_len,
                                 unsigned char l4proto,

@@ -187,8 +187,8 @@ static void natflow_l7_tls_cache_cleanup(void)
 #endif
 
 int natflow_l7_tls_cache_attach(__be32 src_ip, __be16 src_port,
-        __be32 dst_ip, __be16 dst_port, __u32 seq,
-        unsigned char *data, unsigned int data_len)
+                                __be32 dst_ip, __be16 dst_port, __u32 seq,
+                                unsigned char *data, unsigned int data_len)
 {
 	int i = smp_processor_id();
 	int j;
@@ -232,8 +232,8 @@ int natflow_l7_tls_cache_attach(__be32 src_ip, __be16 src_port,
 }
 
 int natflow_l7_tls_cache_attach6(const struct in6_addr *src_ip,
-        __be16 src_port, const struct in6_addr *dst_ip, __be16 dst_port,
-        __u32 seq, unsigned char *data, unsigned int data_len)
+                                 __be16 src_port, const struct in6_addr *dst_ip, __be16 dst_port,
+                                 __u32 seq, unsigned char *data, unsigned int data_len)
 {
 	int i = smp_processor_id();
 	int j;
@@ -465,9 +465,9 @@ failed:
 #endif
 
 static int natflow_l7_quic_hmac_sha256(struct natflow_l7_quic_crypto_ctx *ctx,
-        const unsigned char *key, unsigned int key_len,
-        const unsigned char *data, unsigned int data_len,
-        unsigned char *out)
+                                       const unsigned char *key, unsigned int key_len,
+                                       const unsigned char *data, unsigned int data_len,
+                                       unsigned char *out)
 {
 	struct shash_desc *desc = (struct shash_desc *)ctx->desc_buf;
 	int ret;
@@ -484,9 +484,9 @@ static int natflow_l7_quic_hmac_sha256(struct natflow_l7_quic_crypto_ctx *ctx,
 }
 
 static int natflow_l7_quic_hkdf_expand(struct natflow_l7_quic_crypto_ctx *ctx,
-        const unsigned char *secret, unsigned int secret_len,
-        const unsigned char *info, unsigned int info_len,
-        unsigned char *out, unsigned int out_len)
+                                       const unsigned char *secret, unsigned int secret_len,
+                                       const unsigned char *info, unsigned int info_len,
+                                       unsigned char *out, unsigned int out_len)
 {
 	unsigned char *input = ctx->hkdf_input;
 	unsigned char *digest = ctx->hkdf_digest;
@@ -535,8 +535,8 @@ static int natflow_l7_quic_hkdf_expand_label(struct natflow_l7_quic_crypto_ctx *
 }
 
 static int natflow_l7_quic_initial_keys(struct natflow_l7_quic_crypto_ctx *ctx,
-        const unsigned char *dcid, unsigned int dcid_len,
-        unsigned char *key, unsigned char *iv, unsigned char *hp)
+                                        const unsigned char *dcid, unsigned int dcid_len,
+                                        unsigned char *key, unsigned char *iv, unsigned char *hp)
 {
 	unsigned char *initial_secret = ctx->initial_secret;
 	unsigned char *client_secret = ctx->client_secret;
@@ -734,9 +734,9 @@ malformed:
 }
 
 static int natflow_l7_quic_cache_match(const struct natflow_l7_quic_cache_node *node,
-        __be32 src_ip, __be16 src_port,
-        __be32 dst_ip, __be16 dst_port,
-        const struct natflow_l7_quic_initial_info *info)
+                                       __be32 src_ip, __be16 src_port,
+                                       __be32 dst_ip, __be16 dst_port,
+                                       const struct natflow_l7_quic_initial_info *info)
 {
 	return node->crypto_data != NULL &&
 	       node->src_ip == src_ip &&
@@ -749,9 +749,9 @@ static int natflow_l7_quic_cache_match(const struct natflow_l7_quic_cache_node *
 }
 
 static int natflow_l7_quic_cache_match6(const struct natflow_l7_quic_cache_node *node,
-        const struct in6_addr *src_ip, __be16 src_port,
-        const struct in6_addr *dst_ip, __be16 dst_port,
-        const struct natflow_l7_quic_initial_info *info)
+                                        const struct in6_addr *src_ip, __be16 src_port,
+                                        const struct in6_addr *dst_ip, __be16 dst_port,
+                                        const struct natflow_l7_quic_initial_info *info)
 {
 	return node->crypto_data != NULL &&
 	       memcmp(&node->src_ipv6, src_ip, sizeof(*src_ip)) == 0 &&
@@ -764,10 +764,10 @@ static int natflow_l7_quic_cache_match6(const struct natflow_l7_quic_cache_node 
 }
 
 int natflow_l7_quic_cache_attach(__be32 src_ip, __be16 src_port,
-        __be32 dst_ip, __be16 dst_port,
-        const struct natflow_l7_quic_initial_info *info,
-        unsigned char *crypto_data,
-        unsigned int crypto_len)
+                                 __be32 dst_ip, __be16 dst_port,
+                                 const struct natflow_l7_quic_initial_info *info,
+                                 unsigned char *crypto_data,
+                                 unsigned int crypto_len)
 {
 	int i = smp_processor_id();
 	int j;
@@ -787,8 +787,8 @@ int natflow_l7_quic_cache_attach(__be32 src_ip, __be16 src_port,
 			natflow_l7_quic_cache[i][j].crypto_data = NULL;
 		}
 		if (natflow_l7_quic_cache_match(&natflow_l7_quic_cache[i][j],
-		                                 src_ip, src_port, dst_ip, dst_port,
-		                                 info))
+		                                src_ip, src_port, dst_ip, dst_port,
+		                                info))
 			return -EEXIST;
 		if (next_to_use == NATFLOW_L7_QUIC_CACHE_NODE_MAX &&
 		        natflow_l7_quic_cache[i][j].crypto_data == NULL)
@@ -812,10 +812,10 @@ int natflow_l7_quic_cache_attach(__be32 src_ip, __be16 src_port,
 }
 
 int natflow_l7_quic_cache_attach6(const struct in6_addr *src_ip,
-        __be16 src_port, const struct in6_addr *dst_ip, __be16 dst_port,
-        const struct natflow_l7_quic_initial_info *info,
-        unsigned char *crypto_data,
-        unsigned int crypto_len)
+                                  __be16 src_port, const struct in6_addr *dst_ip, __be16 dst_port,
+                                  const struct natflow_l7_quic_initial_info *info,
+                                  unsigned char *crypto_data,
+                                  unsigned int crypto_len)
 {
 	int i = smp_processor_id();
 	int j;
@@ -835,8 +835,8 @@ int natflow_l7_quic_cache_attach6(const struct in6_addr *src_ip,
 			natflow_l7_quic_cache[i][j].crypto_data = NULL;
 		}
 		if (natflow_l7_quic_cache_match6(&natflow_l7_quic_cache[i][j],
-		                                  src_ip, src_port, dst_ip, dst_port,
-		                                  info))
+		                                 src_ip, src_port, dst_ip, dst_port,
+		                                 info))
 			return -EEXIST;
 		if (next_to_use == NATFLOW_L7_QUIC_CACHE_NODE_MAX &&
 		        natflow_l7_quic_cache[i][j].crypto_data == NULL)
@@ -1032,7 +1032,7 @@ static void natflow_l7_mark_terminal(const struct natflow_l7_packet_view *view,
 
 #if defined(CONFIG_NATFLOW_DPI)
 static unsigned int natflow_l7_dpi_consume_packet_view(
-        const struct natflow_l7_packet_view *view)
+    const struct natflow_l7_packet_view *view)
 {
 	struct natflow_l7_packet_view pending_view;
 	unsigned int done_mask;
@@ -1093,10 +1093,10 @@ static unsigned int natflow_l7_dispatch_host_view(unsigned int hooknum,
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 #if NATFLOW_HAVE_IP_SET_STATE_API
 	return natflow_urllogger_consume_host_view(hooknum, state, &dispatch_view,
-	                                           host_view, reply_dev, bridge);
+	        host_view, reply_dev, bridge);
 #else
 	return natflow_urllogger_consume_host_view(hooknum, in, out, &dispatch_view,
-	                                           host_view, reply_dev, bridge);
+	        host_view, reply_dev, bridge);
 #endif
 #else
 	(void)hooknum;
@@ -1176,9 +1176,9 @@ static noinline unsigned int natflow_l7_quic4(NATFLOW_L7_URL_CONSUMER_ARGS,
 	crypto_data = natflow_l7_quic_cache_detach(iph->saddr, UDPH(l4)->source,
 	              iph->daddr, UDPH(l4)->dest, &quic_info, &crypto_len);
 	sni_result = natflow_l7_quic_initial_sni_search(data, &quic_info,
-	                                                &crypto_data,
-	                                                &crypto_len,
-	                                                &host, &host_len);
+	             &crypto_data,
+	             &crypto_len,
+	             &host, &host_len);
 	if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
 		if (crypto_data != NULL && crypto_len > 0 &&
 		        natflow_l7_quic_cache_attach(iph->saddr, UDPH(l4)->source,
@@ -1259,9 +1259,9 @@ static noinline unsigned int natflow_l7_quic6(NATFLOW_L7_URL_CONSUMER_ARGS,
 	crypto_data = natflow_l7_quic_cache_detach6(&ip6h->saddr, UDPH(l4)->source,
 	              &ip6h->daddr, UDPH(l4)->dest, &quic_info, &crypto_len);
 	sni_result = natflow_l7_quic_initial_sni_search(data, &quic_info,
-	                                                &crypto_data,
-	                                                &crypto_len,
-	                                                &host, &host_len);
+	             &crypto_data,
+	             &crypto_len,
+	             &host, &host_len);
 	if (sni_result == NATFLOW_L7_TLS_SEARCH_NEED_MORE) {
 		if (crypto_data != NULL && crypto_len > 0 &&
 		        natflow_l7_quic_cache_attach6(&ip6h->saddr, UDPH(l4)->source,
@@ -1476,12 +1476,12 @@ static int natflow_l7_udp6_packet_view_init(struct sk_buff *skb,
 }
 
 static noinline unsigned int natflow_l7_tcp_dispatch_tls_host(
-        NATFLOW_L7_URL_CONSUMER_ARGS,
-        const struct natflow_l7_packet_view *view,
-        const struct net_device *reply_dev,
-        int bridge,
-        unsigned char *host,
-        int host_len)
+    NATFLOW_L7_URL_CONSUMER_ARGS,
+    const struct natflow_l7_packet_view *view,
+    const struct net_device *reply_dev,
+    int bridge,
+    unsigned char *host,
+    int host_len)
 {
 	struct natflow_l7_host_view host_view;
 
@@ -1494,11 +1494,11 @@ static noinline unsigned int natflow_l7_tcp_dispatch_tls_host(
 }
 
 static noinline unsigned int natflow_l7_tcp_dispatch_http(
-        NATFLOW_L7_URL_CONSUMER_ARGS,
-        const struct natflow_l7_packet_view *view,
-        const struct net_device *reply_dev,
-        int bridge,
-        const struct natflow_l7_tcp_flow *flow);
+    NATFLOW_L7_URL_CONSUMER_ARGS,
+    const struct natflow_l7_packet_view *view,
+    const struct net_device *reply_dev,
+    int bridge,
+    const struct natflow_l7_tcp_flow *flow);
 
 static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_ARGS,
         const struct natflow_l7_packet_view *view,
@@ -1545,7 +1545,7 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_ARGS
 	}
 
 	prev_data = natflow_l7_tcp_tls_cache_detach(flow, &prev_seq,
-	                                            &prev_data_len);
+	            &prev_data_len);
 	if (prev_data) {
 		unsigned int append_len = flow->data_len;
 		unsigned int next_data_len;
@@ -1638,7 +1638,7 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_ARGS
 			if (!prev_data)
 				goto terminal;
 			if (natflow_l7_tcp_tls_cache_attach_current(flow, prev_data,
-			                                            flow->data_len) != 0) {
+			        flow->data_len) != 0) {
 				if (flow->l3num == AF_INET6)
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach l7 tls cache6\n",
 					              DEBUG_TCP_ARG6(flow->iph,flow->l4));
@@ -1659,8 +1659,8 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_ARGS
 terminal:
 	if (host) {
 		ret = natflow_l7_tcp_dispatch_tls_host(
-		      NATFLOW_L7_URL_CONSUMER_CALL_ARGS, view, reply_dev,
-		      bridge, host, host_len);
+		          NATFLOW_L7_URL_CONSUMER_CALL_ARGS, view, reply_dev,
+		          bridge, host, host_len);
 #if defined(CONFIG_NATFLOW_DPI)
 		if (ret == NF_ACCEPT && !dpi_packet_done &&
 		        (view->consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET))
@@ -1936,9 +1936,9 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 				if (consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET) {
 					if (ret == NF_ACCEPT &&
 					        natflow_l7_udp6_packet_view_init(skb, view,
-					                                         consumer_mask,
-					                                         &packet_view,
-					                                         &dport) == 0)
+					                consumer_mask,
+					                &packet_view,
+					                &dport) == 0)
 						natflow_l7_dpi_consume_packet_view(&packet_view);
 					else
 						natflow_l7_mark_terminal(view,
@@ -1990,9 +1990,9 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 				if (consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET) {
 					if (ret == NF_ACCEPT &&
 					        natflow_l7_udp4_packet_view_init(skb, view,
-					                                         consumer_mask,
-					                                         &packet_view,
-					                                         &dport) == 0)
+					                consumer_mask,
+					                &packet_view,
+					                &dport) == 0)
 						natflow_l7_dpi_consume_packet_view(&packet_view);
 					else
 						natflow_l7_mark_terminal(view,
@@ -2120,34 +2120,34 @@ static unsigned int natflow_l7_dpi_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS)
 #if !defined(CONFIG_NATFLOW_URLLOGGER) || !defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
 #if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_l7_url_hook(unsigned int hooknum,
-        struct sk_buff *skb,
-        const struct net_device *in,
-        const struct net_device *out,
-        int (*okfn)(struct sk_buff *))
+                                        struct sk_buff *skb,
+                                        const struct net_device *in,
+                                        const struct net_device *out,
+                                        int (*okfn)(struct sk_buff *))
 {
 	return NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, NULL, in, out);
 }
 #elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 static unsigned int natflow_l7_url_hook(const struct nf_hook_ops *ops,
-        struct sk_buff *skb,
-        const struct net_device *in,
-        const struct net_device *out,
-        int (*okfn)(struct sk_buff *))
+                                        struct sk_buff *skb,
+                                        const struct net_device *in,
+                                        const struct net_device *out,
+                                        int (*okfn)(struct sk_buff *))
 {
 	return NATFLOW_L7_URL_CONSUMER_CALL(ops->hooknum, skb, NULL, in, out);
 }
 #elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 static unsigned int natflow_l7_url_hook(const struct nf_hook_ops *ops,
-        struct sk_buff *skb,
-        const struct nf_hook_state *state)
+                                        struct sk_buff *skb,
+                                        const struct nf_hook_state *state)
 {
 	return NATFLOW_L7_URL_CONSUMER_CALL(state->hook, skb, state, state->in,
 	                                    state->out);
 }
 #else
 static unsigned int natflow_l7_url_hook(void *priv,
-        struct sk_buff *skb,
-        const struct nf_hook_state *state)
+                                        struct sk_buff *skb,
+                                        const struct nf_hook_state *state)
 {
 #if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
 	return NATFLOW_L7_URL_CONSUMER_CALL(state->hook, skb, state, state->in,
@@ -2162,34 +2162,34 @@ static unsigned int natflow_l7_url_hook(void *priv,
 #if defined(CONFIG_NATFLOW_DPI) && defined(CONFIG_NATFLOW_URLLOGGER) && defined(CONFIG_NATFLOW_URLLOGGER_LOCAL_IN)
 #if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_l7_dpi_hook(unsigned int hooknum,
-        struct sk_buff *skb,
-        const struct net_device *in,
-        const struct net_device *out,
-        int (*okfn)(struct sk_buff *))
+                                        struct sk_buff *skb,
+                                        const struct net_device *in,
+                                        const struct net_device *out,
+                                        int (*okfn)(struct sk_buff *))
 {
 	return NATFLOW_L7_DPI_CONSUMER_CALL(hooknum, skb, NULL, in, out);
 }
 #elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 static unsigned int natflow_l7_dpi_hook(const struct nf_hook_ops *ops,
-        struct sk_buff *skb,
-        const struct net_device *in,
-        const struct net_device *out,
-        int (*okfn)(struct sk_buff *))
+                                        struct sk_buff *skb,
+                                        const struct net_device *in,
+                                        const struct net_device *out,
+                                        int (*okfn)(struct sk_buff *))
 {
 	return NATFLOW_L7_DPI_CONSUMER_CALL(ops->hooknum, skb, NULL, in, out);
 }
 #elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 static unsigned int natflow_l7_dpi_hook(const struct nf_hook_ops *ops,
-        struct sk_buff *skb,
-        const struct nf_hook_state *state)
+                                        struct sk_buff *skb,
+                                        const struct nf_hook_state *state)
 {
 	return NATFLOW_L7_DPI_CONSUMER_CALL(state->hook, skb, state, state->in,
 	                                    state->out);
 }
 #else
 static unsigned int natflow_l7_dpi_hook(void *priv,
-        struct sk_buff *skb,
-        const struct nf_hook_state *state)
+                                        struct sk_buff *skb,
+                                        const struct nf_hook_state *state)
 {
 #if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
 	return NATFLOW_L7_DPI_CONSUMER_CALL(state->hook, skb, state, state->in,
@@ -2359,7 +2359,7 @@ static void natflow_l7_url_hooks_unregister(void)
 #endif /* CONFIG_NATFLOW_URLLOGGER || CONFIG_NATFLOW_DPI */
 
 static inline int natflow_l7_has_bytes(unsigned int offset,
-        unsigned int bytes, unsigned int len)
+                                       unsigned int bytes, unsigned int len)
 {
 	return offset <= len && bytes <= len - offset;
 }
@@ -2378,7 +2378,7 @@ static inline int natflow_l7_host_char_valid(unsigned char c)
 }
 
 ssize_t natflow_l7_copy_host_tolower(unsigned char *dst,
-        const unsigned char *src, ssize_t n, unsigned int flags)
+                                     const unsigned char *src, ssize_t n, unsigned int flags)
 {
 	ssize_t i = 0;
 	ssize_t end = n;
@@ -2475,7 +2475,7 @@ int natflow_l7_uri_validate(const unsigned char *uri, int uri_len)
 }
 
 void natflow_l7_feature_init(struct natflow_l7_feature *feature,
-        enum natflow_l7_feature_source source)
+                             enum natflow_l7_feature_source source)
 {
 	memset(feature, 0, sizeof(*feature));
 	feature->source = source;
@@ -2483,7 +2483,7 @@ void natflow_l7_feature_init(struct natflow_l7_feature *feature,
 }
 
 int natflow_l7_feature_set_host(struct natflow_l7_feature *feature,
-        const unsigned char *host, int host_len, unsigned int host_flags)
+                                const unsigned char *host, int host_len, unsigned int host_flags)
 {
 	ssize_t copied_host_len;
 
@@ -2506,7 +2506,7 @@ int natflow_l7_feature_set_host(struct natflow_l7_feature *feature,
 }
 
 int natflow_l7_feature_set_uri(struct natflow_l7_feature *feature,
-        const unsigned char *uri, int uri_len)
+                               const unsigned char *uri, int uri_len)
 {
 	if (!feature || !uri || natflow_l7_uri_validate(uri, uri_len) < 0)
 		return -EINVAL;
@@ -2520,8 +2520,8 @@ int natflow_l7_feature_set_uri(struct natflow_l7_feature *feature,
 }
 
 int natflow_l7_host_view_init(struct natflow_l7_host_view *view,
-        enum natflow_l7_feature_source source, const unsigned char *host,
-        int host_len, unsigned int host_flags)
+                              enum natflow_l7_feature_source source, const unsigned char *host,
+                              int host_len, unsigned int host_flags)
 {
 	if (!view || !host || host_len <= 0)
 		return -EINVAL;
@@ -2537,7 +2537,7 @@ int natflow_l7_host_view_init(struct natflow_l7_host_view *view,
 }
 
 int natflow_l7_host_view_from_feature(struct natflow_l7_host_view *view,
-        const struct natflow_l7_feature *feature)
+                                      const struct natflow_l7_feature *feature)
 {
 	int ret;
 
@@ -2570,7 +2570,7 @@ struct natflow_l7_http_host_view {
 };
 
 static int natflow_l7_http_fields_parse(unsigned char *data, int data_len,
-        struct natflow_l7_http_fields *fields)
+                                        struct natflow_l7_http_fields *fields)
 {
 	unsigned char *p = data;
 	int p_len = data_len;
@@ -2668,7 +2668,7 @@ static int natflow_l7_http_fields_parse(unsigned char *data, int data_len,
 }
 
 int natflow_l7_http_parse(unsigned char *data, int data_len,
-        struct natflow_l7_feature *feature)
+                          struct natflow_l7_feature *feature)
 {
 	struct natflow_l7_http_fields fields;
 	int ret;
@@ -2718,11 +2718,11 @@ static int natflow_l7_http_host_view_parse(unsigned char *data, int data_len,
 }
 
 static noinline unsigned int natflow_l7_tcp_dispatch_http(
-        NATFLOW_L7_URL_CONSUMER_ARGS,
-        const struct natflow_l7_packet_view *view,
-        const struct net_device *reply_dev,
-        int bridge,
-        const struct natflow_l7_tcp_flow *flow)
+    NATFLOW_L7_URL_CONSUMER_ARGS,
+    const struct natflow_l7_packet_view *view,
+    const struct net_device *reply_dev,
+    int bridge,
+    const struct natflow_l7_tcp_flow *flow)
 {
 	struct natflow_l7_http_host_view http;
 
@@ -2974,13 +2974,13 @@ need_more:
 }
 
 int natflow_l7_quic_has_bytes(unsigned int offset,
-        unsigned int bytes, unsigned int len)
+                              unsigned int bytes, unsigned int len)
 {
 	return natflow_l7_has_bytes(offset, bytes, len);
 }
 
 static int natflow_l7_quic_read_varint(const unsigned char *data,
-        unsigned int data_len, unsigned int *offset, u64 *value)
+                                       unsigned int data_len, unsigned int *offset, u64 *value)
 {
 	unsigned int pos = *offset;
 	unsigned int len;
@@ -3002,7 +3002,7 @@ static int natflow_l7_quic_read_varint(const unsigned char *data,
 }
 
 int natflow_l7_quic_initial_parse_info(const unsigned char *data,
-        unsigned int data_len, struct natflow_l7_quic_initial_info *info)
+                                       unsigned int data_len, struct natflow_l7_quic_initial_info *info)
 {
 	unsigned int offset = 0;
 	unsigned int scid_len;
@@ -3198,7 +3198,7 @@ enum natflow_l7_tls_search_result natflow_l7_quic_crypto_frames_search(const uns
 }
 
 int natflow_l7_dns_parse(const unsigned char *data, unsigned int data_len,
-        unsigned char l4proto, struct natflow_l7_feature *feature)
+                         unsigned char l4proto, struct natflow_l7_feature *feature)
 {
 	unsigned int offset;
 	unsigned int qdcount;

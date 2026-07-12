@@ -29,8 +29,8 @@ module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0=none,1=error,2=warn,4=info,8=debug,16=fixme,32=debug_ratelimited,...,63=all) default=0");
 
 ssize_t natflow_queue_cache_write(struct natflow_queue_cache_write_state *state,
-        const char __user *buf, size_t buf_len, loff_t *offset,
-        natflow_queue_cache_set_fn set_cache)
+                                  const char __user *buf, size_t buf_len, loff_t *offset,
+                                  natflow_queue_cache_set_fn set_cache)
 {
 	int n, l;
 	int cnt = MAX_IOCTL_LEN;
@@ -183,8 +183,8 @@ int natflow_ct_ext_layout_validate(void)
 	}
 
 	if (layout.natflow_off < layout.nat_key_off + sizeof(struct nat_key_t) ||
-	    layout.natflow_off != ALIGN(layout.natflow_off, __ALIGN_64BITS) ||
-	    layout.natflow_len < sizeof(struct natflow_t)) {
+	        layout.natflow_off != ALIGN(layout.natflow_off, __ALIGN_64BITS) ||
+	        layout.natflow_len < sizeof(struct natflow_t)) {
 		NATFLOW_ERROR("invalid natflow layout: key=%u flow=%u len=%u total=%u\n",
 		              layout.nat_key_off, layout.natflow_off,
 		              layout.natflow_len, layout.total_len);
