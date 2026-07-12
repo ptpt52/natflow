@@ -1259,7 +1259,7 @@ path notifier：
 ### 21.5 SHOULD：工程质量
 
 - SHOULD 把会静默截断的用户输入改为显式长度校验，尤其 auth rule 和 bypass ipset 名称；若保持兼容，则必须保留当前截断语义。
-- SHOULD 把 partial read FIXME 改成兼容性更好的 seq_file 或 per-open buffer，但必须记录行为变化。
+- SHOULD 评估是否把 `userinfo_ctl` 小 buffer read 改成兼容性更好的 seq_file 或 per-open buffer，但必须记录行为变化；三个 `natflow_*_queue` 已明确为 batch complete-record read，不做 partial record，除非先记录 ABI 变更决策。
 - SHOULD 为 vline 配置提供事务/冲突检查，但若追求完全兼容，应保留当前非事务行为。
 - SHOULD 避免继续复用 `net_device->flags` 高位和 `dev->name` 隐藏字节；若改动，必须提供兼容适配层。
 - SHOULD 为 fastnat hash 冲突、URL parser、QoS CIDR、认证状态机、vline NOARP/ND 路径增加测试。

@@ -34,7 +34,8 @@
 - [x] Host ACL 的 `redirect` action 当前没有完整重定向实现。（已实现基于 302 的拦截与配置）
 - `conntrackinfo_ctl` 的 `kickall` 当前没有实际清理行为。
 - [x] `/dev/natflow_userinfo_queue` 写接口不再返回 `-ENOSYS`，已统一为 queue `cache=N` 协议。
-- `userinfo_ctl`、`natflow_userinfo_queue`、`natflow_urllogger_queue`、`natflow_dpi_queue` 小 buffer read 当前返回 `-EINVAL`，不是 partial read；已作为 P1-1 兼容性任务保留。
+- [x] `natflow_userinfo_queue`、`natflow_urllogger_queue`、`natflow_dpi_queue` 已支持单次 `read()` 返回多条完整记录；三个 queue 仍不拆分单条记录，小于单条记录的用户 buffer 返回 `-EINVAL`，这是当前 ABI 限制。
+- `userinfo_ctl` 小 buffer read 当前返回 `-EINVAL`，不是 partial read；是否改善已作为 P1-1 兼容性任务保留。
 
 退出条件：
 
@@ -43,13 +44,13 @@
 
 ## P1：质量和兼容性
 
-### P1-1：修复小 buffer read 兼容性
+### P1-1：评估 `userinfo_ctl` 小 buffer read 兼容性
 
 状态：Planned
 
-目标：把 `userinfo_ctl`、`natflow_userinfo_queue`、`natflow_urllogger_queue`、`natflow_dpi_queue` 的小 buffer 读取从直接 `-EINVAL` 改为更兼容的 partial read 或 per-open buffer 行为。
+目标：评估是否把 `userinfo_ctl` 的小 buffer 读取从直接 `-EINVAL` 改为更兼容的 partial read 或 per-open buffer 行为，或明确保留当前限制。
 
-注意：这是用户可见行为变化，必须同步文档。
+注意：这是用户可见行为变化，必须同步文档。三个 `natflow_*_queue` 已支持 batch complete-record read，且当前 ABI 明确不返回 partial record，不再纳入本项改造范围。
 
 ### P1-2：增强控制输入长度校验
 
