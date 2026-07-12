@@ -61,5 +61,11 @@ extern void natflow_dpi_classify_host(struct nf_conn *ct,
                                       const unsigned char *host,
                                       unsigned short host_len,
                                       unsigned int source);
+extern void natflow_dpi_classify_host_flags(struct nf_conn *ct,
+        const unsigned char *host, unsigned short host_len,
+        unsigned int source, unsigned int host_flags);
+extern void natflow_dpi_classify_host_normalized(struct nf_conn *ct,
+        const unsigned char *host, unsigned short host_len,
+        unsigned int source);
 
 #endif /* _NATFLOW_DPI_H_ */

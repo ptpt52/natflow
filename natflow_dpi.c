@@ -574,24 +574,14 @@ int natflow_dpi_packet_consumer_enabled(void)
 	       READ_ONCE(natflow_dpi_proto_rules) != 0;
 }
 
-void natflow_dpi_classify_host(struct nf_conn *ct, const unsigned char *host,
-                               unsigned short host_len, unsigned int source)
+static void natflow_dpi_classify_normalized_host_match(struct nf_conn *ct,
+        const unsigned char *normalized, unsigned short normalized_len,
+        unsigned int source)
 {
 	const struct natflow_dpi_domain_rule *rule;
 	struct natflow_dpi_ruleset *ruleset;
-	unsigned char normalized[NATFLOW_DPI_HOST_MAX_LEN + 1];
 	natflow_t *nf;
-	int normalized_len;
 	unsigned int i;
-
-	if (!ct || !host || host_len == 0)
-		return;
-	if (READ_ONCE(natflow_dpi_state) != NATFLOW_DPI_STATE_ENABLED)
-		return;
-
-	normalized_len = natflow_dpi_host_normalize(normalized, host, host_len);
-	if (normalized_len <= 0)
-		return;
 
 	rcu_read_lock();
 	ruleset = rcu_dereference(natflow_dpi_active_ruleset);
@@ -614,6 +604,50 @@ void natflow_dpi_classify_host(struct nf_conn *ct, const unsigned char *host,
 		break;
 	}
 	rcu_read_unlock();
+}
+
+void natflow_dpi_classify_host_normalized(struct nf_conn *ct,
+        const unsigned char *host, unsigned short host_len, unsigned int source)
+{
+	if (!ct || !host || host_len == 0 || host_len > NATFLOW_DPI_HOST_MAX_LEN)
+		return;
+	if (READ_ONCE(natflow_dpi_state) != NATFLOW_DPI_STATE_ENABLED)
+		return;
+
+	natflow_dpi_classify_normalized_host_match(ct, host, host_len, source);
+}
+
+void natflow_dpi_classify_host_flags(struct nf_conn *ct,
+                                     const unsigned char *host,
+                                     unsigned short host_len,
+                                     unsigned int source,
+                                     unsigned int host_flags)
+{
+	unsigned char normalized[NATFLOW_DPI_HOST_MAX_LEN + 1];
+	int normalized_len;
+
+	if (!ct || !host || host_len == 0)
+		return;
+	if (READ_ONCE(natflow_dpi_state) != NATFLOW_DPI_STATE_ENABLED)
+		return;
+
+	if (host_flags != 0)
+		normalized_len = natflow_l7_copy_host_tolower(normalized, host,
+		                 host_len, host_flags);
+	else
+		normalized_len = natflow_dpi_host_normalize(normalized, host,
+		                 host_len);
+	if (normalized_len <= 0)
+		return;
+
+	natflow_dpi_classify_normalized_host_match(ct, normalized,
+	        normalized_len, source);
+}
+
+void natflow_dpi_classify_host(struct nf_conn *ct, const unsigned char *host,
+                               unsigned short host_len, unsigned int source)
+{
+	natflow_dpi_classify_host_flags(ct, host, host_len, source, 0);
 }
 
 static unsigned int natflow_dpi_proto_event_source(unsigned int proto)
@@ -1132,8 +1166,8 @@ static void natflow_dpi_classify_dns_query(struct nf_conn *ct,
 	if (natflow_l7_dns_parse(payload, payload_len, l4proto, &feature) <= 0)
 		return;
 
-	natflow_dpi_classify_host(ct, feature.host, feature.host_len,
-	                          NATFLOW_DPI_EVENT_SOURCE_DNS);
+	natflow_dpi_classify_host_normalized(ct, feature.host, feature.host_len,
+	                                     NATFLOW_DPI_EVENT_SOURCE_DNS);
 }
 
 static unsigned int natflow_dpi_detect_tcp(__be16 dport)

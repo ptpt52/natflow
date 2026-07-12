@@ -1114,8 +1114,11 @@ static unsigned int natflow_l7_dispatch_host_view(unsigned int hooknum,
 
 		dpi_source = natflow_l7_dpi_event_source(host_view->source);
 		if (dpi_source != 0)
-			natflow_dpi_classify_host(view->ct, host_view->host.data,
-			                          host_view->host.len, dpi_source);
+			natflow_dpi_classify_host_flags(view->ct,
+			                                host_view->host.data,
+			                                host_view->host.len,
+			                                dpi_source,
+			                                host_view->host_flags);
 	}
 #endif
 	return NF_ACCEPT;
@@ -1472,6 +1475,31 @@ static int natflow_l7_udp6_packet_view_init(struct sk_buff *skb,
 	return 0;
 }
 
+static noinline unsigned int natflow_l7_tcp_dispatch_tls_host(
+        NATFLOW_L7_URL_CONSUMER_ARGS,
+        const struct natflow_l7_packet_view *view,
+        const struct net_device *reply_dev,
+        int bridge,
+        unsigned char *host,
+        int host_len)
+{
+	struct natflow_l7_host_view host_view;
+
+	if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_TLS,
+	                              host, host_len, 0) == 0)
+		return NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
+		                                     reply_dev, bridge);
+
+	return NF_ACCEPT;
+}
+
+static noinline unsigned int natflow_l7_tcp_dispatch_http(
+        NATFLOW_L7_URL_CONSUMER_ARGS,
+        const struct natflow_l7_packet_view *view,
+        const struct net_device *reply_dev,
+        int bridge,
+        const struct natflow_l7_tcp_flow *flow);
+
 static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_ARGS,
         const struct natflow_l7_packet_view *view,
         const struct net_device *reply_dev,
@@ -1630,12 +1658,9 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_ARGS
 
 terminal:
 	if (host) {
-		struct natflow_l7_host_view host_view;
-
-		if (natflow_l7_host_view_init(&host_view, NATFLOW_L7_SOURCE_TLS,
-		                              host, host_len, 0) == 0)
-			ret = NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
-			                                    reply_dev, bridge);
+		ret = natflow_l7_tcp_dispatch_tls_host(
+		      NATFLOW_L7_URL_CONSUMER_CALL_ARGS, view, reply_dev,
+		      bridge, host, host_len);
 #if defined(CONFIG_NATFLOW_DPI)
 		if (ret == NF_ACCEPT && !dpi_packet_done &&
 		        (view->consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET))
@@ -1649,15 +1674,8 @@ terminal:
 	kfree(prev_data);
 	prev_data = NULL;
 
-	if (flow->data) {
-		struct natflow_l7_feature feature;
-		struct natflow_l7_host_view host_view;
-
-		if (natflow_l7_http_parse(flow->data, flow->data_len, &feature) > 0 &&
-		        natflow_l7_host_view_from_feature(&host_view, &feature) == 0)
-			ret = NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
-			                                    reply_dev, bridge);
-	}
+	ret = natflow_l7_tcp_dispatch_http(NATFLOW_L7_URL_CONSUMER_CALL_ARGS,
+	                                   view, reply_dev, bridge, flow);
 
 #if defined(CONFIG_NATFLOW_DPI)
 	if (ret == NF_ACCEPT && !dpi_packet_done &&
@@ -2539,22 +2557,30 @@ int natflow_l7_host_view_from_feature(struct natflow_l7_host_view *view,
 }
 
 /* Simple request-line + Host header parser matching legacy URL logger behavior. */
-int natflow_l7_http_parse(unsigned char *data, int data_len,
-        struct natflow_l7_feature *feature)
-{
-	unsigned char *host = NULL;
-	unsigned char *uri = NULL;
-	unsigned char *p = data;
+struct natflow_l7_http_fields {
+	unsigned char *host;
+	unsigned char *uri;
 	int host_len;
 	int uri_len;
+	enum natflow_l7_http_method http_method;
+};
+
+struct natflow_l7_http_host_view {
+	struct natflow_l7_host_view view;
+};
+
+static int natflow_l7_http_fields_parse(unsigned char *data, int data_len,
+        struct natflow_l7_http_fields *fields)
+{
+	unsigned char *p = data;
 	int p_len = data_len;
 	unsigned int i = 0;
 	enum natflow_l7_http_method http_method;
 
-	if (!data || !feature)
+	if (!data || !fields)
 		return -1;
 
-	natflow_l7_feature_init(feature, NATFLOW_L7_SOURCE_HTTP);
+	memset(fields, 0, sizeof(*fields));
 
 	if (i + 5 > p_len)
 		return -1;
@@ -2588,7 +2614,7 @@ int natflow_l7_http_parse(unsigned char *data, int data_len,
 		return -1;
 	if (p[i] != '/')
 		return -1;
-	uri = p + i;
+	fields->uri = p + i;
 
 	i++;
 	while (i < p_len && p[i] != ' ')
@@ -2597,7 +2623,7 @@ int natflow_l7_http_parse(unsigned char *data, int data_len,
 		return -1;
 	if (p[i] != ' ')
 		return -1;
-	uri_len = p + i - uri;
+	fields->uri_len = p + i - fields->uri;
 	i++;
 
 	while (i < p_len && p[i] != '\n')
@@ -2619,7 +2645,7 @@ int natflow_l7_http_parse(unsigned char *data, int data_len,
 				i++;
 			if (i >= p_len)
 				return -1;
-			host = p + i;
+			fields->host = p + i;
 
 			i++;
 			while (i < p_len && p[i] != ' ' && p[i] != '\r' && p[i] != '\n')
@@ -2628,18 +2654,10 @@ int natflow_l7_http_parse(unsigned char *data, int data_len,
 				return -1;
 			if (p[i] != ' ' && p[i] != '\r' && p[i] != '\n')
 				return -1;
-			host_len = p + i - host;
+			fields->host_len = p + i - fields->host;
+			fields->http_method = http_method;
 
-			if (natflow_l7_feature_set_host(feature, host, host_len,
-			                                NATFLOW_L7_HOST_ALLOW_PORT) < 0)
-				return -1;
-			feature->raw_uri.data = uri;
-			feature->raw_uri.len = uri_len;
-			feature->uri_len = uri_len;
-			feature->flags |= NATFLOW_L7_FEATURE_URI;
-			feature->http_method = http_method;
-
-			return host_len + uri_len;
+			return fields->host_len + fields->uri_len;
 		}
 		while (i < p_len && p[i] != '\n')
 			i++;
@@ -2648,6 +2666,76 @@ int natflow_l7_http_parse(unsigned char *data, int data_len,
 
 	return 0;
 }
+
+int natflow_l7_http_parse(unsigned char *data, int data_len,
+        struct natflow_l7_feature *feature)
+{
+	struct natflow_l7_http_fields fields;
+	int ret;
+
+	if (!data || !feature)
+		return -1;
+
+	natflow_l7_feature_init(feature, NATFLOW_L7_SOURCE_HTTP);
+	ret = natflow_l7_http_fields_parse(data, data_len, &fields);
+	if (ret <= 0)
+		return ret;
+
+	if (natflow_l7_feature_set_host(feature, fields.host, fields.host_len,
+	                                NATFLOW_L7_HOST_ALLOW_PORT) < 0)
+		return -1;
+	feature->raw_uri.data = fields.uri;
+	feature->raw_uri.len = fields.uri_len;
+	feature->uri_len = fields.uri_len;
+	feature->flags |= NATFLOW_L7_FEATURE_URI;
+	feature->http_method = fields.http_method;
+
+	return ret;
+}
+
+#if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
+static int natflow_l7_http_host_view_parse(unsigned char *data, int data_len,
+        struct natflow_l7_http_host_view *http)
+{
+	struct natflow_l7_http_fields fields;
+	int ret;
+
+	if (!http)
+		return -1;
+
+	ret = natflow_l7_http_fields_parse(data, data_len, &fields);
+	if (ret <= 0)
+		return ret;
+
+	if (natflow_l7_host_view_init(&http->view, NATFLOW_L7_SOURCE_HTTP,
+	                              fields.host, fields.host_len,
+	                              NATFLOW_L7_HOST_ALLOW_PORT) != 0)
+		return -1;
+	http->view.http_method = fields.http_method;
+	http->view.uri.data = fields.uri;
+	http->view.uri.len = fields.uri_len;
+	return ret;
+}
+
+static noinline unsigned int natflow_l7_tcp_dispatch_http(
+        NATFLOW_L7_URL_CONSUMER_ARGS,
+        const struct natflow_l7_packet_view *view,
+        const struct net_device *reply_dev,
+        int bridge,
+        const struct natflow_l7_tcp_flow *flow)
+{
+	struct natflow_l7_http_host_view http;
+
+	if (!flow->data)
+		return NF_ACCEPT;
+
+	if (natflow_l7_http_host_view_parse(flow->data, flow->data_len, &http) > 0)
+		return NATFLOW_L7_DISPATCH_HOST_VIEW(view, &http.view,
+		                                     reply_dev, bridge);
+
+	return NF_ACCEPT;
+}
+#endif
 
 static inline int natflow_l7_tls_has_bytes(unsigned int offset,
         unsigned int bytes, unsigned int len)
@@ -3112,7 +3200,6 @@ enum natflow_l7_tls_search_result natflow_l7_quic_crypto_frames_search(const uns
 int natflow_l7_dns_parse(const unsigned char *data, unsigned int data_len,
         unsigned char l4proto, struct natflow_l7_feature *feature)
 {
-	unsigned char host[NATFLOW_L7_HOST_MAX_LEN + 1];
 	unsigned int offset;
 	unsigned int qdcount;
 	unsigned int host_len = 0;
@@ -3167,11 +3254,11 @@ int natflow_l7_dns_parse(const unsigned char *data, unsigned int data_len,
 		if (host_len != 0) {
 			if (host_len >= NATFLOW_L7_HOST_MAX_LEN)
 				return -EINVAL;
-			host[host_len++] = '.';
+			feature->host[host_len++] = '.';
 		}
 		if (label_len > NATFLOW_L7_HOST_MAX_LEN - host_len)
 			return -EINVAL;
-		memcpy(host + host_len, data + offset, label_len);
+		memcpy(feature->host + host_len, data + offset, label_len);
 		host_len += label_len;
 		offset += label_len;
 	} while (offset < data_len);
@@ -3181,7 +3268,7 @@ int natflow_l7_dns_parse(const unsigned char *data, unsigned int data_len,
 	if (!natflow_l7_has_bytes(offset, 4, data_len))
 		return -EINVAL;
 
-	if (natflow_l7_feature_set_host(feature, host, host_len, 0) < 0)
+	if (natflow_l7_feature_set_host(feature, feature->host, host_len, 0) < 0)
 		return -EINVAL;
 	feature->raw_host.data = feature->host;
 	feature->raw_host.len = feature->host_len;

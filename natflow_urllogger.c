@@ -261,22 +261,28 @@ static int urllogger_acl_lookup_init(struct urllogger_acl_lookup *lookup,
 static inline void urllogger_dpi_classify_url(struct nf_conn *ct,
         const struct urlinfo *url, unsigned int source)
 {
-	natflow_dpi_classify_host(ct, url->data, url->host_len, source);
+	natflow_dpi_classify_host_normalized(ct, url->data, url->host_len,
+	                                     source);
 }
 
 static inline void urllogger_dpi_classify_lookup(struct nf_conn *ct,
         const struct urllogger_acl_lookup *lookup, unsigned int source)
 {
-	natflow_dpi_classify_host(ct, lookup->data, lookup->host_len, source);
+	natflow_dpi_classify_host_normalized(ct, lookup->data,
+	                                     lookup->host_len, source);
 }
 
 static inline void urllogger_dpi_classify_raw_host(struct nf_conn *ct,
-        const unsigned char *host, int host_len, unsigned int source)
+        const unsigned char *host, int host_len, unsigned int source,
+        unsigned int host_flags)
 {
-	if (host_len <= 0 || host_len > URLINFO_HOST_MAX_LEN)
+	if (host_len <= 0)
+		return;
+	if (host_len > URLINFO_HOST_MAX_LEN &&
+	        !(host_flags & URLINFO_HOST_ALLOW_PORT))
 		return;
 
-	natflow_dpi_classify_host(ct, host, host_len, source);
+	natflow_dpi_classify_host_flags(ct, host, host_len, source, host_flags);
 }
 
 struct acl_redirect_config {
@@ -1211,6 +1217,35 @@ static inline void urllogger_source_acl_reply(enum natflow_l7_feature_source sou
 	}
 }
 
+static noinline unsigned int urllogger_consume_host_view_fallback(URLLOGGER_HOOK_CTX_ARGS,
+        const struct net_device *reply_dev, struct sk_buff *skb,
+        struct nf_conn *ct, natflow_t *nf,
+        const struct natflow_l7_host_view *host_view, unsigned int dpi_source,
+        int l3num, int bridge, int dpi_consumer, int reset_reply,
+        enum urllogger_redirect_reply redirect_reply)
+{
+	struct urllogger_acl_lookup acl;
+	unsigned int ret = NF_ACCEPT;
+
+	if (urllogger_acl_lookup_init(&acl, host_view->host.data,
+	                              host_view->host.len,
+	                              host_view->host_flags) != 0)
+		return ret;
+
+	if (dpi_consumer)
+		urllogger_dpi_classify_lookup(ct, &acl, dpi_source);
+	urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS, skb, &acl,
+	                                l3num);
+	if (acl.acl_action != URLINFO_ACL_ACTION_RECORD)
+		ret = urllogger_reply_acl_action(URLLOGGER_HOOK_CTX_PASS,
+		                                 reply_dev, skb, ct, nf,
+		                                 l3num, bridge, acl.acl_action,
+		                                 host_view->http_method,
+		                                 reset_reply, redirect_reply);
+
+	return ret;
+}
+
 static unsigned int urllogger_consume_host_view_internal(URLLOGGER_HOOK_CTX_ARGS,
         const struct net_device *reply_dev, struct sk_buff *skb,
         struct nf_conn *ct, natflow_t *nf,
@@ -1243,32 +1278,18 @@ static unsigned int urllogger_consume_host_view_internal(URLLOGGER_HOOK_CTX_ARGS
 	if (!url_consumer) {
 		if (dpi_consumer)
 			urllogger_dpi_classify_raw_host(ct, host, host_view->host.len,
-			                                dpi_source);
+			                                dpi_source,
+			                                host_view->host_flags);
 		return ret;
 	}
 
 	url = urlinfo_alloc_record(host, host_view->host.len,
 	                           host_view->host_flags, uri,
 	                           host_view->uri.len);
-	if (!url) {
-		struct urllogger_acl_lookup acl;
-
-		if (urllogger_acl_lookup_init(&acl, host, host_view->host.len,
-		                              host_view->host_flags) == 0) {
-			if (dpi_consumer)
-				urllogger_dpi_classify_lookup(ct, &acl,
-				                              dpi_source);
-			urllogger_apply_host_acl_lookup(URLLOGGER_HOOK_CTX_PASS,
-			                                skb, &acl, l3num);
-			if (acl.acl_action != URLINFO_ACL_ACTION_RECORD)
-				ret = urllogger_reply_acl_action(URLLOGGER_HOOK_CTX_PASS,
-				                                 reply_dev, skb, ct, nf,
-				                                 l3num, bridge, acl.acl_action,
-				                                 http_method, reset_reply,
-				                                 redirect_reply);
-		}
-		return ret;
-	}
+	if (!url)
+		return urllogger_consume_host_view_fallback(URLLOGGER_HOOK_CTX_PASS,
+		       reply_dev, skb, ct, nf, host_view, dpi_source, l3num, bridge,
+		       dpi_consumer, reset_reply, redirect_reply);
 
 	urllogger_fill_url_tuple(url, ct, l3num);
 	url->timestamp = URLINFO_NOW;
