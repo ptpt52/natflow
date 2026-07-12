@@ -775,6 +775,98 @@ struct natflow_dpi_event_hdr {
 - `flags` 当前记录事件来源：1=`HTTP`，2=`TLS`，3=`QUIC`，4=`DNS`，5=`SSH`，6=`WireGuard`，7=`STUN`，8=`TURN`，9=`BitTorrent`。
 - `timestamp` 是 `ktime_get_ns()` 的内核单调时间纳秒值。
 
+C 读者样例：
+
+```c
+#include <errno.h>
+#include <fcntl.h>
+#include <inttypes.h>
+#include <poll.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <unistd.h>
+
+#define DPI_QUEUE "/dev/natflow_dpi_queue"
+
+struct natflow_dpi_event_hdr {
+	uint16_t version;
+	uint16_t header_len;
+	uint16_t record_len;
+	uint16_t reason;
+	uint32_t generation;
+	uint32_t app_id;
+	uint32_t category_id;
+	uint32_t rule_id;
+	uint32_t flags;
+	uint64_t timestamp;
+} __attribute__((packed));
+
+static const char *source_name(uint32_t source)
+{
+	switch (source) {
+	case 1: return "HTTP";
+	case 2: return "TLS";
+	case 3: return "QUIC";
+	case 4: return "DNS";
+	case 5: return "SSH";
+	case 6: return "WireGuard";
+	case 7: return "STUN";
+	case 8: return "TURN";
+	case 9: return "BitTorrent";
+	default: return "UNKNOWN";
+	}
+}
+
+int main(void)
+{
+	int fd = open(DPI_QUEUE, O_RDONLY | O_CLOEXEC);
+	if (fd < 0) {
+		perror("open " DPI_QUEUE);
+		return 1;
+	}
+
+	for (;;) {
+		struct pollfd pfd = { .fd = fd, .events = POLLIN };
+		int n = poll(&pfd, 1, -1);
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			perror("poll");
+			break;
+		}
+
+		for (;;) {
+			struct natflow_dpi_event_hdr ev;
+			ssize_t len = read(fd, &ev, sizeof(ev));
+
+			if (len < 0) {
+				if (errno == EINTR)
+					continue;
+				perror("read");
+				close(fd);
+				return 1;
+			}
+			if (len == 0)
+				break;
+			if ((size_t)len != sizeof(ev))
+				continue;
+			if (ev.version != 1 ||
+			    ev.header_len != sizeof(ev) ||
+			    ev.record_len != sizeof(ev))
+				continue;
+
+			printf("ts=%" PRIu64 " generation=%u app=%u rule=%u "
+			       "reason=%u source=%s category=%u\n",
+			       ev.timestamp, ev.generation, ev.app_id, ev.rule_id,
+			       ev.reason, source_name(ev.flags), ev.category_id);
+		}
+	}
+
+	close(fd);
+	return 1;
+}
+```
+
 ## `/dev/conntrackinfo_ctl`
 
 读取：
