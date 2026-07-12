@@ -1197,7 +1197,8 @@ skip:
 			ret = NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
 			                                    NULL, 0);
 	}
-	natflow_l7_mark_terminal(view, view->consumer_mask);
+	natflow_l7_mark_terminal(view,
+	                         natflow_l7_host_consumer_mask(view->consumer_mask));
 
 done:
 	kfree(crypto_data);
@@ -1279,7 +1280,8 @@ skip:
 			ret = NATFLOW_L7_DISPATCH_HOST_VIEW(view, &host_view,
 			                                    NULL, 0);
 	}
-	natflow_l7_mark_terminal(view, view->consumer_mask);
+	natflow_l7_mark_terminal(view,
+	                         natflow_l7_host_consumer_mask(view->consumer_mask));
 
 done:
 	kfree(crypto_data);
@@ -1913,13 +1915,16 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 				ret = natflow_l7_quic6(hooknum, in, out, skb, &packet_view);
 #endif
 #if defined(CONFIG_NATFLOW_DPI)
-				if (ret == NF_ACCEPT &&
-				        (consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET) &&
-				        natflow_l7_udp6_packet_view_init(skb, view,
-				                                         consumer_mask,
-				                                         &packet_view,
-				                                         &dport) == 0) {
-					natflow_l7_dpi_consume_packet_view(&packet_view);
+				if (consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET) {
+					if (ret == NF_ACCEPT &&
+					        natflow_l7_udp6_packet_view_init(skb, view,
+					                                         consumer_mask,
+					                                         &packet_view,
+					                                         &dport) == 0)
+						natflow_l7_dpi_consume_packet_view(&packet_view);
+					else
+						natflow_l7_mark_terminal(view,
+						                         NATFLOW_L7_CONSUMER_DPI_PACKET);
 				}
 #endif
 				return ret;
@@ -1964,13 +1969,16 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 				ret = natflow_l7_quic4(hooknum, in, out, skb, &packet_view);
 #endif
 #if defined(CONFIG_NATFLOW_DPI)
-				if (ret == NF_ACCEPT &&
-				        (consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET) &&
-				        natflow_l7_udp4_packet_view_init(skb, view,
-				                                         consumer_mask,
-				                                         &packet_view,
-				                                         &dport) == 0) {
-					natflow_l7_dpi_consume_packet_view(&packet_view);
+				if (consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET) {
+					if (ret == NF_ACCEPT &&
+					        natflow_l7_udp4_packet_view_init(skb, view,
+					                                         consumer_mask,
+					                                         &packet_view,
+					                                         &dport) == 0)
+						natflow_l7_dpi_consume_packet_view(&packet_view);
+					else
+						natflow_l7_mark_terminal(view,
+						                         NATFLOW_L7_CONSUMER_DPI_PACKET);
 				}
 #endif
 				return ret;
@@ -2224,7 +2232,11 @@ static unsigned int natflow_l7_url_local_in(void *priv,
 		return NF_ACCEPT;
 
 	ct = nf_ct_get(skb, &ctinfo);
-	if (!ct || CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
+	if (!ct)
+		return NF_ACCEPT;
+	if (ct->status & IPS_NATFLOW_CT_DROP)
+		return NF_DROP;
+	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
 		return NF_ACCEPT;
 	if (ct->status & IPS_NATFLOW_L7_HANDLED)
 		return NF_ACCEPT;
