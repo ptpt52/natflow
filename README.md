@@ -596,6 +596,13 @@ echo events_clear >/dev/natflow_dpi_ctl
 
 `/dev/natflow_dpi_queue` 使用版本化二进制记录，只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 时，match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时会先清空残留事件，关闭时也会清空未读事件。当前 record 只有固定头；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。有 reader 期间队列最多缓存 1024 条事件，溢出或分配失败会增加 `events_lost`。
 
+读者用法：
+
+- 用户态应先打开并保持 `/dev/natflow_dpi_queue` fd，再启用 DPI 或开始采集流量；fd 关闭期间产生的 match event 会被直接丢弃。
+- 不建议用 `cat /dev/natflow_dpi_queue` 做长期采集；如果打开时队列为空，`read()` 会返回 0，`cat` 会退出，后续事件又会因没有 reader 而被丢弃。
+- 推荐使用 `poll()`、`select()` 或 `epoll` 等待 fd 可读；可读后按 `sizeof(struct natflow_dpi_event_hdr)` 读取记录。每次 `read()` 最多返回一条固定头事件。
+- 如果同一个 fd 上 `read()` 返回 0，表示当前队列已空；reader 应继续保持 fd 打开并重新进入 `poll()` 等待，而不是关闭后反复重开。
+
 固定头为：
 
 ```c
