@@ -129,22 +129,7 @@ static const char *const sctp_conntrack_names[] = {
 	"HEARTBEAT_ACKED",
 };
 
-#if NATFLOW_DCCP_STATES_ARE_LOCAL
-enum ct_dccp_states {
-	CT_DCCP_NONE,
-	CT_DCCP_REQUEST,
-	CT_DCCP_RESPOND,
-	CT_DCCP_PARTOPEN,
-	CT_DCCP_OPEN,
-	CT_DCCP_CLOSEREQ,
-	CT_DCCP_CLOSING,
-	CT_DCCP_TIMEWAIT,
-	CT_DCCP_IGNORE,
-	CT_DCCP_INVALID,
-	__CT_DCCP_MAX
-};
-#endif
-
+#if !NATFLOW_DCCP_STATES_ARE_LOCAL
 static const char * const dccp_state_names[] = {
 	[CT_DCCP_NONE]          = "NONE",
 	[CT_DCCP_REQUEST]       = "REQUEST",
@@ -157,6 +142,7 @@ static const char * const dccp_state_names[] = {
 	[CT_DCCP_IGNORE]        = "IGNORE",
 	[CT_DCCP_INVALID]       = "INVALID",
 };
+#endif
 
 static const char *const tcp_conntrack_names[] = {
 	"NONE",
@@ -364,6 +350,7 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 					                     ntohs(tuple->src.u.udp.port),
 					                     ntohs(tuple->dst.u.udp.port));
 					break;
+#if !NATFLOW_DCCP_STATES_ARE_LOCAL
 				case IPPROTO_DCCP:
 					ct_i->len += sprintf(ct_i->data + ct_i->len, "%s ",
 					                     conntrack_state_name(dccp_state_names,
@@ -385,6 +372,7 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 					                     ntohs(tuple->src.u.dccp.port),
 					                     ntohs(tuple->dst.u.dccp.port));
 					break;
+#endif
 				case IPPROTO_SCTP:
 					ct_i->len += sprintf(ct_i->data + ct_i->len, "%s ",
 					                     conntrack_state_name(sctp_conntrack_names,
@@ -488,11 +476,13 @@ static ssize_t conntrackinfo_read(struct file *file, char __user *buf,
 					                     ntohs(tuple->src.u.udp.port),
 					                     ntohs(tuple->dst.u.udp.port));
 					break;
+#if !NATFLOW_DCCP_STATES_ARE_LOCAL
 				case IPPROTO_DCCP:
 					ct_i->len += sprintf(ct_i->data + ct_i->len, "sport=%hu dport=%hu ",
 					                     ntohs(tuple->src.u.dccp.port),
 					                     ntohs(tuple->dst.u.dccp.port));
 					break;
+#endif
 				case IPPROTO_SCTP:
 					ct_i->len += sprintf(ct_i->data + ct_i->len, "sport=%hu dport=%hu ",
 					                     ntohs(tuple->src.u.sctp.port),
