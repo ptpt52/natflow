@@ -614,7 +614,7 @@ static const struct file_operations conntrackinfo_fops = {
 static int conntrackinfo_major = 0;
 static int conntrackinfo_minor = 0;
 static struct cdev conntrackinfo_cdev;
-static const char * const conntrackinfo_dev_name = "conntrackinfo_ctl";
+static const char * const conntrackinfo_dev_name = "natflow_conntrackinfo_ctl";
 static struct class *conntrackinfo_class;
 static struct device *conntrackinfo_dev;
 

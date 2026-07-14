@@ -240,7 +240,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 | `/dev/natflow_urllogger_queue` | char device | URL/SNI/ACL 命中二进制事件队列，只允许一个 reader，默认不缓存。 |
 | `/dev/natflow_dpi_ctl` | char device | DPI enable 状态、domain/proto ruleset 事务和统计。 |
 | `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列，只允许一个 reader，默认不缓存，当前输出 domain/proto match v2 固定头事件和 original tuple。 |
-| `/dev/conntrackinfo_ctl` | char device | conntrack 文本快照。 |
+| `/dev/natflow_conntrackinfo_ctl` | char device | conntrack 文本快照。 |
 | `/proc/sys/urllogger_store/*` | sysctl | URL logger 开关、合并窗口和当前队列条数。 |
 
 ## `/dev/natflow_ctl`
@@ -1271,12 +1271,12 @@ int main(void)
 }
 ```
 
-## `/dev/conntrackinfo_ctl`
+## `/dev/natflow_conntrackinfo_ctl`
 
 读取：
 
 ```sh
-cat /dev/conntrackinfo_ctl
+cat /dev/natflow_conntrackinfo_ctl
 ```
 
 该接口输出 conntrack 文本快照，包含 L3/L4 协议、源/目的地址端口、timeout、计数、状态标记等。它支持 partial read，适合用常规 `cat` 或脚本持续读取完整快照。
@@ -1284,7 +1284,7 @@ cat /dev/conntrackinfo_ctl
 写入：
 
 ```sh
-echo 'kickall' >/dev/conntrackinfo_ctl
+echo 'kickall' >/dev/natflow_conntrackinfo_ctl
 ```
 
 当前实现只接受该命令但没有额外清理动作，主要保留为兼容控制入口。

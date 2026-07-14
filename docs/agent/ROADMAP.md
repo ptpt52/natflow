@@ -32,7 +32,7 @@
 当前必须覆盖：
 
 - [x] Host ACL 的 `redirect` action 当前没有完整重定向实现。（已实现基于 302 的拦截与配置）
-- `conntrackinfo_ctl` 的 `kickall` 当前没有实际清理行为。
+- `natflow_conntrackinfo_ctl` 的 `kickall` 当前没有实际清理行为。
 - [x] `/dev/natflow_userinfo_queue` 写接口不再返回 `-ENOSYS`，已统一为 queue `cache=N` 协议。
 - [x] `natflow_userinfo_queue`、`natflow_urllogger_queue`、`natflow_dpi_queue` 已支持单次 `read()` 返回多条完整记录；三个 queue 仍不拆分单条记录，小于单条记录的用户 buffer 返回 `-EINVAL`，这是当前 ABI 限制。
 - `natflow_userinfo_ctl` 小 buffer read 当前返回 `-EINVAL`，不是 partial read；是否改善已作为 P1-1 兼容性任务保留。
