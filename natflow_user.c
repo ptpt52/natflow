@@ -315,7 +315,7 @@ static inline natflow_fakeuser_t *natflow_user_find_addr_get(const union nf_inet
 static int qos_major = 0;
 static int qos_minor = 0;
 static struct cdev qos_cdev;
-static const char * const qos_dev_name = "qos_ctl";
+static const char * const qos_dev_name = "natflow_qos_ctl";
 static struct class *qos_class;
 static struct device *qos_dev;
 
@@ -3949,7 +3949,7 @@ static const struct file_operations userinfo_fops = {
 static int userinfo_major = 0;
 static int userinfo_minor = 0;
 static struct cdev userinfo_cdev;
-static const char * const userinfo_dev_name = "userinfo_ctl";
+static const char * const userinfo_dev_name = "natflow_userinfo_ctl";
 static struct class *userinfo_class;
 static struct device *userinfo_dev;
 
@@ -4304,10 +4304,10 @@ static inline struct qos_rule *qos_rule_get(int idx)
 static void *qos_start(struct seq_file *m, loff_t *pos)
 {
 	int n = 0;
-	char *qos_ctl_buffer = m->private;
+	char *natflow_qos_ctl_buffer = m->private;
 
 	if ((*pos) == 0) {
-		n = snprintf(qos_ctl_buffer,
+		n = snprintf(natflow_qos_ctl_buffer,
 		             PAGE_SIZE - 1,
 		             "# Usage:\n"
 		             "#    clear -- clear all existing auth rule(s)\n"
@@ -4320,62 +4320,62 @@ static void *qos_start(struct seq_file *m, loff_t *pos)
 		             "clear\n"
 		             "\n", tc_classid_mode
 		            );
-		qos_ctl_buffer[n] = 0;
-		return qos_ctl_buffer;
+		natflow_qos_ctl_buffer[n] = 0;
+		return natflow_qos_ctl_buffer;
 	} else if ((*pos) > 0) {
 		struct qos_rule *qr = qos_rule_get((*pos) - 1);
 
 		if (qr) {
-			qos_ctl_buffer[0] = 0;
+			natflow_qos_ctl_buffer[0] = 0;
 			if ((qr->flag & USER_TYPE_IP)) {
 				if (qr->user_l3num == AF_INET6)
-					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI6c,", &qr->user.ip6);
+					n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI6c,", &qr->user.ip6);
 				else
-					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI4,", &qr->user.ip);
+					n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI4,", &qr->user.ip);
 			} else if ((qr->flag & USER_TYPE_IPCIDR)) {
 				if (qr->user_l3num == AF_INET6)
-					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI6c/%u,", &qr->user.ip6cidr.ip6, qr->user.ip6cidr.prefix_len);
+					n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI6c/%u,", &qr->user.ip6cidr.ip6, qr->user.ip6cidr.prefix_len);
 				else
-					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI4/%u,", &qr->user.ipcidr.ip, hweight32(ntohl(qr->user.ipcidr.mask)));
+					n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%pI4/%u,", &qr->user.ipcidr.ip, hweight32(ntohl(qr->user.ipcidr.mask)));
 			} else {
-				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%s,", qr->user.name);
+				n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "add user=%s,", qr->user.name);
 			}
 
 			if ((qr->flag & USER_PORT_TYPE_PORT))
-				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "user_port=%u,", ntohs(qr->user_port.port));
+				n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "user_port=%u,", ntohs(qr->user_port.port));
 			else
-				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "user_port=%s,", qr->user_port.name);
+				n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "user_port=%s,", qr->user_port.name);
 
 			if ((qr->flag & REMOTE_TYPE_IP)) {
 				if (qr->remote_l3num == AF_INET6)
-					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI6c,", &qr->remote.ip6);
+					n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI6c,", &qr->remote.ip6);
 				else
-					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI4,", &qr->remote.ip);
+					n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI4,", &qr->remote.ip);
 			} else if ((qr->flag & REMOTE_TYPE_IPCIDR)) {
 				if (qr->remote_l3num == AF_INET6)
-					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI6c/%u,", &qr->remote.ip6cidr.ip6, qr->remote.ip6cidr.prefix_len);
+					n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI6c/%u,", &qr->remote.ip6cidr.ip6, qr->remote.ip6cidr.prefix_len);
 				else
-					n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI4/%u,", &qr->remote.ipcidr.ip, hweight32(ntohl(qr->remote.ipcidr.mask)));
+					n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%pI4/%u,", &qr->remote.ipcidr.ip, hweight32(ntohl(qr->remote.ipcidr.mask)));
 			} else {
-				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%s,", qr->remote.name);
+				n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote=%s,", qr->remote.name);
 			}
 
 			if ((qr->flag & REMOTE_PORT_TYPE_PORT))
-				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote_port=%u,", ntohs(qr->remote_port.port));
+				n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote_port=%u,", ntohs(qr->remote_port.port));
 			else
-				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote_port=%s,", qr->remote_port.name);
+				n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "remote_port=%s,", qr->remote_port.name);
 
 			if (qr->proto == IPPROTO_TCP)
-				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "proto=tcp,");
+				n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "proto=tcp,");
 			else if (qr->proto == IPPROTO_UDP)
-				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "proto=udp,");
+				n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "proto=udp,");
 			else
-				n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "proto=,");
+				n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "proto=,");
 
-			n += snprintf(qos_ctl_buffer + n, PAGE_SIZE - n - 1, "rxbytes=%u,txbytes=%u\n", qr->rxbytes, qr->txbytes);
+			n += snprintf(natflow_qos_ctl_buffer + n, PAGE_SIZE - n - 1, "rxbytes=%u,txbytes=%u\n", qr->rxbytes, qr->txbytes);
 
-			qos_ctl_buffer[n] = 0;
-			return qos_ctl_buffer;
+			natflow_qos_ctl_buffer[n] = 0;
+			return natflow_qos_ctl_buffer;
 		}
 	}
 

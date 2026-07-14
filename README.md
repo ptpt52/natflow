@@ -222,7 +222,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 - 一条命令必须以 `\n` 结束。
 - `cat /dev/*_ctl` 通常会输出 usage 和可重放配置。
 - 未识别命令多数情况下只写内核日志并返回已消费字节；三个 `natflow_*_queue` 的写接口只接受 `cache=N`，未识别命令返回 `-EINVAL`。
-- `userinfo_ctl` 不支持小 buffer partial read。三个 `natflow_*_queue` 不会拆分单条记录；用户 buffer 小于单条记录时返回 `-EINVAL`，buffer 足够时一次 `read()` 可返回多条完整记录。
+- `natflow_userinfo_ctl` 不支持小 buffer partial read。三个 `natflow_*_queue` 不会拆分单条记录；用户 buffer 小于单条记录时返回 `-EINVAL`，buffer 足够时一次 `read()` 可返回多条完整记录。
 - `/dev/natflow_userinfo_queue`、`/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应以 `O_RDWR` 打开并保持 fd，写入 `cache=N\n` 设置最多缓存 N 条事件后才会缓存新事件；写入 `cache=0\n` 会关闭缓存并清空未读事件。
 - 多个 writer 并发写同一控制设备时，半行缓存可能互相干扰；生产脚本应串行写入。
 
@@ -233,9 +233,9 @@ echo 1 >/proc/sys/urllogger_store/enable
 | `/dev/natflow_ctl` | char device | 全局 fast path、debug、HWNAT、ifname group、vline/relay。 |
 | `/dev/natflow_zone_ctl` | char device | LAN/WAN zone 配置和刷新。 |
 | `/dev/natflow_user_ctl` | char device | 认证规则、认证开关、portal 重定向和 bypass ipset。 |
-| `/dev/userinfo_ctl` | char device | 用户状态读取、踢用户、设置认证状态、单用户限速。 |
+| `/dev/natflow_userinfo_ctl` | char device | 用户状态读取、踢用户、设置认证状态、单用户限速。 |
 | `/dev/natflow_userinfo_queue` | char device | 认证二进制事件队列，只允许一个 reader，默认不缓存，空读返回 0，支持 `poll()`。 |
-| `/dev/qos_ctl` | char device | 全局 QoS 规则和 `tc_classid_mode`。 |
+| `/dev/natflow_qos_ctl` | char device | 全局 QoS 规则和 `tc_classid_mode`。 |
 | `/dev/hostacl_ctl` | char device | Host ACL 规则和默认动作。 |
 | `/dev/natflow_urllogger_queue` | char device | URL/SNI/ACL 命中二进制事件队列，只允许一个 reader，默认不缓存。 |
 | `/dev/natflow_dpi_ctl` | char device | DPI enable 状态、domain/proto ruleset 事务和统计。 |
@@ -400,12 +400,12 @@ cat /dev/natflow_user_ctl
 | `AUTH_TYPE_AUTO` | 1 |
 | `AUTH_TYPE_WEB` | 2 |
 
-## `/dev/userinfo_ctl`
+## `/dev/natflow_userinfo_ctl`
 
 读取当前用户：
 
 ```sh
-cat /dev/userinfo_ctl
+cat /dev/natflow_userinfo_ctl
 ```
 
 输出格式：
@@ -417,10 +417,10 @@ ip_or_ipv6,mac,auth_type,auth_status,rule_id,idle_time,rx_pkts:rx_bytes,tx_pkts:
 命令：
 
 ```sh
-echo 'kickall' >/dev/userinfo_ctl
-echo 'kick <ip_or_ipv6>' >/dev/userinfo_ctl
-echo 'set-status <ip_or_ipv6> <status>' >/dev/userinfo_ctl
-echo 'set-token-ctrl <ip_or_ipv6> <rxbytes> <txbytes>' >/dev/userinfo_ctl
+echo 'kickall' >/dev/natflow_userinfo_ctl
+echo 'kick <ip_or_ipv6>' >/dev/natflow_userinfo_ctl
+echo 'set-status <ip_or_ipv6> <status>' >/dev/natflow_userinfo_ctl
+echo 'set-token-ctrl <ip_or_ipv6> <rxbytes> <txbytes>' >/dev/natflow_userinfo_ctl
 ```
 
 说明：
@@ -476,7 +476,7 @@ struct natflow_userinfo_event_hdr {
 - 除地址字节数组外，整数按内核本机端序输出；用户态 reader 与内核运行在同一机器时直接按结构体读取即可。
 - `family` 是 `AF_INET` 或 `AF_INET6`；IPv4 地址放在 `ip[0..3]`，IPv6 地址使用完整 16 字节。
 - `idle_time` 是该 fakeuser 内部活动时间戳至今经过的秒数。
-- 计数字段与 `/dev/userinfo_ctl` 文本输出一致；速度字段来自 4 个 2 秒窗口，超过 8 秒无更新时为 0。
+- 计数字段与 `/dev/natflow_userinfo_ctl` 文本输出一致；速度字段来自 4 个 2 秒窗口，超过 8 秒无更新时为 0。
 
 C 读者样例：
 
@@ -652,20 +652,20 @@ int main(void)
 }
 ```
 
-## `/dev/qos_ctl`
+## `/dev/natflow_qos_ctl`
 
 读取：
 
 ```sh
-cat /dev/qos_ctl
+cat /dev/natflow_qos_ctl
 ```
 
 命令：
 
 ```sh
-echo 'clear' >/dev/qos_ctl
-echo 'tc_classid_mode=1' >/dev/qos_ctl
-echo 'add user=<user>,user_port=<user_port>,remote=<remote>,remote_port=<remote_port>,proto=<tcp|udp|>,rxbytes=<Bytes>,txbytes=<Bytes>' >/dev/qos_ctl
+echo 'clear' >/dev/natflow_qos_ctl
+echo 'tc_classid_mode=1' >/dev/natflow_qos_ctl
+echo 'add user=<user>,user_port=<user_port>,remote=<remote>,remote_port=<remote_port>,proto=<tcp|udp|>,rxbytes=<Bytes>,txbytes=<Bytes>' >/dev/natflow_qos_ctl
 ```
 
 字段：
@@ -679,8 +679,8 @@ echo 'add user=<user>,user_port=<user_port>,remote=<remote>,remote_port=<remote_
 示例：
 
 ```sh
-echo 'add user=192.168.1.0/24,user_port=,remote=,remote_port=,proto=tcp,rxbytes=1310720,txbytes=655360' >/dev/qos_ctl
-echo 'add user=2001:db8::/64,user_port=,remote=2001:4860:4860::8888,remote_port=443,proto=tcp,rxbytes=1310720,txbytes=655360' >/dev/qos_ctl
+echo 'add user=192.168.1.0/24,user_port=,remote=,remote_port=,proto=tcp,rxbytes=1310720,txbytes=655360' >/dev/natflow_qos_ctl
+echo 'add user=2001:db8::/64,user_port=,remote=2001:4860:4860::8888,remote_port=443,proto=tcp,rxbytes=1310720,txbytes=655360' >/dev/natflow_qos_ctl
 ```
 
 `tc_classid_mode=1` 时，匹配到的 `qos_id` 会写入 `skb->mark`，可配合 `tc filter fw` 使用。
@@ -1310,7 +1310,7 @@ echo 'kickall' >/dev/conntrackinfo_ctl
 2. 写命令无效时，确认命令带换行，且没有超过 256 字节。
 3. fast path 不生效时，检查 `disabled=0`、zone 是否刷新、`debug` 日志、conntrack 是否存在。
 4. URL/Host ACL 不生效时，确认 `echo 1 >/proc/sys/urllogger_store/enable`，并让 reader 以 `O_RDWR` 打开 `/dev/natflow_urllogger_queue` 后写入正数 `cache=N`，再看队列是否输出目标 host。
-5. QoS 不生效时，先 `cat /dev/qos_ctl` 确认规则已加载，再检查是否已有连接缓存了旧规则；生产变更建议配合重新建连或刷新相关连接状态。
+5. QoS 不生效时，先 `cat /dev/natflow_qos_ctl` 确认规则已加载，再检查是否已有连接缓存了旧规则；生产变更建议配合重新建连或刷新相关连接状态。
 6. 老内核如果不能正确处理 ingress hook 的 `NF_STOLEN`，需要内核侧补丁；详细实现约束见 `SYSTEM_DESIGN_SPEC.md`。
 
 ## Donate
