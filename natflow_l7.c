@@ -1415,6 +1415,8 @@ static int natflow_l7_udp4_packet_view_init(struct sk_buff *skb,
 	packet_view->l3 = iph;
 	packet_view->l4proto = IPPROTO_UDP;
 	packet_view->l4 = l4;
+	packet_view->sport = UDPH(l4)->source;
+	packet_view->dport = UDPH(l4)->dest;
 	packet_view->payload_len = payload_len;
 	packet_view->payload_linear_len = linear_len;
 	packet_view->payload = payload_len > 0 ?
@@ -1468,6 +1470,8 @@ static int natflow_l7_udp6_packet_view_init(struct sk_buff *skb,
 	packet_view->l3 = ip6h;
 	packet_view->l4proto = IPPROTO_UDP;
 	packet_view->l4 = l4;
+	packet_view->sport = UDPH(l4)->source;
+	packet_view->dport = UDPH(l4)->dest;
 	packet_view->payload_len = payload_len;
 	packet_view->payload_linear_len = linear_len;
 	packet_view->payload = payload_len > 0 ?
@@ -1782,6 +1786,8 @@ static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_URL_CONSUMER_ARGS,
 		packet_view.payload_len = data_len;
 		packet_view.payload_linear_len = data_len;
 	}
+	packet_view.sport = TCPH(packet_view.l4)->source;
+	packet_view.dport = TCPH(packet_view.l4)->dest;
 
 	return natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_CALL_ARGS,
 	                              &packet_view, reply_dev,
@@ -1878,6 +1884,8 @@ static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_URL_CONSUMER_ARGS,
 		packet_view.payload_len = data_len;
 		packet_view.payload_linear_len = data_len;
 	}
+	packet_view.sport = TCPH(packet_view.l4)->source;
+	packet_view.dport = TCPH(packet_view.l4)->dest;
 
 	return natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_CALL_ARGS,
 	                              &packet_view, reply_dev,
@@ -2065,7 +2073,9 @@ static unsigned int natflow_l7_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS,
 		ret = NF_DROP;
 		goto out;
 	}
-	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL)
+	view.direction = CTINFO2DIR(ctinfo) == IP_CT_DIR_REPLY ?
+	                 NATFLOW_L7_DIR_REPLY : NATFLOW_L7_DIR_ORIGINAL;
+	if (view.direction != NATFLOW_L7_DIR_ORIGINAL)
 		goto out;
 	if (ct->status & IPS_NATFLOW_L7_HANDLED)
 		goto out;

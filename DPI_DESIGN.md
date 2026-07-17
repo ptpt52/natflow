@@ -4,7 +4,7 @@
 
 更新时间：2026-07-18
 
-实现状态：本文描述目标架构。当前源码已经把 bit 19 收敛为 `NF_FF_L7_USE` shared L7 fast-path pause 位，预留 `NF_FF_DPI_USE`，使用 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE` 在 `natflow_t.status` 中分别记录 URL、DPI domain 与 DPI packet 终态，并保留 `app_id` 和 shared conntrack extension layout guard；已增加 `natflow_l7` hook 生命周期和共享 feature core，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、match event producer、source counters 和 `app_id` 写入。当前 HTTP/TLS/QUIC、DNS QNAME 和 protocol-only detector 均由 `natflow_l7` shared hook 入口调度；DPI packet consumer 直接消费 L7 producer 填好的 L4/payload 指针和有界线性 payload 窗口，不再自行重解析 IPv4/IPv6 skb。当前源码仍只准入 original direction，Draft v7 新增按 detector 声明 `ORIGINAL_ONLY`、`REPLY_ONLY`、`EITHER` 或 `BOTH` 的双向识别合同；该合同尚未实现。
+实现状态：本文描述目标架构。当前源码已经把 bit 19 收敛为 `NF_FF_L7_USE` shared L7 fast-path pause 位，预留 `NF_FF_DPI_USE`，使用 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE` 在 `natflow_t.status` 中分别记录 URL、DPI domain 与 DPI packet 终态，并保留 `app_id` 和 shared conntrack extension layout guard；已增加 `natflow_l7` hook 生命周期和共享 feature core，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、match event producer、source counters 和 `app_id` 写入。当前 HTTP/TLS/QUIC、DNS QNAME 和 protocol-only detector 均由 `natflow_l7` shared hook 入口调度；DPI packet consumer 直接消费 L7 producer 填好的 L4/payload 指针和有界线性 payload 窗口，不再自行重解析 IPv4/IPv6 skb。packet view 已携带 conntrack direction、当前 packet `sport/dport`，并提供方向感知的 client/server port helper；当前入口仍只准入 original direction，Draft v7 的 detector 方向调度和 reply 准入尚未实现。
 
 ## 1. 总体结论
 
@@ -699,7 +699,8 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成 MVP：增加 BitTorrent TCP handshake，以及 UDP uTP v1 header 和 DHT bencode token 前缀窗口子集；uTP 会校验版本、类型和扩展号。
 - 已完成 MVP：`/dev/natflow_dpi_ctl` status 输出 HTTP/TLS/QUIC/DNS/SSH/WireGuard/STUN/TURN/BitTorrent source counters、protocol-only reason counters 和 `events_lost`。
 - 已完成 MVP：增加 `events_clear` 测试辅助命令，用于清空已排队 match event 并重置 `events*` shadow 统计和 `proto_*` reason 统计，不改变 ruleset、enable 状态或 generation。
-- 规划中：packet view 增加 direction，detector dispatcher 按 `ORIGINAL_ONLY`、`REPLY_ONLY`、`EITHER`、`BOTH` 运行，并用 bounded context、`NF_FF_DPI_USE`、双向预算和 deadline 支持 reply 证据。
+- 已完成基础设施：packet view 增加 conntrack direction、当前 packet `sport/dport` 和方向感知的 client/server port helper；reply 入口过滤保持不变。
+- 规划中：detector dispatcher 按 `ORIGINAL_ONLY`、`REPLY_ONLY`、`EITHER`、`BOTH` 运行，并用 bounded context、`NF_FF_DPI_USE`、双向预算和 deadline 支持 reply 证据。
 - 仍未完成：更完整的 reason counters、payload TLV、IPv6 extension header 解析、误判 corpus 和生产 shadow 数据采集。
 
 ### M2：生产 shadow

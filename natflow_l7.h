@@ -32,6 +32,12 @@ enum natflow_l7_consumer {
 	                          NATFLOW_L7_CONSUMER_DPI_PACKET,
 };
 
+enum natflow_l7_direction {
+	NATFLOW_L7_DIR_UNSPEC = 0,
+	NATFLOW_L7_DIR_ORIGINAL = 1,
+	NATFLOW_L7_DIR_REPLY = 2,
+};
+
 enum natflow_l7_http_method {
 	NATFLOW_L7_HTTP_NONE = 0,
 	NATFLOW_L7_HTTP_GET = 1,
@@ -60,12 +66,39 @@ struct natflow_l7_packet_view {
 	unsigned int consumer_mask;
 	int l3num;
 	unsigned char l4proto;
+	unsigned char direction;
+	__be16 sport;
+	__be16 dport;
 	void *l3;
 	void *l4;
 	unsigned char *payload;
 	unsigned int payload_len;
 	unsigned int payload_linear_len;
 };
+
+static inline __be16 natflow_l7_packet_client_port(
+    const struct natflow_l7_packet_view *view)
+{
+	if (!view)
+		return 0;
+	if (view->direction == NATFLOW_L7_DIR_ORIGINAL)
+		return view->sport;
+	if (view->direction == NATFLOW_L7_DIR_REPLY)
+		return view->dport;
+	return 0;
+}
+
+static inline __be16 natflow_l7_packet_server_port(
+    const struct natflow_l7_packet_view *view)
+{
+	if (!view)
+		return 0;
+	if (view->direction == NATFLOW_L7_DIR_ORIGINAL)
+		return view->dport;
+	if (view->direction == NATFLOW_L7_DIR_REPLY)
+		return view->sport;
+	return 0;
+}
 
 struct natflow_l7_feature {
 	enum natflow_l7_feature_source source;
