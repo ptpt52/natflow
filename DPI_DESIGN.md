@@ -540,7 +540,7 @@ M0 若改变 HTTP 跨包识别、TLS cache 跨 CPU 行为或 enable 只影响新
 
 | 等级 | 协议示例 | 进入条件 | 默认动作 |
 | --- | --- | --- | --- |
-| A | DNS、SSH port/banner、WireGuard、STUN/TURN、BitTorrent TCP handshake 与 UDP uTP/DHT | 有固定 magic、版本/长度字段或稳定握手，少量包内可高置信确认。 | audit-only，可产生 `DIRECT_PROTOCOL`。 |
+| A | DNS query、SSH banner、WireGuard、STUN/TURN、BitTorrent TCP handshake 与 UDP uTP/DHT | 有固定 magic、版本/长度字段或稳定握手，少量包内可高置信确认。 | audit-only，可产生 `DIRECT_PROTOCOL`。 |
 | B | FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB | 明文命令或二进制握手明确，但可能依赖 server-first 或升级路径。 | shadow 后再考虑 policy。 |
 | C | OpenVPN、SoftEther、Kerberos、RTP/RTCP、游戏/私有 TCP/UDP、代理/VPN 变体 | 需要多包方向模式、弱 magic、端口上下文或复杂状态。 | 默认 protocol-only 或 hint。 |
 | D | 仅端口/IP、DNS 关联、统计特征、加密不可见流量 | 证据弱或容易受共享基础设施污染。 | 不单独产生可阻断 app。 |
@@ -552,7 +552,7 @@ M0 若改变 HTTP 跨包识别、TLS cache 跨 CPU 行为或 enable 只影响新
 | stage | 内容 |
 | --- | --- |
 | M1b | HTTP、TLS、QUIC parser 统一和 domain exact/suffix rules。 |
-| M1c | DNS、SSH、WireGuard protocol-only detector。 |
+| M1c | DNS 标准 query、SSH banner、WireGuard 结构校验 protocol-only detector；端口只选择解析候选，不单独产生分类。 |
 | M1d | STUN/TURN protocol-only、BitTorrent TCP handshake 与 UDP uTP/DHT 子集。 |
 | M2 | MQTT、MySQL、PostgreSQL、SMB、FTP、SMTP、POP3、IMAP、SIP、RTSP、RESP、RDP 等 shadow 评估。 |
 | M4 | OpenVPN、SoftEther、Kerberos、RTP/RTCP、私有游戏/聊天、代理/VPN、IP/证书/cache/JA4 等专项评审。 |
