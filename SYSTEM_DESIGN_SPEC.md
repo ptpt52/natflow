@@ -1003,6 +1003,20 @@ classid 模式：
 - 固定事件头为 packed `struct natflow_dpi_event_hdr`，`version=2`，包含 `header_len`、`record_len`、`reason`、`generation`、`app_id`、`category_id`、`rule_id`、`flags`、`timestamp` 和 original tuple。当前 match event 使用 `reason=6`，`category_id=0`，`flags` 表示来源：1=HTTP、2=TLS、3=QUIC、4=DNS、5=SSH、6=WireGuard、7=STUN、8=TURN、9=BitTorrent，`timestamp` 为 uptime 秒数，与 URL logger 事件语义一致。tuple 字段固定取 `IP_CT_DIR_ORIGINAL`，`family` 为 `AF_INET` 或 `AF_INET6`，`l4proto` 为 L4 protocol，`sport`/`dport` 为主机字节序端口，`sip`/`dip` 为地址字节数组；IPv4 使用前 4 字节，IPv6 使用完整 16 字节。
 - 当前不会执行 drop/reset/QoS，不覆盖认证、Host ACL 或 conntrack drop 结果；未命中、禁用、无 parser、无法创建 session 或事件队列丢失都 fail-open。
 
+### 15.5 DPI 方向识别目标合同
+
+以下是 Draft v7 后续实现合同，当前源码尚未放开 conntrack reply direction：
+
+- packet view 增加明确的 conntrack direction，并提供方向感知的 client/server port 语义。original/reply 仍以 original tuple 作为稳定连接身份，reply packet 的服务端口来自当前 `sport`，不能继续按 `dport` 解释。
+- 编译期 detector metadata 声明 `ORIGINAL_ONLY`、`REPLY_ONLY`、`EITHER` 或 `BOTH`。方向模式属于 detector 正确性，不作为首期 ruleset 参数开放。
+- `ORIGINAL_ONLY` 不等待 reply；`REPLY_ONLY` 只消费 reply；`EITHER` 允许任一方向确认，但一个方向未命中不能关闭另一方向；`BOTH` 必须有界关联两个方向，不能简单拼接上下行 payload。
+- DNS QNAME domain、URL logger、Host ACL、HTTP request Host、TLS ClientHello SNI 和 QUIC client Initial SNI 保持 original-only。reply 首期只进入 DPI packet consumer。DNS protocol、SSH、WireGuard、STUN/TURN 和 BitTorrent protocol detector 目标模式为 `EITHER`。
+- 纯单包 `ORIGINAL_ONLY` detector 可以无 context 执行；等待 reply、任一方向后续证据、双向关联或跨包 prefix 时才分配 bounded context，并设置 `NF_FF_DPI_USE` 阻止 fast path 提前接管。
+- context 存续期间允许 `NF_FF_L7_USE | NF_FF_DPI_USE` 同时设置：L7 bit 保证 shared hook 继续提供 packet view，DPI bit 表示 context owner。arm/terminal 写入顺序不能产生两个 busy bit 都未设置而 context 仍活跃的 fast-path 窗口。
+- 初始 hard limit 为 original/reply 各 4 个 payload 包、4 秒 deadline。任一 detector 命中并写入 `app_id`，或全部 active detector 因明确不匹配、FIN/RST、packet/byte budget、deadline 或资源失败终态后，才设置连接级 `NF_FF_L7_DPI_PACKET_DONE`。若其他 consumer 已写入非 0 `app_id`，packet consumer 以 `APP_EXISTS` 终态，不再等待方向证据。资源失败 fail-open，不能留下无 context 的 busy bit。
+- runtime enable、rules commit/clear 不枚举、不 drain、不清理已标记连接或 active context；已设置 `IPS_NATFLOW_L7_HANDLED` 的连接不重新武装。module exit 可以释放模块自身 context pool，但不枚举 conntrack 补写 terminal。
+- 常驻 conntrack DPI 结果继续只有 `app_id`。direction、detector stage、packet/byte counter、evidence 和 terminal reason 只进入 active context 或后续 terminal event；事件 evidence direction 的 ABI 变化必须单独版本化。
+
 ## 16. Zone 设计
 
 zone 元数据编码在 `net_device->name[IFNAMSIZ - 1]` 的隐藏字节：

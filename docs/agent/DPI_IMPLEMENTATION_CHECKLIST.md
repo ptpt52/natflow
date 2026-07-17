@@ -42,6 +42,11 @@ M0/M1 期间必须保持：
 - writer 顺序保持为：写结果、写对应 consumer terminal done bit、所有 active consumer 均 done 后清 busy bit 并设置 `IPS_NATFLOW_L7_HANDLED` L7_SKIP 派生 hint。
 - 运行时 URL/DPI enable、DPI rules commit/clear 只改变后续数据包看到的 active consumer/ruleset；不得为配置变化增加 conntrack 全表扫描、强制 terminal 或 owner bit 清理。已标记连接允许自然终态或保留状态直到 conntrack 生命周期结束。
 - 已设置 `IPS_NATFLOW_L7_HANDLED` 的连接不因配置变化重新武装；仍在分类路径中的连接读取匹配时的 active ruleset，不 pin arm 时 generation。
+- reply 准入前必须让 packet view 携带 conntrack direction，并提供方向感知的 client/server port 语义；不能在 reply 包上继续把 `dport` 当服务端口。
+- detector 必须声明 `ORIGINAL_ONLY`、`REPLY_ONLY`、`EITHER` 或 `BOTH`。一个方向未命中不能让 `EITHER`/`BOTH` detector 或整个 DPI packet consumer 提前终态。
+- 只有等待方向、跨包 prefix 或关联阶段的 detector 才分配 bounded context；等待时设置 `NF_FF_DPI_USE`，match、全部 detector terminal、packet/byte budget、deadline 或资源失败时确定性清除。单向流量不能因未出现无关方向永久阻塞 fast path。
+- context 存续期间可同时设置 `NF_FF_L7_USE | NF_FF_DPI_USE`，但 arm/terminal 顺序不能出现 context 活跃而两个 busy bit 都未设置的窗口；已有非 0 `app_id` 时 packet consumer 应以 `APP_EXISTS` 终态。
+- reply 首期只进入 DPI packet consumer；URL logger、Host ACL、HTTP/TLS/QUIC host producer 和 DNS QNAME domain 保持 original-only，除非后续单独修改并审核其外部行为。
 
 ## DPI ABI 基线
 

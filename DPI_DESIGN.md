@@ -1,10 +1,10 @@
 # Natflow 统一 L7 与 DPI 设计
 
-状态：Draft v6，实施中
+状态：Draft v7，实施中
 
 更新时间：2026-07-18
 
-实现状态：本文描述目标架构。当前源码已经把 bit 19 收敛为 `NF_FF_L7_USE` shared L7 fast-path pause 位，预留 `NF_FF_DPI_USE`，使用 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE` 在 `natflow_t.status` 中分别记录 URL、DPI domain 与 DPI packet 终态，并保留 `app_id` 和 shared conntrack extension layout guard；已增加 `natflow_l7` hook 生命周期和共享 feature core，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、match event producer、source counters 和 `app_id` 写入。当前 HTTP/TLS/QUIC、DNS QNAME 和 protocol-only detector 均由 `natflow_l7` shared hook 入口调度；DPI packet consumer 直接消费 L7 producer 填好的 L4/payload 指针和有界线性 payload 窗口，不再自行重解析 IPv4/IPv6 skb；protocol-only detector 仍是端口/payload 子集 MVP。
+实现状态：本文描述目标架构。当前源码已经把 bit 19 收敛为 `NF_FF_L7_USE` shared L7 fast-path pause 位，预留 `NF_FF_DPI_USE`，使用 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE` 在 `natflow_t.status` 中分别记录 URL、DPI domain 与 DPI packet 终态，并保留 `app_id` 和 shared conntrack extension layout guard；已增加 `natflow_l7` hook 生命周期和共享 feature core，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、match event producer、source counters 和 `app_id` 写入。当前 HTTP/TLS/QUIC、DNS QNAME 和 protocol-only detector 均由 `natflow_l7` shared hook 入口调度；DPI packet consumer 直接消费 L7 producer 填好的 L4/payload 指针和有界线性 payload 窗口，不再自行重解析 IPv4/IPv6 skb。当前源码仍只准入 original direction，Draft v7 新增按 detector 声明 `ORIGINAL_ONLY`、`REPLY_ONLY`、`EITHER` 或 `BOTH` 的双向识别合同；该合同尚未实现。
 
 ## 1. 总体结论
 
@@ -300,6 +300,9 @@ enum natflow_l7_parse_rc {
 
 struct natflow_l7_parser_ops {
 	u16 parser_id;
+	u8 direction_mode;
+	u8 packet_budget[2];
+	u16 byte_budget[2];
 	bool (*eligible)(const struct natflow_l7_packet_view *view);
 	enum natflow_l7_parse_rc (*parse)(struct natflow_l7_flow_ctx *ctx,
 	                                  const struct natflow_l7_packet_view *view,
@@ -314,11 +317,46 @@ struct natflow_l7_parser_ops {
 - detector 是编译期静态实现，由 ruleset 或 enable mask 控制是否参与。
 - parser/detector 不能直接执行 policy，只返回 feature、reason 和 confidence。
 
+### 8.4 Direction contract
+
+方向准入和 detector 终态是两个独立概念。packet view 必须携带 conntrack direction；original/reply 都使用 original tuple 作为连接身份，但 detector 通过方向感知的 client/server port helper 解释服务端口，不能把当前 packet 的 `dport` 永久等同于服务端口。
+
+```c
+enum natflow_dpi_direction_mode {
+	NATFLOW_DPI_DIR_ORIGINAL_ONLY,
+	NATFLOW_DPI_DIR_REPLY_ONLY,
+	NATFLOW_DPI_DIR_EITHER,
+	NATFLOW_DPI_DIR_BOTH,
+};
+```
+
+| mode | 准入与终态语义 | context 要求 |
+| --- | --- | --- |
+| `ORIGINAL_ONLY` | 只消费 original；该方向确认、明确不匹配或预算耗尽后 detector 终态，不等待 reply。 | 单包可无 context；跨包时按需分配。 |
+| `REPLY_ONLY` | original 不消耗 detector 预算；等待 reply，直到确认或资源/时间预算耗尽。 | 必须有最小等待状态。 |
+| `EITHER` | 两个方向都可提供充分证据；任一方向确认即成功终态，一个方向未命中不能关闭另一个方向。 | 首个方向未确认后需要最小方向/预算状态。 |
+| `BOTH` | 必须满足 detector 定义的双向关联条件；不能把两个方向字节简单拼接后匹配。 | 必须保存两个方向的有界状态和关联阶段。 |
+
+首批方向合同：
+
+| detector/feature | mode | 证据 |
+| --- | --- | --- |
+| DNS QNAME domain | `ORIGINAL_ONLY` | TCP/UDP 53 标准 query 第一问 QNAME。 |
+| DNS protocol | `EITHER` | original query 或 reply response 的合法 DNS header/question 结构。 |
+| SSH | `EITHER` | 任一方向 `SSH-<version>-` identification string。 |
+| WireGuard | `EITHER` | 任一方向合法 message type、reserved bytes 和对应长度。 |
+| STUN/TURN | `EITHER` | 任一方向合法 header、length、magic cookie 和 method。 |
+| BitTorrent | `EITHER` | 任一方向 TCP handshake 或 UDP uTP/DHT 子集证据。 |
+| 后续 server-first detector | `REPLY_ONLY` | 仅服务端应答具有稳定证据。 |
+| 后续挑战应答 detector | `BOTH` | request/response 阶段和字段能够有界关联。 |
+
+方向模式是编译期 detector 正确性元数据，不作为首期规则参数开放。ruleset 只决定启用哪些 detector 以及命中后映射的 `app_id`，不能覆盖 detector 的方向语义。URL logger、Host ACL、HTTP request Host、TLS ClientHello SNI、QUIC client Initial SNI 和 DNS QNAME domain 继续保持 original-only；reply 首期只准入 DPI packet consumer。
+
 ## 9. Context 与多 consumer 生命周期
 
 ### 9.1 Context key
 
-跨包状态优先使用有界 parser cache。只有后续 detector 确实需要比现有 TCP TLS/QUIC cache 更强的跨包状态时，才增加 `natflow_l7_flow_ctx`；不能仅为了运行时 disable、rules commit 或 rules clear 清理既有连接而引入全局 conntrack registry。
+跨包状态优先使用有界 parser cache。只有 detector 的方向模式、跨包 prefix 或关联阶段需要等待后续数据时，才增加 `natflow_l7_flow_ctx`；纯单包 `ORIGINAL_ONLY` detector 可以不分配 context。不能仅为了运行时 disable、rules commit 或 rules clear 清理既有连接而引入全局 conntrack registry。
 
 若后续确实引入 context，其可保存：
 
@@ -331,6 +369,7 @@ struct natflow_l7_parser_ops {
 - 观察到的 DPI ruleset generation，仅用于审计，不 pin retired ruleset。
 - 已确认的 proto/features。
 - 每个 consumer 的 done/reason。
+- 每个 active detector 的 direction mode、seen/done direction、parse stage 和 terminal reason。
 
 ### 9.2 状态机
 
@@ -354,7 +393,11 @@ ARMING -> ARMED -> PARSING -> WAIT_MORE
 - `PARSING` 使用单 flow owner claim，避免同一 conntrack 同时跑多个 parser owner。
 - loser CPU 可以在短锁内合并连续 prefix；无法表达 gap/overlap 或预算耗尽时 deterministic terminal。
 - 每个 consumer 独立 terminal。最后一个 consumer done 后释放 context。
-- FIN/RST、deadline、packet budget、byte budget 和 cache full 应按 parser 自身状态机自然终止；运行时 disable、rules commit、rules clear 和 module exit 不枚举或强制终止已经标记的连接。
+- DPI packet consumer 在任一 detector 命中并写入 `app_id`，或全部 active detector 都终态后，才设置连接级 `NF_FF_L7_DPI_PACKET_DONE`。不能把“观察到一个方向”直接解释为整个 packet consumer 已完成。
+- 若 URL/domain consumer 已写入非 0 `app_id`，DPI packet consumer 以 `APP_EXISTS` 终态，不再分配或保留方向 context；MVP 不为同一连接覆盖既有应用结果或继续输出第二分类。
+- 仍有 `REPLY_ONLY`、`EITHER`、`BOTH` 或跨包 detector 等待数据时设置 `NF_FF_DPI_USE`；context 注册失败必须 fail-open 并使 DPI packet consumer 确定性终态，不能留下无 context 的 busy bit。context 存续期间允许 `NF_FF_L7_USE | NF_FF_DPI_USE` 同时存在：前者保证 shared hook 继续接收 packet view，后者表示 DPI context owner；不得先清 L7 owner 再设置 DPI owner，或产生 fast path 可见的无 busy-bit 窗口。
+- FIN/RST、deadline、packet budget、byte budget 和 cache full 应按 parser 自身状态机自然终止。初始 hard limit 是 original/reply 各 4 个 payload 包和 4 秒；deadline 可以在下一次相关包到达时惰性检查，不要求定时扫描 conntrack。运行时 disable、rules commit、rules clear 和 module exit 不枚举或强制终止已经标记的连接；module exit 只释放模块自身 context pool，不回写 conntrack terminal。
+- 单向流量不能因为未出现无关方向而永久阻塞 fast path：`ORIGINAL_ONLY` 不等待 reply；其他模式必须由 match、明确 terminal、packet/byte budget 或 deadline 收敛。
 
 ### 9.3 Enable/disable
 
@@ -645,7 +688,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 ### M1c：首批 protocol-only detector
 
 - 已完成 MVP：增加 DNS、SSH、WireGuard protocol-only 规则，并通过 L7 shared hook 的 DPI packet-view consumer 运行。
-- 已完成 MVP：DNS 按 TCP/UDP 53、SSH 按 TCP 22 或 TCP original-direction payload `SSH-<version>-` banner、WireGuard 按 UDP 51820 识别，命中 proto rule 后写 `app_id` 并输出 match event。
+- 已完成 MVP：DNS 需要解析 TCP/UDP 53 标准 query，SSH 需要匹配 TCP original-direction `SSH-<version>-` banner，WireGuard 需要校验 UDP message type、reserved bytes 和长度；端口只选择解析候选，不直接写入 `app_id`。命中 proto rule 后写 `app_id` 并输出 match event。
 - 已完成 MVP：DNS query 第一问 QNAME 由 `natflow_l7_dns_parse()` 解析并进入 domain exact/suffix ruleset，命中事件 source 为 DNS。
 - 已完成阶段性迁移：DPI packet consumer 不再自行按 IPv4/IPv6 重解析 skb，而是消费 L7 packet view 的 L4/payload 指针、payload 长度和有界 `payload_linear_len`。
 - 全部 audit-only，不执行 app ACL/QoS。
@@ -656,6 +699,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成 MVP：增加 BitTorrent TCP handshake，以及 UDP uTP v1 header 和 DHT bencode token 前缀窗口子集；uTP 会校验版本、类型和扩展号。
 - 已完成 MVP：`/dev/natflow_dpi_ctl` status 输出 HTTP/TLS/QUIC/DNS/SSH/WireGuard/STUN/TURN/BitTorrent source counters、protocol-only reason counters 和 `events_lost`。
 - 已完成 MVP：增加 `events_clear` 测试辅助命令，用于清空已排队 match event 并重置 `events*` shadow 统计和 `proto_*` reason 统计，不改变 ruleset、enable 状态或 generation。
+- 规划中：packet view 增加 direction，detector dispatcher 按 `ORIGINAL_ONLY`、`REPLY_ONLY`、`EITHER`、`BOTH` 运行，并用 bounded context、`NF_FF_DPI_USE`、双向预算和 deadline 支持 reply 证据。
 - 仍未完成：更完整的 reason counters、payload TLV、IPv6 extension header 解析、误判 corpus 和生产 shadow 数据采集。
 
 ### M2：生产 shadow
