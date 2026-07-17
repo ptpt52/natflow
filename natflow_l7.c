@@ -1353,16 +1353,16 @@ static int natflow_l7_tcp_tls_cache_attach_current(const struct natflow_l7_tcp_f
 }
 
 static unsigned int natflow_l7_dpi_pull_len(unsigned int consumer_mask,
-        unsigned char l4proto, __be16 dport, unsigned int payload_len)
+        const struct natflow_l7_packet_view *view, unsigned int payload_len)
 {
 #if defined(CONFIG_NATFLOW_DPI)
-	if (consumer_mask & NATFLOW_L7_CONSUMER_DPI)
-		return natflow_dpi_packet_view_pull_len(l4proto, dport,
-		                                        payload_len);
+	if ((consumer_mask & NATFLOW_L7_CONSUMER_DPI) && view)
+		return natflow_dpi_packet_view_pull_len(consumer_mask,
+		                                        view->l4proto, view->direction,
+		                                        natflow_l7_packet_server_port(view), payload_len);
 #else
 	(void)consumer_mask;
-	(void)l4proto;
-	(void)dport;
+	(void)view;
 	(void)payload_len;
 #endif
 	return 0;
@@ -1400,17 +1400,7 @@ static int natflow_l7_udp4_packet_view_init(struct sk_buff *skb,
 	if (udp_len < sizeof(struct udphdr) || total_len < ihl + udp_len)
 		return -EINVAL;
 
-	*dport = UDPH(l4)->dest;
 	payload_len = udp_len - sizeof(struct udphdr);
-	pull_len = natflow_l7_dpi_pull_len(consumer_mask, IPPROTO_UDP,
-	                                   *dport, payload_len);
-	if (pull_len > 0 &&
-	        pskb_may_pull(skb, ihl + sizeof(struct udphdr) + pull_len)) {
-		iph = ip_hdr(skb);
-		l4 = (void *)iph + ihl;
-		linear_len = pull_len;
-	}
-
 	*packet_view = *view;
 	packet_view->l3 = iph;
 	packet_view->l4proto = IPPROTO_UDP;
@@ -1418,9 +1408,24 @@ static int natflow_l7_udp4_packet_view_init(struct sk_buff *skb,
 	packet_view->sport = UDPH(l4)->source;
 	packet_view->dport = UDPH(l4)->dest;
 	packet_view->payload_len = payload_len;
+	*dport = packet_view->dport;
+	pull_len = natflow_l7_dpi_pull_len(consumer_mask, packet_view,
+	                                   payload_len);
+	if (pull_len > 0 &&
+	        pskb_may_pull(skb, ihl + sizeof(struct udphdr) + pull_len)) {
+		iph = ip_hdr(skb);
+		l4 = (void *)iph + ihl;
+		packet_view->l3 = iph;
+		packet_view->l4 = l4;
+		packet_view->sport = UDPH(l4)->source;
+		packet_view->dport = UDPH(l4)->dest;
+		linear_len = pull_len;
+	}
+
 	packet_view->payload_linear_len = linear_len;
 	packet_view->payload = payload_len > 0 ?
-	                       (unsigned char *)l4 + sizeof(struct udphdr) : NULL;
+	                       (unsigned char *)packet_view->l4 +
+	                       sizeof(struct udphdr) : NULL;
 	return 0;
 }
 
@@ -1454,18 +1459,7 @@ static int natflow_l7_udp6_packet_view_init(struct sk_buff *skb,
 	if (udp_len < sizeof(struct udphdr) || total_len < udp_len)
 		return -EINVAL;
 
-	*dport = UDPH(l4)->dest;
 	payload_len = udp_len - sizeof(struct udphdr);
-	pull_len = natflow_l7_dpi_pull_len(consumer_mask, IPPROTO_UDP,
-	                                   *dport, payload_len);
-	if (pull_len > 0 &&
-	        pskb_may_pull(skb, sizeof(struct ipv6hdr) +
-	                      sizeof(struct udphdr) + pull_len)) {
-		ip6h = ipv6_hdr(skb);
-		l4 = (void *)ip6h + sizeof(struct ipv6hdr);
-		linear_len = pull_len;
-	}
-
 	*packet_view = *view;
 	packet_view->l3 = ip6h;
 	packet_view->l4proto = IPPROTO_UDP;
@@ -1473,9 +1467,25 @@ static int natflow_l7_udp6_packet_view_init(struct sk_buff *skb,
 	packet_view->sport = UDPH(l4)->source;
 	packet_view->dport = UDPH(l4)->dest;
 	packet_view->payload_len = payload_len;
+	*dport = packet_view->dport;
+	pull_len = natflow_l7_dpi_pull_len(consumer_mask, packet_view,
+	                                   payload_len);
+	if (pull_len > 0 &&
+	        pskb_may_pull(skb, sizeof(struct ipv6hdr) +
+	                      sizeof(struct udphdr) + pull_len)) {
+		ip6h = ipv6_hdr(skb);
+		l4 = (void *)ip6h + sizeof(struct ipv6hdr);
+		packet_view->l3 = ip6h;
+		packet_view->l4 = l4;
+		packet_view->sport = UDPH(l4)->source;
+		packet_view->dport = UDPH(l4)->dest;
+		linear_len = pull_len;
+	}
+
 	packet_view->payload_linear_len = linear_len;
 	packet_view->payload = payload_len > 0 ?
-	                       (unsigned char *)l4 + sizeof(struct udphdr) : NULL;
+	                       (unsigned char *)packet_view->l4 +
+	                       sizeof(struct udphdr) : NULL;
 	return 0;
 }
 
@@ -1739,6 +1749,8 @@ static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_URL_CONSUMER_ARGS,
 	packet_view.l3 = iph;
 	packet_view.l4proto = IPPROTO_TCP;
 	packet_view.l4 = l4;
+	packet_view.sport = TCPH(l4)->source;
+	packet_view.dport = TCPH(l4)->dest;
 	packet_view.payload = data_len > 0 ?
 	                      (unsigned char *)l4 + tcp_hlen : NULL;
 	packet_view.payload_len = data_len > 0 ? data_len : 0;
@@ -1747,9 +1759,7 @@ static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_URL_CONSUMER_ARGS,
 		unsigned int pull_len;
 
 		pull_len = natflow_l7_dpi_pull_len(view->consumer_mask,
-		                                   IPPROTO_TCP,
-		                                   TCPH(l4)->dest,
-		                                   data_len);
+		                                   &packet_view, data_len);
 		if (pull_len > 0 &&
 		        pskb_may_pull(skb, ihl + tcp_hlen + pull_len)) {
 			iph = ip_hdr(skb);
@@ -1837,6 +1847,8 @@ static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_URL_CONSUMER_ARGS,
 	packet_view.l3 = ip6h;
 	packet_view.l4proto = IPPROTO_TCP;
 	packet_view.l4 = l4;
+	packet_view.sport = TCPH(l4)->source;
+	packet_view.dport = TCPH(l4)->dest;
 	packet_view.payload = data_len > 0 ?
 	                      (unsigned char *)l4 + tcp_hlen : NULL;
 	packet_view.payload_len = data_len > 0 ? data_len : 0;
@@ -1845,9 +1857,7 @@ static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_URL_CONSUMER_ARGS,
 		unsigned int pull_len;
 
 		pull_len = natflow_l7_dpi_pull_len(view->consumer_mask,
-		                                   IPPROTO_TCP,
-		                                   TCPH(l4)->dest,
-		                                   data_len);
+		                                   &packet_view, data_len);
 		if (pull_len > 0 &&
 		        pskb_may_pull(skb, sizeof(struct ipv6hdr) +
 		                      tcp_hlen + pull_len)) {
