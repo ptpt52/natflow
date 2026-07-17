@@ -1,6 +1,6 @@
 # Natflow 开发路线图
 
-更新时间：2026-07-12
+更新时间：2026-07-18
 
 本文记录当前仓库的下一步开发目标。它是智能体和维护者的任务入口，不替代 `SYSTEM_DESIGN_SPEC.md`；具体实现仍以源码为准。
 
@@ -101,11 +101,11 @@
 
 ### P2-4：设计并开发 DPI 能力
 
-状态：Design Draft v5，Implementation Started
+状态：Design Draft v6，Implementation Started
 
 目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，先统一 L7 parser/context/consumer 生命周期，再实现轻量 DPI 能力，用于协议/应用分类、审计记录和后续策略匹配。
 
-当前设计基线：`DPI_DESIGN.md`。Draft v5 把内部目标统一为 `natflow_l7` core：共享 read-only packet view、bounded prefix、HTTP/TLS/QUIC parser、hostname normalize、consumer fan-out 和资源生命周期；legacy URL logger/Host ACL 作为 URL consumer 保持外部 ABI，DPI 作为 classifier consumer 新增独立控制和事件 ABI。本文档仍是目标设计，不代表源码已实现 DPI ABI 或行为。
+当前设计基线：`DPI_DESIGN.md`。Draft v6 把内部目标统一为 `natflow_l7` core：共享 read-only packet view、bounded prefix、HTTP/TLS/QUIC parser、hostname normalize、consumer fan-out 和资源生命周期；legacy URL logger/Host ACL 作为 URL consumer 保持外部 ABI，DPI 作为 classifier consumer 新增独立控制和事件 ABI；运行时配置变化不枚举或清理已标记连接。本文档仍是目标设计，不代表源码已实现全部规划行为。
 
 实现进度：源码已完成 M0b 的 DPI busy bit、`app_id` 尾增和 layout guard，完成 M0c 的 `natflow_l7` hook lifecycle 骨架、共享 feature/normalize 基础结构、URL/DPI shared hook ops、签名兼容包装迁移、PPPoE normalize/restore 和 packet view/host view 传递、L7 consumer mask/API 与 packet dispatcher、HTTP Host parser、TLS ClientHello/SNI 搜索、TCP HTTP/TLS producer 迁移、TCP TLS SNI cache 生命周期迁移、QUIC Initial header/CRYPTO frame/SNI 搜索迁移、QUIC cache/crypto 生命周期迁移、QUIC UDP producer 迁移、DNS QNAME parser 和 `natflow_l7_host_view` consumer 输入 contract，完成 M0d 的 Host ACL 与 URL record 分配解耦，完成 M1a 的 DPI ctl/queue 设备骨架，完成 M1b 的 domain exact/suffix ruleset、match event producer、DPI host consumer 独立激活和复用 urllogger host 的 `app_id` 写入，完成 M1c 的 DNS QNAME domain 分类和 DNS/SSH/WireGuard protocol-only detector，其中 SSH 支持 TCP 22 和 TCP original-direction `SSH-<version>-` banner，并完成 M1d 的 STUN/TURN、BitTorrent TCP handshake、UDP uTP/DHT 子集、source/reason counters 和 `events_clear` 测试辅助命令；DPI protocol-only detector 已从独立 hook 收敛到 L7 shared hook 的 packet-view consumer。2026-07-12 对最新 L7/DPI 收尾提交完成代码审查、串行构建矩阵和维护者真机测试，未发现阻断问题；误判 corpus 和生产 shadow 数据尚未实现。
 
@@ -122,7 +122,7 @@
 计划：
 
 1. M0：建立 `natflow_l7` core，抽出 read-only packet view、hostname normalize、共享 HTTP/TLS/QUIC parser、bounded prefix 和 consumer mask，保持 legacy URL/Host ACL ABI。
-2. M1a：完成 DPI owner bit gate、`app_id` 尾增、layout guard、最小 context registry、terminal state、enable/disable、空 ruleset 事务和版本化事件骨架；默认关闭并 fail-open。
+2. M1a：完成 DPI owner bit gate、`app_id` 尾增、layout guard、terminal state、enable/disable、空 ruleset 事务和版本化事件骨架；默认关闭并 fail-open。仅在后续 parser 确需更强跨包状态时增加最小 context，不为配置变化实现 conntrack drain。
 3. M1b：完成 domain exact/suffix ruleset，让 URL logger、Host ACL 和 DPI 消费同一次 HTTP/TLS/QUIC parser 结果。
 4. M1c：加入 DNS QNAME domain 分类，以及 DNS、SSH、WireGuard 三个首批非 HTTP/TLS/QUIC protocol-only detector，全部 audit-only。
 5. M1d：加入 STUN/TURN protocol-only、BitTorrent TCP handshake 和 UDP uTP/DHT 子集，补齐 shadow 统计。
@@ -143,3 +143,4 @@
 - 加密、ECH、异常分片和规避流量导致识别率不可控。
 - 输出格式或控制 ABI 设计不当会增加后续兼容成本。
 - DPI 与 fast path、Host ACL、QoS、认证状态机的状态同步错误可能导致策略绕过或误拦截。
+- 运行时 enable 和 ruleset 变化不枚举、不退出、不清理已标记连接；既有连接允许自然终态或保留 L7 状态直到 conntrack 生命周期结束。

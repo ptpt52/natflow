@@ -1,8 +1,8 @@
 # Natflow 统一 L7 与 DPI 设计
 
-状态：Draft v5，实施中
+状态：Draft v6，实施中
 
-更新时间：2026-07-12
+更新时间：2026-07-18
 
 实现状态：本文描述目标架构。当前源码已经把 bit 19 收敛为 `NF_FF_L7_USE` shared L7 fast-path pause 位，预留 `NF_FF_DPI_USE`，使用 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE` 在 `natflow_t.status` 中分别记录 URL、DPI domain 与 DPI packet 终态，并保留 `app_id` 和 shared conntrack extension layout guard；已增加 `natflow_l7` hook 生命周期和共享 feature core，让 Host ACL 在 URL record 分配失败时仍基于最小 host 视图执行，并提供默认关闭的 DPI ctl/queue、domain exact/suffix ruleset、DNS QNAME domain 分类、DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only ruleset、match event producer、source counters 和 `app_id` 写入。当前 HTTP/TLS/QUIC、DNS QNAME 和 protocol-only detector 均由 `natflow_l7` shared hook 入口调度；DPI packet consumer 直接消费 L7 producer 填好的 L4/payload 指针和有界线性 payload 窗口，不再自行重解析 IPv4/IPv6 skb；protocol-only detector 仍是端口/payload 子集 MVP。
 
@@ -165,7 +165,7 @@ bounded parser/detector
              fast path may proceed
 ```
 
-共享 context 的 lifetime 由 consumer mask 决定。URL 完成不能提前释放 DPI 仍在等待的 context；DPI disable 也不能释放 URL consumer 还需要的 prefix。
+共享跨包 prefix/cache 的 lifetime 由解析自然终态和其自身资源上限决定。URL 完成不能提前释放 DPI 仍在等待的 prefix。运行时配置变化只控制后续数据包看到的 active consumer，不枚举、不强制终止、也不清理已经设置 `NF_FF_L7_USE` 的连接状态。
 
 ## 6. 编译与初始化
 
@@ -187,7 +187,7 @@ bounded parser/detector
 5. URL consumer 初始化 legacy 设备和 sysctl，再由 L7 core 注册 hook，避免 hook 进入未初始化的 URL 资源。
 6. DPI consumer 默认 `enable=0`，只初始化控制设备、规则和事件状态；数据面由 L7 shared hook 在存在 domain/proto 规则时分别调度 DPI domain/packet consumer，`natflow_dpi_consume_packet_view()` 返回本次可终态的子 mask。
 
-退出顺序反向执行：先阻止新 hook/新 arm，再 drain active context，写 terminal event，清 owner bit，唤醒 reader，最后释放规则、cache、crypto 和设备。
+退出顺序反向执行：先注销 hook，阻止新包进入 L7，再释放模块持有的规则、cache、crypto 和设备资源。模块退出不枚举 conntrack，也不要求为已经标记的连接补写 terminal 或清 owner bit。
 
 ## 7. Flow 结果与 fast-path gate
 
@@ -318,9 +318,9 @@ struct natflow_l7_parser_ops {
 
 ### 9.1 Context key
 
-跨包状态使用全局 hash 中的 `natflow_l7_flow_ctx`，key 为持有引用的 `struct nf_conn *`。context terminal/过期时 `nf_ct_put()`。
+跨包状态优先使用有界 parser cache。只有后续 detector 确实需要比现有 TCP TLS/QUIC cache 更强的跨包状态时，才增加 `natflow_l7_flow_ctx`；不能仅为了运行时 disable、rules commit 或 rules clear 清理既有连接而引入全局 conntrack registry。
 
-context 保存：
+若后续确实引入 context，其可保存：
 
 - active consumer mask。
 - owner state。
@@ -328,7 +328,7 @@ context 保存：
 - original/reply packet 与 byte counter。
 - TCP 连续 prefix 和 sequence。
 - UDP/QUIC CRYPTO 连续 prefix。
-- 绑定的 DPI ruleset generation。
+- 观察到的 DPI ruleset generation，仅用于审计，不 pin retired ruleset。
 - 已确认的 proto/features。
 - 每个 consumer 的 done/reason。
 
@@ -354,28 +354,27 @@ ARMING -> ARMED -> PARSING -> WAIT_MORE
 - `PARSING` 使用单 flow owner claim，避免同一 conntrack 同时跑多个 parser owner。
 - loser CPU 可以在短锁内合并连续 prefix；无法表达 gap/overlap 或预算耗尽时 deterministic terminal。
 - 每个 consumer 独立 terminal。最后一个 consumer done 后释放 context。
-- FIN/RST、deadline、packet budget、byte budget、cache full、disable 和 module exit 都必须终止。
+- FIN/RST、deadline、packet budget、byte budget 和 cache full 应按 parser 自身状态机自然终止；运行时 disable、rules commit、rules clear 和 module exit 不枚举或强制终止已经标记的连接。
 
 ### 9.3 Enable/disable
 
-L7 control mutex 串行化以下操作：
+控制面 mutex 串行化以下操作：
 
 - legacy `urllogger_store/enable` 写入。
 - DPI `enable=0|1`。
 - DPI ruleset commit。
 - event mode 更新。
 
-DPI 状态：
+DPI 状态保持为：
 
 ```text
-DISABLED -> ENABLING -> ENABLED -> DISABLING -> DISABLED
+DISABLED <-> ENABLED
 ```
 
-- `enable=1` 准备 context/ring/ruleset/crypto capability 后，以 release 语义发布 `ENABLED`。
-- 任一步失败都回滚到 `DISABLED` 并返回原始 errno。
-- `enable=0` 先发布 `DISABLING`，阻止新 arm，再 `synchronize_net()`，随后完成所有 active DPI consumer，写 `DPI_DISABLED` terminal 并清 DPI owner bit。
-- shared L7 资源仍被 URL consumer 使用时不能释放，只移除 DPI consumer。
-- 同值 enable 写幂等成功；迁移中冲突操作返回 `-EBUSY`。
+- `enable=1` 发布 `ENABLED`，仅使后续尚未 L7 terminal 的候选连接可以进入 DPI consumer。
+- `enable=0` 发布 `DISABLED`，使后续数据包不再把 DPI 纳入 active consumer；不扫描 conntrack，不完成既有 consumer，不补写 `DPI_DISABLED` terminal，也不清理已经设置的 L7 owner/done 状态。
+- shared L7 资源仍可被 URL consumer 或已经进入解析流程的连接使用，不能因 DPI enable 变化而释放共享资源。
+- 同值 enable 写幂等成功。
 
 legacy `urllogger_store/enable` 必须从裸 `proc_douintvec` 迁移到 custom sysctl handler，保持路径和值不变，但在 L7 control mutex 下完成资源准备、发布和回滚。
 
@@ -449,9 +448,9 @@ HTTP URI 继续由 legacy URL logger 输出，但不进入 MVP DPI classifier。
 1. 每个控制 fd 在 private staging 中构造完整候选 ruleset。
 2. `commit` 在 mutex 下校验 base generation、引用、冲突和 hard limit。
 3. 构造完成后 `rcu_assign_pointer()` 一次发布。
-4. selected flow 在 arm 时绑定实际 ruleset generation。
-5. 替换后的 global 引用在 grace period 后释放；被 active context pin 的 retired snapshot 等 context 完成后释放。
-6. commit 只影响 commit 后 arm 的连接。
+4. classifier 在实际匹配时读取 active ruleset，并把该次匹配使用的 generation 写入 event。
+5. 替换后的 global 引用在 grace period 后释放；MVP 不为已标记连接 pin retired ruleset。
+6. 已设置 L7_SKIP 的终态连接不会因 commit 重新武装；仍在自然解析路径中的连接若再次分类，读取当时发布的 active ruleset，不保证继续使用 arm 时 generation。
 7. accounting 覆盖 current、retired 和 staging snapshot。
 
 ## 12. 用户态 ABI
@@ -605,14 +604,14 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 ## 17. 配置变化和既有连接
 
-- DPI `enable=1` 只影响启用后看到的新建候选连接。
+- DPI `enable=1` 只影响启用后看到的、尚未进入 L7 terminal 的候选连接。
 - 已建立或已 offload 的连接不会重新出现 ClientHello、banner 或首段握手，不得宣称可重分类。
-- ruleset commit 只影响 commit 后 arm 的连接。
-- WAIT_MORE flow 持有 arm 时的 snapshot generation。
+- 已设置 `IPS_NATFLOW_L7_HANDLED` 的连接不会因 ruleset commit 重新武装。
+- WAIT_MORE flow 不 pin ruleset snapshot；若后续包仍进入分类路径，使用当时的 active ruleset。
 - `update_magic` 只能使部分 path 状态重学，不能恢复已经错过的 L7 元数据。
 - MVP 不在 rule commit 时自动失效软件 fastnat 或硬件 offload flow。
-- runtime 关闭 URL consumer 只完成 URL/HostACL consumer，不改变 DPI terminal。
-- runtime 关闭 DPI 只完成 DPI consumer，不影响 legacy URL consumer。
+- runtime 关闭 URL consumer、关闭 DPI、rules clear 或 rules commit 都只改变后续 active consumer mask，不枚举、不退出、不清理已经标记的连接。
+- 已标记连接可以继续自然终态，也可以一直保留原 owner/done 状态直到 conntrack 生命周期结束；这是接受的配置语义，不要求控制面主动回收。
 
 ## 18. 分阶段实施
 
@@ -630,7 +629,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成：增加 `CONFIG_NATFLOW_DPI`。
 - 已完成：增加 `NF_FF_L7_USE`、`NF_FF_DPI_USE`、`NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE`、`NF_FF_L7_DPI_PACKET_DONE` 和扩展后的 `NF_FF_BUSY_USE`。
 - 已完成：在 `natflow_t` 尾部追加 `app_id`，并完成 shared conntrack extension layout guard。
-- 增加最小 context registry、terminal state、drain 和 reason counter。
+- 后续仅在 parser/detector 确需更强跨包状态时增加最小 context；不为运行时配置变更实现 conntrack drain。
 - 已完成骨架：实现 `/dev/natflow_dpi_ctl` 的 status、enable/disable、空 ruleset 事务。
 - 已完成骨架：实现 `/dev/natflow_dpi_queue` 固定 header ABI；后续 M1b/M1c 已增加 match event producer。
 - M1a 当时不宣称应用识别；后续 M1b/M1c 已加入 audit-only 的 domain/proto match。
@@ -706,7 +705,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 - waiting flow 不建 fastnat/HWNAT。
 - URL 和 DPI owner 独立完成。
-- module exit、disable、timeout、cache full、NO_MEMORY 路径都清 bit。
+- 正常 parser terminal、明确 timeout、cache full 和 NO_MEMORY 路径按各自状态机清 bit；disable、ruleset 变化和 module exit 不要求清理已标记连接。
 - `nf->status` lost-owner/early-fastpath 计数。
 - RPS/RFS 跨 CPU prefix 不丢。
 
@@ -737,7 +736,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 3. `natflow_probe_ct_ext()` 可以 exactly-once 前置并返回错误。
 4. fast path 和硬件 offload 所有建表点都受扩展后的 `NF_FF_BUSY_USE` 保护。
 5. URL/Host ACL legacy 行为有 corpus 和字节级回归。
-6. L7 context registry 能在 disable/exit 时枚举和完成 active consumer。
+6. 运行时 disable/规则变化不依赖全局 conntrack registry，且不会重新武装或主动清理既有连接。
 7. DPI queue ABI 在 v1 就定义 partial-read/poll/overflow。
 8. 最低内核版本所需 RCU、poll、sysctl、crypto、IPv6 extension helper 兼容封装明确。
 9. 默认规则包生成方式和 app_id 重映射责任归用户态。
@@ -747,7 +746,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 内部实现统一为 L7 core，URL 和 DPI 不重复解析 HTTP/TLS/QUIC。
 - legacy URL logger、Host ACL、sysctl 和二进制事件行为不回退。
 - `NF_FF_L7_USE` 正常阻止 fast path 提前接管 shared HTTP/TLS/QUIC selected flow，URL/DPI-domain/DPI-packet done bit 保证任一 consumer 失败或完成不会提前关闭另一个 consumer；后续独立 DPI context 使用 `NF_FF_DPI_USE`。
-- 所有 terminal/error/disable/exit 路径都写 reason 并清 DPI owner bit。
+- 正常 terminal/error 路径按状态机写 reason 并清 owner bit；运行时 disable、规则变化和 module exit 不负责清理已标记连接。
 - flow 常驻结果只有 `app_id`，其他细节在 event 中输出。
 - unknown/error/resource exhaustion 默认 fail-open。
 - 新增 DPI ABI 有版本、长度、generation、IPv6、reason、overflow 和 read/poll 语义。

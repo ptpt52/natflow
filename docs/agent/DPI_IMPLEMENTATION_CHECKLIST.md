@@ -40,6 +40,8 @@ M0/M1 期间必须保持：
 - 追加字段前必须验证 shared conntrack extension 布局，失败时不能注册 DPI/L7 hook。
 - L7 入口必须先调用 `natflow_session_in()` 统一确保 URL/DPI 终态有 `natflow_t.status` 可写；已 confirm 且没有 natflow session 的 flow 仍不能安全追加扩展，必须 fail-open 跳过 L7 解析，不能退回无状态 DPI/URL 事件。
 - writer 顺序保持为：写结果、写对应 consumer terminal done bit、所有 active consumer 均 done 后清 busy bit 并设置 `IPS_NATFLOW_L7_HANDLED` L7_SKIP 派生 hint。
+- 运行时 URL/DPI enable、DPI rules commit/clear 只改变后续数据包看到的 active consumer/ruleset；不得为配置变化增加 conntrack 全表扫描、强制 terminal 或 owner bit 清理。已标记连接允许自然终态或保留状态直到 conntrack 生命周期结束。
+- 已设置 `IPS_NATFLOW_L7_HANDLED` 的连接不因配置变化重新武装；仍在分类路径中的连接读取匹配时的 active ruleset，不 pin arm 时 generation。
 
 ## DPI ABI 基线
 

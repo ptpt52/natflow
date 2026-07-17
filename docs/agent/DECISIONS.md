@@ -86,3 +86,28 @@ DPI 能力采用有界 L7 detector 框架：
 - 实现应先拆出 L7 core，再迁移 legacy URL logger 消费 shared features，最后接入 DPI consumer。
 - 可以调整内部文件和函数名，但不能破坏当前 URL/Host ACL 命令、sysctl 路径或事件格式。
 - URL queue 已从旧 CSV ABI 迁移到 `/dev/natflow_urllogger_queue` 二进制 ABI；后续审查以源码、`README.md` 和 `SYSTEM_DESIGN_SPEC.md` 的当前 ABI 为准。
+
+## ADR-0004：L7 配置变化不清理已标记连接
+
+日期：2026-07-18
+
+状态：Accepted
+
+### 背景
+
+DPI enable、ruleset commit/clear 和 URL consumer enable 变化后，可以通过全局 conntrack registry 枚举并强制完成已经设置 `NF_FF_L7_USE` 的连接，也可以把配置变化限定为后续流量准入。前一种方案会增加 conntrack 引用、全局状态、drain 同步和旧内核兼容复杂度。
+
+### 决策
+
+- 运行时配置变化只控制后续数据包看到的 active consumer 和 active ruleset。
+- 不为 enable、rules commit、rules clear 或模块退出枚举 conntrack，不强制退出、补写 terminal 或清理已经标记的连接。
+- 已设置 `IPS_NATFLOW_L7_HANDLED` 的连接不重新武装。
+- 仍在自然解析路径中的连接若再次分类，读取当时发布的 active ruleset，不 pin arm 时 generation。
+- 已标记连接允许自然终态，也允许保留 L7 owner/done 状态直到 conntrack 生命周期结束；配置切换不保证立即恢复其 fast path。
+- 后续只有 parser/detector 本身确需更强跨包状态时，才评审最小 context，不得以配置清理为理由引入全局 conntrack registry。
+
+### 后果
+
+- DPI `enable=0`、`rules_clear` 和规则替换保持常数级控制面操作，不执行全表扫描或 drain。
+- 配置切换后的验证必须使用新连接；不能用既有连接判断新规则是否生效。
+- 运维若要求立即应用新配置，需要在用户态显式重建相关连接；内核 ABI 不提供隐式连接清理。
