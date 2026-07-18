@@ -59,8 +59,10 @@ enum natflow_dpi_detector_id {
 	NATFLOW_DPI_DETECTOR_SSH,
 	NATFLOW_DPI_DETECTOR_WIREGUARD,
 	NATFLOW_DPI_DETECTOR_BITTORRENT,
+	NATFLOW_DPI_DETECTOR_MAX,
 };
 
+#define NATFLOW_DPI_DETECTOR_BIT(id) (1U << (id))
 #define NATFLOW_DPI_L4_TCP 0x01
 #define NATFLOW_DPI_L4_UDP 0x02
 #define NATFLOW_DPI_DIRECTION_PACKET_BUDGET 4
@@ -1403,6 +1405,258 @@ static const struct natflow_dpi_detector natflow_dpi_payload_detectors[] = {
 	},
 };
 
+static unsigned char natflow_dpi_l4_mask(unsigned char l4proto);
+static bool natflow_dpi_detector_direction_allowed(
+    const struct natflow_dpi_detector *detector, unsigned char direction);
+
+static const struct natflow_dpi_detector *natflow_dpi_detector_by_id(
+    unsigned int detector_id)
+{
+	unsigned int i;
+
+	if (detector_id == NATFLOW_DPI_DETECTOR_DNS)
+		return &natflow_dpi_dns_detector;
+
+	for (i = 0; i < ARRAY_SIZE(natflow_dpi_payload_detectors); i++) {
+		if (natflow_dpi_payload_detectors[i].detector_id == detector_id)
+			return &natflow_dpi_payload_detectors[i];
+	}
+	return NULL;
+}
+
+static int natflow_dpi_direction_index(unsigned char direction)
+{
+	if (direction == NATFLOW_L7_DIR_ORIGINAL)
+		return NF_FF_DIR_ORIGINAL;
+	if (direction == NATFLOW_L7_DIR_REPLY)
+		return NF_FF_DIR_REPLY;
+	return -EINVAL;
+}
+
+static void natflow_dpi_context_clear(natflow_t *nf)
+{
+	if (!nf)
+		return;
+
+	if (READ_ONCE(nf->status) & NF_FF_DPI_USE)
+		simple_clear_bit(NF_FF_DPI_USE_BIT, &nf->status);
+	nf->dpi_byte_count[NF_FF_DIR_ORIGINAL] = 0;
+	nf->dpi_byte_count[NF_FF_DIR_REPLY] = 0;
+	nf->dpi_packet_count[NF_FF_DIR_ORIGINAL] = 0;
+	nf->dpi_packet_count[NF_FF_DIR_REPLY] = 0;
+	nf->dpi_detector_mask = 0;
+	nf->dpi_reserved = 0;
+}
+
+void natflow_dpi_packet_context_abort(struct nf_conn *ct)
+{
+	natflow_t *nf;
+
+	if (!ct)
+		return;
+	nf = natflow_session_get(ct);
+	if (nf)
+		natflow_dpi_context_clear(nf);
+}
+
+static unsigned int natflow_dpi_detector_candidate_mask(unsigned char l4proto,
+        __be16 server_port, unsigned int proto_mask)
+{
+	unsigned int detector_mask = 0;
+	unsigned char l4_mask;
+	unsigned int i;
+
+	l4_mask = natflow_dpi_l4_mask(l4proto);
+	if (l4_mask == 0)
+		return 0;
+
+	if ((proto_mask & natflow_dpi_dns_detector.proto_mask) &&
+	        (natflow_dpi_dns_detector.l4_mask & l4_mask) &&
+	        server_port == __constant_htons(53))
+		detector_mask |= NATFLOW_DPI_DETECTOR_BIT(NATFLOW_DPI_DETECTOR_DNS);
+
+	for (i = 0; i < ARRAY_SIZE(natflow_dpi_payload_detectors); i++) {
+		const struct natflow_dpi_detector *detector =
+			    &natflow_dpi_payload_detectors[i];
+
+		if ((proto_mask & detector->proto_mask) &&
+		        (detector->l4_mask & l4_mask))
+			detector_mask |= NATFLOW_DPI_DETECTOR_BIT(detector->detector_id);
+	}
+	return detector_mask;
+}
+
+static bool natflow_dpi_detector_direction_exhausted(
+    const struct natflow_dpi_detector *detector, const natflow_t *nf,
+    unsigned int direction)
+{
+	unsigned int packet_budget;
+	unsigned int byte_budget;
+
+	if (direction == NF_FF_DIR_ORIGINAL) {
+		packet_budget = detector->packet_budget_original;
+		byte_budget = detector->byte_budget_original;
+	} else {
+		packet_budget = detector->packet_budget_reply;
+		byte_budget = detector->byte_budget_reply;
+	}
+
+	return nf->dpi_packet_count[direction] >= packet_budget ||
+	       nf->dpi_byte_count[direction] >= byte_budget;
+}
+
+static bool natflow_dpi_detector_exhausted(
+    const struct natflow_dpi_detector *detector, const natflow_t *nf)
+{
+	bool original_exhausted;
+	bool reply_exhausted;
+
+	original_exhausted = natflow_dpi_detector_direction_exhausted(
+	                         detector, nf, NF_FF_DIR_ORIGINAL);
+	reply_exhausted = natflow_dpi_detector_direction_exhausted(
+	                      detector, nf, NF_FF_DIR_REPLY);
+
+	switch (detector->direction_mode) {
+	case NATFLOW_DPI_DIR_ORIGINAL_ONLY:
+		return original_exhausted;
+	case NATFLOW_DPI_DIR_REPLY_ONLY:
+		return reply_exhausted;
+	case NATFLOW_DPI_DIR_EITHER:
+	case NATFLOW_DPI_DIR_BOTH:
+		return original_exhausted && reply_exhausted;
+	default:
+		return true;
+	}
+}
+
+static bool natflow_dpi_context_detectors_exhausted(const natflow_t *nf)
+{
+	const struct natflow_dpi_detector *detector;
+	unsigned int detector_id;
+
+	for (detector_id = 0; detector_id < NATFLOW_DPI_DETECTOR_MAX;
+	        detector_id++) {
+		if (!(nf->dpi_detector_mask & NATFLOW_DPI_DETECTOR_BIT(detector_id)))
+			continue;
+		detector = natflow_dpi_detector_by_id(detector_id);
+		if (detector && !natflow_dpi_detector_exhausted(detector, nf))
+			return false;
+	}
+	return true;
+}
+
+static unsigned int natflow_dpi_context_direction_detector_mask(
+    const natflow_t *nf, unsigned int detector_mask, unsigned char direction)
+{
+	const struct natflow_dpi_detector *detector;
+	unsigned int detector_id;
+	int dir;
+
+	dir = natflow_dpi_direction_index(direction);
+	if (dir < 0)
+		return 0;
+
+	for (detector_id = 0; detector_id < NATFLOW_DPI_DETECTOR_MAX;
+	        detector_id++) {
+		if (!(detector_mask & NATFLOW_DPI_DETECTOR_BIT(detector_id)))
+			continue;
+		detector = natflow_dpi_detector_by_id(detector_id);
+		if (!detector ||
+		        !natflow_dpi_detector_direction_allowed(detector, direction) ||
+		        ((READ_ONCE(nf->status) & NF_FF_DPI_USE) &&
+		         natflow_dpi_detector_direction_exhausted(detector, nf, dir)))
+			detector_mask &= ~NATFLOW_DPI_DETECTOR_BIT(detector_id);
+	}
+	return detector_mask;
+}
+
+static unsigned int natflow_dpi_detector_mask_proto_mask(
+    unsigned int detector_mask)
+{
+	const struct natflow_dpi_detector *detector;
+	unsigned int proto_mask = 0;
+	unsigned int detector_id;
+
+	for (detector_id = 0; detector_id < NATFLOW_DPI_DETECTOR_MAX;
+	        detector_id++) {
+		if (!(detector_mask & NATFLOW_DPI_DETECTOR_BIT(detector_id)))
+			continue;
+		detector = natflow_dpi_detector_by_id(detector_id);
+		if (detector)
+			proto_mask |= detector->proto_mask;
+	}
+	return proto_mask;
+}
+
+static bool natflow_dpi_context_observe(natflow_t *nf,
+                                        unsigned char direction, unsigned int detector_mask,
+                                        unsigned int observed_detector_mask,
+                                        unsigned int payload_len, unsigned int payload_linear_len)
+{
+	unsigned int inspect_len;
+	unsigned int byte_count;
+	int dir;
+
+	if (!nf || detector_mask == 0)
+		return true;
+	dir = natflow_dpi_direction_index(direction);
+	if (dir < 0)
+		return true;
+
+	if (READ_ONCE(nf->status) & NF_FF_DPI_USE) {
+		nf->dpi_detector_mask &= detector_mask;
+		if (nf->dpi_detector_mask == 0)
+			return true;
+	} else {
+		nf->dpi_byte_count[NF_FF_DIR_ORIGINAL] = 0;
+		nf->dpi_byte_count[NF_FF_DIR_REPLY] = 0;
+		nf->dpi_packet_count[NF_FF_DIR_ORIGINAL] = 0;
+		nf->dpi_packet_count[NF_FF_DIR_REPLY] = 0;
+		nf->dpi_detector_mask = detector_mask;
+		nf->dpi_reserved = 0;
+	}
+
+	if (payload_len > 0 && observed_detector_mask != 0) {
+		if (nf->dpi_packet_count[dir] != 0xff)
+			nf->dpi_packet_count[dir]++;
+
+		inspect_len = payload_linear_len;
+		if (inspect_len > payload_len)
+			inspect_len = payload_len;
+		if (nf->dpi_detector_mask &
+		        ~NATFLOW_DPI_DETECTOR_BIT(NATFLOW_DPI_DETECTOR_DNS)) {
+			if (inspect_len > NATFLOW_DPI_PAYLOAD_INSPECT_MAX)
+				inspect_len = NATFLOW_DPI_PAYLOAD_INSPECT_MAX;
+		} else if (inspect_len > NATFLOW_DPI_DNS_INSPECT_MAX) {
+			inspect_len = NATFLOW_DPI_DNS_INSPECT_MAX;
+		}
+
+		byte_count = nf->dpi_byte_count[dir];
+		if (inspect_len > 0xffffu - byte_count)
+			byte_count = 0xffffu;
+		else
+			byte_count += inspect_len;
+		nf->dpi_byte_count[dir] = byte_count;
+	}
+
+	if (natflow_dpi_context_detectors_exhausted(nf))
+		return true;
+
+	if (!(READ_ONCE(nf->status) & NF_FF_L7_USE))
+		simple_set_bit(NF_FF_L7_USE_BIT, &nf->status);
+	if (!(READ_ONCE(nf->status) & NF_FF_DPI_USE))
+		simple_set_bit(NF_FF_DPI_USE_BIT, &nf->status);
+	return false;
+}
+
+static bool natflow_dpi_packet_is_terminal(
+    const struct natflow_l7_packet_view *view)
+{
+	if (!view || view->l4proto != IPPROTO_TCP || !view->l4)
+		return false;
+	return TCPH(view->l4)->fin || TCPH(view->l4)->rst;
+}
+
 static unsigned char natflow_dpi_l4_mask(unsigned char l4proto)
 {
 	if (l4proto == IPPROTO_TCP)
@@ -1571,7 +1825,11 @@ unsigned int natflow_dpi_packet_view_pull_len(unsigned int consumer_mask,
 unsigned int natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view *view)
 {
 	const unsigned char *payload;
+	natflow_t *nf;
 	unsigned int payload_linear_len;
+	unsigned int detector_mask;
+	unsigned int inspect_detector_mask;
+	unsigned int packet_proto_mask;
 	unsigned int dns_inspect_len;
 	unsigned int inspect_len;
 	unsigned int done_mask = 0;
@@ -1598,6 +1856,7 @@ unsigned int natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view
 		return 0;
 	server_port = natflow_l7_packet_server_port(view);
 	proto_mask = READ_ONCE(natflow_dpi_proto_mask);
+	nf = natflow_session_get(view->ct);
 
 	payload = view->payload;
 	payload_linear_len = view->payload_linear_len;
@@ -1624,13 +1883,34 @@ unsigned int natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view
 	if (!(consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET) ||
 	        proto_mask == 0)
 		return done_mask;
+	if (!nf) {
+		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
+		return done_mask;
+	}
+	if (READ_ONCE(nf->app_id) != 0 || natflow_dpi_packet_is_terminal(view)) {
+		natflow_dpi_context_clear(nf);
+		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
+		return done_mask;
+	}
+
+	detector_mask = natflow_dpi_detector_candidate_mask(view->l4proto,
+	                server_port, proto_mask);
+	if (detector_mask == 0) {
+		natflow_dpi_context_clear(nf);
+		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
+		return done_mask;
+	}
+	inspect_detector_mask = natflow_dpi_context_direction_detector_mask(
+	                            nf, detector_mask, view->direction);
+	packet_proto_mask = proto_mask &
+	                    natflow_dpi_detector_mask_proto_mask(inspect_detector_mask);
 
 	if (dns_match &&
-	        (proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_DNS)))
+	        (packet_proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_DNS)))
 		proto = NATFLOW_DPI_PROTO_DNS;
 
 	if (!proto &&
-	        (proto_mask & natflow_dpi_payload_proto_mask(view->l4proto,
+	        (packet_proto_mask & natflow_dpi_payload_proto_mask(view->l4proto,
 	                view->direction))) {
 		inspect_len = view->payload_len > NATFLOW_DPI_PAYLOAD_INSPECT_MAX ?
 		              NATFLOW_DPI_PAYLOAD_INSPECT_MAX : view->payload_len;
@@ -1642,13 +1922,23 @@ unsigned int natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view
 			                                   inspect_len,
 			                                   view->l4proto,
 			                                   view->direction,
-			                                   proto_mask);
+			                                   packet_proto_mask);
 	}
 
-	if (proto)
+	if (proto) {
 		natflow_dpi_classify_proto(view->ct, proto);
+		natflow_dpi_context_clear(nf);
+		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
+		return done_mask;
+	}
 
-	done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
+	if (natflow_dpi_context_observe(nf, view->direction, detector_mask,
+	                                inspect_detector_mask,
+	                                view->payload_len,
+	                                payload_linear_len)) {
+		natflow_dpi_context_clear(nf);
+		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
+	}
 	return done_mask;
 }
 

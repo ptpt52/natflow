@@ -191,6 +191,18 @@ int natflow_ct_ext_layout_validate(void)
 		return -EINVAL;
 	}
 
+	if (offsetof(struct natflow_t, dpi_byte_count) !=
+	        offsetof(struct natflow_t, app_id) + sizeof(((struct natflow_t *)0)->app_id) ||
+	        ALIGN(offsetof(struct natflow_t, dpi_reserved) +
+	              sizeof(((struct natflow_t *)0)->dpi_reserved),
+	              __ALIGN_64BITS) != sizeof(struct natflow_t)) {
+		NATFLOW_ERROR("invalid natflow dpi context layout: size=%u app=%u counters=%u\n",
+		              (unsigned int)sizeof(struct natflow_t),
+		              (unsigned int)offsetof(struct natflow_t, app_id),
+		              (unsigned int)offsetof(struct natflow_t, dpi_byte_count));
+		return -EINVAL;
+	}
+
 	return 0;
 }
 

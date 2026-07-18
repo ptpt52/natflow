@@ -111,6 +111,10 @@ typedef struct natflow_t {
 #define NF_FF_DIR_MAX 2
 	struct natflow_route_t rroute[NF_FF_DIR_MAX];
 	unsigned int app_id;
+	unsigned short dpi_byte_count[NF_FF_DIR_MAX];
+	unsigned char dpi_packet_count[NF_FF_DIR_MAX];
+	unsigned char dpi_detector_mask;
+	unsigned char dpi_reserved;
 } natflow_t;
 
 /*XXX don't change */

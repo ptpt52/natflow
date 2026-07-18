@@ -35,8 +35,8 @@ M0/M1 期间必须保持：
 
 M0/M1 期间必须保持：
 
-- `NF_FF_L7_USE` 和 `NF_FF_DPI_USE` 必须纳入 `NF_FF_BUSY_USE`；shared HTTP/TLS/QUIC parser 使用 L7 busy bit，URL/DPI-domain/DPI-packet consumer 终态分别使用 `NF_FF_L7_URL_DONE`/`NF_FF_L7_DPI_DOMAIN_DONE`/`NF_FF_L7_DPI_PACKET_DONE` 且不纳入 busy mask，后续独立 DPI context 使用 DPI busy bit。
-- `natflow_t` 只追加 `app_id` 作为常驻 DPI flow result；其他 DPI 细节只进入 terminal event。
+- `NF_FF_L7_USE` 和 `NF_FF_DPI_USE` 必须纳入 `NF_FF_BUSY_USE`；shared parser 使用 L7 busy bit，`natflow_t` 内瞬态 DPI context 使用 DPI busy bit，三个 consumer done bit 不纳入 busy mask。
+- `natflow_t` 的常驻 DPI 分类结果只有 `app_id`；允许尾部 8 字节瞬态 context 保存双向 packet/byte counter 和 detector mask，不保存证据、规则详情或指针。
 - 追加字段前必须验证 shared conntrack extension 布局，失败时不能注册 DPI/L7 hook。
 - L7 入口必须先调用 `natflow_session_in()` 统一确保 URL/DPI 终态有 `natflow_t.status` 可写；已 confirm 且没有 natflow session 的 flow 仍不能安全追加扩展，必须 fail-open 跳过 L7 解析，不能退回无状态 DPI/URL 事件。
 - writer 顺序保持为：写结果、写对应 consumer terminal done bit、所有 active consumer 均 done 后清 busy bit 并设置 `IPS_NATFLOW_L7_HANDLED` L7_SKIP 派生 hint。
@@ -44,7 +44,7 @@ M0/M1 期间必须保持：
 - 已设置 `IPS_NATFLOW_L7_HANDLED` 的连接不因配置变化重新武装；仍在分类路径中的连接读取匹配时的 active ruleset，不 pin arm 时 generation。
 - reply 准入前必须让 packet view 携带 conntrack direction，并提供方向感知的 client/server port 语义；不能在 reply 包上继续把 `dport` 当服务端口。
 - detector 必须声明 `ORIGINAL_ONLY`、`REPLY_ONLY`、`EITHER` 或 `BOTH`。一个方向未命中不能让 `EITHER`/`BOTH` detector 或整个 DPI packet consumer 提前终态。
-- 只有等待方向、跨包 prefix 或关联阶段的 detector 才分配 bounded context；等待时设置 `NF_FF_DPI_USE`，match、全部 detector terminal、packet/byte budget、deadline 或资源失败时确定性清除。单向流量不能因未出现无关方向永久阻塞 fast path。
+- 只有等待方向或后续 packet 的 detector 才启用 bounded context；等待时设置 `NF_FF_DPI_USE`，match、已有 app、FIN/RST 或双向 packet/byte budget 耗尽时清除。不使用时间 deadline，所需方向始终无 payload 时允许 context 保留到 conntrack 结束。
 - context 存续期间可同时设置 `NF_FF_L7_USE | NF_FF_DPI_USE`，但 arm/terminal 顺序不能出现 context 活跃而两个 busy bit 都未设置的窗口；已有非 0 `app_id` 时 packet consumer 应以 `APP_EXISTS` 终态。
 - reply 首期只进入 DPI packet consumer；URL logger、Host ACL、HTTP/TLS/QUIC host producer 和 DNS QNAME domain 保持 original-only，除非后续单独修改并审核其外部行为。
 

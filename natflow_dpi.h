@@ -65,6 +65,7 @@ extern unsigned int natflow_dpi_packet_view_pull_len(unsigned int consumer_mask,
         unsigned int payload_len);
 extern unsigned int natflow_dpi_consume_packet_view(
     const struct natflow_l7_packet_view *view);
+extern void natflow_dpi_packet_context_abort(struct nf_conn *ct);
 extern void natflow_dpi_classify_host(struct nf_conn *ct,
                                       const unsigned char *host,
                                       unsigned short host_len,
