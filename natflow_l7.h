@@ -231,6 +231,8 @@ extern int natflow_l7_dns_parse(const unsigned char *data,
                                 unsigned int data_len,
                                 unsigned char l4proto,
                                 struct natflow_l7_feature *feature);
+extern int natflow_l7_dns_response_parse(const unsigned char *data,
+        unsigned int data_len, unsigned char l4proto);
 extern unsigned int natflow_l7_consumer_mask(void);
 extern int natflow_l7_consumer_active(unsigned int consumer);
 extern int natflow_l7_init(void);

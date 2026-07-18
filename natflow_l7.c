@@ -3244,19 +3244,93 @@ enum natflow_l7_tls_search_result natflow_l7_quic_crypto_frames_search(const uns
 	return has_crypto ? sni_result : NATFLOW_L7_TLS_SEARCH_NO_SNI;
 }
 
-int natflow_l7_dns_parse(const unsigned char *data, unsigned int data_len,
-                         unsigned char l4proto, struct natflow_l7_feature *feature)
+#define NATFLOW_L7_DNS_POINTER_MAX 16
+#define NATFLOW_L7_DNS_LABEL_MAX 128
+
+static int natflow_l7_dns_name_parse(const unsigned char *data,
+                                     unsigned int data_len, unsigned int name_offset,
+                                     unsigned char *host, unsigned int *host_len,
+                                     unsigned int *next_offset)
 {
-	unsigned int offset;
-	unsigned int qdcount;
+	unsigned short pointer_seen[NATFLOW_L7_DNS_POINTER_MAX];
+	unsigned int pointer_count = 0;
+	unsigned int label_count = 0;
+	unsigned int output_len = 0;
+	unsigned int offset = name_offset;
+	bool jumped = false;
+
+	if (!data || !host_len || !next_offset)
+		return -EINVAL;
+
+	for (;;) {
+		unsigned int label_len;
+
+		if (offset >= data_len || ++label_count > NATFLOW_L7_DNS_LABEL_MAX)
+			return -EINVAL;
+		label_len = data[offset++];
+		if (label_len == 0) {
+			if (!jumped)
+				*next_offset = offset;
+			break;
+		}
+		if ((label_len & 0xc0) == 0xc0) {
+			unsigned int pointer;
+			unsigned int i;
+
+			if (offset >= data_len ||
+			        pointer_count >= NATFLOW_L7_DNS_POINTER_MAX)
+				return -EINVAL;
+			pointer = ((label_len & 0x3f) << 8) | data[offset++];
+			if (pointer >= data_len)
+				return -EINVAL;
+			for (i = 0; i < pointer_count; i++) {
+				if (pointer_seen[i] == pointer)
+					return -EINVAL;
+			}
+			pointer_seen[pointer_count++] = pointer;
+			if (!jumped)
+				*next_offset = offset;
+			jumped = true;
+			offset = pointer;
+			continue;
+		}
+		if ((label_len & 0xc0) != 0 || label_len > 63 ||
+		        label_len > data_len - offset)
+			return -EINVAL;
+		if (output_len != 0) {
+			if (output_len >= NATFLOW_L7_HOST_MAX_LEN)
+				return -EINVAL;
+			if (host)
+				host[output_len] = '.';
+			output_len++;
+		}
+		if (label_len > NATFLOW_L7_HOST_MAX_LEN - output_len)
+			return -EINVAL;
+		if (host)
+			memcpy(host + output_len, data + offset, label_len);
+		output_len += label_len;
+		offset += label_len;
+		if (!jumped)
+			*next_offset = offset;
+	}
+
+	*host_len = output_len;
+	return 0;
+}
+
+static int natflow_l7_dns_message_parse(const unsigned char *data,
+                                        unsigned int data_len, unsigned char l4proto, bool response,
+                                        struct natflow_l7_feature *feature)
+{
+	unsigned int next_offset = 0;
 	unsigned int host_len = 0;
 	unsigned int flags;
 	unsigned int msg_len;
 
-	if (!data || !feature)
+	if (!data || (!response && !feature))
 		return -EINVAL;
-
-	natflow_l7_feature_init(feature, NATFLOW_L7_SOURCE_DNS);
+	if (feature)
+		natflow_l7_feature_init(feature, NATFLOW_L7_SOURCE_DNS);
 
 	if (l4proto == IPPROTO_TCP) {
 		unsigned int available;
@@ -3277,43 +3351,20 @@ int natflow_l7_dns_parse(const unsigned char *data, unsigned int data_len,
 		return -EINVAL;
 
 	flags = ntohs(get_byte2(data + 2));
-	if (flags & 0x8000)
+	if (!!(flags & 0x8000) != response || (flags & 0x7800) != 0)
 		return 0;
-	if ((flags & 0x7800) != 0)
-		return 0;
-	qdcount = ntohs(get_byte2(data + 4));
-	if (qdcount == 0)
+	if (ntohs(get_byte2(data + 4)) == 0)
 		return 0;
 
-	offset = 12;
-	do {
-		unsigned int label_len;
-
-		if (!natflow_l7_has_bytes(offset, 1, data_len))
-			return -EINVAL;
-		label_len = data[offset++];
-		if (label_len == 0)
-			break;
-		if ((label_len & 0xc0) != 0 || label_len > 63)
-			return -EINVAL;
-		if (!natflow_l7_has_bytes(offset, label_len, data_len))
-			return -EINVAL;
-		if (host_len != 0) {
-			if (host_len >= NATFLOW_L7_HOST_MAX_LEN)
-				return -EINVAL;
-			feature->host[host_len++] = '.';
-		}
-		if (label_len > NATFLOW_L7_HOST_MAX_LEN - host_len)
-			return -EINVAL;
-		memcpy(feature->host + host_len, data + offset, label_len);
-		host_len += label_len;
-		offset += label_len;
-	} while (offset < data_len);
-
+	if (natflow_l7_dns_name_parse(data, data_len, 12,
+	                              feature ? feature->host : NULL, &host_len, &next_offset) != 0)
+		return -EINVAL;
+	if (!natflow_l7_has_bytes(next_offset, 4, data_len))
+		return -EINVAL;
+	if (response)
+		return 1;
 	if (host_len == 0)
 		return 0;
-	if (!natflow_l7_has_bytes(offset, 4, data_len))
-		return -EINVAL;
 
 	if (natflow_l7_feature_set_host(feature, feature->host, host_len, 0) < 0)
 		return -EINVAL;
@@ -3321,6 +3372,19 @@ int natflow_l7_dns_parse(const unsigned char *data, unsigned int data_len,
 	feature->raw_host.len = feature->host_len;
 
 	return 1;
+}
+
+int natflow_l7_dns_parse(const unsigned char *data, unsigned int data_len,
+                         unsigned char l4proto, struct natflow_l7_feature *feature)
+{
+	return natflow_l7_dns_message_parse(data, data_len, l4proto, false,
+	                                    feature);
+}
+
+int natflow_l7_dns_response_parse(const unsigned char *data,
+                                  unsigned int data_len, unsigned char l4proto)
+{
+	return natflow_l7_dns_message_parse(data, data_len, l4proto, true, NULL);
 }
 
 int natflow_l7_init(void)

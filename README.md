@@ -1018,7 +1018,7 @@ echo events_clear >/dev/natflow_dpi_ctl
 - `host` 会转小写、去掉末尾点，并校验 DNS label；HTTP Host 中的端口由 URL logger normalize 时剥离；DNS QNAME 解析第一问并复用同一 domain exact/suffix matcher。
 - `kind=suffix` 同时匹配完全相同的 host 和带点边界的子域名，例如规则 `example.net` 可匹配 `example.net` 与 `www.example.net`。
 - `proto` 当前支持 `dns`、`ssh`、`wireguard`（也接受 `wg`）、`stun`、`turn`、`bittorrent`（也接受 `bt`）。
-- DNS QNAME detector：original direction TCP/UDP 53 标准 query 的第一问 QNAME 会进入 domain exact/suffix ruleset；有效标准 query 也可命中 DNS protocol-only 规则。response、非 query opcode、压缩 QNAME、畸形或前缀不足的报文忽略。
+- DNS QNAME detector：original direction TCP/UDP 53 标准 query 的第一问 QNAME 会进入 domain exact/suffix ruleset；支持 compression pointer，最多跳转 16 次并拒绝指针环、越界和展开后超长名称。reply 只用于 DNS protocol 证据，不进入 domain rules。
 - 端口只用于选择有界解析候选和 payload pull budget，不直接写入 `app_id`；当前只有 TCP/UDP 53 会触发 DNS 候选解析，TCP 22 和 UDP 51820 不再作为 SSH/WireGuard 的独立分类证据。
 - 有界 payload detector：TCP 任一方向的 SSH banner 识别 `SSH-<version>-` identification string；WireGuard、STUN/TURN 和 BitTorrent detector 也按 metadata 在任一方向匹配直接 payload 证据。仅执行当前 ruleset 实际配置且当前方向预算未耗尽的 detector。
 - `cat /dev/natflow_dpi_ctl` 会输出已成功入队的 `events_*` source counters 和 `proto_no_session`、`proto_app_exists`、`proto_no_rule` protocol-only reason counters，可用于 shadow 统计和解释 detector 已识别但未产生 match event 的原因。
