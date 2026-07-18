@@ -687,7 +687,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 ### M1c：首批 protocol-only detector
 
 - 已完成 MVP：增加 DNS、SSH、WireGuard protocol-only 规则，并通过 L7 shared hook 的 DPI packet-view consumer 运行。
-- 已完成 MVP：DNS 需要解析 TCP/UDP 53 标准 query，SSH 需要匹配 TCP original-direction `SSH-<version>-` banner，WireGuard 需要校验 UDP message type、reserved bytes 和长度；端口只选择解析候选，不直接写入 `app_id`。命中 proto rule 后写 `app_id` 并输出 match event。
+- 已完成 MVP：DNS 需要解析 TCP/UDP 53 标准 query，SSH 可以在 TCP 任一方向匹配 `SSH-<version>-` banner，WireGuard 需要校验 UDP message type、reserved bytes 和长度；端口只选择解析候选，不直接写入 `app_id`。命中 proto rule 后写 `app_id` 并输出 match event。
 - 已完成 MVP：DNS query 第一问 QNAME 由 `natflow_l7_dns_parse()` 解析并进入 domain exact/suffix ruleset，命中事件 source 为 DNS。
 - 已完成阶段性迁移：DPI packet consumer 不再自行按 IPv4/IPv6 重解析 skb，而是消费 L7 packet view 的 L4/payload 指针、payload 长度和有界 `payload_linear_len`。
 - 全部 audit-only，不执行 app ACL/QoS。
