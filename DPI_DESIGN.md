@@ -539,7 +539,7 @@ DPI event 使用版本化二进制记录，不复用 `/dev/natflow_urllogger_que
 | ruleset_generation | 命中时使用的规则版本。 |
 | app_id/category_id/rule_id | 分类结果。 |
 | proto_id/detector_id/evidence/confidence/reason | 解释字段。 |
-| family/l4_proto/dir | 协议和方向。 |
+| family/l4_proto/tuple_dir/evidence_dir | original tuple 协议和身份方向，以及实际命中证据方向。 |
 | tuple | IPv4/IPv6 五元组。 |
 | inspected_packets/bytes | 有界观察量。 |
 
@@ -702,6 +702,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成基础设施：DNS 与 payload detector 使用静态 metadata 声明 L4、方向模式和双向预算；DNS query/response 第一问共享有界 compression pointer walker，最多跳转 16 次并拒绝环和越界。
 - 已完成基础设施：`natflow_t` 内置 8 字节 bounded context，使用 `NF_FF_DPI_USE`、双向 packet/byte counter 和 detector mask 保持 packet consumer pending。
 - 已完成基础设施：放开 reply packet consumer，保持所有 URL/domain host consumer original-only。
+- 已完成 M2 准备项：DPI event ABI v3 保持 original tuple 作为连接身份，并增加独立 `evidence_dir` 记录实际命中 packet 方向。
 - 仍未完成：更完整的 reason counters、payload TLV、IPv6 extension header 解析、误判 corpus 和生产 shadow 数据采集。
 
 ### M2：生产 shadow

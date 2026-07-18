@@ -508,7 +508,7 @@ static void natflow_dpi_event_fill_tuple(struct natflow_dpi_event_hdr *hdr,
 static void natflow_dpi_event_queue(const struct nf_conn *ct,
                                     unsigned int reason, unsigned int generation,
                                     unsigned int app_id, unsigned int rule_id,
-                                    unsigned int flags)
+                                    unsigned int flags, unsigned char direction)
 {
 	struct natflow_dpi_event_node *node;
 
@@ -531,6 +531,8 @@ static void natflow_dpi_event_queue(const struct nf_conn *ct,
 	node->hdr.category_id = 0;
 	node->hdr.rule_id = rule_id;
 	node->hdr.flags = flags;
+	node->hdr.evidence_dir = direction == NATFLOW_L7_DIR_REPLY ?
+	                         IP_CT_DIR_REPLY : IP_CT_DIR_ORIGINAL;
 	node->hdr.timestamp = NATFLOW_DPI_EVENT_TIMESTAMP_NOW;
 	natflow_dpi_event_fill_tuple(&node->hdr, ct);
 
@@ -730,7 +732,8 @@ static void natflow_dpi_classify_normalized_host_match(struct nf_conn *ct,
 			WRITE_ONCE(nf->app_id, rule->app_id);
 		natflow_dpi_event_queue(ct, NATFLOW_DPI_REASON_MATCHED,
 		                        ruleset->generation, rule->app_id,
-		                        rule->rule_id, source);
+		                        rule->rule_id, source,
+		                        NATFLOW_L7_DIR_ORIGINAL);
 		break;
 	}
 	rcu_read_unlock();
@@ -800,7 +803,8 @@ static unsigned int natflow_dpi_proto_event_source(unsigned int proto)
 	}
 }
 
-static void natflow_dpi_classify_proto(struct nf_conn *ct, unsigned int proto)
+static void natflow_dpi_classify_proto(struct nf_conn *ct, unsigned int proto,
+                                       unsigned char direction)
 {
 	const struct natflow_dpi_proto_rule *rule;
 	struct natflow_dpi_ruleset *ruleset;
@@ -842,7 +846,7 @@ static void natflow_dpi_classify_proto(struct nf_conn *ct, unsigned int proto)
 		WRITE_ONCE(nf->app_id, rule->app_id);
 		natflow_dpi_event_queue(ct, NATFLOW_DPI_REASON_MATCHED,
 		                        ruleset->generation, rule->app_id,
-		                        rule->rule_id, source);
+		                        rule->rule_id, source, direction);
 		rcu_read_unlock();
 		return;
 	}
@@ -1932,7 +1936,7 @@ unsigned int natflow_dpi_consume_packet_view(
 	}
 
 	if (proto) {
-		natflow_dpi_classify_proto(view->ct, proto);
+		natflow_dpi_classify_proto(view->ct, proto, view->direction);
 		natflow_dpi_context_clear(nf);
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
 		return done_mask;
@@ -2071,6 +2075,9 @@ int natflow_dpi_init(void)
 	struct natflow_dpi_ruleset *ruleset;
 	int ret;
 	int i;
+
+	BUILD_BUG_ON(sizeof(struct natflow_dpi_event_hdr) !=
+	             NATFLOW_DPI_EVENT_HEADER_LEN);
 
 	ret = natflow_ct_ext_layout_validate();
 	if (ret != 0)

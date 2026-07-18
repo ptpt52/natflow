@@ -136,7 +136,7 @@ L7 reply 入口只准入 DPI packet consumer，`NF_FF_L7_DPI_PACKET_DONE` 是连
 
 - packet view 和 detector dispatcher 必须先补齐 direction 与 client/server port 语义，再放开 reply hook。
 - 单向 detector 不为无关方向付出等待成本，双向 detector 也不能被任一方向首包提前关闭。
-- 事件 ABI 后续需要独立记录 evidence direction，同时保持 original tuple 作为稳定连接身份；该 ABI 变化不属于本 ADR 的当前实现步骤。
+- DPI event ABI v3 已增加独立 `evidence_dir`，同时保持 original tuple 作为稳定连接身份；domain host event 固定记录 original，protocol-only event 记录实际命中 packet 方向。
 
 ## ADR-0006：L7 最低线程栈和单帧预算
 

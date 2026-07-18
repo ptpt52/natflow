@@ -244,7 +244,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 | `/dev/hostacl_ctl` | char device | Host ACL 规则和默认动作。 |
 | `/dev/natflow_urllogger_queue` | char device | URL/SNI/ACL 命中二进制事件队列，只允许一个 reader，默认不缓存。 |
 | `/dev/natflow_dpi_ctl` | char device | DPI enable 状态、domain/proto ruleset 事务和统计。 |
-| `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列，只允许一个 reader，默认不缓存，当前输出 domain/proto match v2 固定头事件和 original tuple。 |
+| `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列，只允许一个 reader，默认不缓存，当前输出 domain/proto match v3 固定头事件、original tuple 和 evidence direction。 |
 | `/dev/natflow_conntrackinfo_ctl` | char device | conntrack 文本快照。 |
 | `/proc/sys/urllogger_store/*` | sysctl | URL logger 开关、合并窗口和当前队列条数。 |
 
@@ -1028,7 +1028,7 @@ echo events_clear >/dev/natflow_dpi_ctl
 - 有界 payload detector：TCP 任一方向的 SSH banner 识别 `SSH-<version>-` identification string；WireGuard、STUN/TURN 和 BitTorrent detector 也按 metadata 在任一方向匹配直接 payload 证据。仅执行当前 ruleset 实际配置且当前方向预算未耗尽的 detector。
 - `cat /dev/natflow_dpi_ctl` 会输出已成功入队的 `events_*` source counters 和 `proto_no_session`、`proto_app_exists`、`proto_no_rule` protocol-only reason counters，可用于 shadow 统计和解释 detector 已识别但未产生 match event 的原因。
 
-`/dev/natflow_dpi_queue` 使用版本化二进制记录，只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 或 reader 未写入正数 `cache=N\n` 时，match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时 cache 默认为 0 并会先清空残留事件，写入 `cache=N\n` 后最多缓存 N 条新事件，队列满、溢出或分配失败会丢弃新事件并增加 `events_lost`；写入 `cache=0\n` 或关闭 fd 会关闭缓存并清空未读事件。当前 record 是 v2 固定头，包含规则命中摘要和 original direction tuple；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。
+`/dev/natflow_dpi_queue` 使用版本化二进制记录，只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 或 reader 未写入正数 `cache=N\n` 时，match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时 cache 默认为 0 并会先清空残留事件，写入 `cache=N\n` 后最多缓存 N 条新事件，队列满、溢出或分配失败会丢弃新事件并增加 `events_lost`；写入 `cache=0\n` 或关闭 fd 会关闭缓存并清空未读事件。当前 record 是 v3 固定头，包含规则命中摘要、original direction tuple 和实际证据方向；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。
 
 读者用法：
 
@@ -1048,6 +1048,8 @@ struct natflow_dpi_event_hdr {
 	__u64 timestamp;
 	__u8 l4proto;
 	__u8 tuple_dir;
+	__u8 evidence_dir;
+	__u8 reserved;
 	__u16 reason;
 	__u16 sport;
 	__u16 dport;
@@ -1063,14 +1065,15 @@ struct natflow_dpi_event_hdr {
 
 当前 match event 字段含义：
 
-- `version=2`，`header_len=record_len=sizeof(struct natflow_dpi_event_hdr)`。
+- `version=3`，`header_len=record_len=sizeof(struct natflow_dpi_event_hdr)=78`。
 - `reason=6` 表示 rule matched。
 - `generation` 是命中时的 ruleset generation。
 - `app_id` 和 `rule_id` 来自命中的 domain 或 proto rule。
 - `category_id=0` 预留。
 - `flags` 当前记录事件来源：1=`HTTP`，2=`TLS`，3=`QUIC`，4=`DNS`，5=`SSH`，6=`WireGuard`，7=`STUN`，8=`TURN`，9=`BitTorrent`。
 - `timestamp` 是基于系统 uptime 的秒数，不是 Unix epoch，与 URL logger 事件语义一致。
-- `family` 是 original tuple 的 L3 family，当前为 `AF_INET` 或 `AF_INET6`；`l4proto` 是 original tuple 的 L4 protocol；`tuple_dir=0` 表示 `IP_CT_DIR_ORIGINAL`。
+- `family` 是 original tuple 的 L3 family，当前为 `AF_INET` 或 `AF_INET6`；`l4proto` 是 original tuple 的 L4 protocol；`tuple_dir=0` 表示 tuple 固定取 `IP_CT_DIR_ORIGINAL`。
+- `evidence_dir=0/1` 分别表示命中证据来自 `IP_CT_DIR_ORIGINAL/IP_CT_DIR_REPLY`；domain host event 固定为 original，protocol-only event 记录实际命中 packet 的方向。`reserved` 当前必须忽略。
 - `sport` 和 `dport` 是 original tuple 的源/目的端口，按主机字节序输出；非端口型协议为 0。
 - `sip` 和 `dip` 是 original tuple 的源/目的地址字节数组；IPv4 使用前 4 字节，IPv6 使用完整 16 字节。
 
@@ -1097,6 +1100,8 @@ struct natflow_dpi_event_hdr {
 	uint64_t timestamp;
 	uint8_t l4proto;
 	uint8_t tuple_dir;
+	uint8_t evidence_dir;
+	uint8_t reserved;
 	uint16_t reason;
 	uint16_t sport;
 	uint16_t dport;
@@ -1256,7 +1261,7 @@ int main(void)
 				char sip[INET6_ADDRSTRLEN];
 				char dip[INET6_ADDRSTRLEN];
 
-				if (ev->version != 2 ||
+				if (ev->version != 3 ||
 				    ev->header_len != sizeof(*ev) ||
 				    ev->record_len != sizeof(*ev)) {
 					fprintf(stderr, "skip unsupported dpi event\n");
@@ -1265,14 +1270,14 @@ int main(void)
 
 				printf("ts=%" PRIu64 " generation=%u app=%u rule=%u "
 				       "reason=%u source=%s category=%u "
-				       "tuple=%s %s:%u -> %s:%u dir=%u\n",
+				       "tuple=%s %s:%u -> %s:%u tuple_dir=%u evidence_dir=%u\n",
 				       ev->timestamp, ev->generation, ev->app_id,
 				       ev->rule_id, ev->reason, source_name(ev->flags),
 				       ev->category_id, l4proto_name(ev->l4proto),
 				       addr_text(ev->family, ev->sip, sip, sizeof(sip)),
 				       ev->sport,
 				       addr_text(ev->family, ev->dip, dip, sizeof(dip)),
-				       ev->dport, ev->tuple_dir);
+				       ev->dport, ev->tuple_dir, ev->evidence_dir);
 			}
 		}
 	}

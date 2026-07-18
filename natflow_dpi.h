@@ -10,7 +10,8 @@ struct nf_conn;
 struct natflow_l7_packet_view;
 
 #define NATFLOW_DPI_CTL_MAX_LINE 512
-#define NATFLOW_DPI_EVENT_VERSION 2
+#define NATFLOW_DPI_EVENT_VERSION 3
+#define NATFLOW_DPI_EVENT_HEADER_LEN 78
 #define NATFLOW_DPI_HOST_MAX_LEN 253
 
 enum natflow_dpi_event_reason {
@@ -43,6 +44,8 @@ struct natflow_dpi_event_hdr {
 	__u64 timestamp;
 	__u8 l4proto;
 	__u8 tuple_dir;
+	__u8 evidence_dir;
+	__u8 reserved;
 	__u16 reason;
 	__u16 sport;
 	__u16 dport;
