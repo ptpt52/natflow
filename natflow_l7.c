@@ -1043,7 +1043,6 @@ static void natflow_l7_mark_terminal(const struct natflow_l7_packet_view *view,
 static unsigned int natflow_l7_dpi_consume_packet_view(
     const struct natflow_l7_packet_view *view)
 {
-	struct natflow_l7_packet_view pending_view;
 	unsigned int done_mask;
 	unsigned int pending_mask;
 	natflow_t *nf;
@@ -1060,9 +1059,7 @@ static unsigned int natflow_l7_dpi_consume_packet_view(
 	if (!pending_mask)
 		return 0;
 
-	pending_view = *view;
-	pending_view.consumer_mask = pending_mask;
-	done_mask = natflow_dpi_consume_packet_view(&pending_view);
+	done_mask = natflow_dpi_consume_packet_view(view, pending_mask);
 	if (done_mask)
 		natflow_l7_mark_terminal(view, done_mask);
 	return done_mask;
@@ -1095,7 +1092,6 @@ static unsigned int natflow_l7_dispatch_host_view(unsigned int hooknum,
         int bridge)
 #endif
 {
-	struct natflow_l7_packet_view dispatch_view;
 	unsigned int host_mask;
 
 	if (!view || !host_view)
@@ -1105,15 +1101,12 @@ static unsigned int natflow_l7_dispatch_host_view(unsigned int hooknum,
 	if (host_mask == 0)
 		return NF_ACCEPT;
 
-	dispatch_view = *view;
-	dispatch_view.consumer_mask = host_mask;
-
 #if defined(CONFIG_NATFLOW_URLLOGGER)
 #if NATFLOW_HAVE_IP_SET_STATE_API
-	return natflow_urllogger_consume_host_view(hooknum, state, &dispatch_view,
+	return natflow_urllogger_consume_host_view(hooknum, state, view, host_mask,
 	        host_view, reply_dev, bridge);
 #else
-	return natflow_urllogger_consume_host_view(hooknum, in, out, &dispatch_view,
+	return natflow_urllogger_consume_host_view(hooknum, in, out, view, host_mask,
 	        host_view, reply_dev, bridge);
 #endif
 #else
@@ -1387,9 +1380,8 @@ static unsigned int natflow_l7_dpi_pull_len(unsigned int consumer_mask,
 }
 
 static int natflow_l7_udp4_packet_view_init(struct sk_buff *skb,
-        const struct natflow_l7_packet_view *view,
         unsigned int consumer_mask,
-        struct natflow_l7_packet_view *packet_view,
+        struct natflow_l7_packet_view *view,
         __be16 *dport)
 {
 	struct iphdr *iph;
@@ -1419,38 +1411,35 @@ static int natflow_l7_udp4_packet_view_init(struct sk_buff *skb,
 		return -EINVAL;
 
 	payload_len = udp_len - sizeof(struct udphdr);
-	*packet_view = *view;
-	packet_view->l3 = iph;
-	packet_view->l4proto = IPPROTO_UDP;
-	packet_view->l4 = l4;
-	packet_view->sport = UDPH(l4)->source;
-	packet_view->dport = UDPH(l4)->dest;
-	packet_view->payload_len = payload_len;
-	*dport = packet_view->dport;
-	pull_len = natflow_l7_dpi_pull_len(consumer_mask, packet_view,
+	view->l3 = iph;
+	view->l4proto = IPPROTO_UDP;
+	view->l4 = l4;
+	view->sport = UDPH(l4)->source;
+	view->dport = UDPH(l4)->dest;
+	view->payload_len = payload_len;
+	*dport = view->dport;
+	pull_len = natflow_l7_dpi_pull_len(consumer_mask, view,
 	                                   payload_len);
 	if (pull_len > 0 &&
 	        pskb_may_pull(skb, ihl + sizeof(struct udphdr) + pull_len)) {
 		iph = ip_hdr(skb);
 		l4 = (void *)iph + ihl;
-		packet_view->l3 = iph;
-		packet_view->l4 = l4;
-		packet_view->sport = UDPH(l4)->source;
-		packet_view->dport = UDPH(l4)->dest;
+		view->l3 = iph;
+		view->l4 = l4;
+		view->sport = UDPH(l4)->source;
+		view->dport = UDPH(l4)->dest;
 		linear_len = pull_len;
 	}
 
-	packet_view->payload_linear_len = linear_len;
-	packet_view->payload = payload_len > 0 ?
-	                       (unsigned char *)packet_view->l4 +
-	                       sizeof(struct udphdr) : NULL;
+	view->payload_linear_len = linear_len;
+	view->payload = payload_len > 0 ?
+	                (unsigned char *)view->l4 + sizeof(struct udphdr) : NULL;
 	return 0;
 }
 
 static int natflow_l7_udp6_packet_view_init(struct sk_buff *skb,
-        const struct natflow_l7_packet_view *view,
         unsigned int consumer_mask,
-        struct natflow_l7_packet_view *packet_view,
+        struct natflow_l7_packet_view *view,
         __be16 *dport)
 {
 	struct ipv6hdr *ip6h;
@@ -1478,32 +1467,30 @@ static int natflow_l7_udp6_packet_view_init(struct sk_buff *skb,
 		return -EINVAL;
 
 	payload_len = udp_len - sizeof(struct udphdr);
-	*packet_view = *view;
-	packet_view->l3 = ip6h;
-	packet_view->l4proto = IPPROTO_UDP;
-	packet_view->l4 = l4;
-	packet_view->sport = UDPH(l4)->source;
-	packet_view->dport = UDPH(l4)->dest;
-	packet_view->payload_len = payload_len;
-	*dport = packet_view->dport;
-	pull_len = natflow_l7_dpi_pull_len(consumer_mask, packet_view,
+	view->l3 = ip6h;
+	view->l4proto = IPPROTO_UDP;
+	view->l4 = l4;
+	view->sport = UDPH(l4)->source;
+	view->dport = UDPH(l4)->dest;
+	view->payload_len = payload_len;
+	*dport = view->dport;
+	pull_len = natflow_l7_dpi_pull_len(consumer_mask, view,
 	                                   payload_len);
 	if (pull_len > 0 &&
 	        pskb_may_pull(skb, sizeof(struct ipv6hdr) +
 	                      sizeof(struct udphdr) + pull_len)) {
 		ip6h = ipv6_hdr(skb);
 		l4 = (void *)ip6h + sizeof(struct ipv6hdr);
-		packet_view->l3 = ip6h;
-		packet_view->l4 = l4;
-		packet_view->sport = UDPH(l4)->source;
-		packet_view->dport = UDPH(l4)->dest;
+		view->l3 = ip6h;
+		view->l4 = l4;
+		view->sport = UDPH(l4)->source;
+		view->dport = UDPH(l4)->dest;
 		linear_len = pull_len;
 	}
 
-	packet_view->payload_linear_len = linear_len;
-	packet_view->payload = payload_len > 0 ?
-	                       (unsigned char *)packet_view->l4 +
-	                       sizeof(struct udphdr) : NULL;
+	view->payload_linear_len = linear_len;
+	view->payload = payload_len > 0 ?
+	                (unsigned char *)view->l4 + sizeof(struct udphdr) : NULL;
 	return 0;
 }
 
@@ -1736,10 +1723,9 @@ done:
 }
 
 static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_URL_CONSUMER_ARGS,
-        const struct natflow_l7_packet_view *view)
+        struct natflow_l7_packet_view *view)
 {
 	const struct net_device *reply_dev;
-	struct natflow_l7_packet_view packet_view;
 	struct natflow_l7_tcp_flow flow;
 	struct iphdr *iph;
 	void *l4;
@@ -1778,31 +1764,30 @@ static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_URL_CONSUMER_ARGS,
 		return ret;
 	data_len = total_len - (ihl + tcp_hlen);
 
-	packet_view = *view;
-	packet_view.l3 = iph;
-	packet_view.l4proto = IPPROTO_TCP;
-	packet_view.l4 = l4;
-	packet_view.sport = TCPH(l4)->source;
-	packet_view.dport = TCPH(l4)->dest;
-	packet_view.payload = data_len > 0 ?
-	                      (unsigned char *)l4 + tcp_hlen : NULL;
-	packet_view.payload_len = data_len > 0 ? data_len : 0;
-	packet_view.payload_linear_len = 0;
+	view->l3 = iph;
+	view->l4proto = IPPROTO_TCP;
+	view->l4 = l4;
+	view->sport = TCPH(l4)->source;
+	view->dport = TCPH(l4)->dest;
+	view->payload = data_len > 0 ?
+	                (unsigned char *)l4 + tcp_hlen : NULL;
+	view->payload_len = data_len > 0 ? data_len : 0;
+	view->payload_linear_len = 0;
 	if (data_len > 0) {
 		unsigned int pull_len;
 
-		pull_len = natflow_l7_dpi_pull_len(view->consumer_mask,
-		                                   &packet_view, data_len);
+		pull_len = natflow_l7_dpi_pull_len(view->consumer_mask, view,
+		                                   data_len);
 		if (pull_len > 0 &&
 		        pskb_may_pull(skb, ihl + tcp_hlen + pull_len)) {
 			iph = ip_hdr(skb);
 			ihl = iph->ihl * 4;
 			l4 = (void *)iph + ihl;
 			tcp_hlen = TCPH(l4)->doff * 4;
-			packet_view.l3 = iph;
-			packet_view.l4 = l4;
-			packet_view.payload = (unsigned char *)l4 + tcp_hlen;
-			packet_view.payload_linear_len = pull_len;
+			view->l3 = iph;
+			view->l4 = l4;
+			view->payload = (unsigned char *)l4 + tcp_hlen;
+			view->payload_linear_len = pull_len;
 		}
 	}
 
@@ -1823,26 +1808,25 @@ static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_URL_CONSUMER_ARGS,
 		flow.dst_port = TCPH(l4)->dest;
 		flow.seq = TCPH(l4)->seq;
 		flow.data = skb->data + ihl + tcp_hlen;
-		packet_view.l3 = iph;
-		packet_view.l4 = l4;
-		packet_view.payload = flow.data;
-		packet_view.payload_len = data_len;
-		packet_view.payload_linear_len = data_len;
+		view->l3 = iph;
+		view->l4 = l4;
+		view->payload = flow.data;
+		view->payload_len = data_len;
+		view->payload_linear_len = data_len;
 	}
-	packet_view.sport = TCPH(packet_view.l4)->source;
-	packet_view.dport = TCPH(packet_view.l4)->dest;
+	view->sport = TCPH(view->l4)->source;
+	view->dport = TCPH(view->l4)->dest;
 
 	return natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_CALL_ARGS,
-	                              &packet_view, reply_dev,
+	                              view, reply_dev,
 	                              (view->flags & NATFLOW_L7_PACKET_F_PPPOE) != 0,
 	                              &flow);
 }
 
 static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_URL_CONSUMER_ARGS,
-        const struct natflow_l7_packet_view *view)
+        struct natflow_l7_packet_view *view)
 {
 	const struct net_device *reply_dev;
-	struct natflow_l7_packet_view packet_view;
 	struct natflow_l7_tcp_flow flow;
 	struct ipv6hdr *ip6h;
 	void *l4;
@@ -1876,31 +1860,30 @@ static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_URL_CONSUMER_ARGS,
 		return ret;
 	data_len = total_len - tcp_hlen;
 
-	packet_view = *view;
-	packet_view.l3 = ip6h;
-	packet_view.l4proto = IPPROTO_TCP;
-	packet_view.l4 = l4;
-	packet_view.sport = TCPH(l4)->source;
-	packet_view.dport = TCPH(l4)->dest;
-	packet_view.payload = data_len > 0 ?
-	                      (unsigned char *)l4 + tcp_hlen : NULL;
-	packet_view.payload_len = data_len > 0 ? data_len : 0;
-	packet_view.payload_linear_len = 0;
+	view->l3 = ip6h;
+	view->l4proto = IPPROTO_TCP;
+	view->l4 = l4;
+	view->sport = TCPH(l4)->source;
+	view->dport = TCPH(l4)->dest;
+	view->payload = data_len > 0 ?
+	                (unsigned char *)l4 + tcp_hlen : NULL;
+	view->payload_len = data_len > 0 ? data_len : 0;
+	view->payload_linear_len = 0;
 	if (data_len > 0) {
 		unsigned int pull_len;
 
-		pull_len = natflow_l7_dpi_pull_len(view->consumer_mask,
-		                                   &packet_view, data_len);
+		pull_len = natflow_l7_dpi_pull_len(view->consumer_mask, view,
+		                                   data_len);
 		if (pull_len > 0 &&
 		        pskb_may_pull(skb, sizeof(struct ipv6hdr) +
 		                      tcp_hlen + pull_len)) {
 			ip6h = ipv6_hdr(skb);
 			l4 = (void *)ip6h + sizeof(struct ipv6hdr);
 			tcp_hlen = TCPH(l4)->doff * 4;
-			packet_view.l3 = ip6h;
-			packet_view.l4 = l4;
-			packet_view.payload = (unsigned char *)l4 + tcp_hlen;
-			packet_view.payload_linear_len = pull_len;
+			view->l3 = ip6h;
+			view->l4 = l4;
+			view->payload = (unsigned char *)l4 + tcp_hlen;
+			view->payload_linear_len = pull_len;
 		}
 	}
 
@@ -1921,17 +1904,17 @@ static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_URL_CONSUMER_ARGS,
 		flow.dst_port = TCPH(l4)->dest;
 		flow.seq = TCPH(l4)->seq;
 		flow.data = skb->data + sizeof(struct ipv6hdr) + tcp_hlen;
-		packet_view.l3 = ip6h;
-		packet_view.l4 = l4;
-		packet_view.payload = flow.data;
-		packet_view.payload_len = data_len;
-		packet_view.payload_linear_len = data_len;
+		view->l3 = ip6h;
+		view->l4 = l4;
+		view->payload = flow.data;
+		view->payload_len = data_len;
+		view->payload_linear_len = data_len;
 	}
-	packet_view.sport = TCPH(packet_view.l4)->source;
-	packet_view.dport = TCPH(packet_view.l4)->dest;
+	view->sport = TCPH(view->l4)->source;
+	view->dport = TCPH(view->l4)->dest;
 
 	return natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_CALL_ARGS,
-	                              &packet_view, reply_dev,
+	                              view, reply_dev,
 	                              (view->flags & NATFLOW_L7_PACKET_F_PPPOE) != 0,
 	                              &flow);
 }
@@ -1939,13 +1922,13 @@ static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_URL_CONSUMER_ARGS,
 #if NATFLOW_HAVE_IP_SET_STATE_API
 static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
         const struct nf_hook_state *state,
-        const struct natflow_l7_packet_view *view,
+        struct natflow_l7_packet_view *view,
         unsigned int consumer_mask)
 #else
 static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
         const struct net_device *in,
         const struct net_device *out,
-        const struct natflow_l7_packet_view *view,
+        struct natflow_l7_packet_view *view,
         unsigned int consumer_mask)
 #endif
 {
@@ -1966,12 +1949,10 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 		if (ip6h->version != 6)
 			return NF_ACCEPT;
 		if (ip6h->nexthdr == IPPROTO_UDP) {
-			struct natflow_l7_packet_view packet_view;
 			__be16 dport;
 
-			if (natflow_l7_udp6_packet_view_init(skb, view,
-			                                     consumer_mask,
-			                                     &packet_view,
+			if (natflow_l7_udp6_packet_view_init(skb, consumer_mask,
+			                                     view,
 			                                     &dport) != 0)
 				return NF_ACCEPT;
 			if (dport == __constant_htons(443) &&
@@ -1979,18 +1960,17 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 				unsigned int ret;
 
 #if NATFLOW_HAVE_IP_SET_STATE_API
-				ret = natflow_l7_quic6(hooknum, state, skb, &packet_view);
+				ret = natflow_l7_quic6(hooknum, state, skb, view);
 #else
-				ret = natflow_l7_quic6(hooknum, in, out, skb, &packet_view);
+				ret = natflow_l7_quic6(hooknum, in, out, skb, view);
 #endif
 #if defined(CONFIG_NATFLOW_DPI)
 				if (consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET) {
 					if (ret == NF_ACCEPT &&
-					        natflow_l7_udp6_packet_view_init(skb, view,
-					                consumer_mask,
-					                &packet_view,
+					        natflow_l7_udp6_packet_view_init(skb,
+					                consumer_mask, view,
 					                &dport) == 0)
-						natflow_l7_dpi_consume_packet_view(&packet_view);
+						natflow_l7_dpi_consume_packet_view(view);
 					else
 						natflow_l7_dpi_force_terminal(view);
 				}
@@ -1999,10 +1979,10 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 			}
 #if defined(CONFIG_NATFLOW_DPI)
 			if (consumer_mask & NATFLOW_L7_CONSUMER_DPI)
-				natflow_l7_dpi_consume_packet_view(&packet_view);
+				natflow_l7_dpi_consume_packet_view(view);
 #endif
-			natflow_l7_mark_terminal(&packet_view,
-			                         packet_view.consumer_mask &
+			natflow_l7_mark_terminal(view,
+			                         view->consumer_mask &
 			                         ~NATFLOW_L7_CONSUMER_DPI_PACKET);
 			return NF_ACCEPT;
 		}
@@ -2020,12 +2000,10 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 			return NF_ACCEPT;
 		iph = ip_hdr(skb);
 		if (iph->protocol == IPPROTO_UDP) {
-			struct natflow_l7_packet_view packet_view;
 			__be16 dport;
 
-			if (natflow_l7_udp4_packet_view_init(skb, view,
-			                                     consumer_mask,
-			                                     &packet_view,
+			if (natflow_l7_udp4_packet_view_init(skb, consumer_mask,
+			                                     view,
 			                                     &dport) != 0)
 				return NF_ACCEPT;
 			if (dport == __constant_htons(443) &&
@@ -2033,18 +2011,17 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 				unsigned int ret;
 
 #if NATFLOW_HAVE_IP_SET_STATE_API
-				ret = natflow_l7_quic4(hooknum, state, skb, &packet_view);
+				ret = natflow_l7_quic4(hooknum, state, skb, view);
 #else
-				ret = natflow_l7_quic4(hooknum, in, out, skb, &packet_view);
+				ret = natflow_l7_quic4(hooknum, in, out, skb, view);
 #endif
 #if defined(CONFIG_NATFLOW_DPI)
 				if (consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET) {
 					if (ret == NF_ACCEPT &&
-					        natflow_l7_udp4_packet_view_init(skb, view,
-					                consumer_mask,
-					                &packet_view,
+					        natflow_l7_udp4_packet_view_init(skb,
+					                consumer_mask, view,
 					                &dport) == 0)
-						natflow_l7_dpi_consume_packet_view(&packet_view);
+						natflow_l7_dpi_consume_packet_view(view);
 					else
 						natflow_l7_dpi_force_terminal(view);
 				}
@@ -2053,10 +2030,10 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 			}
 #if defined(CONFIG_NATFLOW_DPI)
 			if (consumer_mask & NATFLOW_L7_CONSUMER_DPI)
-				natflow_l7_dpi_consume_packet_view(&packet_view);
+				natflow_l7_dpi_consume_packet_view(view);
 #endif
-			natflow_l7_mark_terminal(&packet_view,
-			                         packet_view.consumer_mask &
+			natflow_l7_mark_terminal(view,
+			                         view->consumer_mask &
 			                         ~NATFLOW_L7_CONSUMER_DPI_PACKET);
 			return NF_ACCEPT;
 		}

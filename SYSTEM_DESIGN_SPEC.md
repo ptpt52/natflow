@@ -967,7 +967,7 @@ classid 模式：
 - URL 记录创建前会先完成 hostname/URI 校验，并限制 `normalized_host + uri + NUL <= URLLOGGER_DATALEN`，避免按畸形输入长度做过大的 `GFP_ATOMIC` 分配。
 - Host ACL 失败路径使用 `urllogger_acl_lookup` 栈上视图复用同一 hostname normalize 规则，不依赖 URL store record 分配成功；该大对象只允许在 URL record 分配失败的 `noinline` fallback 中创建，不能常驻正常 URL consumer 调用帧。
 - L7/DPI 热路径栈预算按入口到 consumer 的整条内核调用链评估，不按单个函数帧孤立评估。新增 parser 或 detector 不应在父帧、parser 帧和 consumer 帧中重复保存同一 host/payload scratch；需要复用已规范化输入、per-CPU scratch 或异常路径 helper 来降低叠加峰值。
-- 2026-07-18 使用 x86_64 GCC 9.4、完整 PATH+URLLOGGER+DPI 配置生成 `.su` 后，最大单函数帧为 360 字节，模块内部最坏累计 L7 调用链约为 1936 字节；该累计值不包含进入 hook 前的 Netfilter/conntrack 栈和外部内核函数内部栈。8 KiB 是完整 L7 功能的最低支持线程栈，不代表所有 8 KiB 目标已经完成运行时余量验证。
+- 2026-07-18 使用 x86_64 GCC 9.4、完整 PATH+URLLOGGER+DPI 配置生成 `.su` 后，最大单函数帧为 360 字节；显式传递 narrowed consumer mask 并让 TCP/UDP producer 复用入口 packet view 后，模块内部最坏累计 L7 调用链由约 1936 字节降至约 1624 字节。该累计值不包含进入 hook 前的 Netfilter/conntrack 栈和外部内核函数内部栈。8 KiB 是完整 L7 功能的最低支持线程栈，不代表所有 8 KiB 目标已经完成运行时余量验证。
 - TLS/QUIC SNI server_name type 0 的内容会按 DNS hostname 规则校验后使用；严格校验会拒绝包含 `_`、非 ASCII U-label、通配符、IPv6 literal 或其他非标准 DNS hostname 的输入。
 - HTTP Host、TLS SNI、QUIC SNI 的识别是审计和粗粒度 ACL 能力，不是不可绕过的 WAF/域名防火墙边界。
 - PPPoE bridge 场景下，L7 URL common path 临时剥离 PPPoE header 后构造 packet view，并在 consumer 返回后统一恢复 PPPoE header、`skb->protocol` 和 `network_header`；URL consumer 中等待更多 TLS/QUIC 数据、drop、reset、redirect 或错误路径都必须返回到该 L7 common path。

@@ -1385,19 +1385,19 @@ static unsigned int urllogger_consume_host_view_internal(URLLOGGER_HOOK_CTX_ARGS
 unsigned int natflow_urllogger_consume_host_view(unsigned int hooknum,
         URLLOGGER_HOOK_CTX_ARGS,
         const struct natflow_l7_packet_view *view,
+        unsigned int consumer_mask,
         const struct natflow_l7_host_view *host_view,
         const struct net_device *reply_dev,
         int bridge)
 {
 	natflow_t *nf;
-	unsigned int consumer_mask;
 	int url_consumer;
 	int dpi_consumer;
 
 	if (!view || !view->skb || !view->ct || !host_view)
 		return NF_ACCEPT;
 
-	consumer_mask = view->consumer_mask;
+	consumer_mask &= view->consumer_mask;
 	url_consumer = (consumer_mask & NATFLOW_L7_CONSUMER_URL) != 0;
 	dpi_consumer = (consumer_mask & NATFLOW_L7_CONSUMER_DPI_DOMAIN) != 0;
 	if (!url_consumer && !dpi_consumer)

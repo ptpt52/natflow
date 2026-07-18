@@ -61,6 +61,7 @@ extern int natflow_urllogger_url_enabled(void);
 extern unsigned int natflow_urllogger_consume_host_view(unsigned int hooknum,
         const struct nf_hook_state *state,
         const struct natflow_l7_packet_view *view,
+        unsigned int consumer_mask,
         const struct natflow_l7_host_view *host_view,
         const struct net_device *reply_dev,
         int bridge);
@@ -69,6 +70,7 @@ extern unsigned int natflow_urllogger_consume_host_view(unsigned int hooknum,
         const struct net_device *in,
         const struct net_device *out,
         const struct natflow_l7_packet_view *view,
+        unsigned int consumer_mask,
         const struct natflow_l7_host_view *host_view,
         const struct net_device *reply_dev,
         int bridge);

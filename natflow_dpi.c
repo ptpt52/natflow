@@ -1822,7 +1822,8 @@ unsigned int natflow_dpi_packet_view_pull_len(unsigned int consumer_mask,
 	       NATFLOW_DPI_PAYLOAD_INSPECT_MAX : payload_len;
 }
 
-unsigned int natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view *view)
+unsigned int natflow_dpi_consume_packet_view(
+    const struct natflow_l7_packet_view *view, unsigned int consumer_mask)
 {
 	const unsigned char *payload;
 	natflow_t *nf;
@@ -1833,7 +1834,6 @@ unsigned int natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view
 	unsigned int dns_inspect_len;
 	unsigned int inspect_len;
 	unsigned int done_mask = 0;
-	unsigned int consumer_mask;
 	unsigned int proto_mask;
 	unsigned int proto = 0;
 	bool dns_match = false;
@@ -1844,7 +1844,7 @@ unsigned int natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view
 	if (!natflow_dpi_consumer_enabled())
 		return 0;
 
-	consumer_mask = view->consumer_mask & NATFLOW_L7_CONSUMER_DPI;
+	consumer_mask &= view->consumer_mask & NATFLOW_L7_CONSUMER_DPI;
 	if (view->direction != NATFLOW_L7_DIR_ORIGINAL)
 		consumer_mask &= ~NATFLOW_L7_CONSUMER_DPI_DOMAIN;
 	if (!consumer_mask)

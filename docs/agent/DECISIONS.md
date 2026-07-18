@@ -142,7 +142,7 @@ L7 reply 入口只准入 DPI packet consumer，`NF_FF_L7_DPI_PACKET_DONE` 是连
 
 日期：2026-07-18
 
-状态：Accepted
+状态：Amended 2026-07-18
 
 ### 背景
 
@@ -166,3 +166,6 @@ L7 reply 入口只准入 DPI packet consumer，`NF_FF_L7_DPI_PACKET_DONE` 是连
 - 后续 parser、detector 和 consumer 不得通过拆函数规避累计栈预算；累计链
   接近当前约 2 KiB 基线时，应优先复用 view、缩短调用链或使用有明确并发
   归属的 per-CPU scratch，再扩大识别能力。
+- 第一阶段通过显式传递 narrowed consumer mask 和复用入口 packet view，
+  把同一 x86_64 GCC 9.4 完整配置的模块内部最坏累计链从约 1936 字节降至
+  约 1624 字节；当前不引入 per-CPU hostname scratch。
