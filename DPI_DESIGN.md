@@ -4,7 +4,7 @@
 
 更新时间：2026-07-18
 
-实现状态：本文描述目标架构。当前源码已经把 bit 19 收敛为 `NF_FF_L7_USE` shared L7 fast-path pause 位，使用 `NF_FF_DPI_USE` 标记 `natflow_t` 尾部的有界 DPI 瞬态上下文，并使用三个独立 done bit 记录 URL、DPI domain 与 DPI packet 终态；`app_id` 仍是唯一分类结果。packet view 已携带 conntrack direction、当前 packet `sport/dport` 和方向感知的 client/server port；payload detector 使用编译期静态 metadata dispatcher，声明 L4、方向模式和双向 packet/byte budget。未命中时，DPI packet consumer 使用 `natflow_t` 内的双向计数和 detector mask 保持 pending。当前入口仍只准入 original direction，reply 准入尚未实现。
+实现状态：本文描述目标架构。当前源码使用 `NF_FF_L7_USE` 和 `NF_FF_DPI_USE` 协调 shared L7 与 `natflow_t` 尾部的有界 DPI 瞬态上下文；`app_id` 仍是唯一分类结果。packet view 携带 conntrack direction、当前 packet `sport/dport` 和方向感知的 client/server port。reply 包只准入 DPI packet consumer，URL、Host ACL、HTTP/TLS/QUIC host 和 DNS QNAME domain 保持 original-only；DNS response 与 payload detector 可作为 reply 协议证据。
 
 ## 1. 总体结论
 
@@ -698,10 +698,10 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成 MVP：增加 BitTorrent TCP handshake，以及 UDP uTP v1 header 和 DHT bencode token 前缀窗口子集；uTP 会校验版本、类型和扩展号。
 - 已完成 MVP：`/dev/natflow_dpi_ctl` status 输出 HTTP/TLS/QUIC/DNS/SSH/WireGuard/STUN/TURN/BitTorrent source counters、protocol-only reason counters 和 `events_lost`。
 - 已完成 MVP：增加 `events_clear` 测试辅助命令，用于清空已排队 match event 并重置 `events*` shadow 统计和 `proto_*` reason 统计，不改变 ruleset、enable 状态或 generation。
-- 已完成基础设施：packet view 增加 conntrack direction、当前 packet `sport/dport` 和方向感知的 client/server port helper；reply 入口过滤保持不变。
-- 已完成基础设施：DNS 与 payload detector 使用编译期静态 metadata 声明 L4、`ORIGINAL_ONLY`/`REPLY_ONLY`/`EITHER`/`BOTH` 方向模式和 original/reply packet/byte budget；payload dispatch 最多遍历 4 个固定 detector family，pull API 使用 direction 和 server port。当前首批 protocol detector metadata 均为 `EITHER`，但 reply 仍被入口过滤。
+- 已完成基础设施：packet view 增加 direction、当前 packet `sport/dport` 和 client/server port helper；reply 只准入 DPI packet consumer。
+- 已完成基础设施：DNS 与 payload detector 使用静态 metadata 声明 L4、方向模式和双向预算；首批 protocol detector 均为 `EITHER`，DNS response 使用保守的 header/question 结构证据。
 - 已完成基础设施：`natflow_t` 内置 8 字节 bounded context，使用 `NF_FF_DPI_USE`、双向 packet/byte counter 和 detector mask 保持 packet consumer pending。
-- 规划中：放开 reply packet consumer，并补齐 reply DNS protocol 结构证据。
+- 已完成基础设施：放开 reply packet consumer，保持所有 URL/domain host consumer original-only。
 - 仍未完成：更完整的 reason counters、payload TLV、IPv6 extension header 解析、误判 corpus 和生产 shadow 数据采集。
 
 ### M2：生产 shadow

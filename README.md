@@ -983,6 +983,8 @@ int main(void)
 
 protocol detector 未命中时会在 `natflow_t` 尾部保存 8 字节瞬态双向预算 context，并设置 `NF_FF_DPI_USE`；`app_id` 仍是唯一分类结果。当前每方向最多观察 4 个 payload 包，不设置时间 deadline。所需方向始终没有 payload 时，该 context 可以保留到 conntrack 生命周期结束。
 
+reply 方向只进入 DPI packet consumer；URL logger、Host ACL、HTTP/TLS/QUIC host 和 DNS QNAME domain 仍只处理 original。DNS reply 必须通过 response header 和第一问结构校验，其他 protocol detector 也必须匹配 payload 证据，端口不会直接产生分类。
+
 当前 DPI 仍是 audit-only：不执行 drop/reset/QoS，不覆盖 Host ACL、认证或 conntrack drop 结果；未命中、禁用、无对应 parser 或无法创建 natflow session 时 fail-open。L7 shared hook 在解析前会统一调用 `natflow_session_in()` 确保 URL/DPI 共享同一个 `natflow_t.status` 终态存储；若 confirmed、内存或布局限制导致 session 不存在，则跳过本次 L7 解析，不输出无状态 DPI match event，也不写入 `app_id`。protocol-only 命中要求 `app_id=0`，用于避免每包重复事件。
 
 控制：
@@ -1018,7 +1020,7 @@ echo events_clear >/dev/natflow_dpi_ctl
 - `proto` 当前支持 `dns`、`ssh`、`wireguard`（也接受 `wg`）、`stun`、`turn`、`bittorrent`（也接受 `bt`）。
 - DNS QNAME detector：original direction TCP/UDP 53 标准 query 的第一问 QNAME 会进入 domain exact/suffix ruleset；有效标准 query 也可命中 DNS protocol-only 规则。response、非 query opcode、压缩 QNAME、畸形或前缀不足的报文忽略。
 - 端口只用于选择有界解析候选和 payload pull budget，不直接写入 `app_id`；当前只有 TCP/UDP 53 会触发 DNS 候选解析，TCP 22 和 UDP 51820 不再作为 SSH/WireGuard 的独立分类证据。
-- 有界 payload detector：TCP original direction 的 SSH banner 识别 `SSH-<version>-` identification string；WireGuard UDP 校验 message type、reserved bytes 和对应长度；STUN/TURN 校验 header、length 和 magic cookie，并按 TURN 方法区分 TURN；BitTorrent 的 TCP 分支识别标准 handshake，UDP 分支识别 uTP v1 header 和 DHT bencode token 前缀窗口，其中 uTP 会校验版本、类型和扩展号。仅执行当前 ruleset 实际配置的 protocol detector。
+- 有界 payload detector：TCP 任一方向的 SSH banner 识别 `SSH-<version>-` identification string；WireGuard、STUN/TURN 和 BitTorrent detector 也按 metadata 在任一方向匹配直接 payload 证据。仅执行当前 ruleset 实际配置且当前方向预算未耗尽的 detector。
 - `cat /dev/natflow_dpi_ctl` 会输出已成功入队的 `events_*` source counters 和 `proto_no_session`、`proto_app_exists`、`proto_no_rule` protocol-only reason counters，可用于 shadow 统计和解释 detector 已识别但未产生 match event 的原因。
 
 `/dev/natflow_dpi_queue` 使用版本化二进制记录，只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 或 reader 未写入正数 `cache=N\n` 时，match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时 cache 默认为 0 并会先清空残留事件，写入 `cache=N\n` 后最多缓存 N 条新事件，队列满、溢出或分配失败会丢弃新事件并增加 `events_lost`；写入 `cache=0\n` 或关闭 fd 会关闭缓存并清空未读事件。当前 record 是 v2 固定头，包含规则命中摘要和 original direction tuple；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。

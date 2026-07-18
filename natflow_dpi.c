@@ -1783,6 +1783,63 @@ static noinline bool natflow_dpi_classify_dns_query(struct nf_conn *ct,
 	return true;
 }
 
+static bool natflow_dpi_dns_response_match(const unsigned char *payload,
+        unsigned int payload_len, unsigned char l4proto)
+{
+	unsigned int data_len = payload_len;
+	const unsigned char *data = payload;
+	unsigned int offset;
+	unsigned int flags;
+	unsigned int labels = 0;
+
+	if (!data)
+		return false;
+	if (l4proto == IPPROTO_TCP) {
+		unsigned int msg_len;
+
+		if (data_len < 2)
+			return false;
+		msg_len = ntohs(get_byte2(data));
+		if (msg_len < 12)
+			return false;
+		data += 2;
+		data_len -= 2;
+		if (data_len > msg_len)
+			data_len = msg_len;
+	} else if (l4proto != IPPROTO_UDP) {
+		return false;
+	}
+
+	if (data_len < 12)
+		return false;
+	flags = ntohs(get_byte2(data + 2));
+	if (!(flags & 0x8000) || (flags & 0x7800) != 0 ||
+	        ntohs(get_byte2(data + 4)) == 0)
+		return false;
+
+	offset = 12;
+	for (;;) {
+		unsigned int label_len;
+
+		if (offset >= data_len)
+			return false;
+		label_len = data[offset++];
+		if (++labels > 128)
+			return false;
+		if (label_len == 0)
+			break;
+		if ((label_len & 0xc0) != 0 || label_len > 63 ||
+		        label_len > data_len - offset)
+			return false;
+		offset += label_len;
+		if (offset >= data_len)
+			return false;
+	}
+	if (data_len - offset < 4)
+		return false;
+	return true;
+}
+
 static bool natflow_dpi_dns_candidate(unsigned char l4proto,
                                       unsigned char direction, __be16 server_port)
 {
@@ -1871,11 +1928,17 @@ unsigned int natflow_dpi_consume_packet_view(const struct natflow_l7_packet_view
 		                  NATFLOW_DPI_DNS_INSPECT_MAX : view->payload_len;
 		if (dns_inspect_len > payload_linear_len)
 			dns_inspect_len = payload_linear_len;
-		if (dns_inspect_len > 0 && payload &&
-		        natflow_dpi_classify_dns_query(view->ct, payload,
-		                                       dns_inspect_len, view->l4proto,
-		                                       (consumer_mask & NATFLOW_L7_CONSUMER_DPI_DOMAIN) != 0))
-			dns_match = true;
+		if (dns_inspect_len > 0 && payload) {
+			if (view->direction == NATFLOW_L7_DIR_ORIGINAL &&
+			        natflow_dpi_classify_dns_query(view->ct, payload,
+			                                       dns_inspect_len, view->l4proto,
+			                                       (consumer_mask & NATFLOW_L7_CONSUMER_DPI_DOMAIN) != 0))
+				dns_match = true;
+			else if (view->direction == NATFLOW_L7_DIR_REPLY &&
+			         natflow_dpi_dns_response_match(payload, dns_inspect_len,
+			                                        view->l4proto))
+				dns_match = true;
+		}
 		if (consumer_mask & NATFLOW_L7_CONSUMER_DPI_DOMAIN)
 			done_mask |= NATFLOW_L7_CONSUMER_DPI_DOMAIN;
 	}

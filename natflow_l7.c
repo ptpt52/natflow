@@ -1539,9 +1539,6 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_ARGS
 	enum natflow_l7_tls_search_result sni_result;
 	unsigned int ret = NF_ACCEPT;
 	unsigned int host_mask;
-#if defined(CONFIG_NATFLOW_DPI)
-	int dpi_packet_done = 0;
-#endif
 
 	if (!view || !view->ct || !flow)
 		return ret;
@@ -1569,12 +1566,10 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_ARGS
 	host_mask = natflow_l7_host_consumer_mask(view->consumer_mask);
 	if (host_mask == 0) {
 #if defined(CONFIG_NATFLOW_DPI)
-		if (view->consumer_mask & NATFLOW_L7_CONSUMER_DPI) {
+		if (view->consumer_mask & NATFLOW_L7_CONSUMER_DPI)
 			natflow_l7_dpi_consume_packet_view(view);
-			dpi_packet_done = 1;
-		}
 #endif
-		goto terminal;
+		goto done;
 	}
 
 	prev_data = natflow_l7_tcp_tls_cache_detach(flow, &prev_seq,
@@ -1695,7 +1690,7 @@ terminal:
 		          NATFLOW_L7_URL_CONSUMER_CALL_ARGS, view, reply_dev,
 		          bridge, host, host_len);
 #if defined(CONFIG_NATFLOW_DPI)
-		if (ret == NF_ACCEPT && !dpi_packet_done &&
+		if (ret == NF_ACCEPT &&
 		        (view->consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET))
 			natflow_l7_dpi_consume_packet_view(view);
 		else if (ret != NF_ACCEPT &&
@@ -1716,7 +1711,7 @@ terminal:
 	                                   view, reply_dev, bridge, flow);
 
 #if defined(CONFIG_NATFLOW_DPI)
-	if (ret == NF_ACCEPT && !dpi_packet_done &&
+	if (ret == NF_ACCEPT &&
 	        (view->consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET))
 		natflow_l7_dpi_consume_packet_view(view);
 	else if (ret != NF_ACCEPT &&
@@ -2114,8 +2109,11 @@ static unsigned int natflow_l7_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS,
 	}
 	view.direction = CTINFO2DIR(ctinfo) == IP_CT_DIR_REPLY ?
 	                 NATFLOW_L7_DIR_REPLY : NATFLOW_L7_DIR_ORIGINAL;
-	if (view.direction != NATFLOW_L7_DIR_ORIGINAL)
-		goto out;
+	if (view.direction == NATFLOW_L7_DIR_REPLY) {
+		consumer_mask &= NATFLOW_L7_CONSUMER_DPI_PACKET;
+		if (!consumer_mask)
+			goto out;
+	}
 	if (ct->status & IPS_NATFLOW_L7_HANDLED)
 		goto out;
 
