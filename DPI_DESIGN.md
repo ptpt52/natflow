@@ -102,7 +102,7 @@ MVP 是审计和机会性分类能力。`UNKNOWN`、`ERROR`、预算耗尽、不
 | `CONFIG_NATFLOW_URLLOGGER` | 继续表示启用 legacy URL logger、Host ACL 和 sysctl。 |
 | `NF_FF_L7_URL_DONE` / `NF_FF_L7_DPI_DOMAIN_DONE` / `NF_FF_L7_DPI_PACKET_DONE` | URL、DPI domain、DPI packet 独立终态标记，保存在 `natflow_t.status`；任一终态不关闭其他仍 pending 的 consumer。 |
 
-可以在内部把实现文件拆分或把符号改成 `natflow_l7_url_*`；用户可见 ABI 以当前 `/dev/natflow_urllogger_queue`、`/dev/hostacl_ctl` 和 `urllogger_store` 为准。
+共享 hook、parser 和 dispatcher 必须使用 `natflow_l7_*` 命名；只有 URL event、Host ACL 和兼容资源 consumer 使用 `natflow_urllogger_*` 命名。用户可见 ABI 以当前 `/dev/natflow_urllogger_queue`、`/dev/hostacl_ctl` 和 `urllogger_store` 为准。
 
 ## 5. 统一架构
 
@@ -183,7 +183,7 @@ bounded parser/detector
 1. `natflow_probe_ct_ext()` 已从 path 私有初始化移动到 common/main 初始化。
 2. probe 已改为可返回错误，供 DPI 判断共享 conntrack extension 是否可用。
 3. layout guard 已在注册 path 或 shared L7 hook 前完成；后续 L7/DPI hook 必须继续遵守该顺序。
-4. `natflow_l7` 已成为 URL hook lifecycle owner，并持有 URL hook ops、签名兼容包装、PPPoE normalize/restore 和 packet view 构造；但还没有共享 context pool 或 crypto capability。
+4. `natflow_l7` 是 shared L7 hook lifecycle owner，并持有 hook ops、签名兼容包装、PPPoE normalize/restore、packet view 构造和 QUIC crypto capability；内部入口统一使用 `natflow_l7_hook*` 命名。
 5. URL consumer 初始化 legacy 设备和 sysctl，再由 L7 core 注册 hook，避免 hook 进入未初始化的 URL 资源。
 6. DPI consumer 默认 `enable=0`，只初始化控制设备、规则和事件状态；数据面由 L7 shared hook 在存在 domain/proto 规则时分别调度 DPI domain/packet consumer，`natflow_dpi_consume_packet_view()` 返回本次可终态的子 mask。
 

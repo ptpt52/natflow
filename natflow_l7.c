@@ -936,22 +936,22 @@ unsigned char *natflow_l7_quic_cache_detach6(const struct in6_addr *src_ip,
 
 #if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
 #if NATFLOW_HAVE_IP_SET_STATE_API
-#define NATFLOW_L7_URL_CONSUMER_ARGS \
+#define NATFLOW_L7_HOOK_ARGS \
 	unsigned int hooknum, const struct nf_hook_state *state, struct sk_buff *skb
-#define NATFLOW_L7_URL_CONSUMER_CALL_ARGS hooknum, state, skb
-#define NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, state, in, out) \
-	natflow_l7_url_consume_common(hooknum, state, skb)
+#define NATFLOW_L7_HOOK_CALL_ARGS hooknum, state, skb
+#define NATFLOW_L7_HOOK_CALL(hooknum, skb, state, in, out) \
+	natflow_l7_hook_common(hooknum, state, skb)
 #define NATFLOW_L7_DISPATCH_PACKET_VIEW(view, consumer_mask) \
 	natflow_l7_dispatch_packet_view(hooknum, state, view, consumer_mask)
 #define NATFLOW_L7_DISPATCH_HOST_VIEW(view, host_view, reply_dev, bridge) \
 	natflow_l7_dispatch_host_view(hooknum, state, view, host_view, reply_dev, bridge)
 #else
-#define NATFLOW_L7_URL_CONSUMER_ARGS \
+#define NATFLOW_L7_HOOK_ARGS \
 	unsigned int hooknum, const struct net_device *in, \
 	const struct net_device *out, struct sk_buff *skb
-#define NATFLOW_L7_URL_CONSUMER_CALL_ARGS hooknum, in, out, skb
-#define NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, state, in, out) \
-	natflow_l7_url_consume_common(hooknum, in, out, skb)
+#define NATFLOW_L7_HOOK_CALL_ARGS hooknum, in, out, skb
+#define NATFLOW_L7_HOOK_CALL(hooknum, skb, state, in, out) \
+	natflow_l7_hook_common(hooknum, in, out, skb)
 #define NATFLOW_L7_DISPATCH_PACKET_VIEW(view, consumer_mask) \
 	natflow_l7_dispatch_packet_view(hooknum, in, out, view, consumer_mask)
 #define NATFLOW_L7_DISPATCH_HOST_VIEW(view, host_view, reply_dev, bridge) \
@@ -1132,7 +1132,7 @@ static unsigned int natflow_l7_dispatch_host_view(unsigned int hooknum,
 #endif
 }
 
-static noinline unsigned int natflow_l7_quic4(NATFLOW_L7_URL_CONSUMER_ARGS,
+static noinline unsigned int natflow_l7_quic4(NATFLOW_L7_HOOK_ARGS,
         const struct natflow_l7_packet_view *view)
 {
 	struct natflow_l7_quic_initial_info quic_info;
@@ -1215,7 +1215,7 @@ done:
 	return ret;
 }
 
-static noinline unsigned int natflow_l7_quic6(NATFLOW_L7_URL_CONSUMER_ARGS,
+static noinline unsigned int natflow_l7_quic6(NATFLOW_L7_HOOK_ARGS,
         const struct natflow_l7_packet_view *view)
 {
 	struct natflow_l7_quic_initial_info quic_info;
@@ -1491,7 +1491,7 @@ static int natflow_l7_udp6_packet_view_init(struct sk_buff *skb,
 }
 
 static noinline unsigned int natflow_l7_tcp_dispatch_tls_host(
-    NATFLOW_L7_URL_CONSUMER_ARGS,
+    NATFLOW_L7_HOOK_ARGS,
     const struct natflow_l7_packet_view *view,
     const struct net_device *reply_dev,
     int bridge,
@@ -1509,13 +1509,13 @@ static noinline unsigned int natflow_l7_tcp_dispatch_tls_host(
 }
 
 static noinline unsigned int natflow_l7_tcp_dispatch_http(
-    NATFLOW_L7_URL_CONSUMER_ARGS,
+    NATFLOW_L7_HOOK_ARGS,
     const struct natflow_l7_packet_view *view,
     const struct net_device *reply_dev,
     int bridge,
     const struct natflow_l7_tcp_flow *flow);
 
-static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_ARGS,
+static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_HOOK_ARGS,
         const struct natflow_l7_packet_view *view,
         const struct net_device *reply_dev,
         int bridge,
@@ -1679,7 +1679,7 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_ARGS
 terminal:
 	if (host) {
 		ret = natflow_l7_tcp_dispatch_tls_host(
-		          NATFLOW_L7_URL_CONSUMER_CALL_ARGS, view, reply_dev,
+		          NATFLOW_L7_HOOK_CALL_ARGS, view, reply_dev,
 		          bridge, host, host_len);
 #if defined(CONFIG_NATFLOW_DPI)
 		if (ret == NF_ACCEPT &&
@@ -1699,7 +1699,7 @@ terminal:
 	kfree(prev_data);
 	prev_data = NULL;
 
-	ret = natflow_l7_tcp_dispatch_http(NATFLOW_L7_URL_CONSUMER_CALL_ARGS,
+	ret = natflow_l7_tcp_dispatch_http(NATFLOW_L7_HOOK_CALL_ARGS,
 	                                   view, reply_dev, bridge, flow);
 
 #if defined(CONFIG_NATFLOW_DPI)
@@ -1718,7 +1718,7 @@ done:
 	return ret;
 }
 
-static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_URL_CONSUMER_ARGS,
+static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_HOOK_ARGS,
         struct natflow_l7_packet_view *view)
 {
 	const struct net_device *reply_dev;
@@ -1813,13 +1813,13 @@ static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_URL_CONSUMER_ARGS,
 	view->sport = TCPH(view->l4)->source;
 	view->dport = TCPH(view->l4)->dest;
 
-	return natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_CALL_ARGS,
+	return natflow_l7_tcp_process(NATFLOW_L7_HOOK_CALL_ARGS,
 	                              view, reply_dev,
 	                              (view->flags & NATFLOW_L7_PACKET_F_PPPOE) != 0,
 	                              &flow);
 }
 
-static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_URL_CONSUMER_ARGS,
+static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_HOOK_ARGS,
         struct natflow_l7_packet_view *view)
 {
 	const struct net_device *reply_dev;
@@ -1909,7 +1909,7 @@ static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_URL_CONSUMER_ARGS,
 	view->sport = TCPH(view->l4)->source;
 	view->dport = TCPH(view->l4)->dest;
 
-	return natflow_l7_tcp_process(NATFLOW_L7_URL_CONSUMER_CALL_ARGS,
+	return natflow_l7_tcp_process(NATFLOW_L7_HOOK_CALL_ARGS,
 	                              view, reply_dev,
 	                              (view->flags & NATFLOW_L7_PACKET_F_PPPOE) != 0,
 	                              &flow);
@@ -2045,7 +2045,7 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 	return NF_ACCEPT;
 }
 
-static unsigned int natflow_l7_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS,
+static unsigned int natflow_l7_consume_common(NATFLOW_L7_HOOK_ARGS,
         unsigned int consumer_mask)
 {
 	struct natflow_l7_packet_view view;
@@ -2129,58 +2129,58 @@ out:
 	return ret;
 }
 
-static unsigned int natflow_l7_url_consume_common(NATFLOW_L7_URL_CONSUMER_ARGS)
+static unsigned int natflow_l7_hook_common(NATFLOW_L7_HOOK_ARGS)
 {
-	return natflow_l7_consume_common(NATFLOW_L7_URL_CONSUMER_CALL_ARGS,
+	return natflow_l7_consume_common(NATFLOW_L7_HOOK_CALL_ARGS,
 	                                 natflow_l7_active_consumer_mask());
 }
 
 #if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
-static unsigned int natflow_l7_url_hook(unsigned int hooknum,
-                                        struct sk_buff *skb,
-                                        const struct net_device *in,
-                                        const struct net_device *out,
-                                        int (*okfn)(struct sk_buff *))
+static unsigned int natflow_l7_hook(unsigned int hooknum,
+                                    struct sk_buff *skb,
+                                    const struct net_device *in,
+                                    const struct net_device *out,
+                                    int (*okfn)(struct sk_buff *))
 {
-	return NATFLOW_L7_URL_CONSUMER_CALL(hooknum, skb, NULL, in, out);
+	return NATFLOW_L7_HOOK_CALL(hooknum, skb, NULL, in, out);
 }
 #elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
-static unsigned int natflow_l7_url_hook(const struct nf_hook_ops *ops,
-                                        struct sk_buff *skb,
-                                        const struct net_device *in,
-                                        const struct net_device *out,
-                                        int (*okfn)(struct sk_buff *))
+static unsigned int natflow_l7_hook(const struct nf_hook_ops *ops,
+                                    struct sk_buff *skb,
+                                    const struct net_device *in,
+                                    const struct net_device *out,
+                                    int (*okfn)(struct sk_buff *))
 {
-	return NATFLOW_L7_URL_CONSUMER_CALL(ops->hooknum, skb, NULL, in, out);
+	return NATFLOW_L7_HOOK_CALL(ops->hooknum, skb, NULL, in, out);
 }
 #elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
-static unsigned int natflow_l7_url_hook(const struct nf_hook_ops *ops,
-                                        struct sk_buff *skb,
-                                        const struct nf_hook_state *state)
+static unsigned int natflow_l7_hook(const struct nf_hook_ops *ops,
+                                    struct sk_buff *skb,
+                                    const struct nf_hook_state *state)
 {
-	return NATFLOW_L7_URL_CONSUMER_CALL(state->hook, skb, state, state->in,
-	                                    state->out);
+	return NATFLOW_L7_HOOK_CALL(state->hook, skb, state, state->in,
+	                            state->out);
 }
 #else
-static unsigned int natflow_l7_url_hook(void *priv,
-                                        struct sk_buff *skb,
-                                        const struct nf_hook_state *state)
+static unsigned int natflow_l7_hook(void *priv,
+                                    struct sk_buff *skb,
+                                    const struct nf_hook_state *state)
 {
 #if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
-	return NATFLOW_L7_URL_CONSUMER_CALL(state->hook, skb, state, state->in,
-	                                    state->out);
+	return NATFLOW_L7_HOOK_CALL(state->hook, skb, state, state->in,
+	                            state->out);
 #else
-	return NATFLOW_L7_URL_CONSUMER_CALL(state->hook, skb, state, state->in, NULL);
+	return NATFLOW_L7_HOOK_CALL(state->hook, skb, state, state->in, NULL);
 #endif
 }
 #endif
 
-static struct nf_hook_ops natflow_l7_url_hooks[] = {
+static struct nf_hook_ops natflow_l7_hooks[] = {
 	{
 #if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
-		.hook = natflow_l7_url_hook,
+		.hook = natflow_l7_hook,
 		.pf = PF_INET,
 		.hooknum = NF_INET_FORWARD,
 		.priority = NF_IP_PRI_FILTER + 5,
@@ -2189,7 +2189,7 @@ static struct nf_hook_ops natflow_l7_url_hooks[] = {
 #if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
-		.hook = natflow_l7_url_hook,
+		.hook = natflow_l7_hook,
 		.pf = AF_INET6,
 		.hooknum = NF_INET_FORWARD,
 		.priority = NF_IP_PRI_FILTER + 5,
@@ -2198,23 +2198,23 @@ static struct nf_hook_ops natflow_l7_url_hooks[] = {
 #if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
-		.hook = natflow_l7_url_hook,
+		.hook = natflow_l7_hook,
 		.pf = NFPROTO_BRIDGE,
 		.hooknum = NF_INET_FORWARD,
 		.priority = NF_IP_PRI_FILTER + 5,
 	},
 };
 
-static int natflow_l7_url_hooks_register(void)
+static int natflow_l7_hooks_register(void)
 {
-	return nf_register_hooks(natflow_l7_url_hooks,
-	                         ARRAY_SIZE(natflow_l7_url_hooks));
+	return nf_register_hooks(natflow_l7_hooks,
+	                         ARRAY_SIZE(natflow_l7_hooks));
 }
 
-static void natflow_l7_url_hooks_unregister(void)
+static void natflow_l7_hooks_unregister(void)
 {
-	nf_unregister_hooks(natflow_l7_url_hooks,
-	                    ARRAY_SIZE(natflow_l7_url_hooks));
+	nf_unregister_hooks(natflow_l7_hooks,
+	                    ARRAY_SIZE(natflow_l7_hooks));
 }
 #endif /* CONFIG_NATFLOW_URLLOGGER || CONFIG_NATFLOW_DPI */
 
@@ -2578,7 +2578,7 @@ static int natflow_l7_http_host_view_parse(unsigned char *data, int data_len,
 }
 
 static noinline unsigned int natflow_l7_tcp_dispatch_http(
-    NATFLOW_L7_URL_CONSUMER_ARGS,
+    NATFLOW_L7_HOOK_ARGS,
     const struct natflow_l7_packet_view *view,
     const struct net_device *reply_dev,
     int bridge,
@@ -3223,7 +3223,7 @@ int natflow_l7_init(void)
 	if (ret != 0)
 		NATFLOW_WARN("QUIC hostname parser disabled, crypto init error=%d\n", ret);
 
-	ret = natflow_l7_url_hooks_register();
+	ret = natflow_l7_hooks_register();
 	if (ret != 0) {
 		natflow_l7_quic_crypto_cleanup();
 		natflow_l7_quic_cache_cleanup();
@@ -3242,7 +3242,7 @@ void natflow_l7_exit(void)
 		return;
 
 #if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
-	natflow_l7_url_hooks_unregister();
+	natflow_l7_hooks_unregister();
 	natflow_l7_quic_crypto_cleanup();
 	natflow_l7_quic_cache_cleanup();
 	natflow_l7_tls_cache_cleanup();

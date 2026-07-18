@@ -78,7 +78,7 @@ DPI 能力采用有界 L7 detector 框架：
 - legacy URL logger 与 Host ACL 是 L7 的 URL consumer，继续保留 `/dev/hostacl_ctl`、`/proc/sys/urllogger_store/*` 和 `CONFIG_NATFLOW_URLLOGGER`；URL queue 用户接口为 `/dev/natflow_urllogger_queue`，输出版本化二进制 URL event。
 - DPI 是 L7 的 classifier consumer，新增 `/dev/natflow_dpi_ctl`、`/dev/natflow_dpi_queue` 和 `CONFIG_NATFLOW_DPI`。
 - `/proc/sys/urllogger_store/enable=0` 仍表示 URL event 和 Host ACL 都不执行；DPI host consumer 可独立使用 HTTP/TLS/QUIC host parser，但 DPI enable 不能让 Host ACL 悄悄生效。
-- M1 阶段 DPI protocol-only hook 继续由 `natflow_dpi.c` 独立持有，不合并进 L7 URL common path，也不受 `urllogger_store/enable` 控制；只有在 L7 dispatcher、consumer mask 和 DPI context 生命周期落地后，才重新评审统一入口。
+- M1 阶段曾暂时由 `natflow_dpi.c` 独立持有 DPI protocol-only hook；后续已完成 L7 dispatcher、consumer mask 和 DPI context 生命周期，当前 URL/DPI 统一从 shared L7 hook 入口消费，且 DPI 不受 `urllogger_store/enable` 控制。
 - MVP 常驻分类结果仍只有 `app_id`；8 字节瞬态预算 context 不属于分类结果，其他分类细节进入 terminal event。
 
 ### 后果

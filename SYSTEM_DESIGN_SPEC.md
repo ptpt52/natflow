@@ -189,7 +189,7 @@ Natflow 分为控制面、策略面、数据面和观测面。
 - zone 和 user 在 path 前初始化，因此 fast path 可依赖 zone/user 状态位。
 - user 子系统初始化时，`userinfo_event_store_init()` 在 `/dev/natflow_userinfo_queue` 的 `cdev_add()` 之前执行；设备节点一旦可打开，事件队列的 spinlock、list 和 waitqueue 已经有效。
 - URL logger 在 path 后初始化，shared L7 解析通过 `NF_FF_L7_USE` 与 path 协调，避免未完成 URL/DPI host 处理的流被快速转发。
-- L7 hook lifecycle 在 URL logger 资源初始化之后初始化 TCP TLS SNI cache、QUIC cache，并尝试初始化 QUIC crypto ctx；QUIC crypto 初始化失败只告警并禁用 QUIC hostname parser，不导致 URL logger 或 L7 初始化失败。随后注册 URL hook ops；hook 签名兼容包装由 L7 持有，数据面中 TCP HTTP/TLS 和 UDP/443 QUIC 都由 L7 producer 解析后通过 `natflow_urllogger_consume_host_view()` fan-out。退出时先注销 hook、释放 QUIC crypto/cache 和 TCP TLS SNI cache，再释放 URL logger 资源。
+- L7 hook lifecycle 在 URL logger 资源初始化之后初始化 TCP TLS SNI cache、QUIC cache，并尝试初始化 QUIC crypto ctx；QUIC crypto 初始化失败只告警并禁用 QUIC hostname parser，不导致 URL logger 或 L7 初始化失败。随后注册 shared L7 hook ops；hook 签名兼容包装由 L7 持有，数据面中 TCP HTTP/TLS 和 UDP/443 QUIC 都由 L7 producer 解析后 fan-out 到当前 active consumer。退出时先注销 hook、释放 QUIC crypto/cache 和 TCP TLS SNI cache，再释放 URL logger 资源。
 - 退出 path 时先 `disabled=1`，再注销 hooks/notifier、同步 RCU、停止硬件 offload、释放表。
 
 ## 6. 公共控制协议
@@ -524,7 +524,7 @@ struct natflow_urllogger_event_hdr {
 - `<id>` 必须是 `0..31`。
 - host 原样追加进规则 buffer，匹配时会按 host 和域名后缀查找。
 - 规则 buffer 容量按 `ACL_RULE_ALLOC_SIZE = 256` 对齐；每次追加规则都会构造新的完整 buffer，并通过 RCU 指针发布，旧 buffer 在 RCU grace period 后释放。
-- host ACL 控制面读写由 `acl_rule_lock` 串行化；URL hook 数据面匹配在 RCU 读侧保护下读取当前规则 buffer。
+- host ACL 控制面读写由 `acl_rule_lock` 串行化；URL consumer 在 shared L7 hook 数据面中通过 RCU 读侧保护读取当前规则 buffer。
 - 规则内部用 host 前一个 marker 字节保存 high-bit、action 和 rule id；读 `/dev/hostacl_ctl` 时会把 marker 内容直接夹在规则 buffer 输出中，不是结构化 JSON/CSV。
 
 关联 ipset：
@@ -543,12 +543,12 @@ struct natflow_urllogger_event_hdr {
 
 | 名称 | 默认值 | 权限/行为 |
 | --- | --- | --- |
-| `enable` | 0 | 开关 URL store 和 hook 处理。 |
+| `enable` | 0 | 开关 URL event 和 Host ACL consumer；不控制 DPI consumer。 |
 | `count` | 0 | 当前已缓存待读 URL 记录数，只读语义。 |
 | `timestamp_freq` | 10 | 相同 URL 合并时间窗口，也是读出前的最小老化秒数。 |
 | `tuple_type` | 0 | URL 记录使用的 conntrack tuple 方向。0=dir0 src/dst；1=dir0 src/dir1 src；2=dir1 dst/dir1 src。 |
 
-`enable=0` 时 URL hook 直接 accept，不记录、不执行 host ACL。
+`enable=0` 时 URL consumer 不记录 URL event、不执行 Host ACL；shared L7 hook 仍可按 DPI 规则激活 DPI domain 或 packet consumer。
 
 ## 9. ipset 契约
 
@@ -906,7 +906,7 @@ classid 模式：
 - 不丢包。
 - 只写 `skb->mark`，交给 tc 处理。
 
-## 15. URL logger 和 host ACL 算法
+## 15. Shared L7、URL logger 和 host ACL 算法
 
 ### 15.1 hook 范围
 
@@ -920,7 +920,7 @@ classid 模式：
 
 1. 若 URL、DPI domain 和 DPI packet consumer 都未激活，则直接 accept；`/proc/sys/urllogger_store/enable=1` 激活 URL/HostACL consumer，DPI `enable=1` 且存在 domain/proto 规则分别激活 DPI domain/packet consumer。
 2. 跳过已设置 `IPS_NATFLOW_CT_DROP` 的连接。
-3. 只处理 original 方向；进入解析前统一调用 `natflow_session_in()` 确保存在 natflow session。若 confirmed、内存或布局限制导致无法创建 session，则 fail-open 跳过本次 L7 解析，避免在无 `nf->status` 可写时产生无状态 URL/DPI 结果。
+3. original 方向可进入 URL、DPI domain 和 DPI packet consumer；reply 方向只进入 DPI packet consumer。进入解析前统一调用 `natflow_session_in()` 确保存在 natflow session。若 confirmed、内存或布局限制导致无法创建 session，则 fail-open 跳过本次 L7 解析，避免在无 `nf->status` 可写时产生无状态 URL/DPI 结果。
 4. 若 `IPS_NATFLOW_L7_HANDLED` 已设置，则作为 L7_SKIP hint 在入口处快速跳过所有 L7 解析。否则从 active consumer mask 中扣除 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE` 对应 consumer。URL done 不会阻止 DPI 后续解析；DPI packet done 不会关闭仍在等待 SNI/DNS QNAME 的 DPI domain；DPI domain done 也不会阻止 URL consumer 后续解析。若 active consumer 已全部 done，则设置 L7_SKIP hint 并跳过所有 L7 解析。
 5. 设置 `NF_FF_L7_USE` 暂停 fast path。
 6. 解析 HTTP：
@@ -964,14 +964,14 @@ classid 模式：
 - 2026-07-18 使用 x86_64 GCC 9.4、完整 PATH+URLLOGGER+DPI 配置生成 `.su` 后，最大单函数帧为 360 字节；显式传递 narrowed consumer mask 并让 TCP/UDP producer 复用入口 packet view 后，模块内部最坏累计 L7 调用链由约 1936 字节降至约 1624 字节。该累计值不包含进入 hook 前的 Netfilter/conntrack 栈和外部内核函数内部栈。8 KiB 是完整 L7 功能的最低支持线程栈，不代表所有 8 KiB 目标已经完成运行时余量验证。
 - TLS/QUIC SNI server_name type 0 的内容会按 DNS hostname 规则校验后使用；严格校验会拒绝包含 `_`、非 ASCII U-label、通配符、IPv6 literal 或其他非标准 DNS hostname 的输入。
 - HTTP Host、TLS SNI、QUIC SNI 的识别是审计和粗粒度 ACL 能力，不是不可绕过的 WAF/域名防火墙边界。
-- PPPoE bridge 场景下，L7 URL common path 临时剥离 PPPoE header 后构造 packet view，并在 consumer 返回后统一恢复 PPPoE header、`skb->protocol` 和 `network_header`；URL consumer 中等待更多 TLS/QUIC 数据、drop、reset、redirect 或错误路径都必须返回到该 L7 common path。
+- PPPoE bridge 场景下，shared L7 common path 临时剥离 PPPoE header 后构造 packet view，并在 consumer 返回后统一恢复 PPPoE header、`skb->protocol` 和 `network_header`；URL consumer 中等待更多 TLS/QUIC 数据、drop、reset、redirect 或错误路径都必须返回到该 L7 common path。
 
 ### 15.3 host ACL
 
 匹配：
 
 - host ACL 规则按 rule id 保存为追加式字符串表；控制面新增/清空会构造新 buffer 并用 RCU 发布，旧 buffer 在 grace period 后释放。
-- `hostacl` 读写侧由 `acl_rule_lock` 串行化；URL hook 数据面在 RCU read-side 临界区内读取当前规则 buffer。
+- `hostacl` 读写侧由 `acl_rule_lock` 串行化；URL consumer 在 shared L7 hook 的 RCU read-side 临界区内读取当前规则 buffer。
 - 流量中的 host 会在 `urlinfo_copy_host_tolower()` 中转小写并校验；`hostacl_ctl` 写入的 `<host>` 规则则按原始输入保存，不做大小写转换，因此用户态应写入小写 DNS hostname。
 - 先匹配完整 host，再逐级匹配点后的后缀。
 - 每条规则前一个 marker 字节保存 action 和 rule id。
@@ -1136,7 +1136,7 @@ path hooks：
 | PRE_ROUTING | bridge | `NF_IP_PRI_CONNTRACK + 1`，仅无 ingress 时 |
 | NETDEV_INGRESS | per net_device | `9`，仅 `CONFIG_NETFILTER_INGRESS` |
 
-L7/urllogger hooks：
+shared L7 hooks：
 
 | hook | family | priority |
 | --- | --- | --- |
@@ -1147,7 +1147,7 @@ L7/urllogger hooks：
 - user PRE 在 DNAT 附近运行，用于认证 HTTPS 重定向。
 - path PRE 在 conntrack 后尝试 fast path 或补建 conntrack。
 - user FORWARD 在 filter 优先级做认证和 QoS 判断。
-- L7 URL hook 在 filter 后 5 个优先级解析 HTTP/TLS/QUIC host，并暂停 fast path。
+- shared L7 hook 在 filter 后 5 个优先级为 active URL/DPI consumer 解析和分发 packet/host view，并在 consumer 未终态时暂停 fast path。
 - user POST 做统计/限速，path POST 后置学习最终出口。
 
 ## 19. 设备 notifier 行为
