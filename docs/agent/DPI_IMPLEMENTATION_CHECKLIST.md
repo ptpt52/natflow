@@ -20,7 +20,7 @@
 - `/proc/sys/urllogger_store/enable=0` 仍同时关闭 URL 记录和 Host ACL 处理。
 - `/proc/sys/urllogger_store/*` 其他节点路径、默认值和读写语义兼容。
 - `CONFIG_NATFLOW_URLLOGGER` 仍独立控制 URL logger 和 Host ACL 能力。
-- `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 的 URL local-in 行为不能影响 DPI 的 forward/bridge hook 目标。
+- URLLogger 和 DPI 共用 IPv4、IPv6、bridge FORWARD L7 hook，不能为 consumer 重新引入分叉 hook 生命周期。
 
 ## Host ACL 基线
 
@@ -68,8 +68,6 @@ make EXTRA_CFLAGS="-DCONFIG_NATFLOW_URLLOGGER"
 make EXTRA_CFLAGS="-DCONFIG_NATFLOW_DPI"
 make EXTRA_CFLAGS="-DCONFIG_NATFLOW_PATH -DCONFIG_NATFLOW_URLLOGGER -DCONFIG_NATFLOW_DPI"
 make NO_DEBUG=1 EXTRA_CFLAGS="-DCONFIG_NATFLOW_PATH -DCONFIG_NATFLOW_URLLOGGER -DCONFIG_NATFLOW_DPI"
-make EXTRA_CFLAGS="-DCONFIG_NATFLOW_URLLOGGER -DCONFIG_NATFLOW_URLLOGGER_LOCAL_IN -Wall -Werror -Wno-stringop-overread"
-make EXTRA_CFLAGS="-DCONFIG_NATFLOW_URLLOGGER -DCONFIG_NATFLOW_URLLOGGER_LOCAL_IN -DCONFIG_NATFLOW_DPI -Wall -Werror -Wno-stringop-overread"
 ```
 
 若当前环境缺少内核头文件或某个配置尚未实现导致构建失败，提交说明或最终结果必须说明失败原因，不能标记为已验证。

@@ -97,7 +97,6 @@ DKMS Makefile：
 | `CONFIG_NET_MEDIATEK_SOC_WED` | 允许配置 `hwnat_wed_disabled`。 |
 | `CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH` | 硬件外部设备 offload 以 VLAN hash 辅助索引。 |
 | `CONFIG_HWNAT_EXTDEV_DISABLED` | 禁用部分外部设备硬件 offload 分支。 |
-| `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` | URL logger 改用 IPv4 `LOCAL_IN` hook，而不是默认 FORWARD/bridge hook 组合；若同时编译 `CONFIG_NATFLOW_DPI`，DPI consumer 仍额外注册 FORWARD/bridge shared L7 hook。 |
 | `CONFIG_NF_CONNTRACK_MARK` | 认证流程可写 `ct->mark`。 |
 | `CONFIG_BRIDGE_NETFILTER` | 用户统计/桥路径有额外物理入出设备判断。 |
 | `CONFIG_NF_NAT` 或 `CONFIG_NF_NAT_MODULE` | 必需；缺失会在 `natflow_common.h` 编译期报错。 |
@@ -911,16 +910,11 @@ classid 模式：
 
 ### 15.1 hook 范围
 
-默认注册：
+固定注册：
 
 - IPv4 `NF_INET_FORWARD`，priority `NF_IP_PRI_FILTER + 5`。
 - IPv6 `NF_INET_FORWARD`，priority `NF_IP_PRI_FILTER + 5`。
 - bridge `NF_INET_FORWARD`，priority `NF_IP_PRI_FILTER + 5`。
-
-若 `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN`：
-
-- 只注册 IPv4 `NF_INET_LOCAL_IN`，priority `NF_IP_PRI_FILTER + 5`。
-- 若同时编译 `CONFIG_NATFLOW_DPI`，仍额外注册 DPI-only IPv4/IPv6/bridge `NF_INET_FORWARD` shared L7 hook，避免 DPI protocol-only 失效。
 
 ### 15.2 解析流程
 
@@ -1003,7 +997,7 @@ classid 模式：
 - 端口只选择有界解析候选和 payload pull budget，不直接写入 `app_id`；当前 TCP/UDP 53 用作 DNS 候选，TCP 22 和 UDP 51820 不再单独构成 SSH/WireGuard 分类证据。
 - 有界 payload detector 在 original/reply 任一方向识别 SSH banner、WireGuard、STUN/TURN 和 BitTorrent TCP/UDP 子集；数据面根据 active ruleset 和方向预算只运行仍可观察的 detector。IPv6 当前只处理无 extension header 的 TCP/UDP。
 - DPI 默认 `disabled`。reply 包进入公共入口后，consumer mask 强制收窄为 `DPI_PACKET`；URL、Host ACL、HTTP/TLS/QUIC host 和 DNS QNAME domain 不消费 reply。DNS protocol reply 需要通过 response header、标准 opcode、question count 和支持有界 compression pointer 的第一问结构校验；端口本身不分类。
-- `natflow_l7` 统一持有 shared hook 入口、`NATFLOW_L7_CONSUMER_URL/DPI_DOMAIN/DPI_PACKET` mask 和 packet dispatcher；active mask 按 `/proc/sys/urllogger_store/enable` 发布 URL consumer，按 domain/proto 规则分别发布 DPI domain 和 DPI packet consumer。L7 入口先检查 `IPS_NATFLOW_L7_HANDLED` L7_SKIP hint，未命中时再统一调用 `natflow_session_in()`，然后使用 `natflow_t.status` 中的 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE` 独立记录终态；若无法创建 session，则 fail-open 跳过解析，不产生无状态 URL/DPI terminal。`IPS_NATFLOW_L7_HANDLED` 只是从当前 active consumer 全部 done 派生出来的短路缓存，不替代 per-consumer done bit；运行时开启新的 URL/DPI consumer 或提交新规则不会自动重新武装已设置 L7_SKIP 的旧连接。`CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 只收窄 URL logger 的 local-in hook；若同时编译 DPI，L7 会额外注册 DPI-only FORWARD/bridge hook，避免 protocol-only detector 被 local-in 配置关掉。
+- `natflow_l7` 统一持有 shared hook 入口、`NATFLOW_L7_CONSUMER_URL/DPI_DOMAIN/DPI_PACKET` mask 和 packet dispatcher；active mask 按 `/proc/sys/urllogger_store/enable` 发布 URL consumer，按 domain/proto 规则分别发布 DPI domain 和 DPI packet consumer。L7 入口先检查 `IPS_NATFLOW_L7_HANDLED` L7_SKIP hint，未命中时再统一调用 `natflow_session_in()`，然后使用 `natflow_t.status` 中的 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE` 独立记录终态；若无法创建 session，则 fail-open 跳过解析，不产生无状态 URL/DPI terminal。`IPS_NATFLOW_L7_HANDLED` 只是从当前 active consumer 全部 done 派生出来的短路缓存，不替代 per-consumer done bit；运行时开启新的 URL/DPI consumer 或提交新规则不会自动重新武装已设置 L7_SKIP 的旧连接。
 - DPI enable、URL enable、`rules_commit` 和 `rules_clear` 只改变后续数据包看到的 active consumer/ruleset。控制面不枚举 conntrack，不强制完成、不退出、也不清理已经设置 `NF_FF_L7_USE` 或 consumer done bit 的连接；已设置 L7_SKIP 的连接不重新武装，仍在自然解析路径中的连接若再次分类则读取当时发布的 active ruleset。既有连接可以自然终态，也可以保留原 L7 状态直到 conntrack 生命周期结束。
 - HTTP Host、TCP TLS SNI 和 QUIC v1 Initial SNI 解析出 host view 后进入 host consumer；HTTP host view 可携带原始 Host 和 `NATFLOW_L7_HOST_ALLOW_PORT`，URL record、ACL lookup 或 DPI raw classify 边界负责 normalize，已规范化的 URL/DNS host 走 DPI normalized classify 入口。`CONFIG_NATFLOW_URLLOGGER` 存在时通过 `natflow_urllogger_consume_host_view()` 同时保留 URL record、Host ACL 和 DPI host classify，URL record 分配失败时也会通过 `urllogger_acl_lookup` 的最小 host 视图调用 DPI；DPI-only 构建则由 L7 直接调用 `natflow_dpi_classify_host_flags()`。DNS QNAME 由 DPI packet consumer 调用共享 DNS parser 后进入同一 domain classifier。Host ACL 行为和 `/dev/natflow_urllogger_queue` 输出不因 DPI 改变。
 - domain/proto 命中时写入当前连接的 `natflow_t.app_id` 并输出 match event；L7 入口已经在解析前统一确保 natflow session。若 session 创建失败，则本次 L7 解析整体跳过，因此不会输出无状态 match event。protocol-only 命中要求 `app_id==0`，用于避免每包重复事件。
@@ -1147,8 +1141,6 @@ L7/urllogger hooks：
 | hook | family | priority |
 | --- | --- | --- |
 | FORWARD | IPv4/IPv6/bridge | `NF_IP_PRI_FILTER + 5` |
-| LOCAL_IN | IPv4 | `NF_IP_PRI_FILTER + 5`，仅 `CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` |
-| FORWARD | IPv4/IPv6/bridge | `NF_IP_PRI_FILTER + 5`，`CONFIG_NATFLOW_URLLOGGER_LOCAL_IN` 与 `CONFIG_NATFLOW_DPI` 同时编译时的 DPI-only hook |
 
 顺序含义：
 
