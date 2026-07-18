@@ -66,6 +66,28 @@
 
 目标：把 plain vline IPv6 Ethernet/NOARP 的 Neighbor Advertisement 构造路径改为更明确的 skb length/tailroom helper 流程，并补回归验证。
 
+### P1-4：降低 L7 数据面累计栈占用
+
+状态：Planned
+
+目标：在不改变 URLLogger、Host ACL 和 DPI 行为的前提下，把当前 x86_64
+GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链先降到 1792 字节
+以内，并在实际 8 KiB 栈目标上复核。
+
+优先顺序：
+
+1. 消除仅为收窄 `consumer_mask` 创建的 `packet_view` 副本。
+2. 让 TCP/UDP producer 在调用方拥有的可写 packet view 上补齐 L4/payload
+   字段，避免 dispatcher 和 IPv4/IPv6 helper 重复保留完整 view。
+3. 收敛 URL consumer/fallback 的长参数列表，降低 outgoing argument 和保存
+   寄存器形成的栈帧。
+4. 只有证明重入、CPU migration 和嵌套 hook 归属安全后，才考虑把 hostname
+   scratch 改为 per-CPU；不得在 URL allocation fallback 中新增依赖成功分配的
+   `GFP_ATOMIC` scratch。
+
+退出条件：完整构建矩阵通过；目标工具链 `.su` 单帧不超过 512 字节；重新
+核算入口到 consumer 的累计链；8 KiB 目标完成 stack tracer 压力验证。
+
 ## P2：产品化和架构目标
 
 ### P2-1：建立构建和回归验证矩阵

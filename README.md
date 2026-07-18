@@ -129,6 +129,11 @@ make
 | `CONFIG_HWNAT_EXTDEV_DISABLED` | 禁用部分外部设备硬件 offload 分支。 |
 | `NO_DEBUG=1` | 追加 `-DNO_DEBUG -Os`，编译期关闭日志宏。 |
 
+启用 `CONFIG_NATFLOW_URLLOGGER` 或 `CONFIG_NATFLOW_DPI` 时，目标内核的
+`THREAD_SIZE` 必须至少为 8192 字节，否则构建会失败。L7、DPI 和 URL
+consumer 数据面源文件同时把单函数栈帧限制为 512 字节；该限制不能替代对
+入口到 consumer 的累计调用栈检查。
+
 示例：
 
 ```sh

@@ -137,3 +137,32 @@ L7 reply 入口只准入 DPI packet consumer，`NF_FF_L7_DPI_PACKET_DONE` 是连
 - packet view 和 detector dispatcher 必须先补齐 direction 与 client/server port 语义，再放开 reply hook。
 - 单向 detector 不为无关方向付出等待成本，双向 detector 也不能被任一方向首包提前关闭。
 - 事件 ABI 后续需要独立记录 evidence direction，同时保持 original tuple 作为稳定连接身份；该 ABI 变化不属于本 ADR 的当前实现步骤。
+
+## ADR-0006：L7 最低线程栈和单帧预算
+
+日期：2026-07-18
+
+状态：Accepted
+
+### 背景
+
+完整 URLLogger+DPI 构建在 x86_64 GCC 9.4 下测得模块内部最坏累计 L7
+调用链约 1936 字节。累计值之外还存在 Netfilter/conntrack 上游和外部内核
+函数栈，不能把单函数无告警当作整条数据面调用链安全。
+
+### 决策
+
+- 启用 `CONFIG_NATFLOW_URLLOGGER` 或 `CONFIG_NATFLOW_DPI` 时要求
+  `THREAD_SIZE >= 8192`，更小的平台在编译期拒绝。
+- `natflow_l7.o`、`natflow_dpi.o` 和 `natflow_urllogger.o` 的单函数栈帧
+  上限为 512 字节，并由对象级 `-Werror=frame-larger-than=512` 转为构建
+  失败，不依赖调用方是否覆盖全局 `EXTRA_CFLAGS`。
+- 512 字节单帧限制不替代累计调用链审核；目标架构和工具链仍须用
+  `-fstack-usage` 复核，8 KiB 平台还须做运行时栈余量测试。
+
+### 后果
+
+- 完整 L7 功能不支持 4 KiB 内核线程栈。
+- 后续 parser、detector 和 consumer 不得通过拆函数规避累计栈预算；累计链
+  接近当前约 2 KiB 基线时，应优先复用 view、缩短调用链或使用有明确并发
+  归属的 per-CPU scratch，再扩大识别能力。

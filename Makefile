@@ -12,6 +12,12 @@ endif
 
 ccflags-y += $(EXTRA_CFLAGS)
 
+# Keep individual L7 data-plane frames bounded.  The cumulative call-chain
+# budget is reviewed separately with compiler-generated .su files.
+CFLAGS_natflow_l7.o += -Werror=frame-larger-than=512
+CFLAGS_natflow_dpi.o += -Werror=frame-larger-than=512
+CFLAGS_natflow_urllogger.o += -Werror=frame-larger-than=512
+
 PWD ?= $(shell pwd)
 
 ifndef KERNELRELEASE

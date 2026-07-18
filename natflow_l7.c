@@ -14,11 +14,20 @@
 #include <linux/slab.h>
 #include <linux/smp.h>
 #include <linux/string.h>
+#include <linux/thread_info.h>
 #include <crypto/aead.h>
 #include <crypto/hash.h>
 #include <crypto/skcipher.h>
 #include "natflow_common.h"
 #include "natflow_l7.h"
+
+#if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
+#define NATFLOW_L7_MIN_THREAD_SIZE 8192
+#if THREAD_SIZE < NATFLOW_L7_MIN_THREAD_SIZE
+#error "natflow L7 requires a kernel thread stack of at least 8192 bytes"
+#endif
+#endif
+
 #if defined(CONFIG_NATFLOW_DPI)
 #include "natflow_dpi.h"
 #endif
