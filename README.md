@@ -1030,6 +1030,8 @@ echo events_clear >/dev/natflow_dpi_ctl
 - `domain_lookups`/`domain_matches` 统计 hostname 规则查找和命中；`packet_inspect_original/reply` 按实际进入有界 protocol parser 的 packet 计数，每包最多增加一次，不按 detector 个数累加；`packet_match_original/reply` 统计直接协议证据方向。
 - `context_armed` 和各 `context_cleared_*` 记录 bounded context 的累计状态转换；`context_aborted` 表示 L7 强制终态清理。conntrack 自然销毁不会回调 DPI，因此这些累计值不能相减推导当前活跃 context 数。`proto_no_session`、`proto_app_exists` 和 `proto_no_rule` 继续解释 protocol-only 未产生新分类结果的原因。
 
+空 ruleset 的测试环境可运行 `tools/natflow-dpi-ctl-smoke.sh` 验证未知命令、事务 begin/abort/commit、generation、规则计数和 clear。脚本会临时禁用 DPI、清空事件统计并发布两条测试规则，因此会改变 generation；为避免覆盖运行配置，启动时只要发现 ruleset 非空或已有事务就会拒绝执行，退出时会恢复原 enable 状态。
+
 `/dev/natflow_dpi_queue` 使用版本化二进制记录，只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 或 reader 未写入正数 `cache=N\n` 时，match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时 cache 默认为 0 并会先清空残留事件，写入 `cache=N\n` 后最多缓存 N 条新事件，队列满、溢出或分配失败会丢弃新事件并增加 `events_lost`；写入 `cache=0\n` 或关闭 fd 会关闭缓存并清空未读事件。当前 record 是 v3 固定头，包含规则命中摘要、original direction tuple 和实际证据方向；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。
 
 读者用法：
@@ -1080,6 +1082,16 @@ struct natflow_dpi_event_hdr {
 - `sip` 和 `dip` 是 original tuple 的源/目的地址字节数组；IPv4 使用前 4 字节，IPv6 使用完整 16 字节。
 
 C 读者样例：
+
+仓库提供可直接编译的维护版本 `tools/natflow-dpi-reader.c`，支持指定设备、cache 上限和读取条数：
+
+```sh
+cc -std=c11 -O2 -Wall -Wextra -Werror \
+	-o natflow-dpi-reader tools/natflow-dpi-reader.c
+./natflow-dpi-reader -c 256
+```
+
+下面代码保留为接口示例；实际测试优先使用上述维护版本。
 
 ```c
 #include <arpa/inet.h>

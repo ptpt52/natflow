@@ -726,6 +726,8 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 ### 19.1 构建
 
+仓库入口：`tools/build-matrix.sh`。脚本在每个组合前执行 clean build，并在退出时清理构建产物。
+
 - base。
 - `CONFIG_NATFLOW_URLLOGGER`。
 - `CONFIG_NATFLOW_DPI`。
@@ -762,6 +764,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - DPI queue 小 buffer、poll、event lost、record_len 跳过。
 - ruleset memory、retired generation、hash collision、suffix probes。
 - malformed packet 不刷日志。
+- `tools/natflow-dpi-reader.c` 提供 v3 queue ABI 参考读取器；`tools/natflow-dpi-ctl-smoke.sh` 提供仅允许空 ruleset 的控制事务冒烟入口。真机仍需补小 buffer、队列满和并发流量验证。
 
 ### 19.6 性能
 
