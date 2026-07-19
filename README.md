@@ -1102,6 +1102,8 @@ cc -std=c11 -O2 -Wall -Wextra -Werror \
 
 queue smoke 打开设备时会按 ABI 清空残留事件并独占 reader；不要与生产 reader 同时运行。`-w` 模式运行前应先配置并启用至少一条可产生匹配流量的 DPI 规则，并在等待窗口内生成对应流量。
 
+协议 detector 黑盒 corpus 入口为 `tests/dpi/run-corpus.sh`。它在 root namespace 中建立两个 IPv4 network namespace，让 TCP/UDP fixture 经过真实 FORWARD hook，并对 queue event 的 original tuple、source、`app_id`、`rule_id` 和 `evidence_dir` 做断言。runner 要求 root 权限、`ip`、`iptables`、C 编译器、已加载的 DPI 模块和空 ruleset；会临时修改 IPv4 forwarding、FORWARD 规则、DPI enable/ruleset/generation 和事件统计，只能用于隔离测试环境。样本格式和清理边界见 `tests/dpi/README.md`。
+
 下面代码保留为接口示例；实际测试优先使用上述维护版本。
 
 ```c

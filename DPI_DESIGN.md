@@ -738,6 +738,8 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 ### 19.2 Parser corpus
 
+黑盒框架入口为 `tests/dpi/run-corpus.sh`：每个 fixture 使用新连接，经 root namespace 的真实 FORWARD hook 后按 original tuple 过滤 v3 event，并断言分类来源与证据方向。当前框架先覆盖 IPv4 和单 payload socket 注入；精确 TCP segmentation、IPv6、non-linear skb、VLAN/PPPoE/bridge 仍需独立扩展。
+
 - HTTP GET/POST/HEAD、Host 大小写、port、非法 host、超长 URI、跨包 header。
 - TLS 普通 SNI、无 SNI、ECH outer SNI、malformed extension、跨连续 TCP 包、gap/retransmit。
 - QUIC v1 Initial、无 crypto、crypto split、coalesced、Retry、v2/unsupported、crypto 不可用。
