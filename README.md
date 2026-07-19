@@ -1025,7 +1025,7 @@ echo events_clear >/dev/natflow_dpi_ctl
 - `proto` 当前支持 `dns`、`ssh`、`wireguard`（也接受 `wg`）、`stun`、`turn`、`bittorrent`（也接受 `bt`）。
 - DNS QNAME detector：original direction TCP/UDP 53 标准 query 的第一问 QNAME 会进入 domain exact/suffix ruleset；支持 compression pointer，最多跳转 16 次并拒绝指针环、越界和展开后超长名称。reply 只用于 DNS protocol 证据，不进入 domain rules。
 - 端口只用于选择有界解析候选和 payload pull budget，不直接写入 `app_id`；当前只有 TCP/UDP 53 会触发 DNS 候选解析，TCP 22 和 UDP 51820 不再作为 SSH/WireGuard 的独立分类证据。
-- 有界 payload detector：TCP 任一方向的 SSH banner 识别 `SSH-<version>-` identification string；WireGuard、STUN/TURN 和 BitTorrent detector 也按 metadata 在任一方向匹配直接 payload 证据。仅执行当前 ruleset 实际配置且当前方向预算未耗尽的 detector。
+- 有界 payload detector：TCP 任一方向的 SSH banner 识别 `SSH-<version>-` identification string；WireGuard、STUN/TURN 和 BitTorrent detector 也按 metadata 在任一方向匹配直接 payload 证据。uTP 会校验 version/type、最多 4 段的有界 extension chain；为避免与 WireGuard type 1 重叠，DATA packet 的 connection ID 为 0 时不分类。仅执行当前 ruleset 实际配置且当前方向预算未耗尽的 detector。
 - `cat /dev/natflow_dpi_ctl` 中，`matches`/`matches_*` 统计全部规则命中，不依赖 queue reader；`events`/`events_*` 只统计成功入队，`events_suppressed` 表示没有 reader 或 `cache=0`，`events_lost` 表示分配失败或队列已满。稳定采样区间内应满足 `matches = events + events_suppressed + events_lost`；并发读取或执行 `events_clear` 时允许短暂不一致。
 - `domain_lookups`/`domain_matches` 统计 hostname 规则查找和命中；`packet_inspect_original/reply` 按实际进入有界 protocol parser 的 packet 计数，每包最多增加一次，不按 detector 个数累加；`packet_match_original/reply` 统计直接协议证据方向。
 - `context_armed` 和各 `context_cleared_*` 记录 bounded context 的累计状态转换；`context_aborted` 表示 L7 强制终态清理。conntrack 自然销毁不会回调 DPI，因此这些累计值不能相减推导当前活跃 context 数。`proto_no_session`、`proto_app_exists` 和 `proto_no_rule` 继续解释 protocol-only 未产生新分类结果的原因。

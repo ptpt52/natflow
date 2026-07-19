@@ -1422,6 +1422,8 @@ static bool natflow_dpi_payload_is_utp(const unsigned char *data,
 	unsigned char utp_type;
 	unsigned char utp_version;
 	unsigned char utp_extension;
+	unsigned int extension_count = 0;
+	unsigned int offset = 20;
 
 	if (inspect_len < 20)
 		return false;
@@ -1434,6 +1436,24 @@ static bool natflow_dpi_payload_is_utp(const unsigned char *data,
 		return false;
 	if (utp_extension > 2)
 		return false;
+	/* A DATA packet with connection ID 0 overlaps WireGuard type 1. */
+	if (data[0] == 1 && data[2] == 0 && data[3] == 0)
+		return false;
+
+	while (utp_extension != 0) {
+		unsigned int extension_len;
+
+		if (++extension_count > 4 || offset > inspect_len ||
+		        inspect_len - offset < 2)
+			return false;
+		utp_extension = data[offset++];
+		extension_len = data[offset++];
+		if (extension_len == 0 || extension_len > inspect_len - offset)
+			return false;
+		offset += extension_len;
+		if (utp_extension > 2)
+			return false;
+	}
 
 	return true;
 }

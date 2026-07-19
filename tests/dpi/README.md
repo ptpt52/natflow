@@ -42,3 +42,6 @@ Current fixtures:
 - `cases/dns-ssh.cases`: DNS UDP/TCP original/reply, compressed question,
   malformed pointer/header/length and wrong-port negatives; SSH original/reply
   banners, supported version form, port-only, truncated and malformed banners.
+- `cases/udp-protocols.cases`: WireGuard message types and length/reserved-byte
+  negatives; STUN/TURN UDP/TCP headers, method, length and cookie cases;
+  BitTorrent TCP handshake, UDP uTP and DHT positive/negative cases.

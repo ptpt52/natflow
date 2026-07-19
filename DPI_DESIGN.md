@@ -704,7 +704,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成基础设施：放开 reply packet consumer，保持所有 URL/domain host consumer original-only。
 - 已完成 M2 准备项：DPI event ABI v3 保持 original tuple 作为连接身份，并增加独立 `evidence_dir` 记录实际命中 packet 方向。
 - 已完成 M2 准备项：match 与 event queue 交付统计解耦，补充 domain、双向 packet 和 bounded context 累计 counters；不维护会要求 conntrack 销毁回调或全局 registry 的 active-context gauge。
-- 仍未完成：payload TLV、IPv6 extension header 解析、误判 corpus 和生产 shadow 数据采集。
+- 已建立 protocol-only detector 的首批 IPv4 黑盒正反 corpus；仍未完成真机 corpus 执行、payload TLV、IPv6 extension header 解析和生产 shadow 数据采集。
 
 ### M2：生产 shadow
 
