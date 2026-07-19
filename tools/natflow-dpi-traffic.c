@@ -17,6 +17,8 @@
 #define TRAFFIC_PAYLOAD_MAX 2048U
 #define TRAFFIC_TIMEOUT_SECONDS 3
 
+static const unsigned char traffic_ack = 0xa5;
+
 enum traffic_role {
 	TRAFFIC_SERVER,
 	TRAFFIC_CLIENT,
@@ -191,10 +193,13 @@ static void run_tcp_server(const struct sockaddr_in *address,
 	if (connection < 0)
 		fail("accept TCP connection");
 	configure_socket(connection);
-	if (direction == TRAFFIC_ORIGINAL)
+	if (direction == TRAFFIC_ORIGINAL) {
 		receive_exact(connection, payload, payload_length);
-	else
+		send_all(connection, &traffic_ack, sizeof(traffic_ack));
+	} else {
 		send_all(connection, payload, payload_length);
+		receive_exact(connection, &traffic_ack, sizeof(traffic_ack));
+	}
 	close(connection);
 	close(listener);
 }
@@ -210,10 +215,13 @@ static void run_tcp_client(const struct sockaddr_in *address,
 	configure_socket(fd);
 	if (connect(fd, (const struct sockaddr *)address, sizeof(*address)) != 0)
 		fail("connect TCP client");
-	if (direction == TRAFFIC_ORIGINAL)
+	if (direction == TRAFFIC_ORIGINAL) {
 		send_all(fd, payload, payload_length);
-	else
+		receive_exact(fd, &traffic_ack, sizeof(traffic_ack));
+	} else {
 		receive_exact(fd, payload, payload_length);
+		send_all(fd, &traffic_ack, sizeof(traffic_ack));
+	}
 	close(fd);
 }
 

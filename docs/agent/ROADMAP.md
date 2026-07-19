@@ -97,7 +97,7 @@ GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链降到 17
 
 目标：形成可重复的验证入口，至少覆盖基础构建、`CONFIG_NATFLOW_PATH`、`CONFIG_NATFLOW_URLLOGGER`、`NO_DEBUG=1`，并逐步补 URL parser、QoS、认证状态机和 vline 回归验证。
 
-当前进度：`tools/build-matrix.sh` 已固化七组合 clean build；用户态 v3 ABI 已抽到 `tools/natflow-dpi-event.h`，`tools/natflow-dpi-reader.c`、`tools/natflow-dpi-queue-smoke.c` 和 `tools/natflow-dpi-ctl-smoke.sh` 已提供 DPI queue、结构边界、真实事件固定头和空 ruleset 控制事务入口；`tests/dpi/run-corpus.sh` 已建立 IPv4 network namespace、双向 TCP/UDP 注入和 queue event 断言框架。协议样本、真机执行、队列满/并发流量、URL parser corpus、QoS、认证状态机和 vline 自动回归仍未完成。
+当前进度：`tools/build-matrix.sh` 已固化七组合 clean build；用户态 v3 ABI 已抽到 `tools/natflow-dpi-event.h`，`tools/natflow-dpi-reader.c`、`tools/natflow-dpi-queue-smoke.c` 和 `tools/natflow-dpi-ctl-smoke.sh` 已提供 DPI queue、结构边界、真实事件固定头和空 ruleset 控制事务入口；`tests/dpi/run-corpus.sh` 已建立 IPv4 network namespace、双向 TCP/UDP 注入和 queue event 断言框架，并加入 DNS/SSH 正反样本。其余 detector 样本、真机执行、队列满/并发流量、URL parser corpus、QoS、认证状态机和 vline 自动回归仍未完成。
 
 ### P2-2：评估用户态控制面/authd/portal
 

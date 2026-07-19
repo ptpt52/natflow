@@ -30,6 +30,7 @@ usage()
 {
 	cat <<EOF
 Usage: $0 case-file [case-file ...]
+       $0 --check case-file [case-file ...]
 
 Case format, one pipe-separated record per line:
   name|proto|transport|direction|port|payload_hex|expectation
@@ -101,6 +102,62 @@ proto_values()
 	esac
 }
 
+validate_case()
+{
+	case_file=$1
+	name=$2
+	proto=$3
+	l4=$4
+	direction=$5
+	port=$6
+	payload=$7
+	expectation=$8
+	extra=$9
+
+	[ -n "$name" ] || fail "$case_file: empty case name"
+	[ -z "$extra" ] || fail "$case_file: malformed case: $name"
+	values=$(proto_values "$proto") ||
+		fail "$case_file: unknown protocol in $name"
+	set -- $values
+	source_id=$1
+	app_id=$2
+	rule_id=$3
+	case $l4 in tcp|udp) ;; *) fail "$case_file: invalid L4 in $name" ;; esac
+	case $proto:$l4 in
+	ssh:udp|wireguard:tcp) fail "$case_file: invalid protocol/L4 pair in $name" ;;
+	esac
+	case $direction in original|reply) ;; *) fail "$case_file: invalid direction in $name" ;; esac
+	case $port in ""|*[!0-9]*) fail "$case_file: invalid port in $name" ;; esac
+	[ "$port" -gt 0 ] && [ "$port" -le 65535 ] ||
+		fail "$case_file: port out of range in $name"
+	case $payload in ""|*[!0-9a-fA-F]*) fail "$case_file: invalid payload hex in $name" ;; esac
+	[ $((${#payload} % 2)) -eq 0 ] ||
+		fail "$case_file: odd payload hex length in $name"
+	case $expectation in
+	positive) negative= ;;
+	negative) negative=-N ;;
+	*) fail "$case_file: invalid expectation in $name" ;;
+	esac
+}
+
+check_case_files()
+{
+	check_count=0
+	for case_file in "$@"; do
+		[ -r "$case_file" ] || fail "cannot read case file: $case_file"
+		while IFS='|' read -r name proto l4 direction port payload expectation extra; do
+			case $name in
+			""|'#'*) continue ;;
+			esac
+			validate_case "$case_file" "$name" "$proto" "$l4" \
+				"$direction" "$port" "$payload" "$expectation" "$extra"
+			check_count=$((check_count + 1))
+		done <"$case_file"
+	done
+	[ "$check_count" -gt 0 ] || fail "no corpus cases were loaded"
+	printf 'PASS: checked %u DPI corpus case(s)\n' "$check_count"
+}
+
 wait_ready()
 {
 	ready_file=$1
@@ -160,6 +217,13 @@ case ${1:-} in
 	exit 2
 	;;
 esac
+
+if [ "$1" = --check ]; then
+	shift
+	[ "$#" -gt 0 ] || fail "no case files supplied"
+	check_case_files "$@"
+	exit 0
+fi
 
 [ "$(id -u)" = 0 ] || fail "root privileges are required"
 [ -r "$CTL" ] && [ -w "$CTL" ] || fail "$CTL is not readable and writable"
@@ -231,16 +295,8 @@ for case_file in "$@"; do
 		case $name in
 		""|'#'*) continue ;;
 		esac
-		[ -z "$extra" ] || fail "$case_file: malformed case: $name"
-		values=$(proto_values "$proto") ||
-			fail "$case_file: unknown protocol in $name"
-		set -- $values
-		source_id=$1
-		app_id=$2
-		rule_id=$3
-		case $l4 in tcp|udp) ;; *) fail "$case_file: invalid L4 in $name" ;; esac
-		case $direction in original|reply) ;; *) fail "$case_file: invalid direction in $name" ;; esac
-		case $expectation in positive) negative= ;; negative) negative=-N ;; *) fail "$case_file: invalid expectation in $name" ;; esac
+		validate_case "$case_file" "$name" "$proto" "$l4" \
+			"$direction" "$port" "$payload" "$expectation" "$extra"
 
 		printf 'CASE: %s\n' "$name"
 		"$ASSERT_BIN" -d "$QUEUE" -S "$CLIENT_IP" -T "$SERVER_IP" \

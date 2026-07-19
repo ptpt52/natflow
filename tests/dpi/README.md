@@ -19,6 +19,12 @@ Run as root on a disposable test host with the DPI-enabled module loaded:
 tests/dpi/run-corpus.sh tests/dpi/cases/dns-ssh.cases
 ```
 
+Fixture files can be checked without root, a loaded module, or network setup:
+
+```sh
+tests/dpi/run-corpus.sh --check tests/dpi/cases/*.cases
+```
+
 Case files use seven pipe-separated fields:
 
 ```text
@@ -30,3 +36,9 @@ Every case uses a new connection. Positive cases require the expected source,
 fail on any DPI event for that tuple. The first implementation is IPv4-only;
 IPv6, exact TCP segmentation, queue-full pressure, and non-linear skb coverage
 remain separate integration work.
+
+Current fixtures:
+
+- `cases/dns-ssh.cases`: DNS UDP/TCP original/reply, compressed question,
+  malformed pointer/header/length and wrong-port negatives; SSH original/reply
+  banners, supported version form, port-only, truncated and malformed banners.

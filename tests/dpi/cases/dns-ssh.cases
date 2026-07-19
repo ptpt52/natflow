@@ -1,0 +1,25 @@
+# DNS UDP query and response
+dns-udp-query-original|dns|udp|original|53|123401000001000000000000076578616d706c6503636f6d0000010001|positive
+dns-udp-response-reply|dns|udp|reply|53|123481800001000000000000076578616d706c6503636f6d0000010001|positive
+dns-udp-compressed-question|dns|udp|original|53|123401000001000000000000c01200010001076578616d706c6503636f6d00|positive
+dns-udp-pointer-loop|dns|udp|original|53|123401000001000000000000c00c00010001|negative
+dns-udp-pointer-out-of-bounds|dns|udp|original|53|123401000001000000000000c0ff00010001|negative
+dns-udp-truncated-label|dns|udp|original|53|12340100000100000000000007616263|negative
+dns-udp-query-with-response-bit|dns|udp|original|53|123481800001000000000000076578616d706c6503636f6d0000010001|negative
+dns-udp-nonstandard-opcode|dns|udp|original|53|123409000001000000000000076578616d706c6503636f6d0000010001|negative
+dns-udp-zero-question-count|dns|udp|original|53|123401000000000000000000076578616d706c6503636f6d0000010001|negative
+dns-udp-wrong-server-port|dns|udp|original|20530|123401000001000000000000076578616d706c6503636f6d0000010001|negative
+
+# DNS over TCP includes the two-byte message length prefix
+dns-tcp-query-original|dns|tcp|original|53|001d123401000001000000000000076578616d706c6503636f6d0000010001|positive
+dns-tcp-response-reply|dns|tcp|reply|53|001d123481800001000000000000076578616d706c6503636f6d0000010001|positive
+dns-tcp-invalid-short-length|dns|tcp|original|53|000b123401000001000000000000076578616d706c6503636f6d0000010001|negative
+
+# SSH identification string is payload evidence and is not tied to TCP port 22
+ssh-banner-original|ssh|tcp|original|22001|5353482d322e302d4f70656e5353485f392e360d0a|positive
+ssh-banner-reply|ssh|tcp|reply|22002|5353482d322e302d4f70656e5353485f392e360d0a|positive
+ssh-version-1-99|ssh|tcp|original|22003|5353482d312e39392d746573740d0a|positive
+ssh-port-22-without-banner|ssh|tcp|original|22|6e6f742d616e2d7373682d62616e6e65720d0a|negative
+ssh-truncated-version|ssh|tcp|original|22004|5353482d322e30|negative
+ssh-unsupported-major|ssh|tcp|reply|22005|5353482d332e302d746573740d0a|negative
+ssh-missing-version-dash|ssh|tcp|original|22006|5353482d322e30746573740d0a|negative
