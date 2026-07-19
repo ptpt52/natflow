@@ -53,6 +53,12 @@ enum natflow_dpi_direction_mode {
 	NATFLOW_DPI_DIR_BOTH,
 };
 
+enum natflow_dpi_context_result {
+	NATFLOW_DPI_CONTEXT_WAIT,
+	NATFLOW_DPI_CONTEXT_EXHAUSTED,
+	NATFLOW_DPI_CONTEXT_EMPTY,
+};
+
 enum natflow_dpi_detector_id {
 	NATFLOW_DPI_DETECTOR_DNS,
 	NATFLOW_DPI_DETECTOR_STUN_TURN,
@@ -140,9 +146,23 @@ static unsigned int natflow_dpi_rules;
 static unsigned int natflow_dpi_domain_rules;
 static unsigned int natflow_dpi_proto_mask;
 static unsigned int natflow_dpi_generation = 1;
+static atomic64_t natflow_dpi_matches;
+static atomic64_t natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_MAX + 1];
 static atomic64_t natflow_dpi_events;
+static atomic64_t natflow_dpi_events_suppressed;
 static atomic64_t natflow_dpi_events_lost;
 static atomic64_t natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_MAX + 1];
+static atomic64_t natflow_dpi_domain_lookups;
+static atomic64_t natflow_dpi_domain_matches;
+static atomic64_t natflow_dpi_packet_inspections[IP_CT_DIR_MAX];
+static atomic64_t natflow_dpi_packet_matches[IP_CT_DIR_MAX];
+static atomic64_t natflow_dpi_context_armed;
+static atomic64_t natflow_dpi_context_cleared_match;
+static atomic64_t natflow_dpi_context_cleared_budget;
+static atomic64_t natflow_dpi_context_cleared_transport;
+static atomic64_t natflow_dpi_context_cleared_app;
+static atomic64_t natflow_dpi_context_cleared_no_candidate;
+static atomic64_t natflow_dpi_context_aborted;
 static atomic64_t natflow_dpi_proto_no_session;
 static atomic64_t natflow_dpi_proto_app_exists;
 static atomic64_t natflow_dpi_proto_no_rule;
@@ -512,9 +532,15 @@ static void natflow_dpi_event_queue(const struct nf_conn *ct,
 {
 	struct natflow_dpi_event_node *node;
 
+	atomic64_inc(&natflow_dpi_matches);
+	if (flags <= NATFLOW_DPI_EVENT_SOURCE_MAX)
+		atomic64_inc(&natflow_dpi_source_matches[flags]);
+
 	if (READ_ONCE(natflow_dpi_queue_readers) == 0 ||
-	        READ_ONCE(natflow_dpi_queue_cache_limit) == 0)
+	        READ_ONCE(natflow_dpi_queue_cache_limit) == 0) {
+		atomic64_inc(&natflow_dpi_events_suppressed);
 		return;
+	}
 
 	node = kzalloc(sizeof(*node), GFP_ATOMIC);
 	if (!node) {
@@ -541,6 +567,7 @@ static void natflow_dpi_event_queue(const struct nf_conn *ct,
 	        natflow_dpi_queue_cache_limit == 0) {
 		spin_unlock_bh(&natflow_dpi_event_lock);
 		kfree(node);
+		atomic64_inc(&natflow_dpi_events_suppressed);
 		return;
 	}
 	if (natflow_dpi_event_count >= natflow_dpi_queue_cache_limit) {
@@ -587,18 +614,40 @@ static void natflow_dpi_event_purge(void)
 	natflow_dpi_event_free_list(&free_list);
 }
 
-static void natflow_dpi_events_clear(void)
+static void natflow_dpi_counters_clear(void)
 {
 	int i;
 
-	natflow_dpi_event_purge();
+	atomic64_set(&natflow_dpi_matches, 0);
 	atomic64_set(&natflow_dpi_events, 0);
+	atomic64_set(&natflow_dpi_events_suppressed, 0);
 	atomic64_set(&natflow_dpi_events_lost, 0);
+	atomic64_set(&natflow_dpi_domain_lookups, 0);
+	atomic64_set(&natflow_dpi_domain_matches, 0);
+	atomic64_set(&natflow_dpi_packet_inspections[IP_CT_DIR_ORIGINAL], 0);
+	atomic64_set(&natflow_dpi_packet_inspections[IP_CT_DIR_REPLY], 0);
+	atomic64_set(&natflow_dpi_packet_matches[IP_CT_DIR_ORIGINAL], 0);
+	atomic64_set(&natflow_dpi_packet_matches[IP_CT_DIR_REPLY], 0);
+	atomic64_set(&natflow_dpi_context_armed, 0);
+	atomic64_set(&natflow_dpi_context_cleared_match, 0);
+	atomic64_set(&natflow_dpi_context_cleared_budget, 0);
+	atomic64_set(&natflow_dpi_context_cleared_transport, 0);
+	atomic64_set(&natflow_dpi_context_cleared_app, 0);
+	atomic64_set(&natflow_dpi_context_cleared_no_candidate, 0);
+	atomic64_set(&natflow_dpi_context_aborted, 0);
 	atomic64_set(&natflow_dpi_proto_no_session, 0);
 	atomic64_set(&natflow_dpi_proto_app_exists, 0);
 	atomic64_set(&natflow_dpi_proto_no_rule, 0);
-	for (i = 0; i <= NATFLOW_DPI_EVENT_SOURCE_MAX; i++)
+	for (i = 0; i <= NATFLOW_DPI_EVENT_SOURCE_MAX; i++) {
+		atomic64_set(&natflow_dpi_source_matches[i], 0);
 		atomic64_set(&natflow_dpi_source_events[i], 0);
+	}
+}
+
+static void natflow_dpi_events_clear(void)
+{
+	natflow_dpi_event_purge();
+	natflow_dpi_counters_clear();
 	wake_up_interruptible(&natflow_dpi_wait);
 }
 
@@ -715,6 +764,7 @@ static void natflow_dpi_classify_normalized_host_match(struct nf_conn *ct,
 	natflow_t *nf;
 	unsigned int i;
 
+	atomic64_inc(&natflow_dpi_domain_lookups);
 	rcu_read_lock();
 	ruleset = rcu_dereference(natflow_dpi_active_ruleset);
 	if (!ruleset) {
@@ -730,6 +780,7 @@ static void natflow_dpi_classify_normalized_host_match(struct nf_conn *ct,
 		nf = natflow_session_get(ct);
 		if (nf)
 			WRITE_ONCE(nf->app_id, rule->app_id);
+		atomic64_inc(&natflow_dpi_domain_matches);
 		natflow_dpi_event_queue(ct, NATFLOW_DPI_REASON_MATCHED,
 		                        ruleset->generation, rule->app_id,
 		                        rule->rule_id, source,
@@ -892,7 +943,18 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             "domain_rules=%u\n"
 	             "proto_rules=%u\n"
 	             "txn_active=%u\n"
+	             "matches=%llu\n"
+	             "matches_http=%llu\n"
+	             "matches_tls=%llu\n"
+	             "matches_quic=%llu\n"
+	             "matches_dns=%llu\n"
+	             "matches_ssh=%llu\n"
+	             "matches_wireguard=%llu\n"
+	             "matches_stun=%llu\n"
+	             "matches_turn=%llu\n"
+	             "matches_bittorrent=%llu\n"
 	             "events=%llu\n"
+	             "events_suppressed=%llu\n"
 	             "events_lost=%llu\n"
 	             "events_http=%llu\n"
 	             "events_tls=%llu\n"
@@ -903,6 +965,19 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             "events_stun=%llu\n"
 	             "events_turn=%llu\n"
 	             "events_bittorrent=%llu\n"
+	             "domain_lookups=%llu\n"
+	             "domain_matches=%llu\n"
+	             "packet_inspect_original=%llu\n"
+	             "packet_inspect_reply=%llu\n"
+	             "packet_match_original=%llu\n"
+	             "packet_match_reply=%llu\n"
+	             "context_armed=%llu\n"
+	             "context_cleared_match=%llu\n"
+	             "context_cleared_budget=%llu\n"
+	             "context_cleared_transport=%llu\n"
+	             "context_cleared_app=%llu\n"
+	             "context_cleared_no_candidate=%llu\n"
+	             "context_aborted=%llu\n"
 	             "proto_no_session=%llu\n"
 	             "proto_app_exists=%llu\n"
 	             "proto_no_rule=%llu\n",
@@ -916,7 +991,18 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             domain_rules,
 	             proto_rules,
 	             natflow_dpi_txn_active,
+	             (unsigned long long)atomic64_read(&natflow_dpi_matches),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_HTTP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_TLS]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_QUIC]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_DNS]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_SSH]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_WIREGUARD]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_STUN]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_TURN]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_BITTORRENT]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_events),
+	             (unsigned long long)atomic64_read(&natflow_dpi_events_suppressed),
 	             (unsigned long long)atomic64_read(&natflow_dpi_events_lost),
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_HTTP]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_TLS]),
@@ -927,6 +1013,19 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_STUN]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_TURN]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_BITTORRENT]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_domain_lookups),
+	             (unsigned long long)atomic64_read(&natflow_dpi_domain_matches),
+	             (unsigned long long)atomic64_read(&natflow_dpi_packet_inspections[IP_CT_DIR_ORIGINAL]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_packet_inspections[IP_CT_DIR_REPLY]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_packet_matches[IP_CT_DIR_ORIGINAL]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_packet_matches[IP_CT_DIR_REPLY]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_context_armed),
+	             (unsigned long long)atomic64_read(&natflow_dpi_context_cleared_match),
+	             (unsigned long long)atomic64_read(&natflow_dpi_context_cleared_budget),
+	             (unsigned long long)atomic64_read(&natflow_dpi_context_cleared_transport),
+	             (unsigned long long)atomic64_read(&natflow_dpi_context_cleared_app),
+	             (unsigned long long)atomic64_read(&natflow_dpi_context_cleared_no_candidate),
+	             (unsigned long long)atomic64_read(&natflow_dpi_context_aborted),
 	             (unsigned long long)atomic64_read(&natflow_dpi_proto_no_session),
 	             (unsigned long long)atomic64_read(&natflow_dpi_proto_app_exists),
 	             (unsigned long long)atomic64_read(&natflow_dpi_proto_no_rule));
@@ -1437,12 +1536,15 @@ static int natflow_dpi_direction_index(unsigned char direction)
 	return -EINVAL;
 }
 
-static void natflow_dpi_context_clear(natflow_t *nf)
+static bool natflow_dpi_context_clear(natflow_t *nf)
 {
-	if (!nf)
-		return;
+	bool active;
 
-	if (READ_ONCE(nf->status) & NF_FF_DPI_USE)
+	if (!nf)
+		return false;
+
+	active = (READ_ONCE(nf->status) & NF_FF_DPI_USE) != 0;
+	if (active)
 		simple_clear_bit(NF_FF_DPI_USE_BIT, &nf->status);
 	nf->dpi_byte_count[NF_FF_DIR_ORIGINAL] = 0;
 	nf->dpi_byte_count[NF_FF_DIR_REPLY] = 0;
@@ -1450,6 +1552,7 @@ static void natflow_dpi_context_clear(natflow_t *nf)
 	nf->dpi_packet_count[NF_FF_DIR_REPLY] = 0;
 	nf->dpi_detector_mask = 0;
 	nf->dpi_reserved = 0;
+	return active;
 }
 
 void natflow_dpi_packet_context_abort(struct nf_conn *ct)
@@ -1459,8 +1562,8 @@ void natflow_dpi_packet_context_abort(struct nf_conn *ct)
 	if (!ct)
 		return;
 	nf = natflow_session_get(ct);
-	if (nf)
-		natflow_dpi_context_clear(nf);
+	if (nf && natflow_dpi_context_clear(nf))
+		atomic64_inc(&natflow_dpi_context_aborted);
 }
 
 static unsigned int natflow_dpi_detector_candidate_mask(unsigned char l4proto,
@@ -1592,25 +1695,25 @@ static unsigned int natflow_dpi_detector_mask_proto_mask(
 	return proto_mask;
 }
 
-static bool natflow_dpi_context_observe(natflow_t *nf,
-                                        unsigned char direction, unsigned int detector_mask,
-                                        unsigned int observed_detector_mask,
-                                        unsigned int payload_len, unsigned int payload_linear_len)
+static enum natflow_dpi_context_result natflow_dpi_context_observe(
+    natflow_t *nf, unsigned char direction, unsigned int detector_mask,
+    unsigned int observed_detector_mask, unsigned int payload_len,
+    unsigned int payload_linear_len)
 {
 	unsigned int inspect_len;
 	unsigned int byte_count;
 	int dir;
 
 	if (!nf || detector_mask == 0)
-		return true;
+		return NATFLOW_DPI_CONTEXT_EMPTY;
 	dir = natflow_dpi_direction_index(direction);
 	if (dir < 0)
-		return true;
+		return NATFLOW_DPI_CONTEXT_EMPTY;
 
 	if (READ_ONCE(nf->status) & NF_FF_DPI_USE) {
 		nf->dpi_detector_mask &= detector_mask;
 		if (nf->dpi_detector_mask == 0)
-			return true;
+			return NATFLOW_DPI_CONTEXT_EMPTY;
 	} else {
 		nf->dpi_byte_count[NF_FF_DIR_ORIGINAL] = 0;
 		nf->dpi_byte_count[NF_FF_DIR_REPLY] = 0;
@@ -1644,13 +1747,15 @@ static bool natflow_dpi_context_observe(natflow_t *nf,
 	}
 
 	if (natflow_dpi_context_detectors_exhausted(nf))
-		return true;
+		return NATFLOW_DPI_CONTEXT_EXHAUSTED;
 
 	if (!(READ_ONCE(nf->status) & NF_FF_L7_USE))
 		simple_set_bit(NF_FF_L7_USE_BIT, &nf->status);
-	if (!(READ_ONCE(nf->status) & NF_FF_DPI_USE))
+	if (!(READ_ONCE(nf->status) & NF_FF_DPI_USE)) {
 		simple_set_bit(NF_FF_DPI_USE_BIT, &nf->status);
-	return false;
+		atomic64_inc(&natflow_dpi_context_armed);
+	}
+	return NATFLOW_DPI_CONTEXT_WAIT;
 }
 
 static bool natflow_dpi_packet_is_terminal(
@@ -1840,7 +1945,10 @@ unsigned int natflow_dpi_consume_packet_view(
 	unsigned int done_mask = 0;
 	unsigned int proto_mask;
 	unsigned int proto = 0;
+	enum natflow_dpi_context_result context_result;
+	bool inspected = false;
 	bool dns_match = false;
+	int dir;
 	__be16 server_port;
 
 	if (!view || !view->ct || !view->l4)
@@ -1854,6 +1962,9 @@ unsigned int natflow_dpi_consume_packet_view(
 	if (!consumer_mask)
 		return 0;
 	if (!natflow_dpi_packet_direction_valid(view->direction))
+		return 0;
+	dir = natflow_dpi_direction_index(view->direction);
+	if (dir < 0)
 		return 0;
 
 	if (natflow_dpi_l4_mask(view->l4proto) == 0)
@@ -1876,6 +1987,9 @@ unsigned int natflow_dpi_consume_packet_view(
 		if (dns_inspect_len > payload_linear_len)
 			dns_inspect_len = payload_linear_len;
 		if (dns_inspect_len > 0 && payload) {
+			if ((consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET) &&
+			        (proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_DNS)))
+				inspected = true;
 			if (view->direction == NATFLOW_L7_DIR_ORIGINAL &&
 			        natflow_dpi_classify_dns_query(view->ct, payload,
 			                                       dns_inspect_len, view->l4proto,
@@ -1894,11 +2008,19 @@ unsigned int natflow_dpi_consume_packet_view(
 	        proto_mask == 0)
 		return done_mask;
 	if (!nf) {
+		atomic64_inc(&natflow_dpi_proto_no_session);
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
 		return done_mask;
 	}
-	if (READ_ONCE(nf->app_id) != 0 || natflow_dpi_packet_is_terminal(view)) {
-		natflow_dpi_context_clear(nf);
+	if (READ_ONCE(nf->app_id) != 0) {
+		if (natflow_dpi_context_clear(nf))
+			atomic64_inc(&natflow_dpi_context_cleared_app);
+		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
+		return done_mask;
+	}
+	if (natflow_dpi_packet_is_terminal(view)) {
+		if (natflow_dpi_context_clear(nf))
+			atomic64_inc(&natflow_dpi_context_cleared_transport);
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
 		return done_mask;
 	}
@@ -1906,7 +2028,8 @@ unsigned int natflow_dpi_consume_packet_view(
 	detector_mask = natflow_dpi_detector_candidate_mask(view->l4proto,
 	                server_port, proto_mask);
 	if (detector_mask == 0) {
-		natflow_dpi_context_clear(nf);
+		if (natflow_dpi_context_clear(nf))
+			atomic64_inc(&natflow_dpi_context_cleared_no_candidate);
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
 		return done_mask;
 	}
@@ -1926,27 +2049,38 @@ unsigned int natflow_dpi_consume_packet_view(
 		              NATFLOW_DPI_PAYLOAD_INSPECT_MAX : view->payload_len;
 		if (inspect_len > payload_linear_len)
 			inspect_len = payload_linear_len;
-		if (inspect_len > 0 && payload)
+		if (inspect_len > 0 && payload) {
+			inspected = true;
 			proto = natflow_dpi_detect_payload(payload,
 			                                   view->payload_len,
 			                                   inspect_len,
 			                                   view->l4proto,
 			                                   view->direction,
 			                                   packet_proto_mask);
+		}
 	}
+	if (inspected)
+		atomic64_inc(&natflow_dpi_packet_inspections[dir]);
 
 	if (proto) {
+		atomic64_inc(&natflow_dpi_packet_matches[dir]);
 		natflow_dpi_classify_proto(view->ct, proto, view->direction);
-		natflow_dpi_context_clear(nf);
+		if (natflow_dpi_context_clear(nf))
+			atomic64_inc(&natflow_dpi_context_cleared_match);
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
 		return done_mask;
 	}
 
-	if (natflow_dpi_context_observe(nf, view->direction, detector_mask,
-	                                inspect_detector_mask,
-	                                view->payload_len,
-	                                payload_linear_len)) {
-		natflow_dpi_context_clear(nf);
+	context_result = natflow_dpi_context_observe(nf, view->direction,
+	                 detector_mask, inspect_detector_mask,
+	                 view->payload_len, payload_linear_len);
+	if (context_result != NATFLOW_DPI_CONTEXT_WAIT) {
+		if (natflow_dpi_context_clear(nf)) {
+			if (context_result == NATFLOW_DPI_CONTEXT_EXHAUSTED)
+				atomic64_inc(&natflow_dpi_context_cleared_budget);
+			else
+				atomic64_inc(&natflow_dpi_context_cleared_no_candidate);
+		}
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
 	}
 	return done_mask;
@@ -2074,7 +2208,6 @@ int natflow_dpi_init(void)
 {
 	struct natflow_dpi_ruleset *ruleset;
 	int ret;
-	int i;
 
 	BUILD_BUG_ON(sizeof(struct natflow_dpi_event_hdr) !=
 	             NATFLOW_DPI_EVENT_HEADER_LEN);
@@ -2084,13 +2217,7 @@ int natflow_dpi_init(void)
 		return ret;
 
 	init_waitqueue_head(&natflow_dpi_wait);
-	atomic64_set(&natflow_dpi_events, 0);
-	atomic64_set(&natflow_dpi_events_lost, 0);
-	atomic64_set(&natflow_dpi_proto_no_session, 0);
-	atomic64_set(&natflow_dpi_proto_app_exists, 0);
-	atomic64_set(&natflow_dpi_proto_no_rule, 0);
-	for (i = 0; i <= NATFLOW_DPI_EVENT_SOURCE_MAX; i++)
-		atomic64_set(&natflow_dpi_source_events[i], 0);
+	natflow_dpi_counters_clear();
 	WRITE_ONCE(natflow_dpi_queue_readers, 0);
 	WRITE_ONCE(natflow_dpi_queue_cache_limit, 0);
 	natflow_dpi_generation = 1;

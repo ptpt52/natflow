@@ -696,14 +696,15 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 - 已完成 MVP：增加 STUN/TURN 子集，识别 STUN header、length、magic cookie，并按 TURN 方法区分 TURN。
 - 已完成 MVP：增加 BitTorrent TCP handshake，以及 UDP uTP v1 header 和 DHT bencode token 前缀窗口子集；uTP 会校验版本、类型和扩展号。
-- 已完成 MVP：`/dev/natflow_dpi_ctl` status 输出 HTTP/TLS/QUIC/DNS/SSH/WireGuard/STUN/TURN/BitTorrent source counters、protocol-only reason counters 和 `events_lost`。
+- 已完成 MVP：`/dev/natflow_dpi_ctl` status 输出不依赖 reader 的 match/source counters、成功入队/主动抑制/资源丢失 counters、domain lookup、双向 packet inspect/match、bounded context transition 和 protocol-only reason counters。
 - 已完成 MVP：增加 `events_clear` 测试辅助命令，用于清空已排队 match event 并重置 `events*` shadow 统计和 `proto_*` reason 统计，不改变 ruleset、enable 状态或 generation。
 - 已完成基础设施：packet view 增加 direction、当前 packet `sport/dport` 和 client/server port helper；reply 只准入 DPI packet consumer。
 - 已完成基础设施：DNS 与 payload detector 使用静态 metadata 声明 L4、方向模式和双向预算；DNS query/response 第一问共享有界 compression pointer walker，最多跳转 16 次并拒绝环和越界。
 - 已完成基础设施：`natflow_t` 内置 8 字节 bounded context，使用 `NF_FF_DPI_USE`、双向 packet/byte counter 和 detector mask 保持 packet consumer pending。
 - 已完成基础设施：放开 reply packet consumer，保持所有 URL/domain host consumer original-only。
 - 已完成 M2 准备项：DPI event ABI v3 保持 original tuple 作为连接身份，并增加独立 `evidence_dir` 记录实际命中 packet 方向。
-- 仍未完成：更完整的 reason counters、payload TLV、IPv6 extension header 解析、误判 corpus 和生产 shadow 数据采集。
+- 已完成 M2 准备项：match 与 event queue 交付统计解耦，补充 domain、双向 packet 和 bounded context 累计 counters；不维护会要求 conntrack 销毁回调或全局 registry 的 active-context gauge。
+- 仍未完成：payload TLV、IPv6 extension header 解析、误判 corpus 和生产 shadow 数据采集。
 
 ### M2：生产 shadow
 

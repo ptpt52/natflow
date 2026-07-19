@@ -1018,7 +1018,7 @@ echo events_clear >/dev/natflow_dpi_ctl
 - `rules_begin` 创建待提交 ruleset，`domain ...` 和 `proto ...` 只能在事务中写入。
 - `rules_commit` 原子发布新 ruleset 并递增 `generation`；`rules_abort` 放弃待提交 ruleset。
 - `rules_clear` 发布空 ruleset 并递增 `generation`。
-- `events_clear` 清空 `/dev/natflow_dpi_queue` 中已排队事件，并把 `events`、`events_lost`、`events_*` source counters 和 `proto_*` reason counters 归零；不改变 enable 状态、ruleset 或 `generation`。持续流量下可能立刻产生新事件，单项测试前建议先暂停流量或临时 `enable=0`。
+- `events_clear` 清空 `/dev/natflow_dpi_queue` 中已排队事件，并把全部 match、event、domain、packet、context 和 `proto_*` shadow counters 归零；不改变 enable 状态、ruleset 或 `generation`。持续流量下可能立刻产生新计数和事件，单项测试前建议先暂停流量或临时 `enable=0`。
 - `id` 和 `app` 必须为非 0 整数；同一事务内 `id` 不能重复；单个 ruleset 当前最多 128 条 domain 规则和 32 条 proto 规则。
 - `host` 会转小写、去掉末尾点，并校验 DNS label；HTTP Host 中的端口由 URL logger normalize 时剥离；DNS QNAME 解析第一问并复用同一 domain exact/suffix matcher。
 - `kind=suffix` 同时匹配完全相同的 host 和带点边界的子域名，例如规则 `example.net` 可匹配 `example.net` 与 `www.example.net`。
@@ -1026,7 +1026,9 @@ echo events_clear >/dev/natflow_dpi_ctl
 - DNS QNAME detector：original direction TCP/UDP 53 标准 query 的第一问 QNAME 会进入 domain exact/suffix ruleset；支持 compression pointer，最多跳转 16 次并拒绝指针环、越界和展开后超长名称。reply 只用于 DNS protocol 证据，不进入 domain rules。
 - 端口只用于选择有界解析候选和 payload pull budget，不直接写入 `app_id`；当前只有 TCP/UDP 53 会触发 DNS 候选解析，TCP 22 和 UDP 51820 不再作为 SSH/WireGuard 的独立分类证据。
 - 有界 payload detector：TCP 任一方向的 SSH banner 识别 `SSH-<version>-` identification string；WireGuard、STUN/TURN 和 BitTorrent detector 也按 metadata 在任一方向匹配直接 payload 证据。仅执行当前 ruleset 实际配置且当前方向预算未耗尽的 detector。
-- `cat /dev/natflow_dpi_ctl` 会输出已成功入队的 `events_*` source counters 和 `proto_no_session`、`proto_app_exists`、`proto_no_rule` protocol-only reason counters，可用于 shadow 统计和解释 detector 已识别但未产生 match event 的原因。
+- `cat /dev/natflow_dpi_ctl` 中，`matches`/`matches_*` 统计全部规则命中，不依赖 queue reader；`events`/`events_*` 只统计成功入队，`events_suppressed` 表示没有 reader 或 `cache=0`，`events_lost` 表示分配失败或队列已满。稳定采样区间内应满足 `matches = events + events_suppressed + events_lost`；并发读取或执行 `events_clear` 时允许短暂不一致。
+- `domain_lookups`/`domain_matches` 统计 hostname 规则查找和命中；`packet_inspect_original/reply` 按实际进入有界 protocol parser 的 packet 计数，每包最多增加一次，不按 detector 个数累加；`packet_match_original/reply` 统计直接协议证据方向。
+- `context_armed` 和各 `context_cleared_*` 记录 bounded context 的累计状态转换；`context_aborted` 表示 L7 强制终态清理。conntrack 自然销毁不会回调 DPI，因此这些累计值不能相减推导当前活跃 context 数。`proto_no_session`、`proto_app_exists` 和 `proto_no_rule` 继续解释 protocol-only 未产生新分类结果的原因。
 
 `/dev/natflow_dpi_queue` 使用版本化二进制记录，只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 或 reader 未写入正数 `cache=N\n` 时，match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时 cache 默认为 0 并会先清空残留事件，写入 `cache=N\n` 后最多缓存 N 条新事件，队列满、溢出或分配失败会丢弃新事件并增加 `events_lost`；写入 `cache=0\n` 或关闭 fd 会关闭缓存并清空未读事件。当前 record 是 v3 固定头，包含规则命中摘要、original direction tuple 和实际证据方向；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。
 

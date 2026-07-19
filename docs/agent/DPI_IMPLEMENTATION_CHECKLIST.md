@@ -55,6 +55,8 @@ M0/M1 期间必须保持：
 - `/dev/natflow_dpi_ctl` 的命令、错误返回和状态输出。
 - `/dev/natflow_dpi_queue` 的固定事件头、长度、版本、短 buffer 行为、poll/read 语义。
 - DPI event 的 original tuple 必须保持稳定连接身份，`evidence_dir` 独立记录实际命中 packet 的 original/reply 方向，不能复用或改写 `tuple_dir`。
+- `matches*` 必须在 queue reader/cache 判断前统计，`events*` 只统计成功入队，reader/cache 未启用进入 `events_suppressed`，分配失败或队列满进入 `events_lost`；`events_clear` 必须重置全部 shadow counters。
+- context counters 只记录累计 arm/clear/abort 转换；没有 conntrack destroy 回调时不得发布不准确的 active-context gauge，也不得把 arm/clear 差值描述为当前 occupancy。
 - `app_id=0` 永远表示 unknown、未命中、未分类或尚无结果。
 - DPI 默认关闭、fail-open、audit-only；drop/reset/QoS 不进入 M1。
 
