@@ -764,7 +764,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - DPI queue 小 buffer、poll、event lost、record_len 跳过。
 - ruleset memory、retired generation、hash collision、suffix probes。
 - malformed packet 不刷日志。
-- `tools/natflow-dpi-reader.c` 提供 v3 queue ABI 参考读取器；`tools/natflow-dpi-ctl-smoke.sh` 提供仅允许空 ruleset 的控制事务冒烟入口。真机仍需补小 buffer、队列满和并发流量验证。
+- `tools/natflow-dpi-reader.c` 提供 v3 queue ABI 参考读取器；`tools/natflow-dpi-queue-smoke.c` 提供单 reader、不可 seek、小 buffer、空队列、cache/close 和可选真实事件固定头验证；`tools/natflow-dpi-ctl-smoke.sh` 提供仅允许空 ruleset 的控制事务冒烟入口。工具仍需在真机执行，队列满和并发流量验证尚未自动化。
 
 ### 19.6 性能
 

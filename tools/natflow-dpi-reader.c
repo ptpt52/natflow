@@ -14,36 +14,11 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "natflow-dpi-event.h"
+
 #define DPI_QUEUE_DEFAULT "/dev/natflow_dpi_queue"
-#define DPI_EVENT_VERSION 3U
-#define DPI_EVENT_HEADER_LEN 78U
 #define DPI_CACHE_DEFAULT 256U
 #define DPI_READ_BATCH 32U
-
-struct natflow_dpi_event_hdr {
-	uint16_t version;
-	uint16_t header_len;
-	uint16_t record_len;
-	uint16_t family;
-	uint64_t timestamp;
-	uint8_t l4proto;
-	uint8_t tuple_dir;
-	uint8_t evidence_dir;
-	uint8_t reserved;
-	uint16_t reason;
-	uint16_t sport;
-	uint16_t dport;
-	uint8_t sip[16];
-	uint8_t dip[16];
-	uint32_t generation;
-	uint32_t app_id;
-	uint32_t category_id;
-	uint32_t rule_id;
-	uint32_t flags;
-} __attribute__((packed));
-
-_Static_assert(sizeof(struct natflow_dpi_event_hdr) == DPI_EVENT_HEADER_LEN,
-               "unexpected DPI event header size");
 
 static volatile sig_atomic_t stop;
 
@@ -80,23 +55,23 @@ static int parse_uint(const char *value, unsigned int *result)
 static const char *source_name(uint32_t flags)
 {
 	switch (flags) {
-	case 1:
+	case NATFLOW_DPI_EVENT_SOURCE_HTTP:
 		return "http";
-	case 2:
+	case NATFLOW_DPI_EVENT_SOURCE_TLS:
 		return "tls";
-	case 3:
+	case NATFLOW_DPI_EVENT_SOURCE_QUIC:
 		return "quic";
-	case 4:
+	case NATFLOW_DPI_EVENT_SOURCE_DNS:
 		return "dns";
-	case 5:
+	case NATFLOW_DPI_EVENT_SOURCE_SSH:
 		return "ssh";
-	case 6:
+	case NATFLOW_DPI_EVENT_SOURCE_WIREGUARD:
 		return "wireguard";
-	case 7:
+	case NATFLOW_DPI_EVENT_SOURCE_STUN:
 		return "stun";
-	case 8:
+	case NATFLOW_DPI_EVENT_SOURCE_TURN:
 		return "turn";
-	case 9:
+	case NATFLOW_DPI_EVENT_SOURCE_BITTORRENT:
 		return "bittorrent";
 	default:
 		return "unknown";
@@ -251,7 +226,7 @@ int main(int argc, char **argv)
 
 		count = (size_t)bytes / sizeof(events[0]);
 		for (i = 0; i < count && (!limit || consumed < limit); i++) {
-			if (events[i].version != DPI_EVENT_VERSION ||
+			if (events[i].version != NATFLOW_DPI_EVENT_VERSION ||
 			        events[i].header_len != sizeof(events[i]) ||
 			        events[i].record_len != sizeof(events[i])) {
 				fprintf(stderr,

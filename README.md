@@ -1091,6 +1091,17 @@ cc -std=c11 -O2 -Wall -Wextra -Werror \
 ./natflow-dpi-reader -c 256
 ```
 
+`tools/natflow-dpi-queue-smoke.c` 用于真机 ABI 冒烟。默认模式不等待流量，验证单 reader、不可 seek、小 buffer、空队列 poll/read、未知命令、cache 开关和关闭后重开清理；`-w` 模式还要求在超时前收到至少一条匹配事件并严格校验当前 v3 固定头：
+
+```sh
+cc -std=c11 -O2 -Wall -Wextra -Werror \
+	-o natflow-dpi-queue-smoke tools/natflow-dpi-queue-smoke.c
+./natflow-dpi-queue-smoke
+./natflow-dpi-queue-smoke -c 256 -w 10000
+```
+
+queue smoke 打开设备时会按 ABI 清空残留事件并独占 reader；不要与生产 reader 同时运行。`-w` 模式运行前应先配置并启用至少一条可产生匹配流量的 DPI 规则，并在等待窗口内生成对应流量。
+
 下面代码保留为接口示例；实际测试优先使用上述维护版本。
 
 ```c
