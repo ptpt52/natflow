@@ -13,6 +13,7 @@ CLIENT_GW=198.18.0.1
 SERVER_GW=198.19.0.1
 ADDRESS_PREFIX=24
 FIREWALL=iptables
+FIREWALL_CTSTATE=NEW,ESTABLISHED,RELATED
 FORWARD_CTL=/proc/sys/net/ipv4/ip_forward
 CLIENT_NS=ndpc$$
 SERVER_NS=ndps$$
@@ -148,16 +149,20 @@ cleanup_resources()
 	fi
 
 	if [ "$firewall_installed" = 1 ]; then
-		"$FIREWALL" -D FORWARD -i "$CLIENT_IF" -o "$SERVER_IF" -j ACCEPT 2>/dev/null
-		"$FIREWALL" -D FORWARD -i "$SERVER_IF" -o "$CLIENT_IF" -j ACCEPT 2>/dev/null
+		"$FIREWALL" -D FORWARD -i "$CLIENT_IF" -o "$SERVER_IF" \
+			-m conntrack --ctstate "$FIREWALL_CTSTATE" -j ACCEPT 2>/dev/null
+		"$FIREWALL" -D FORWARD -i "$SERVER_IF" -o "$CLIENT_IF" \
+			-m conntrack --ctstate "$FIREWALL_CTSTATE" -j ACCEPT 2>/dev/null
 		if ! "$FIREWALL" -S FORWARD >/dev/null 2>&1; then
 			cleanup_error "could not inspect the FORWARD chain"
 		else
 			if "$FIREWALL" -C FORWARD -i "$CLIENT_IF" -o "$SERVER_IF" \
+				-m conntrack --ctstate "$FIREWALL_CTSTATE" \
 				-j ACCEPT >/dev/null 2>&1; then
 				cleanup_error "client-to-server FORWARD rule remains installed"
 			fi
 			if "$FIREWALL" -C FORWARD -i "$SERVER_IF" -o "$CLIENT_IF" \
+				-m conntrack --ctstate "$FIREWALL_CTSTATE" \
 				-j ACCEPT >/dev/null 2>&1; then
 				cleanup_error "server-to-client FORWARD rule remains installed"
 			fi
@@ -234,6 +239,22 @@ finish_cleanup()
 	[ "$cleanup_status" -eq 0 ] ||
 		fail "corpus cleanup verification failed"
 	printf 'PASS: cleanup restored DPI and network state\n'
+}
+
+dump_failure_state()
+{
+	printf '%s\n' '--- DPI ctl failure snapshot ---' >&2
+	cat "$CTL" >&2
+	printf '%s\n' '--- FORWARD failure snapshot ---' >&2
+	"$FIREWALL" -vnL FORWARD 2>/dev/null |
+		awk -v client="$CLIENT_IF" -v server="$SERVER_IF" \
+			'NR <= 2 || index($0, client) || index($0, server)' >&2
+	if [ "$ipv6_mode" = 1 ] && command -v conntrack >/dev/null 2>&1; then
+		printf '%s\n' '--- IPv6 conntrack failure snapshot ---' >&2
+		conntrack -L -f ipv6 2>/dev/null |
+			awk -v client="$CLIENT_IP" -v server="$SERVER_IP" \
+				'index($0, client) || index($0, server)' >&2
+	fi
 }
 
 proto_values()
@@ -591,9 +612,11 @@ else
 	ip -n "$SERVER_NS" route add default via "$SERVER_GW"
 fi
 printf '1\n' >"$FORWARD_CTL"
-"$FIREWALL" -I FORWARD -i "$CLIENT_IF" -o "$SERVER_IF" -j ACCEPT
+"$FIREWALL" -I FORWARD -i "$CLIENT_IF" -o "$SERVER_IF" \
+	-m conntrack --ctstate "$FIREWALL_CTSTATE" -j ACCEPT
 firewall_installed=1
-"$FIREWALL" -I FORWARD -i "$SERVER_IF" -o "$CLIENT_IF" -j ACCEPT
+"$FIREWALL" -I FORWARD -i "$SERVER_IF" -o "$CLIENT_IF" \
+	-m conntrack --ctstate "$FIREWALL_CTSTATE" -j ACCEPT
 
 write_ctl enable=0
 write_ctl events_clear
@@ -697,11 +720,14 @@ for case_file in "$@"; do
 			"$direction" "$port" "$payload" "$expectation" "$extra"
 
 		printf 'CASE: %s\n' "$name"
-		"$ASSERT_BIN" -d "$QUEUE" -S "$CLIENT_IP" -T "$SERVER_IP" \
+		if ! "$ASSERT_BIN" -d "$QUEUE" -S "$CLIENT_IP" -T "$SERVER_IP" \
 			-P "$l4" -p "$port" -s "$source_id" -D "$direction" \
 			-a "$app_id" -r "$rule_id" $negative -- \
 			"$0" __inject "$CLIENT_NS" "$SERVER_NS" "$TRAFFIC_BIN" \
-			"$TMP_DIR" "$SERVER_IP" "$l4" "$direction" "$port" "$payload"
+			"$TMP_DIR" "$SERVER_IP" "$l4" "$direction" "$port" "$payload"; then
+			dump_failure_state
+			fail "corpus case failed: $name"
+		fi
 		case_count=$((case_count + 1))
 	done <"$case_file"
 done

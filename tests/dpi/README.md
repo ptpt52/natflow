@@ -21,6 +21,10 @@ Run as root on a disposable test host with the DPI-enabled module loaded:
 tests/dpi/run-corpus.sh tests/dpi/cases/dns-ssh.cases
 ```
 
+The interface-specific firewall rules include a conntrack state match so the
+selected address family has conntrack enabled even when the natflow path is
+globally disabled and no other firewall or NAT rule requires conntrack.
+
 Run the same fixtures through an IPv6 routed topology with:
 
 ```sh

@@ -1102,7 +1102,7 @@ cc -std=c11 -O2 -Wall -Wextra -Werror \
 
 queue smoke 打开设备时会按 ABI 清空残留事件并独占 reader；不要与生产 reader 同时运行。`-w` 模式运行前应先配置并启用至少一条可产生匹配流量的 DPI 规则，并在等待窗口内生成对应流量。
 
-协议 detector 黑盒 corpus 入口为 `tests/dpi/run-corpus.sh`。它在 root namespace 中建立两个 network namespace，让 TCP/UDP fixture 经过真实 FORWARD hook，并对 queue event 的 original tuple、source、`app_id`、`rule_id` 和 `evidence_dir` 做断言。runner 要求 root 权限、`ip`、对应 family 的 `iptables`/`ip6tables`、C 编译器、已加载的 DPI 模块和空 ruleset；会临时修改对应 forwarding、FORWARD 规则、DPI enable/ruleset/generation 和事件统计，只能用于隔离测试环境。最终 PASS 仅在 DPI 状态、FORWARD 规则、namespace/veth 和 forwarding 清理结果均核验通过后输出。样本格式和清理边界见 `tests/dpi/README.md`。
+协议 detector 黑盒 corpus 入口为 `tests/dpi/run-corpus.sh`。它在 root namespace 中建立两个 network namespace，让 TCP/UDP fixture 经过真实 FORWARD hook，并对 queue event 的 original tuple、source、`app_id`、`rule_id` 和 `evidence_dir` 做断言。runner 要求 root 权限、`ip`、对应 family 的 `iptables`/`ip6tables`、C 编译器、已加载的 DPI 模块和空 ruleset；临时 FORWARD 规则带 conntrack state match，确保所选地址族不依赖系统已有 NAT/firewall 或 natflow path 开关获得 conntrack。它会临时修改对应 forwarding、FORWARD 规则、DPI enable/ruleset/generation 和事件统计，只能用于隔离测试环境。最终 PASS 仅在 DPI 状态、FORWARD 规则、namespace/veth 和 forwarding 清理结果均核验通过后输出。样本格式和清理边界见 `tests/dpi/README.md`。
 
 `--ipv6` 使用两个 IPv6 `/64`、`ip6tables` 和 IPv6 forwarding 运行同一批 fixture，并验证 event 中完整 16 字节 original tuple；它覆盖基础 IPv6 TCP/UDP，不构造 extension header：
 
