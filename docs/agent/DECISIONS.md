@@ -169,3 +169,32 @@ L7 reply 入口只准入 DPI packet consumer，`NF_FF_L7_DPI_PACKET_DONE` 是连
 - 第一阶段通过显式传递 narrowed consumer mask 和复用入口 packet view，
   把同一 x86_64 GCC 9.4 完整配置的模块内部最坏累计链从约 1936 字节降至
   约 1624 字节；当前不引入 per-CPU hostname scratch。
+
+## ADR-0007：收敛当前 DPI 网络边界验证范围
+
+日期：2026-07-26
+
+状态：Accepted
+
+### 背景
+
+首批 protocol-only detector 已完成 IPv4 和基础 IPv6 各 51 项真机 corpus，
+queue pressure 和 queue stream 也已验证。继续扩展 IPv6 extension header、
+精确 TCP segmentation、non-linear skb 专项测试和长时间 soak 会扩大当前
+阶段，但不影响已确定的轻量 audit-only MVP 交付。
+
+### 决策
+
+- DPI 不解析 IPv6 extension header；固定 IPv6 header 的 `nexthdr` 不是
+  TCP/UDP 时不进入当前 parser/detector，并保持 fail-open。
+- 精确 TCP segmentation、non-linear skb 专项验证和长时间 soak 暂缓，
+  不作为当前阶段退出条件。
+- 保留现有 payload 可读性检查和有界跨包 context，不因暂缓专项验证删除
+  已有防御性实现。
+
+### 后果
+
+- 当前 DPI 验证基线以 IPv4/基础 IPv6 corpus、queue ABI、queue pressure、
+  queue stream 和构建矩阵为准。
+- 后续路线图不再自动推进上述暂缓项；只有维护者重新调整范围时才恢复。
+- IPv6 extension header 流量不会被当前 DPI 分类，不能据此承诺协议覆盖。

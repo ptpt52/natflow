@@ -78,9 +78,10 @@ name|proto|tcp-or-udp|original-or-reply|server-port|payload-hex|positive-or-nega
 Every case uses a new connection. Positive cases require the expected source,
 `app_id`, `rule_id`, original tuple, and evidence direction. Negative cases
 fail on any DPI event for that tuple. IPv4 and base IPv6 TCP/UDP are supported;
-IPv6 extension headers, exact TCP segmentation, non-linear skb, long-duration
-soak, and failure injection remain separate integration work. Queue pressure
-and stream modes currently use the IPv4 topology.
+IPv6 extension headers are outside the supported DPI scope. Exact TCP
+segmentation, non-linear skb, and long-duration soak are deferred. Failure
+injection remains separate integration work. Queue pressure and stream modes
+currently use the IPv4 topology.
 
 Current fixtures:
 

@@ -72,6 +72,8 @@ natflow_l7 core
 - 不做 nDPI 全量内核移植。
 - 不做 WAF、IDS/IPS、反规避网关、完整 TCP 重组、全流 payload 扫描或大签名库。
 - 不支持 PCRE、用户态字节码、任意 offset payload contains 或线性扫描全规则。
+- 不解析 IPv6 extension header；此类 packet 不参与当前 DPI 分类并保持 fail-open。
+- 精确 TCP segmentation、non-linear skb 专项验证和长时间 soak 暂不纳入当前阶段。
 - 不承诺穿透 TLS ECH、HTTP/3 加密头、VPN、代理或自定义加密协议。
 - 不在内核保存应用名称、长描述、报表、机器学习模型或在线学习状态。
 - 不默认引入用户态 daemon。未来用户态工具可以负责编译规则、下发事务和消费事件，但内核模块必须能独立加载并默认关闭 DPI。
@@ -262,13 +264,13 @@ struct natflow_l7_packet_view {
 
 实现必须满足：
 
-- 统一处理 IPv4 IHL、IPv6 extension header、TCP data offset、UDP length、PPPoE、bridge、VLAN 和 non-linear skb。
+- 统一处理 IPv4 IHL、固定 IPv6 header 后的 TCP/UDP、TCP data offset、UDP length、PPPoE、bridge 和 VLAN。
 - 使用 `pskb_may_pull()`、`skb_header_pointer()` 或 `skb_copy_bits()` 证明数据可读。
 - 任何 pull/copy 后重新获取 `iph`、`ip6h`、`l4` 和 payload 指针。
 - parser 不调用 `skb_try_make_writable()`，不临时修改 `skb->protocol`、`network_header` 或 data。
 - reset/redirect/drop 需要修改 skb 时，由 URL consumer 的 action path 独立处理。
 - IPv4/IPv6 fragment 在未确认 defrag 完成时终止为 `FRAGMENT`。
-- IPv6 extension walk 必须有 header 数和字节数上限。
+- IPv6 `nexthdr` 不是 TCP/UDP 时停止 DPI 解析，不遍历 extension header。
 
 ### 8.2 Feature model
 
@@ -704,7 +706,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成基础设施：放开 reply packet consumer，保持所有 URL/domain host consumer original-only。
 - 已完成 M2 准备项：DPI event ABI v3 保持 original tuple 作为连接身份，并增加独立 `evidence_dir` 记录实际命中 packet 方向。
 - 已完成 M2 准备项：match 与 event queue 交付统计解耦，补充 domain、双向 packet 和 bounded context 累计 counters；不维护会要求 conntrack 销毁回调或全局 registry 的 active-context gauge。
-- 已建立 protocol-only detector 的首批 IPv4 黑盒正反 corpus；2026-07-26 首批 51 项已在真机通过，仍未完成 payload TLV、IPv6 extension header 解析和生产 shadow 数据采集。
+- 已建立 protocol-only detector 的 IPv4/IPv6 黑盒正反 corpus；2026-07-26 两种地址族的首批 51 项均已在真机通过。IPv6 extension header 明确不支持，payload TLV 和生产 shadow 数据采集仍未完成。
 
 ### M2：生产 shadow
 
@@ -738,12 +740,12 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 ### 19.2 Parser corpus
 
-黑盒框架入口为 `tests/dpi/run-corpus.sh`：每个 fixture 使用新连接，经 root namespace 的真实 FORWARD hook 后按 original tuple 过滤 v3 event，并断言分类来源与证据方向；最终 PASS 前还会核验测试修改的 DPI 和网络状态均已恢复。默认模式覆盖 IPv4，`--ipv6` 复用同一 fixture 覆盖基础 IPv6 TCP/UDP 和完整 16 字节 event tuple；当前仍是单 payload socket 注入，精确 TCP segmentation、IPv6 extension header、non-linear skb、VLAN/PPPoE/bridge 仍需独立扩展。
+黑盒框架入口为 `tests/dpi/run-corpus.sh`：每个 fixture 使用新连接，经 root namespace 的真实 FORWARD hook 后按 original tuple 过滤 v3 event，并断言分类来源与证据方向；最终 PASS 前还会核验测试修改的 DPI 和网络状态均已恢复。默认模式覆盖 IPv4，`--ipv6` 复用同一 fixture 覆盖基础 IPv6 TCP/UDP 和完整 16 字节 event tuple。IPv6 extension header 不在支持范围；精确 TCP segmentation 和 non-linear skb 专项验证暂缓，VLAN/PPPoE/bridge 仍需独立扩展。
 
 - HTTP GET/POST/HEAD、Host 大小写、port、非法 host、超长 URI、跨包 header。
 - TLS 普通 SNI、无 SNI、ECH outer SNI、malformed extension、跨连续 TCP 包、gap/retransmit。
 - QUIC v1 Initial、无 crypto、crypto split、coalesced、Retry、v2/unsupported、crypto 不可用。
-- IPv4/IPv6、VLAN、PPPoE、bridge、non-linear skb。
+- IPv4/基础 IPv6、VLAN、PPPoE、bridge。
 
 ### 19.3 URL/Host ACL ABI
 
@@ -766,7 +768,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - DPI queue 小 buffer、poll、event lost、record_len 跳过；`tests/dpi/run-corpus.sh --queue-pressure` 已提供小 cache、并发 producer、drop-new 和计数恒等式真机入口，`--queue-stream` 提供 reader 持续 poll/read 与 producer 分批并发、端口去重、零 lost/suppressed 的真机入口。
 - ruleset memory、retired generation、hash collision、suffix probes。
 - malformed packet 不刷日志。
-- `tools/natflow-dpi-reader.c` 提供 v3 queue ABI 参考读取器；`tools/natflow-dpi-queue-smoke.c` 提供单 reader、不可 seek、小 buffer、空队列、cache/close 和可选真实事件固定头验证；`tools/natflow-dpi-ctl-smoke.sh` 提供仅允许空 ruleset 的控制事务冒烟入口；`tools/natflow-dpi-queue-pressure.c` 与 `tests/dpi/run-corpus.sh --queue-pressure` 提供小 cache、并发 STUN producer、drop-new 和计数核验入口，`--queue-stream` 提供 reader/producer 同时运行、每流去重和零丢失核验。queue-full 和 stream 默认场景已于 2026-07-26 真机通过；长时间 soak 和内存分配失败注入尚未覆盖。
+- `tools/natflow-dpi-reader.c` 提供 v3 queue ABI 参考读取器；`tools/natflow-dpi-queue-smoke.c` 提供单 reader、不可 seek、小 buffer、空队列、cache/close 和可选真实事件固定头验证；`tools/natflow-dpi-ctl-smoke.sh` 提供仅允许空 ruleset 的控制事务冒烟入口；`tools/natflow-dpi-queue-pressure.c` 与 `tests/dpi/run-corpus.sh --queue-pressure` 提供小 cache、并发 STUN producer、drop-new 和计数核验入口，`--queue-stream` 提供 reader/producer 同时运行、每流去重和零丢失核验。queue-full 和 stream 默认场景已于 2026-07-26 真机通过；长时间 soak 当前暂缓，内存分配失败注入尚未覆盖。
 
 ### 19.6 性能
 
