@@ -29,6 +29,12 @@ enum traffic_direction {
 	TRAFFIC_REPLY,
 };
 
+struct traffic_endpoint {
+	struct sockaddr_storage address;
+	socklen_t address_len;
+	int family;
+};
+
 static void usage(FILE *stream, const char *program)
 {
 	fprintf(stream,
@@ -95,17 +101,35 @@ static size_t parse_payload(const char *hex, unsigned char *payload)
 	return payload_length;
 }
 
-static struct sockaddr_in parse_address(const char *address,
-                                        unsigned int port)
+static struct traffic_endpoint parse_address(const char *address,
+        unsigned int port)
 {
-	struct sockaddr_in socket_address;
+	struct traffic_endpoint endpoint;
+	struct sockaddr_in address4;
+	struct sockaddr_in6 address6;
 
-	memset(&socket_address, 0, sizeof(socket_address));
-	socket_address.sin_family = AF_INET;
-	socket_address.sin_port = htons((uint16_t)port);
-	if (inet_pton(AF_INET, address, &socket_address.sin_addr) != 1)
-		fail_message("invalid IPv4 address");
-	return socket_address;
+	memset(&endpoint, 0, sizeof(endpoint));
+	memset(&address4, 0, sizeof(address4));
+	if (inet_pton(AF_INET, address, &address4.sin_addr) == 1) {
+		address4.sin_family = AF_INET;
+		address4.sin_port = htons((uint16_t)port);
+		memcpy(&endpoint.address, &address4, sizeof(address4));
+		endpoint.address_len = sizeof(address4);
+		endpoint.family = AF_INET;
+		return endpoint;
+	}
+
+	memset(&address6, 0, sizeof(address6));
+	if (inet_pton(AF_INET6, address, &address6.sin6_addr) == 1) {
+		address6.sin6_family = AF_INET6;
+		address6.sin6_port = htons((uint16_t)port);
+		memcpy(&endpoint.address, &address6, sizeof(address6));
+		endpoint.address_len = sizeof(address6);
+		endpoint.family = AF_INET6;
+		return endpoint;
+	}
+	fail_message("invalid IP address");
+	return endpoint;
 }
 
 static void configure_socket(int fd)
@@ -173,18 +197,19 @@ static void receive_exact(int fd, const unsigned char *expected, size_t length)
 		fail_message("received payload differs from fixture");
 }
 
-static void run_tcp_server(const struct sockaddr_in *address,
+static void run_tcp_server(const struct traffic_endpoint *endpoint,
                            enum traffic_direction direction,
                            const unsigned char *payload, size_t payload_length,
                            const char *ready_file)
 {
-	int listener = socket(AF_INET, SOCK_STREAM, 0);
+	int listener = socket(endpoint->family, SOCK_STREAM, 0);
 	int connection;
 
 	if (listener < 0)
 		fail("create TCP listener");
 	configure_socket(listener);
-	if (bind(listener, (const struct sockaddr *)address, sizeof(*address)) != 0)
+	if (bind(listener, (const struct sockaddr *)&endpoint->address,
+	         endpoint->address_len) != 0)
 		fail("bind TCP listener");
 	if (listen(listener, 1) != 0)
 		fail("listen TCP");
@@ -204,16 +229,17 @@ static void run_tcp_server(const struct sockaddr_in *address,
 	close(listener);
 }
 
-static void run_tcp_client(const struct sockaddr_in *address,
+static void run_tcp_client(const struct traffic_endpoint *endpoint,
                            enum traffic_direction direction,
                            const unsigned char *payload, size_t payload_length)
 {
-	int fd = socket(AF_INET, SOCK_STREAM, 0);
+	int fd = socket(endpoint->family, SOCK_STREAM, 0);
 
 	if (fd < 0)
 		fail("create TCP client");
 	configure_socket(fd);
-	if (connect(fd, (const struct sockaddr *)address, sizeof(*address)) != 0)
+	if (connect(fd, (const struct sockaddr *)&endpoint->address,
+	            endpoint->address_len) != 0)
 		fail("connect TCP client");
 	if (direction == TRAFFIC_ORIGINAL) {
 		send_all(fd, payload, payload_length);
@@ -225,21 +251,22 @@ static void run_tcp_client(const struct sockaddr_in *address,
 	close(fd);
 }
 
-static void run_udp_server(const struct sockaddr_in *address,
+static void run_udp_server(const struct traffic_endpoint *endpoint,
                            enum traffic_direction direction,
                            const unsigned char *payload, size_t payload_length,
                            const char *ready_file)
 {
 	unsigned char received[TRAFFIC_PAYLOAD_MAX];
-	struct sockaddr_in peer;
+	struct sockaddr_storage peer;
 	socklen_t peer_length = sizeof(peer);
-	int fd = socket(AF_INET, SOCK_DGRAM, 0);
+	int fd = socket(endpoint->family, SOCK_DGRAM, 0);
 	ssize_t length;
 
 	if (fd < 0)
 		fail("create UDP server");
 	configure_socket(fd);
-	if (bind(fd, (const struct sockaddr *)address, sizeof(*address)) != 0)
+	if (bind(fd, (const struct sockaddr *)&endpoint->address,
+	         endpoint->address_len) != 0)
 		fail("bind UDP server");
 	mark_ready(ready_file);
 	length = recvfrom(fd, received, sizeof(received), 0,
@@ -259,19 +286,20 @@ static void run_udp_server(const struct sockaddr_in *address,
 	close(fd);
 }
 
-static void run_udp_client(const struct sockaddr_in *address,
+static void run_udp_client(const struct traffic_endpoint *endpoint,
                            enum traffic_direction direction,
                            const unsigned char *payload, size_t payload_length)
 {
 	static const unsigned char probe = 0;
 	unsigned char received[TRAFFIC_PAYLOAD_MAX];
-	int fd = socket(AF_INET, SOCK_DGRAM, 0);
+	int fd = socket(endpoint->family, SOCK_DGRAM, 0);
 	ssize_t length;
 
 	if (fd < 0)
 		fail("create UDP client");
 	configure_socket(fd);
-	if (connect(fd, (const struct sockaddr *)address, sizeof(*address)) != 0)
+	if (connect(fd, (const struct sockaddr *)&endpoint->address,
+	            endpoint->address_len) != 0)
 		fail("connect UDP client");
 	if (direction == TRAFFIC_ORIGINAL) {
 		if (send(fd, payload, payload_length, 0) != (ssize_t)payload_length)
@@ -292,7 +320,7 @@ static void run_udp_client(const struct sockaddr_in *address,
 int main(int argc, char **argv)
 {
 	unsigned char payload[TRAFFIC_PAYLOAD_MAX];
-	struct sockaddr_in address;
+	struct traffic_endpoint endpoint;
 	enum traffic_role role;
 	enum traffic_direction direction;
 	size_t payload_length;
@@ -325,17 +353,17 @@ int main(int argc, char **argv)
 	else
 		fail_message("invalid traffic direction");
 	payload_length = parse_payload(argv[6], payload);
-	address = parse_address(argv[3], port);
+	endpoint = parse_address(argv[3], port);
 	signal(SIGPIPE, SIG_IGN);
 
 	if (role == TRAFFIC_SERVER && protocol == IPPROTO_TCP)
-		run_tcp_server(&address, direction, payload, payload_length, argv[7]);
+		run_tcp_server(&endpoint, direction, payload, payload_length, argv[7]);
 	else if (role == TRAFFIC_CLIENT && protocol == IPPROTO_TCP)
-		run_tcp_client(&address, direction, payload, payload_length);
+		run_tcp_client(&endpoint, direction, payload, payload_length);
 	else if (role == TRAFFIC_SERVER)
-		run_udp_server(&address, direction, payload, payload_length, argv[7]);
+		run_udp_server(&endpoint, direction, payload, payload_length, argv[7]);
 	else
-		run_udp_client(&address, direction, payload, payload_length);
+		run_udp_client(&endpoint, direction, payload, payload_length);
 
 	return EXIT_SUCCESS;
 }

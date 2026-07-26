@@ -22,8 +22,8 @@
 #define DPI_TIMEOUT_DEFAULT 500U
 
 struct corpus_expectation {
-	struct in_addr source_address;
-	struct in_addr destination_address;
+	unsigned char source_address[16];
+	unsigned char destination_address[16];
 	const char *queue;
 	unsigned int app_id;
 	unsigned int rule_id;
@@ -32,6 +32,8 @@ struct corpus_expectation {
 	unsigned int l4proto;
 	unsigned int destination_port;
 	unsigned int timeout_ms;
+	unsigned int family;
+	size_t address_len;
 	int negative;
 };
 
@@ -67,6 +69,24 @@ static int parse_uint(const char *value, unsigned int *result)
 		return -1;
 	*result = (unsigned int)number;
 	return 0;
+}
+
+static int parse_address(const char *value, unsigned char address[16],
+                         unsigned int *family)
+{
+	struct in_addr address4;
+
+	memset(address, 0, 16);
+	if (inet_pton(AF_INET, value, &address4) == 1) {
+		memcpy(address, &address4, sizeof(address4));
+		*family = AF_INET;
+		return 0;
+	}
+	if (inet_pton(AF_INET6, value, address) == 1) {
+		*family = AF_INET6;
+		return 0;
+	}
+	return -1;
 }
 
 static int64_t monotonic_milliseconds(void)
@@ -118,13 +138,13 @@ static void run_injector(char **command)
 static int event_tuple_matches(const struct natflow_dpi_event_hdr *event,
                                const struct corpus_expectation *expectation)
 {
-	return event->family == AF_INET &&
+	return event->family == expectation->family &&
 	       event->l4proto == expectation->l4proto &&
 	       event->dport == expectation->destination_port &&
-	       memcmp(event->sip, &expectation->source_address,
-	              sizeof(expectation->source_address)) == 0 &&
-	       memcmp(event->dip, &expectation->destination_address,
-	              sizeof(expectation->destination_address)) == 0;
+	       memcmp(event->sip, expectation->source_address,
+	              expectation->address_len) == 0 &&
+	       memcmp(event->dip, expectation->destination_address,
+	              expectation->address_len) == 0;
 }
 
 static void validate_event_abi(const struct natflow_dpi_event_hdr *event)
@@ -211,6 +231,8 @@ int main(int argc, char **argv)
 	};
 	int have_source_address = 0;
 	int have_destination_address = 0;
+	unsigned int source_family = 0;
+	unsigned int destination_family = 0;
 	int have_protocol = 0;
 	int have_port = 0;
 	int have_source = 0;
@@ -228,13 +250,13 @@ int main(int argc, char **argv)
 			break;
 		case 'S':
 			have_source_address =
-			    inet_pton(AF_INET, optarg,
-			              &expectation.source_address) == 1;
+			    parse_address(optarg, expectation.source_address,
+			                  &source_family) == 0;
 			break;
 		case 'T':
 			have_destination_address =
-			    inet_pton(AF_INET, optarg,
-			              &expectation.destination_address) == 1;
+			    parse_address(optarg, expectation.destination_address,
+			                  &destination_family) == 0;
 			break;
 		case 'P':
 			if (strcmp(optarg, "tcp") == 0)
@@ -293,6 +315,12 @@ int main(int argc, char **argv)
 		usage(stderr, argv[0]);
 		return EXIT_FAILURE;
 	}
+	if (source_family != destination_family)
+		fail_message("source and destination address families differ");
+	expectation.family = source_family;
+	expectation.address_len =
+	    source_family == AF_INET ? sizeof(struct in_addr) :
+	    sizeof(struct in6_addr);
 	if (expectation.source < NATFLOW_DPI_EVENT_SOURCE_HTTP ||
 	        expectation.source > NATFLOW_DPI_EVENT_SOURCE_BITTORRENT ||
 	        expectation.app_id == 0 || expectation.rule_id == 0)

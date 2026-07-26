@@ -1,25 +1,34 @@
 # DPI Corpus
 
-`run-corpus.sh` creates two network namespaces and routes IPv4 traffic through
-the root namespace so the loaded natflow `FORWARD` hook sees each fixture. It
-installs one audit-only rule for every current protocol detector, opens the DPI
-queue before injection, and checks the v3 event against the original tuple and
-expected evidence direction.
+`run-corpus.sh` creates two network namespaces and routes IPv4 or IPv6 traffic
+through the root namespace so the loaded natflow `FORWARD` hook sees each
+fixture. It installs one audit-only rule for every current protocol detector,
+opens the DPI queue before injection, and checks the v3 event against the
+original tuple and expected evidence direction.
 
 The runner is destructive to the DPI test state: it requires an empty ruleset,
 clears event counters, increments generation, and temporarily changes DPI
-enable. It also inserts two interface-specific `iptables` FORWARD rules and
-temporarily enables IPv4 forwarding. Before reporting the final PASS, cleanup
-restores and verifies the DPI enable value, empty ruleset and inactive
-transaction, IPv4 forwarding value, firewall-rule removal, namespace and veth
-removal, and temporary-directory removal. Signal and failure exits attempt the
-same cleanup and report any failed postcondition as `CLEANUP FAIL`.
+enable. It also inserts two interface-specific firewall rules and temporarily
+enables forwarding for the selected address family. Before reporting the final
+PASS, cleanup restores and verifies the DPI enable value, empty ruleset and
+inactive transaction, forwarding value, firewall-rule removal, namespace and
+veth removal, and temporary-directory removal. Signal and failure exits
+attempt the same cleanup and report any failed postcondition as `CLEANUP FAIL`.
 
 Run as root on a disposable test host with the DPI-enabled module loaded:
 
 ```sh
 tests/dpi/run-corpus.sh tests/dpi/cases/dns-ssh.cases
 ```
+
+Run the same fixtures through an IPv6 routed topology with:
+
+```sh
+sudo tests/dpi/run-corpus.sh --ipv6 tests/dpi/cases/*.cases
+```
+
+IPv6 mode uses documentation-prefix addresses, `ip6tables`, and the IPv6
+forwarding sysctl. It verifies the full 16-byte original tuple in each event.
 
 Fixture files can be checked without root, a loaded module, or network setup:
 
@@ -64,9 +73,10 @@ name|proto|tcp-or-udp|original-or-reply|server-port|payload-hex|positive-or-nega
 
 Every case uses a new connection. Positive cases require the expected source,
 `app_id`, `rule_id`, original tuple, and evidence direction. Negative cases
-fail on any DPI event for that tuple. The first implementation is IPv4-only;
-IPv6, exact TCP segmentation, non-linear skb, long-duration soak, and failure
-injection remain separate integration work.
+fail on any DPI event for that tuple. IPv4 and base IPv6 TCP/UDP are supported;
+IPv6 extension headers, exact TCP segmentation, non-linear skb, long-duration
+soak, and failure injection remain separate integration work. Queue pressure
+and stream modes currently use the IPv4 topology.
 
 Current fixtures:
 

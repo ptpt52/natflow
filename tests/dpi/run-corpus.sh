@@ -11,6 +11,9 @@ CLIENT_IP=198.18.0.2
 SERVER_IP=198.19.0.2
 CLIENT_GW=198.18.0.1
 SERVER_GW=198.19.0.1
+ADDRESS_PREFIX=24
+FIREWALL=iptables
+FORWARD_CTL=/proc/sys/net/ipv4/ip_forward
 CLIENT_NS=ndpc$$
 SERVER_NS=ndps$$
 CLIENT_IF=ndci$$
@@ -42,12 +45,14 @@ stream_mode=0
 stream_cache=$STREAM_CACHE_DEFAULT
 stream_events=$STREAM_EVENTS_DEFAULT
 stream_parallel=$STREAM_PARALLEL_DEFAULT
+ipv6_mode=0
 
 usage()
 {
 	cat <<EOF
 Usage: $0 case-file [case-file ...]
        $0 --check case-file [case-file ...]
+       $0 --ipv6 case-file [case-file ...]
        $0 --queue-pressure [cache [generated]]
        $0 --queue-stream [cache [generated [parallel]]]
 
@@ -143,16 +148,16 @@ cleanup_resources()
 	fi
 
 	if [ "$firewall_installed" = 1 ]; then
-		iptables -D FORWARD -i "$CLIENT_IF" -o "$SERVER_IF" -j ACCEPT 2>/dev/null
-		iptables -D FORWARD -i "$SERVER_IF" -o "$CLIENT_IF" -j ACCEPT 2>/dev/null
-		if ! iptables -S FORWARD >/dev/null 2>&1; then
+		"$FIREWALL" -D FORWARD -i "$CLIENT_IF" -o "$SERVER_IF" -j ACCEPT 2>/dev/null
+		"$FIREWALL" -D FORWARD -i "$SERVER_IF" -o "$CLIENT_IF" -j ACCEPT 2>/dev/null
+		if ! "$FIREWALL" -S FORWARD >/dev/null 2>&1; then
 			cleanup_error "could not inspect the FORWARD chain"
 		else
-			if iptables -C FORWARD -i "$CLIENT_IF" -o "$SERVER_IF" \
+			if "$FIREWALL" -C FORWARD -i "$CLIENT_IF" -o "$SERVER_IF" \
 				-j ACCEPT >/dev/null 2>&1; then
 				cleanup_error "client-to-server FORWARD rule remains installed"
 			fi
-			if iptables -C FORWARD -i "$SERVER_IF" -o "$CLIENT_IF" \
+			if "$FIREWALL" -C FORWARD -i "$SERVER_IF" -o "$CLIENT_IF" \
 				-j ACCEPT >/dev/null 2>&1; then
 				cleanup_error "server-to-client FORWARD rule remains installed"
 			fi
@@ -165,7 +170,7 @@ cleanup_resources()
 		ip link del "$CLIENT_IF" 2>/dev/null
 		ip link del "$SERVER_IF" 2>/dev/null
 		if [ -n "$original_forward" ]; then
-			printf '%s\n' "$original_forward" >/proc/sys/net/ipv4/ip_forward 2>/dev/null
+			printf '%s\n' "$original_forward" >"$FORWARD_CTL" 2>/dev/null
 		fi
 		netns_list=$(ip netns list 2>/dev/null)
 		netns_status=$?
@@ -190,9 +195,9 @@ cleanup_resources()
 			fi
 		fi
 		if [ -n "$original_forward" ]; then
-			actual_value=$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)
+			actual_value=$(cat "$FORWARD_CTL" 2>/dev/null)
 			if [ "$actual_value" != "$original_forward" ]; then
-				cleanup_error "IPv4 forwarding is ${actual_value:-unreadable}, expected $original_forward"
+				cleanup_error "IP forwarding is ${actual_value:-unreadable}, expected $original_forward"
 			fi
 		fi
 	fi
@@ -387,12 +392,13 @@ inject_stream()
 
 if [ "${1:-}" = __inject ]; then
 	shift
-	[ "$#" -eq 8 ] || fail "invalid internal injector arguments"
+	[ "$#" -eq 9 ] || fail "invalid internal injector arguments"
 	CLIENT_NS=$1
 	SERVER_NS=$2
 	TRAFFIC_BIN=$3
 	TMP_DIR=$4
-	shift 4
+	SERVER_IP=$5
+	shift 5
 	inject_case "$@"
 	exit 0
 fi
@@ -443,6 +449,24 @@ if [ "$1" = --check ]; then
 	[ "$#" -gt 0 ] || fail "no case files supplied"
 	check_case_files "$@"
 	exit 0
+fi
+
+if [ "$1" = --ipv6 ]; then
+	ipv6_mode=1
+	shift
+	[ "$#" -gt 0 ] || fail "no IPv6 corpus case files supplied"
+	CLIENT_IP=2001:db8:18::2
+	SERVER_IP=2001:db8:19::2
+	CLIENT_GW=2001:db8:18::1
+	SERVER_GW=2001:db8:19::1
+	ADDRESS_PREFIX=64
+	FIREWALL=ip6tables
+	FORWARD_CTL=/proc/sys/net/ipv6/conf/all/forwarding
+	case ${1:-} in
+	--queue-pressure|--queue-stream)
+		fail "IPv6 cannot be combined with queue pressure or stream mode"
+		;;
+	esac
 fi
 
 if [ "$1" = --queue-pressure ]; then
@@ -508,7 +532,7 @@ fi
 [ -r "$QUEUE" ] && [ -w "$QUEUE" ] || fail "$QUEUE is not readable and writable"
 need_command awk
 need_command ip
-need_command iptables
+need_command "$FIREWALL"
 need_command "$CC"
 
 original_enable=$(field enable) || fail "missing DPI enable field"
@@ -516,7 +540,7 @@ original_enable=$(field enable) || fail "missing DPI enable field"
 	fail "invalid DPI enable field: $original_enable"
 [ "$(field rules)" = 0 ] || fail "DPI ruleset must be empty"
 [ "$(field txn_active)" = 0 ] || fail "DPI transaction is already active"
-original_forward=$(cat /proc/sys/net/ipv4/ip_forward)
+original_forward=$(cat "$FORWARD_CTL")
 
 mkdir "$TMP_DIR" || fail "temporary directory already exists: $TMP_DIR"
 trap exit_cleanup EXIT
@@ -541,22 +565,35 @@ ip link add "$CLIENT_IF" type veth peer name "$CLIENT_PEER"
 ip link set "$CLIENT_PEER" netns "$CLIENT_NS"
 ip link add "$SERVER_IF" type veth peer name "$SERVER_PEER"
 ip link set "$SERVER_PEER" netns "$SERVER_NS"
-ip address add "$CLIENT_GW/24" dev "$CLIENT_IF"
-ip address add "$SERVER_GW/24" dev "$SERVER_IF"
 ip link set "$CLIENT_IF" up
 ip link set "$SERVER_IF" up
 ip -n "$CLIENT_NS" link set lo up
-ip -n "$CLIENT_NS" address add "$CLIENT_IP/24" dev "$CLIENT_PEER"
 ip -n "$CLIENT_NS" link set "$CLIENT_PEER" up
-ip -n "$CLIENT_NS" route add default via "$CLIENT_GW"
 ip -n "$SERVER_NS" link set lo up
-ip -n "$SERVER_NS" address add "$SERVER_IP/24" dev "$SERVER_PEER"
 ip -n "$SERVER_NS" link set "$SERVER_PEER" up
-ip -n "$SERVER_NS" route add default via "$SERVER_GW"
-printf '1\n' >/proc/sys/net/ipv4/ip_forward
-iptables -I FORWARD -i "$CLIENT_IF" -o "$SERVER_IF" -j ACCEPT
+if [ "$ipv6_mode" = 1 ]; then
+	ip -6 address add "$CLIENT_GW/$ADDRESS_PREFIX" dev "$CLIENT_IF" nodad
+	ip -6 address add "$SERVER_GW/$ADDRESS_PREFIX" dev "$SERVER_IF" nodad
+	ip -n "$CLIENT_NS" -6 address add \
+		"$CLIENT_IP/$ADDRESS_PREFIX" dev "$CLIENT_PEER" nodad
+	ip -n "$CLIENT_NS" -6 route add default via "$CLIENT_GW"
+	ip -n "$SERVER_NS" -6 address add \
+		"$SERVER_IP/$ADDRESS_PREFIX" dev "$SERVER_PEER" nodad
+	ip -n "$SERVER_NS" -6 route add default via "$SERVER_GW"
+else
+	ip address add "$CLIENT_GW/$ADDRESS_PREFIX" dev "$CLIENT_IF"
+	ip address add "$SERVER_GW/$ADDRESS_PREFIX" dev "$SERVER_IF"
+	ip -n "$CLIENT_NS" address add \
+		"$CLIENT_IP/$ADDRESS_PREFIX" dev "$CLIENT_PEER"
+	ip -n "$CLIENT_NS" route add default via "$CLIENT_GW"
+	ip -n "$SERVER_NS" address add \
+		"$SERVER_IP/$ADDRESS_PREFIX" dev "$SERVER_PEER"
+	ip -n "$SERVER_NS" route add default via "$SERVER_GW"
+fi
+printf '1\n' >"$FORWARD_CTL"
+"$FIREWALL" -I FORWARD -i "$CLIENT_IF" -o "$SERVER_IF" -j ACCEPT
 firewall_installed=1
-iptables -I FORWARD -i "$SERVER_IF" -o "$CLIENT_IF" -j ACCEPT
+"$FIREWALL" -I FORWARD -i "$SERVER_IF" -o "$CLIENT_IF" -j ACCEPT
 
 write_ctl enable=0
 write_ctl events_clear
@@ -664,11 +701,15 @@ for case_file in "$@"; do
 			-P "$l4" -p "$port" -s "$source_id" -D "$direction" \
 			-a "$app_id" -r "$rule_id" $negative -- \
 			"$0" __inject "$CLIENT_NS" "$SERVER_NS" "$TRAFFIC_BIN" \
-			"$TMP_DIR" "$l4" "$direction" "$port" "$payload"
+			"$TMP_DIR" "$SERVER_IP" "$l4" "$direction" "$port" "$payload"
 		case_count=$((case_count + 1))
 	done <"$case_file"
 done
 
 [ "$case_count" -gt 0 ] || fail "no corpus cases were loaded"
 finish_cleanup
-printf 'PASS: %u DPI corpus case(s)\n' "$case_count"
+if [ "$ipv6_mode" = 1 ]; then
+	printf 'PASS: %u IPv6 DPI corpus case(s)\n' "$case_count"
+else
+	printf 'PASS: %u DPI corpus case(s)\n' "$case_count"
+fi

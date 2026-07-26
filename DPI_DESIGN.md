@@ -738,7 +738,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 ### 19.2 Parser corpus
 
-黑盒框架入口为 `tests/dpi/run-corpus.sh`：每个 fixture 使用新连接，经 root namespace 的真实 FORWARD hook 后按 original tuple 过滤 v3 event，并断言分类来源与证据方向；最终 PASS 前还会核验测试修改的 DPI 和网络状态均已恢复。当前框架先覆盖 IPv4 和单 payload socket 注入；精确 TCP segmentation、IPv6、non-linear skb、VLAN/PPPoE/bridge 仍需独立扩展。
+黑盒框架入口为 `tests/dpi/run-corpus.sh`：每个 fixture 使用新连接，经 root namespace 的真实 FORWARD hook 后按 original tuple 过滤 v3 event，并断言分类来源与证据方向；最终 PASS 前还会核验测试修改的 DPI 和网络状态均已恢复。默认模式覆盖 IPv4，`--ipv6` 复用同一 fixture 覆盖基础 IPv6 TCP/UDP 和完整 16 字节 event tuple；当前仍是单 payload socket 注入，精确 TCP segmentation、IPv6 extension header、non-linear skb、VLAN/PPPoE/bridge 仍需独立扩展。
 
 - HTTP GET/POST/HEAD、Host 大小写、port、非法 host、超长 URI、跨包 header。
 - TLS 普通 SNI、无 SNI、ECH outer SNI、malformed extension、跨连续 TCP 包、gap/retransmit。
@@ -766,7 +766,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - DPI queue 小 buffer、poll、event lost、record_len 跳过；`tests/dpi/run-corpus.sh --queue-pressure` 已提供小 cache、并发 producer、drop-new 和计数恒等式真机入口，`--queue-stream` 提供 reader 持续 poll/read 与 producer 分批并发、端口去重、零 lost/suppressed 的真机入口。
 - ruleset memory、retired generation、hash collision、suffix probes。
 - malformed packet 不刷日志。
-- `tools/natflow-dpi-reader.c` 提供 v3 queue ABI 参考读取器；`tools/natflow-dpi-queue-smoke.c` 提供单 reader、不可 seek、小 buffer、空队列、cache/close 和可选真实事件固定头验证；`tools/natflow-dpi-ctl-smoke.sh` 提供仅允许空 ruleset 的控制事务冒烟入口；`tools/natflow-dpi-queue-pressure.c` 与 `tests/dpi/run-corpus.sh --queue-pressure` 提供小 cache、并发 STUN producer、drop-new 和计数核验入口，`--queue-stream` 提供 reader/producer 同时运行、每流去重和零丢失核验。queue-full 默认场景已于 2026-07-26 真机通过；stream 自动化仍需真机执行，长时间 soak 和内存分配失败注入尚未覆盖。
+- `tools/natflow-dpi-reader.c` 提供 v3 queue ABI 参考读取器；`tools/natflow-dpi-queue-smoke.c` 提供单 reader、不可 seek、小 buffer、空队列、cache/close 和可选真实事件固定头验证；`tools/natflow-dpi-ctl-smoke.sh` 提供仅允许空 ruleset 的控制事务冒烟入口；`tools/natflow-dpi-queue-pressure.c` 与 `tests/dpi/run-corpus.sh --queue-pressure` 提供小 cache、并发 STUN producer、drop-new 和计数核验入口，`--queue-stream` 提供 reader/producer 同时运行、每流去重和零丢失核验。queue-full 和 stream 默认场景已于 2026-07-26 真机通过；长时间 soak 和内存分配失败注入尚未覆盖。
 
 ### 19.6 性能
 
