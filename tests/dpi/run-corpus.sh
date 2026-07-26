@@ -25,6 +25,10 @@ PRESSURE_CACHE_DEFAULT=8
 PRESSURE_EVENTS_DEFAULT=32
 PRESSURE_PORT_BASE=42000
 PRESSURE_PAYLOAD=000100002112a442000102030405060708090a0b
+STREAM_CACHE_DEFAULT=64
+STREAM_EVENTS_DEFAULT=128
+STREAM_PARALLEL_DEFAULT=16
+STREAM_TIMEOUT_MS=15000
 original_enable=
 original_forward=
 rules_installed=0
@@ -34,6 +38,10 @@ cleanup_done=0
 pressure_mode=0
 pressure_cache=$PRESSURE_CACHE_DEFAULT
 pressure_events=$PRESSURE_EVENTS_DEFAULT
+stream_mode=0
+stream_cache=$STREAM_CACHE_DEFAULT
+stream_events=$STREAM_EVENTS_DEFAULT
+stream_parallel=$STREAM_PARALLEL_DEFAULT
 
 usage()
 {
@@ -41,6 +49,7 @@ usage()
 Usage: $0 case-file [case-file ...]
        $0 --check case-file [case-file ...]
        $0 --queue-pressure [cache [generated]]
+       $0 --queue-stream [cache [generated [parallel]]]
 
 Case format, one pipe-separated record per line:
   name|proto|transport|direction|port|payload_hex|expectation
@@ -48,6 +57,8 @@ Case format, one pipe-separated record per line:
 Blank lines and lines beginning with # are ignored. This destructive test
 requires an empty DPI ruleset and root privileges. Queue pressure defaults to
 cache=$PRESSURE_CACHE_DEFAULT and generated=$PRESSURE_EVENTS_DEFAULT.
+Queue stream defaults to cache=$STREAM_CACHE_DEFAULT,
+generated=$STREAM_EVENTS_DEFAULT and parallel=$STREAM_PARALLEL_DEFAULT.
 EOF
 }
 
@@ -60,6 +71,18 @@ fail()
 need_command()
 {
 	command -v "$1" >/dev/null 2>&1 || fail "missing command: $1"
+}
+
+validate_count()
+{
+	name=$1
+	value=$2
+
+	case $value in
+	??????*) fail "$name is too large: $value" ;;
+	0|[1-9]|[1-9][0-9]*) ;;
+	*) fail "invalid $name: $value" ;;
+	esac
 }
 
 field()
@@ -334,6 +357,34 @@ inject_pressure()
 	[ "$failed" = 0 ] || fail "one or more pressure flows failed"
 }
 
+inject_stream()
+{
+	count=$1
+	base_port=$2
+	payload=$3
+	parallel=$4
+	index=0
+
+	while [ "$index" -lt "$count" ]; do
+		pids=
+		failed=0
+		batch=0
+		while [ "$batch" -lt "$parallel" ] &&
+			[ "$index" -lt "$count" ]; do
+			inject_case udp original "$((base_port + index))" \
+				"$payload" &
+			pids="$pids $!"
+			index=$((index + 1))
+			batch=$((batch + 1))
+		done
+		for child_pid in $pids; do
+			wait "$child_pid" || failed=1
+		done
+		[ "$failed" = 0 ] ||
+			fail "one or more stream flows failed"
+	done
+}
+
 if [ "${1:-}" = __inject ]; then
 	shift
 	[ "$#" -eq 8 ] || fail "invalid internal injector arguments"
@@ -357,6 +408,22 @@ if [ "${1:-}" = __pressure_inject ]; then
 	pressure_port_base=$6
 	pressure_payload=$7
 	inject_pressure "$pressure_events" "$pressure_port_base" "$pressure_payload"
+	exit 0
+fi
+
+if [ "${1:-}" = __stream_inject ]; then
+	shift
+	[ "$#" -eq 8 ] || fail "invalid internal stream injector arguments"
+	CLIENT_NS=$1
+	SERVER_NS=$2
+	TRAFFIC_BIN=$3
+	TMP_DIR=$4
+	stream_events=$5
+	stream_port_base=$6
+	stream_payload=$7
+	stream_parallel=$8
+	inject_stream "$stream_events" "$stream_port_base" \
+		"$stream_payload" "$stream_parallel"
 	exit 0
 fi
 
@@ -388,14 +455,8 @@ if [ "$1" = --queue-pressure ]; then
 	if [ "$#" -eq 2 ]; then
 		pressure_events=$2
 	fi
-	case $pressure_cache in
-	0|[1-9]|[1-9][0-9]*) ;;
-	*) fail "invalid queue pressure cache: $pressure_cache" ;;
-	esac
-	case $pressure_events in
-	0|[1-9]|[1-9][0-9]*) ;;
-	*) fail "invalid generated event count: $pressure_events" ;;
-	esac
+	validate_count "queue pressure cache" "$pressure_cache"
+	validate_count "generated event count" "$pressure_events"
 	[ "$pressure_cache" -gt 0 ] ||
 		fail "queue pressure cache must be positive"
 	[ "$pressure_events" -gt "$pressure_cache" ] ||
@@ -404,6 +465,42 @@ if [ "$1" = --queue-pressure ]; then
 		fail "queue pressure is limited to 256 concurrent flows"
 	[ "$((PRESSURE_PORT_BASE + pressure_events))" -le 65535 ] ||
 		fail "queue pressure port range exceeds 65535"
+fi
+
+if [ "$1" = --queue-stream ]; then
+	stream_mode=1
+	shift
+	[ "$#" -le 3 ] ||
+		fail "queue stream accepts at most cache, generated, and parallel"
+	if [ "$#" -ge 1 ]; then
+		stream_cache=$1
+	fi
+	if [ "$#" -ge 2 ]; then
+		stream_events=$2
+	fi
+	if [ "$#" -eq 3 ]; then
+		stream_parallel=$3
+	fi
+	validate_count "queue stream cache" "$stream_cache"
+	validate_count "stream event count" "$stream_events"
+	validate_count "stream parallel count" "$stream_parallel"
+	[ "$stream_cache" -gt 0 ] ||
+		fail "queue stream cache must be positive"
+	[ "$stream_cache" -le 256 ] ||
+		fail "queue stream cache is limited to 256 events"
+	[ "$stream_events" -gt 0 ] ||
+		fail "stream event count must be positive"
+	[ "$stream_events" -le 256 ] ||
+		fail "queue stream is limited to 256 flows"
+	[ "$stream_parallel" -gt 0 ] &&
+		[ "$stream_parallel" -le 64 ] ||
+		fail "stream parallel count must be between 1 and 64"
+	[ "$stream_parallel" -le "$stream_events" ] ||
+		fail "stream parallel count exceeds generated events"
+	[ "$stream_cache" -ge "$stream_parallel" ] ||
+		fail "queue stream cache must cover one parallel batch"
+	[ "$((PRESSURE_PORT_BASE + stream_events))" -le 65535 ] ||
+		fail "queue stream port range exceeds 65535"
 fi
 
 [ "$(id -u)" = 0 ] || fail "root privileges are required"
@@ -431,7 +528,7 @@ trap 'exit 143' TERM
 	-o "$ASSERT_BIN" "$REPO_DIR/tools/natflow-dpi-corpus.c"
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror \
 	-o "$TRAFFIC_BIN" "$REPO_DIR/tools/natflow-dpi-traffic.c"
-if [ "$pressure_mode" = 1 ]; then
+if [ "$pressure_mode" = 1 ] || [ "$stream_mode" = 1 ]; then
 	"$CC" -std=c11 -O2 -Wall -Wextra -Werror \
 		-o "$PRESSURE_BIN" \
 		"$REPO_DIR/tools/natflow-dpi-queue-pressure.c"
@@ -465,7 +562,7 @@ write_ctl enable=0
 write_ctl events_clear
 write_ctl rules_begin
 rules_installed=1
-if [ "$pressure_mode" = 1 ]; then
+if [ "$pressure_mode" = 1 ] || [ "$stream_mode" = 1 ]; then
 	write_ctl "proto id=6104 app=7104 proto=stun"
 else
 	write_ctl "proto id=6101 app=7101 proto=dns"
@@ -512,6 +609,43 @@ if [ "$pressure_mode" = 1 ]; then
 	finish_cleanup
 	printf 'PASS: DPI queue pressure cache=%u generated=%u lost=%u\n' \
 		"$pressure_cache" "$pressure_events" "$expected_lost"
+	exit 0
+fi
+
+if [ "$stream_mode" = 1 ]; then
+	"$PRESSURE_BIN" -d "$QUEUE" -c "$stream_cache" \
+		-n "$stream_events" -S "$CLIENT_IP" -T "$SERVER_IP" \
+		-p "$PRESSURE_PORT_BASE" -a 7104 -r 6104 \
+		-w "$STREAM_TIMEOUT_MS" -- \
+		"$0" __stream_inject "$CLIENT_NS" "$SERVER_NS" \
+		"$TRAFFIC_BIN" "$TMP_DIR" "$stream_events" \
+		"$PRESSURE_PORT_BASE" "$PRESSURE_PAYLOAD" "$stream_parallel"
+
+	actual_matches=$(field matches)
+	actual_events=$(field events)
+	actual_suppressed=$(field events_suppressed)
+	actual_lost=$(field events_lost)
+	actual_matches_stun=$(field matches_stun)
+	actual_events_stun=$(field events_stun)
+	[ "$actual_matches" -eq "$stream_events" ] ||
+		fail "matches=$actual_matches, expected $stream_events"
+	[ "$actual_events" -eq "$stream_events" ] ||
+		fail "events=$actual_events, expected $stream_events"
+	[ "$actual_suppressed" -eq 0 ] ||
+		fail "events_suppressed=$actual_suppressed, expected 0"
+	[ "$actual_lost" -eq 0 ] ||
+		fail "events_lost=$actual_lost, expected 0"
+	[ "$actual_matches_stun" -eq "$stream_events" ] ||
+		fail "matches_stun=$actual_matches_stun, expected $stream_events"
+	[ "$actual_events_stun" -eq "$stream_events" ] ||
+		fail "events_stun=$actual_events_stun, expected $stream_events"
+	[ "$actual_matches" -eq \
+		"$((actual_events + actual_suppressed + actual_lost))" ] ||
+		fail "DPI event counters violate the accounting invariant"
+
+	finish_cleanup
+	printf 'PASS: DPI queue stream cache=%u generated=%u parallel=%u\n' \
+		"$stream_cache" "$stream_events" "$stream_parallel"
 	exit 0
 fi
 

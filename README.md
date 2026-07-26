@@ -1111,6 +1111,13 @@ sudo tests/dpi/run-corpus.sh --queue-pressure
 sudo tests/dpi/run-corpus.sh --queue-pressure 16 64
 ```
 
+`--queue-stream [cache [generated [parallel]]]` 模式让单一 reader 在 producer 分批并发注入期间持续执行 `poll()` 和批量 `read()`，默认 cache=64、总流量 128、每批并发 16。每个测试端口必须恰好读到一次，结束后 queue 必须为空，并要求 `matches=events=128`、`events_lost=events_suppressed=0`：
+
+```sh
+sudo tests/dpi/run-corpus.sh --queue-stream
+sudo tests/dpi/run-corpus.sh --queue-stream 64 128 16
+```
+
 下面代码保留为接口示例；实际测试优先使用上述维护版本。
 
 ```c

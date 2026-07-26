@@ -5,18 +5,22 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <netinet/in.h>
+#include <poll.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "natflow-dpi-event.h"
 
 #define DPI_QUEUE_DEFAULT "/dev/natflow_dpi_queue"
 #define DPI_READ_BATCH 32U
+#define DPI_POLL_SLICE_MS 100
 
 struct pressure_expectation {
 	struct in_addr source_address;
@@ -27,13 +31,17 @@ struct pressure_expectation {
 	unsigned int app_id;
 	unsigned int rule_id;
 	unsigned int first_port;
+	unsigned int stream_timeout_ms;
 };
 
 static void usage(FILE *stream, const char *program)
 {
 	fprintf(stream,
 	        "Usage: %s -c cache -n generated -S src -T dst -p first-port "
-	        "-a app -r rule [-d queue] -- command [args...]\n",
+	        "-a app -r rule [-d queue] [-w timeout-ms] "
+	        "-- command [args...]\n"
+	        "  Without -w, pause reading and require generated > cache.\n"
+	        "  With -w, poll/read concurrently and require every event.\n",
 	        program);
 }
 
@@ -62,6 +70,15 @@ static int parse_uint(const char *value, unsigned int *result)
 	return 0;
 }
 
+static int64_t monotonic_milliseconds(void)
+{
+	struct timespec now;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+		fail("clock_gettime");
+	return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
 static void configure_queue(int fd, unsigned int cache)
 {
 	char command[32];
@@ -78,11 +95,9 @@ static void configure_queue(int fd, unsigned int cache)
 		fail_message("short DPI queue command write");
 }
 
-static void run_injector(char **command)
+static pid_t start_injector(char **command)
 {
 	pid_t child;
-	pid_t waited;
-	int status;
 
 	child = fork();
 	if (child < 0)
@@ -93,17 +108,34 @@ static void run_injector(char **command)
 		        strerror(errno));
 		_exit(127);
 	}
+	return child;
+}
+
+static void check_injector_status(int status)
+{
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+		fail_message("traffic injector failed");
+}
+
+static void wait_injector(pid_t child)
+{
+	pid_t waited;
+	int status;
 
 	do {
 		waited = waitpid(child, &status, 0);
 	} while (waited < 0 && errno == EINTR);
 	if (waited < 0)
 		fail("wait for injector");
-	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
-		fail_message("traffic injector failed");
+	check_injector_status(status);
 }
 
-static void validate_event(
+static void run_injector(char **command)
+{
+	wait_injector(start_injector(command));
+}
+
+static unsigned int validate_event(
     const struct natflow_dpi_event_hdr *event,
     const struct pressure_expectation *expectation)
 {
@@ -128,14 +160,19 @@ static void validate_event(
 	        memcmp(event->dip, &expectation->destination_address,
 	               sizeof(expectation->destination_address)) != 0)
 		fail_message("queue returned an event outside the test tuple");
+	return event->dport - expectation->first_port;
 }
 
 static unsigned int drain_queue(
     int fd, const struct pressure_expectation *expectation)
 {
 	struct natflow_dpi_event_hdr events[DPI_READ_BATCH];
+	unsigned char *seen;
 	unsigned int total = 0;
 
+	seen = calloc(expectation->generated, sizeof(*seen));
+	if (!seen)
+		fail("allocate event bitmap");
 	for (;;) {
 		ssize_t length = read(fd, events, sizeof(events));
 		size_t count;
@@ -149,15 +186,131 @@ static unsigned int drain_queue(
 			fail_message("DPI queue returned a partial event batch");
 
 		count = (size_t)length / sizeof(events[0]);
-		for (i = 0; i < count; i++)
-			validate_event(&events[i], expectation);
+		for (i = 0; i < count; i++) {
+			unsigned int index = validate_event(&events[i], expectation);
+
+			if (seen[index])
+				fail_message("queue returned a duplicate test event");
+			seen[index] = 1;
+		}
 		if (total > UINT_MAX - count)
 			fail_message("DPI event count overflow");
 		total += (unsigned int)count;
 		if (total > expectation->cache)
 			fail_message("queue retained more events than its cache limit");
 	}
+	free(seen);
 	return total;
+}
+
+static unsigned int read_stream_batch(
+    int fd, const struct pressure_expectation *expectation,
+    unsigned char *seen)
+{
+	struct natflow_dpi_event_hdr events[DPI_READ_BATCH];
+	ssize_t length;
+	size_t count;
+	size_t i;
+
+	length = read(fd, events, sizeof(events));
+	if (length < 0)
+		fail("read DPI queue");
+	if (length == 0)
+		return 0;
+	if ((size_t)length % sizeof(events[0]) != 0)
+		fail_message("DPI queue returned a partial event batch");
+
+	count = (size_t)length / sizeof(events[0]);
+	for (i = 0; i < count; i++) {
+		unsigned int index = validate_event(&events[i], expectation);
+
+		if (seen[index])
+			fail_message("queue returned a duplicate test event");
+		seen[index] = 1;
+	}
+	return (unsigned int)count;
+}
+
+static void stream_queue(
+    int fd, const struct pressure_expectation *expectation, char **command)
+{
+	unsigned char *seen;
+	int64_t deadline;
+	unsigned int poll_wakeups = 0;
+	unsigned int read_calls = 0;
+	unsigned int total = 0;
+	int child_done = 0;
+	pid_t child;
+
+	seen = calloc(expectation->generated, sizeof(*seen));
+	if (!seen)
+		fail("allocate event bitmap");
+	child = start_injector(command);
+	deadline = monotonic_milliseconds() + expectation->stream_timeout_ms;
+
+	while (total < expectation->generated) {
+		struct pollfd pfd = {
+			.fd = fd,
+			.events = POLLIN | POLLRDNORM,
+		};
+		int64_t remaining = deadline - monotonic_milliseconds();
+		int timeout;
+		int ready;
+
+		if (remaining <= 0) {
+			if (!child_done) {
+				kill(child, SIGTERM);
+				waitpid(child, NULL, 0);
+			}
+			fail_message("timed out reading concurrent DPI events");
+		}
+		timeout = remaining < DPI_POLL_SLICE_MS ?
+		          (int)remaining : DPI_POLL_SLICE_MS;
+		do {
+			ready = poll(&pfd, 1, timeout);
+		} while (ready < 0 && errno == EINTR);
+		if (ready < 0)
+			fail("poll DPI queue");
+		if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))
+			fail_message("DPI queue poll returned an error");
+		if (ready > 0) {
+			unsigned int count;
+
+			if (!(pfd.revents & (POLLIN | POLLRDNORM)))
+				fail_message("DPI queue poll returned unexpected events");
+			poll_wakeups++;
+			count = read_stream_batch(fd, expectation, seen);
+			if (count == 0)
+				fail_message("poll-readable DPI queue returned no events");
+			if (count > expectation->generated - total)
+				fail_message("queue returned too many test events");
+			total += count;
+			read_calls++;
+		}
+
+		if (!child_done) {
+			int status;
+			pid_t waited = waitpid(child, &status, WNOHANG);
+
+			if (waited < 0)
+				fail("poll traffic injector");
+			if (waited == child) {
+				check_injector_status(status);
+				child_done = 1;
+			}
+		}
+		if (child_done && ready == 0)
+			fail_message("injector completed before all events were read");
+	}
+
+	if (!child_done)
+		wait_injector(child);
+	if (read_stream_batch(fd, expectation, seen) != 0)
+		fail_message("queue returned events beyond the generated set");
+	free(seen);
+	printf("PASS: streamed %u DPI events with %u poll wakeup(s) "
+	       "and %u read(s)\n",
+	       total, poll_wakeups, read_calls);
 }
 
 int main(int argc, char **argv)
@@ -176,7 +329,7 @@ int main(int argc, char **argv)
 	int option;
 	int fd;
 
-	while ((option = getopt(argc, argv, "d:c:n:S:T:p:a:r:h")) != -1) {
+	while ((option = getopt(argc, argv, "d:c:n:S:T:p:a:r:w:h")) != -1) {
 		switch (option) {
 		case 'd':
 			expectation.queue = optarg;
@@ -208,6 +361,12 @@ int main(int argc, char **argv)
 		case 'r':
 			have_rule = parse_uint(optarg, &expectation.rule_id) == 0;
 			break;
+		case 'w':
+			if (parse_uint(optarg, &expectation.stream_timeout_ms) != 0 ||
+			        expectation.stream_timeout_ms == 0 ||
+			        expectation.stream_timeout_ms > INT_MAX)
+				fail_message("invalid stream timeout");
+			break;
 		case 'h':
 			usage(stdout, argv[0]);
 			return EXIT_SUCCESS;
@@ -221,7 +380,9 @@ int main(int argc, char **argv)
 	        !have_cache || !have_generated || !have_app || !have_rule ||
 	        !have_first_port ||
 	        expectation.cache == 0 ||
-	        expectation.generated <= expectation.cache ||
+	        expectation.generated == 0 ||
+	        (expectation.stream_timeout_ms == 0 &&
+	         expectation.generated <= expectation.cache) ||
 	        expectation.app_id == 0 || expectation.rule_id == 0 ||
 	        expectation.first_port == 0 ||
 	        expectation.generated > 65536U - expectation.first_port ||
@@ -234,14 +395,18 @@ int main(int argc, char **argv)
 	if (fd < 0)
 		fail("open DPI queue");
 	configure_queue(fd, expectation.cache);
-	run_injector(&argv[optind]);
-	retained = drain_queue(fd, &expectation);
-	if (retained != expectation.cache)
-		fail_message("queue retained fewer events than its cache limit");
+	if (expectation.stream_timeout_ms != 0) {
+		stream_queue(fd, &expectation, &argv[optind]);
+	} else {
+		run_injector(&argv[optind]);
+		retained = drain_queue(fd, &expectation);
+		if (retained != expectation.cache)
+			fail_message("queue retained fewer events than its cache limit");
+		printf("PASS: retained %u of %u generated DPI events\n",
+		       retained, expectation.generated);
+	}
 	if (close(fd) != 0)
 		fail("close DPI queue");
 
-	printf("PASS: retained %u of %u generated DPI events\n",
-	       retained, expectation.generated);
 	return EXIT_SUCCESS;
 }

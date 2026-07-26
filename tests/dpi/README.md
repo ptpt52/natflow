@@ -42,6 +42,20 @@ requires exactly `cache` valid STUN events and verifies the ctl counters:
 has the same empty-ruleset, isolated-host, state-restoration, and final cleanup
 requirements as the detector corpus.
 
+Concurrent reader/producer operation can be tested with:
+
+```sh
+sudo tests/dpi/run-corpus.sh --queue-stream
+sudo tests/dpi/run-corpus.sh --queue-stream 64 128 16
+```
+
+The optional values are the cache limit, total generated flows, and maximum
+parallel flows per producer batch. One reader continuously polls and batch
+reads while each producer batch runs. Every generated port must appear exactly
+once, the queue must be empty afterward, and ctl must report
+`matches=events=generated` with zero suppressed or lost events. The cache must
+cover at least one parallel batch.
+
 Case files use seven pipe-separated fields:
 
 ```text
@@ -51,8 +65,8 @@ name|proto|tcp-or-udp|original-or-reply|server-port|payload-hex|positive-or-nega
 Every case uses a new connection. Positive cases require the expected source,
 `app_id`, `rule_id`, original tuple, and evidence direction. Negative cases
 fail on any DPI event for that tuple. The first implementation is IPv4-only;
-IPv6, exact TCP segmentation, non-linear skb, and longer sustained queue
-pressure remain separate integration work.
+IPv6, exact TCP segmentation, non-linear skb, long-duration soak, and failure
+injection remain separate integration work.
 
 Current fixtures:
 
