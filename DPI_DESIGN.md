@@ -704,7 +704,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成基础设施：放开 reply packet consumer，保持所有 URL/domain host consumer original-only。
 - 已完成 M2 准备项：DPI event ABI v3 保持 original tuple 作为连接身份，并增加独立 `evidence_dir` 记录实际命中 packet 方向。
 - 已完成 M2 准备项：match 与 event queue 交付统计解耦，补充 domain、双向 packet 和 bounded context 累计 counters；不维护会要求 conntrack 销毁回调或全局 registry 的 active-context gauge。
-- 已建立 protocol-only detector 的首批 IPv4 黑盒正反 corpus；仍未完成真机 corpus 执行、payload TLV、IPv6 extension header 解析和生产 shadow 数据采集。
+- 已建立 protocol-only detector 的首批 IPv4 黑盒正反 corpus；2026-07-26 首批 51 项已在真机通过，仍未完成 payload TLV、IPv6 extension header 解析和生产 shadow 数据采集。
 
 ### M2：生产 shadow
 
@@ -738,7 +738,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 ### 19.2 Parser corpus
 
-黑盒框架入口为 `tests/dpi/run-corpus.sh`：每个 fixture 使用新连接，经 root namespace 的真实 FORWARD hook 后按 original tuple 过滤 v3 event，并断言分类来源与证据方向。当前框架先覆盖 IPv4 和单 payload socket 注入；精确 TCP segmentation、IPv6、non-linear skb、VLAN/PPPoE/bridge 仍需独立扩展。
+黑盒框架入口为 `tests/dpi/run-corpus.sh`：每个 fixture 使用新连接，经 root namespace 的真实 FORWARD hook 后按 original tuple 过滤 v3 event，并断言分类来源与证据方向；最终 PASS 前还会核验测试修改的 DPI 和网络状态均已恢复。当前框架先覆盖 IPv4 和单 payload socket 注入；精确 TCP segmentation、IPv6、non-linear skb、VLAN/PPPoE/bridge 仍需独立扩展。
 
 - HTTP GET/POST/HEAD、Host 大小写、port、非法 host、超长 URI、跨包 header。
 - TLS 普通 SNI、无 SNI、ECH outer SNI、malformed extension、跨连续 TCP 包、gap/retransmit。

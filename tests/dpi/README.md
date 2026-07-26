@@ -9,9 +9,11 @@ expected evidence direction.
 The runner is destructive to the DPI test state: it requires an empty ruleset,
 clears event counters, increments generation, and temporarily changes DPI
 enable. It also inserts two interface-specific `iptables` FORWARD rules and
-temporarily enables IPv4 forwarding. Exit cleanup restores enable and
-forwarding, clears temporary rules, removes firewall entries, and deletes both
-namespaces.
+temporarily enables IPv4 forwarding. Before reporting the final PASS, cleanup
+restores and verifies the DPI enable value, empty ruleset and inactive
+transaction, IPv4 forwarding value, firewall-rule removal, namespace and veth
+removal, and temporary-directory removal. Signal and failure exits attempt the
+same cleanup and report any failed postcondition as `CLEANUP FAIL`.
 
 Run as root on a disposable test host with the DPI-enabled module loaded:
 

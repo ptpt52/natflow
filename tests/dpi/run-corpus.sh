@@ -25,6 +25,7 @@ original_forward=
 rules_installed=0
 topology_installed=0
 firewall_installed=0
+cleanup_done=0
 
 usage()
 {
@@ -62,30 +63,127 @@ write_ctl()
 	printf '%s\n' "$1" >"$CTL"
 }
 
-cleanup()
+cleanup_error()
+{
+	printf 'CLEANUP FAIL: %s\n' "$*" >&2
+	cleanup_failed=1
+}
+
+namespace_exists()
+{
+	printf '%s\n' "$2" |
+		awk -v name="$1" '$1 == name { found = 1 }
+			END { exit !found }'
+}
+
+cleanup_resources()
+{
+	cleanup_failed=0
+	set +e
+
+	txn_active=$(field txn_active 2>/dev/null)
+	if [ "$txn_active" = 1 ] &&
+		! write_ctl rules_abort 2>/dev/null; then
+		cleanup_error "could not abort the active DPI transaction"
+	fi
+	if [ "$rules_installed" = 1 ]; then
+		if ! write_ctl rules_clear 2>/dev/null; then
+			cleanup_error "could not clear the temporary DPI ruleset"
+		fi
+	fi
+	if [ -n "$original_enable" ]; then
+		if ! write_ctl "enable=$original_enable" 2>/dev/null; then
+			cleanup_error "could not restore DPI enable=$original_enable"
+		fi
+	fi
+	for expected_field in rules domain_rules proto_rules txn_active; do
+		actual_value=$(field "$expected_field" 2>/dev/null)
+		if [ "$actual_value" != 0 ]; then
+			cleanup_error "$expected_field is ${actual_value:-unreadable}, expected 0"
+		fi
+	done
+	if [ -n "$original_enable" ]; then
+		actual_value=$(field enable 2>/dev/null)
+		if [ "$actual_value" != "$original_enable" ]; then
+			cleanup_error "enable is ${actual_value:-unreadable}, expected $original_enable"
+		fi
+	fi
+
+	if [ "$firewall_installed" = 1 ]; then
+		iptables -D FORWARD -i "$CLIENT_IF" -o "$SERVER_IF" -j ACCEPT 2>/dev/null
+		iptables -D FORWARD -i "$SERVER_IF" -o "$CLIENT_IF" -j ACCEPT 2>/dev/null
+		if ! iptables -S FORWARD >/dev/null 2>&1; then
+			cleanup_error "could not inspect the FORWARD chain"
+		else
+			if iptables -C FORWARD -i "$CLIENT_IF" -o "$SERVER_IF" \
+				-j ACCEPT >/dev/null 2>&1; then
+				cleanup_error "client-to-server FORWARD rule remains installed"
+			fi
+			if iptables -C FORWARD -i "$SERVER_IF" -o "$CLIENT_IF" \
+				-j ACCEPT >/dev/null 2>&1; then
+				cleanup_error "server-to-client FORWARD rule remains installed"
+			fi
+		fi
+	fi
+
+	if [ "$topology_installed" = 1 ]; then
+		ip netns del "$CLIENT_NS" 2>/dev/null
+		ip netns del "$SERVER_NS" 2>/dev/null
+		ip link del "$CLIENT_IF" 2>/dev/null
+		ip link del "$SERVER_IF" 2>/dev/null
+		if [ -n "$original_forward" ]; then
+			printf '%s\n' "$original_forward" >/proc/sys/net/ipv4/ip_forward 2>/dev/null
+		fi
+		netns_list=$(ip netns list 2>/dev/null)
+		netns_status=$?
+		if [ "$netns_status" -ne 0 ]; then
+			cleanup_error "could not inspect network namespaces"
+		else
+			if namespace_exists "$CLIENT_NS" "$netns_list"; then
+				cleanup_error "network namespace $CLIENT_NS still exists"
+			fi
+			if namespace_exists "$SERVER_NS" "$netns_list"; then
+				cleanup_error "network namespace $SERVER_NS still exists"
+			fi
+		fi
+		if ! ip link show >/dev/null 2>&1; then
+			cleanup_error "could not inspect root network interfaces"
+		else
+			if ip link show dev "$CLIENT_IF" >/dev/null 2>&1; then
+				cleanup_error "root interface $CLIENT_IF still exists"
+			fi
+			if ip link show dev "$SERVER_IF" >/dev/null 2>&1; then
+				cleanup_error "root interface $SERVER_IF still exists"
+			fi
+		fi
+		if [ -n "$original_forward" ]; then
+			actual_value=$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)
+			if [ "$actual_value" != "$original_forward" ]; then
+				cleanup_error "IPv4 forwarding is ${actual_value:-unreadable}, expected $original_forward"
+			fi
+		fi
+	fi
+
+	rm -rf "$TMP_DIR"
+	if [ -e "$TMP_DIR" ]; then
+		cleanup_error "temporary directory $TMP_DIR still exists"
+	fi
+	cleanup_done=1
+	[ "$cleanup_failed" = 0 ]
+}
+
+exit_cleanup()
 {
 	status=$?
 	trap - EXIT HUP INT TERM
 	set +e
-	write_ctl rules_abort 2>/dev/null
-	if [ "$rules_installed" = 1 ]; then
-		write_ctl rules_clear 2>/dev/null
-	fi
-	if [ -n "$original_enable" ]; then
-		write_ctl "enable=$original_enable" 2>/dev/null
-	fi
-	if [ "$firewall_installed" = 1 ]; then
-		iptables -D FORWARD -i "$CLIENT_IF" -o "$SERVER_IF" -j ACCEPT 2>/dev/null
-		iptables -D FORWARD -i "$SERVER_IF" -o "$CLIENT_IF" -j ACCEPT 2>/dev/null
-	fi
-	if [ "$topology_installed" = 1 ]; then
-		ip netns del "$CLIENT_NS" 2>/dev/null
-		ip netns del "$SERVER_NS" 2>/dev/null
-		if [ -n "$original_forward" ]; then
-			printf '%s\n' "$original_forward" >/proc/sys/net/ipv4/ip_forward 2>/dev/null
+	if [ "$cleanup_done" != 1 ]; then
+		cleanup_resources
+		cleanup_status=$?
+		if [ "$status" -eq 0 ] && [ "$cleanup_status" -ne 0 ]; then
+			status=1
 		fi
 	fi
-	rm -rf "$TMP_DIR"
 	exit "$status"
 }
 
@@ -241,7 +339,7 @@ original_enable=$(field enable) || fail "missing DPI enable field"
 original_forward=$(cat /proc/sys/net/ipv4/ip_forward)
 
 mkdir "$TMP_DIR" || fail "temporary directory already exists: $TMP_DIR"
-trap cleanup EXIT
+trap exit_cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -309,4 +407,10 @@ for case_file in "$@"; do
 done
 
 [ "$case_count" -gt 0 ] || fail "no corpus cases were loaded"
+set +e
+cleanup_resources
+cleanup_status=$?
+set -e
+[ "$cleanup_status" -eq 0 ] || fail "corpus cleanup verification failed"
+printf 'PASS: cleanup restored DPI and network state\n'
 printf 'PASS: %u DPI corpus case(s)\n' "$case_count"
