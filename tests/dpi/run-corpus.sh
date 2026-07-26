@@ -20,24 +20,34 @@ SERVER_PEER=ndsp$$
 TMP_DIR=${TMPDIR:-/tmp}/natflow-dpi-corpus.$$
 ASSERT_BIN=$TMP_DIR/natflow-dpi-corpus
 TRAFFIC_BIN=$TMP_DIR/natflow-dpi-traffic
+PRESSURE_BIN=$TMP_DIR/natflow-dpi-queue-pressure
+PRESSURE_CACHE_DEFAULT=8
+PRESSURE_EVENTS_DEFAULT=32
+PRESSURE_PORT_BASE=42000
+PRESSURE_PAYLOAD=000100002112a442000102030405060708090a0b
 original_enable=
 original_forward=
 rules_installed=0
 topology_installed=0
 firewall_installed=0
 cleanup_done=0
+pressure_mode=0
+pressure_cache=$PRESSURE_CACHE_DEFAULT
+pressure_events=$PRESSURE_EVENTS_DEFAULT
 
 usage()
 {
 	cat <<EOF
 Usage: $0 case-file [case-file ...]
        $0 --check case-file [case-file ...]
+       $0 --queue-pressure [cache [generated]]
 
 Case format, one pipe-separated record per line:
   name|proto|transport|direction|port|payload_hex|expectation
 
 Blank lines and lines beginning with # are ignored. This destructive test
-requires an empty DPI ruleset and root privileges.
+requires an empty DPI ruleset and root privileges. Queue pressure defaults to
+cache=$PRESSURE_CACHE_DEFAULT and generated=$PRESSURE_EVENTS_DEFAULT.
 EOF
 }
 
@@ -187,6 +197,17 @@ exit_cleanup()
 	exit "$status"
 }
 
+finish_cleanup()
+{
+	set +e
+	cleanup_resources
+	cleanup_status=$?
+	set -e
+	[ "$cleanup_status" -eq 0 ] ||
+		fail "corpus cleanup verification failed"
+	printf 'PASS: cleanup restored DPI and network state\n'
+}
+
 proto_values()
 {
 	case $1 in
@@ -273,7 +294,7 @@ inject_case()
 	direction=$2
 	port=$3
 	payload=$4
-	ready_file=$TMP_DIR/ready.$$
+	ready_file=$TMP_DIR/ready.$$.${port}
 
 	rm -f "$ready_file"
 	ip netns exec "$SERVER_NS" "$TRAFFIC_BIN" server "$l4" \
@@ -293,6 +314,26 @@ inject_case()
 	wait "$server_pid" || fail "traffic server failed"
 }
 
+inject_pressure()
+{
+	count=$1
+	base_port=$2
+	payload=$3
+	pids=
+	failed=0
+	index=0
+
+	while [ "$index" -lt "$count" ]; do
+		inject_case udp original "$((base_port + index))" "$payload" &
+		pids="$pids $!"
+		index=$((index + 1))
+	done
+	for child_pid in $pids; do
+		wait "$child_pid" || failed=1
+	done
+	[ "$failed" = 0 ] || fail "one or more pressure flows failed"
+}
+
 if [ "${1:-}" = __inject ]; then
 	shift
 	[ "$#" -eq 8 ] || fail "invalid internal injector arguments"
@@ -302,6 +343,20 @@ if [ "${1:-}" = __inject ]; then
 	TMP_DIR=$4
 	shift 4
 	inject_case "$@"
+	exit 0
+fi
+
+if [ "${1:-}" = __pressure_inject ]; then
+	shift
+	[ "$#" -eq 7 ] || fail "invalid internal pressure injector arguments"
+	CLIENT_NS=$1
+	SERVER_NS=$2
+	TRAFFIC_BIN=$3
+	TMP_DIR=$4
+	pressure_events=$5
+	pressure_port_base=$6
+	pressure_payload=$7
+	inject_pressure "$pressure_events" "$pressure_port_base" "$pressure_payload"
 	exit 0
 fi
 
@@ -321,6 +376,34 @@ if [ "$1" = --check ]; then
 	[ "$#" -gt 0 ] || fail "no case files supplied"
 	check_case_files "$@"
 	exit 0
+fi
+
+if [ "$1" = --queue-pressure ]; then
+	pressure_mode=1
+	shift
+	[ "$#" -le 2 ] || fail "queue pressure accepts at most cache and generated"
+	if [ "$#" -ge 1 ]; then
+		pressure_cache=$1
+	fi
+	if [ "$#" -eq 2 ]; then
+		pressure_events=$2
+	fi
+	case $pressure_cache in
+	0|[1-9]|[1-9][0-9]*) ;;
+	*) fail "invalid queue pressure cache: $pressure_cache" ;;
+	esac
+	case $pressure_events in
+	0|[1-9]|[1-9][0-9]*) ;;
+	*) fail "invalid generated event count: $pressure_events" ;;
+	esac
+	[ "$pressure_cache" -gt 0 ] ||
+		fail "queue pressure cache must be positive"
+	[ "$pressure_events" -gt "$pressure_cache" ] ||
+		fail "generated events must exceed the cache limit"
+	[ "$pressure_events" -le 256 ] ||
+		fail "queue pressure is limited to 256 concurrent flows"
+	[ "$((PRESSURE_PORT_BASE + pressure_events))" -le 65535 ] ||
+		fail "queue pressure port range exceeds 65535"
 fi
 
 [ "$(id -u)" = 0 ] || fail "root privileges are required"
@@ -348,6 +431,11 @@ trap 'exit 143' TERM
 	-o "$ASSERT_BIN" "$REPO_DIR/tools/natflow-dpi-corpus.c"
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror \
 	-o "$TRAFFIC_BIN" "$REPO_DIR/tools/natflow-dpi-traffic.c"
+if [ "$pressure_mode" = 1 ]; then
+	"$CC" -std=c11 -O2 -Wall -Wextra -Werror \
+		-o "$PRESSURE_BIN" \
+		"$REPO_DIR/tools/natflow-dpi-queue-pressure.c"
+fi
 
 ip netns add "$CLIENT_NS"
 topology_installed=1
@@ -377,14 +465,55 @@ write_ctl enable=0
 write_ctl events_clear
 write_ctl rules_begin
 rules_installed=1
-write_ctl "proto id=6101 app=7101 proto=dns"
-write_ctl "proto id=6102 app=7102 proto=ssh"
-write_ctl "proto id=6103 app=7103 proto=wireguard"
-write_ctl "proto id=6104 app=7104 proto=stun"
-write_ctl "proto id=6105 app=7105 proto=turn"
-write_ctl "proto id=6106 app=7106 proto=bittorrent"
+if [ "$pressure_mode" = 1 ]; then
+	write_ctl "proto id=6104 app=7104 proto=stun"
+else
+	write_ctl "proto id=6101 app=7101 proto=dns"
+	write_ctl "proto id=6102 app=7102 proto=ssh"
+	write_ctl "proto id=6103 app=7103 proto=wireguard"
+	write_ctl "proto id=6104 app=7104 proto=stun"
+	write_ctl "proto id=6105 app=7105 proto=turn"
+	write_ctl "proto id=6106 app=7106 proto=bittorrent"
+fi
 write_ctl rules_commit
 write_ctl enable=1
+
+if [ "$pressure_mode" = 1 ]; then
+	"$PRESSURE_BIN" -d "$QUEUE" -c "$pressure_cache" \
+		-n "$pressure_events" -S "$CLIENT_IP" -T "$SERVER_IP" \
+		-p "$PRESSURE_PORT_BASE" -a 7104 -r 6104 -- \
+		"$0" __pressure_inject "$CLIENT_NS" "$SERVER_NS" \
+		"$TRAFFIC_BIN" "$TMP_DIR" "$pressure_events" \
+		"$PRESSURE_PORT_BASE" "$PRESSURE_PAYLOAD"
+
+	expected_lost=$((pressure_events - pressure_cache))
+	actual_matches=$(field matches)
+	actual_events=$(field events)
+	actual_suppressed=$(field events_suppressed)
+	actual_lost=$(field events_lost)
+	actual_matches_stun=$(field matches_stun)
+	actual_events_stun=$(field events_stun)
+	[ "$actual_matches" -eq "$pressure_events" ] ||
+		fail "matches=$actual_matches, expected $pressure_events"
+	[ "$actual_events" -eq "$pressure_cache" ] ||
+		fail "events=$actual_events, expected $pressure_cache"
+	[ "$actual_suppressed" -eq 0 ] ||
+		fail "events_suppressed=$actual_suppressed, expected 0"
+	[ "$actual_lost" -eq "$expected_lost" ] ||
+		fail "events_lost=$actual_lost, expected $expected_lost"
+	[ "$actual_matches_stun" -eq "$pressure_events" ] ||
+		fail "matches_stun=$actual_matches_stun, expected $pressure_events"
+	[ "$actual_events_stun" -eq "$pressure_cache" ] ||
+		fail "events_stun=$actual_events_stun, expected $pressure_cache"
+	[ "$actual_matches" -eq \
+		"$((actual_events + actual_suppressed + actual_lost))" ] ||
+		fail "DPI event counters violate the accounting invariant"
+
+	finish_cleanup
+	printf 'PASS: DPI queue pressure cache=%u generated=%u lost=%u\n' \
+		"$pressure_cache" "$pressure_events" "$expected_lost"
+	exit 0
+fi
 
 case_count=0
 for case_file in "$@"; do
@@ -407,10 +536,5 @@ for case_file in "$@"; do
 done
 
 [ "$case_count" -gt 0 ] || fail "no corpus cases were loaded"
-set +e
-cleanup_resources
-cleanup_status=$?
-set -e
-[ "$cleanup_status" -eq 0 ] || fail "corpus cleanup verification failed"
-printf 'PASS: cleanup restored DPI and network state\n'
+finish_cleanup
 printf 'PASS: %u DPI corpus case(s)\n' "$case_count"

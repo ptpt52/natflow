@@ -97,7 +97,7 @@ GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链降到 17
 
 目标：形成可重复的验证入口，至少覆盖基础构建、`CONFIG_NATFLOW_PATH`、`CONFIG_NATFLOW_URLLOGGER`、`NO_DEBUG=1`，并逐步补 URL parser、QoS、认证状态机和 vline 回归验证。
 
-当前进度：`tools/build-matrix.sh` 已固化七组合 clean build；用户态 v3 ABI 已抽到 `tools/natflow-dpi-event.h`，`tools/natflow-dpi-reader.c`、`tools/natflow-dpi-queue-smoke.c` 和 `tools/natflow-dpi-ctl-smoke.sh` 已提供 DPI queue、结构边界、真实事件固定头和空 ruleset 控制事务入口；`tests/dpi/run-corpus.sh` 已建立 IPv4 network namespace、双向 TCP/UDP 注入和 queue event 断言框架，首批 corpus 已覆盖 DNS、SSH、WireGuard、STUN/TURN 和 BitTorrent 正反样本，2026-07-26 真机执行 51 项全部通过。队列满/并发流量、URL parser corpus、QoS、认证状态机和 vline 自动回归仍未完成。
+当前进度：`tools/build-matrix.sh` 已固化七组合 clean build；用户态 v3 ABI 已抽到 `tools/natflow-dpi-event.h`，`tools/natflow-dpi-reader.c`、`tools/natflow-dpi-queue-smoke.c` 和 `tools/natflow-dpi-ctl-smoke.sh` 已提供 DPI queue、结构边界、真实事件固定头和空 ruleset 控制事务入口；`tests/dpi/run-corpus.sh` 已建立 IPv4 network namespace、双向 TCP/UDP 注入和 queue event 断言框架，首批 corpus 已覆盖 DNS、SSH、WireGuard、STUN/TURN 和 BitTorrent 正反样本，2026-07-26 真机执行 51 项全部通过。`tools/natflow-dpi-queue-pressure.c` 和 runner 的 `--queue-pressure` 模式已补小 cache、并发 producer、drop-new 和 lost/accounting 自动化，仍待真机执行；持续 queue 压力、URL parser corpus、QoS、认证状态机和 vline 自动回归仍未完成。
 
 ### P2-2：评估用户态控制面/authd/portal
 

@@ -1104,6 +1104,13 @@ queue smoke 打开设备时会按 ABI 清空残留事件并独占 reader；不�
 
 协议 detector 黑盒 corpus 入口为 `tests/dpi/run-corpus.sh`。它在 root namespace 中建立两个 IPv4 network namespace，让 TCP/UDP fixture 经过真实 FORWARD hook，并对 queue event 的 original tuple、source、`app_id`、`rule_id` 和 `evidence_dir` 做断言。runner 要求 root 权限、`ip`、`iptables`、C 编译器、已加载的 DPI 模块和空 ruleset；会临时修改 IPv4 forwarding、FORWARD 规则、DPI enable/ruleset/generation 和事件统计，只能用于隔离测试环境。最终 PASS 仅在 DPI 状态、FORWARD 规则、namespace/veth 和 forwarding 清理结果均核验通过后输出。样本格式和清理边界见 `tests/dpi/README.md`。
 
+同一 runner 的 `--queue-pressure [cache [generated]]` 模式用于 queue 满载和并发 producer 回归，默认以 cache=8 并发生成 32 条独立 STUN 流。测试期间单一 reader 不读取事件，注入完成后断言只保留 8 条合法 v3 event，并核对 `matches=32`、`events=8`、`events_lost=24`、`events_suppressed=0` 及 STUN 分项。该模式同样要求空 ruleset 和隔离测试环境：
+
+```sh
+sudo tests/dpi/run-corpus.sh --queue-pressure
+sudo tests/dpi/run-corpus.sh --queue-pressure 16 64
+```
+
 下面代码保留为接口示例；实际测试优先使用上述维护版本。
 
 ```c

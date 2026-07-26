@@ -763,10 +763,10 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 ### 19.5 ABI 与资源
 
 - DPI ctl line 长度、未知命令、事务冲突、generation 回放、`events_clear` 后队列和统计归零。
-- DPI queue 小 buffer、poll、event lost、record_len 跳过。
+- DPI queue 小 buffer、poll、event lost、record_len 跳过；`tests/dpi/run-corpus.sh --queue-pressure` 已提供小 cache、并发 producer、drop-new 和计数恒等式真机入口。
 - ruleset memory、retired generation、hash collision、suffix probes。
 - malformed packet 不刷日志。
-- `tools/natflow-dpi-reader.c` 提供 v3 queue ABI 参考读取器；`tools/natflow-dpi-queue-smoke.c` 提供单 reader、不可 seek、小 buffer、空队列、cache/close 和可选真实事件固定头验证；`tools/natflow-dpi-ctl-smoke.sh` 提供仅允许空 ruleset 的控制事务冒烟入口。工具仍需在真机执行，队列满和并发流量验证尚未自动化。
+- `tools/natflow-dpi-reader.c` 提供 v3 queue ABI 参考读取器；`tools/natflow-dpi-queue-smoke.c` 提供单 reader、不可 seek、小 buffer、空队列、cache/close 和可选真实事件固定头验证；`tools/natflow-dpi-ctl-smoke.sh` 提供仅允许空 ruleset 的控制事务冒烟入口；`tools/natflow-dpi-queue-pressure.c` 与 `tests/dpi/run-corpus.sh --queue-pressure` 提供小 cache、并发 STUN producer、drop-new 和计数核验入口。queue pressure 自动化仍需在真机执行，持续压力、reader/producer 同时运行和内存分配失败注入尚未覆盖。
 
 ### 19.6 性能
 

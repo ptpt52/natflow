@@ -27,6 +27,21 @@ Fixture files can be checked without root, a loaded module, or network setup:
 tests/dpi/run-corpus.sh --check tests/dpi/cases/*.cases
 ```
 
+Queue-full accounting and concurrent producer traffic can be tested with:
+
+```sh
+sudo tests/dpi/run-corpus.sh --queue-pressure
+sudo tests/dpi/run-corpus.sh --queue-pressure 8 32
+```
+
+The optional values are the cache limit and number of generated flows. The
+runner opens one reader, does not read while the flows run concurrently, then
+requires exactly `cache` valid STUN events and verifies the ctl counters:
+`matches=generated`, `events=cache`, `events_lost=generated-cache`,
+`events_suppressed=0`, and the corresponding STUN source counters. This mode
+has the same empty-ruleset, isolated-host, state-restoration, and final cleanup
+requirements as the detector corpus.
+
 Case files use seven pipe-separated fields:
 
 ```text
@@ -36,8 +51,8 @@ name|proto|tcp-or-udp|original-or-reply|server-port|payload-hex|positive-or-nega
 Every case uses a new connection. Positive cases require the expected source,
 `app_id`, `rule_id`, original tuple, and evidence direction. Negative cases
 fail on any DPI event for that tuple. The first implementation is IPv4-only;
-IPv6, exact TCP segmentation, queue-full pressure, and non-linear skb coverage
-remain separate integration work.
+IPv6, exact TCP segmentation, non-linear skb, and longer sustained queue
+pressure remain separate integration work.
 
 Current fixtures:
 
