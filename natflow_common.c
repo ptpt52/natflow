@@ -123,52 +123,37 @@ int natflow_ct_ext_layout_validate(void)
 {
 	struct natflow_ct_ext_layout layout;
 
+	BUILD_BUG_ON(NF_FF_L7_USE_BIT != 19);
+	BUILD_BUG_ON(!(NF_FF_BUSY_USE & NF_FF_L7_USE));
+	BUILD_BUG_ON(NF_FF_DPI_USE_BIT != 21);
+	BUILD_BUG_ON(!(NF_FF_BUSY_USE & NF_FF_DPI_USE));
+	BUILD_BUG_ON(NF_FF_L7_URL_DONE_BIT != 22);
+	BUILD_BUG_ON(NF_FF_L7_DPI_DOMAIN_DONE_BIT != 23);
+	BUILD_BUG_ON(NF_FF_L7_DPI_PACKET_DONE_BIT != 24);
+	BUILD_BUG_ON(NF_FF_BUSY_USE & (NF_FF_L7_URL_DONE |
+	                               NF_FF_L7_DPI_DOMAIN_DONE |
+	                               NF_FF_L7_DPI_PACKET_DONE));
+
+	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_byte_count) !=
+	             offsetof(struct natflow_t, app_id) +
+	             sizeof(((struct natflow_t *)0)->app_id));
+	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_packet_count) !=
+	             offsetof(struct natflow_t, dpi_byte_count) +
+	             sizeof(((struct natflow_t *)0)->dpi_byte_count));
+	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_detector_mask) !=
+	             offsetof(struct natflow_t, dpi_packet_count) +
+	             sizeof(((struct natflow_t *)0)->dpi_packet_count));
+	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_reserved) !=
+	             offsetof(struct natflow_t, dpi_detector_mask) +
+	             sizeof(((struct natflow_t *)0)->dpi_detector_mask));
+	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_reserved) +
+	             sizeof(((struct natflow_t *)0)->dpi_reserved) -
+	             offsetof(struct natflow_t, dpi_byte_count) != 8);
+	BUILD_BUG_ON(ALIGN(offsetof(struct natflow_t, dpi_reserved) +
+	                   sizeof(((struct natflow_t *)0)->dpi_reserved),
+	                   __ALIGN_64BITS) != sizeof(struct natflow_t));
+
 	natflow_ct_ext_layout_get(&layout);
-
-	if (NF_FF_L7_USE_BIT != 19) {
-		NATFLOW_ERROR("unexpected NF_FF_L7_USE_BIT=%u\n", NF_FF_L7_USE_BIT);
-		return -EINVAL;
-	}
-
-	if (!(NF_FF_BUSY_USE & NF_FF_L7_USE)) {
-		NATFLOW_ERROR("NF_FF_L7_USE is missing from NF_FF_BUSY_USE\n");
-		return -EINVAL;
-	}
-
-	if (NF_FF_DPI_USE_BIT != 21) {
-		NATFLOW_ERROR("unexpected NF_FF_DPI_USE_BIT=%u\n", NF_FF_DPI_USE_BIT);
-		return -EINVAL;
-	}
-
-	if (!(NF_FF_BUSY_USE & NF_FF_DPI_USE)) {
-		NATFLOW_ERROR("NF_FF_DPI_USE is missing from NF_FF_BUSY_USE\n");
-		return -EINVAL;
-	}
-
-	if (NF_FF_L7_URL_DONE_BIT != 22) {
-		NATFLOW_ERROR("unexpected NF_FF_L7_URL_DONE_BIT=%u\n",
-		              NF_FF_L7_URL_DONE_BIT);
-		return -EINVAL;
-	}
-
-	if (NF_FF_L7_DPI_DOMAIN_DONE_BIT != 23) {
-		NATFLOW_ERROR("unexpected NF_FF_L7_DPI_DOMAIN_DONE_BIT=%u\n",
-		              NF_FF_L7_DPI_DOMAIN_DONE_BIT);
-		return -EINVAL;
-	}
-
-	if (NF_FF_L7_DPI_PACKET_DONE_BIT != 24) {
-		NATFLOW_ERROR("unexpected NF_FF_L7_DPI_PACKET_DONE_BIT=%u\n",
-		              NF_FF_L7_DPI_PACKET_DONE_BIT);
-		return -EINVAL;
-	}
-
-	if (NF_FF_BUSY_USE & (NF_FF_L7_URL_DONE |
-	                      NF_FF_L7_DPI_DOMAIN_DONE |
-	                      NF_FF_L7_DPI_PACKET_DONE)) {
-		NATFLOW_ERROR("L7 done bits must not be part of NF_FF_BUSY_USE\n");
-		return -EINVAL;
-	}
 
 	if (layout.nat_key_off > NATCAP_MAX_OFF) {
 		NATFLOW_ERROR("nat_key_off=%u exceeds NATCAP_MAX_OFF=%u\n",
@@ -179,27 +164,6 @@ int natflow_ct_ext_layout_validate(void)
 	if (layout.natflow_off > 0xffffu) {
 		NATFLOW_ERROR("natflow_off=%u exceeds nat_key_t storage\n",
 		              layout.natflow_off);
-		return -EINVAL;
-	}
-
-	if (layout.natflow_off < layout.nat_key_off + sizeof(struct nat_key_t) ||
-	        layout.natflow_off != ALIGN(layout.natflow_off, __ALIGN_64BITS) ||
-	        layout.natflow_len < sizeof(struct natflow_t)) {
-		NATFLOW_ERROR("invalid natflow layout: key=%u flow=%u len=%u total=%u\n",
-		              layout.nat_key_off, layout.natflow_off,
-		              layout.natflow_len, layout.total_len);
-		return -EINVAL;
-	}
-
-	if (offsetof(struct natflow_t, dpi_byte_count) !=
-	        offsetof(struct natflow_t, app_id) + sizeof(((struct natflow_t *)0)->app_id) ||
-	        ALIGN(offsetof(struct natflow_t, dpi_reserved) +
-	              sizeof(((struct natflow_t *)0)->dpi_reserved),
-	              __ALIGN_64BITS) != sizeof(struct natflow_t)) {
-		NATFLOW_ERROR("invalid natflow dpi context layout: size=%u app=%u counters=%u\n",
-		              (unsigned int)sizeof(struct natflow_t),
-		              (unsigned int)offsetof(struct natflow_t, app_id),
-		              (unsigned int)offsetof(struct natflow_t, dpi_byte_count));
 		return -EINVAL;
 	}
 

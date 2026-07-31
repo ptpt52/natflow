@@ -2232,10 +2232,6 @@ int natflow_dpi_init(void)
 	BUILD_BUG_ON(sizeof(struct natflow_dpi_event_hdr) !=
 	             NATFLOW_DPI_EVENT_HEADER_LEN);
 
-	ret = natflow_ct_ext_layout_validate();
-	if (ret != 0)
-		return ret;
-
 	init_waitqueue_head(&natflow_dpi_wait);
 	natflow_dpi_counters_clear();
 	WRITE_ONCE(natflow_dpi_queue_readers, 0);

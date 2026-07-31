@@ -3202,13 +3202,9 @@ int natflow_l7_dns_response_parse(const unsigned char *data,
 
 int natflow_l7_init(void)
 {
+#if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
 	int ret;
 
-	ret = natflow_ct_ext_layout_validate();
-	if (ret != 0)
-		return ret;
-
-#if defined(CONFIG_NATFLOW_URLLOGGER) || defined(CONFIG_NATFLOW_DPI)
 	ret = natflow_l7_tls_cache_init();
 	if (ret != 0)
 		return ret;

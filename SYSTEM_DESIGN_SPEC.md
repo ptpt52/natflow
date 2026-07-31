@@ -743,7 +743,7 @@ fakeuser 不是普通用户态对象，而是特殊 conntrack：
 - `ct->ext->len` 超过 `NATCAP_MAX_OFF = 512` 不支持。
 - `natflow_session_get()` 会校验 status bit、ext、magic、ext_magic 和 offset；任何不匹配均视为无 natflow 会话。
 - `static_fixed_ext_off` 会在 `natflow_probe_ct_ext()` 中通过构造临时 conntrack 并添加所有扩展来探测；探测失败时使用默认 `256 / NATCAP_FACTOR`。
-- `natflow_ct_ext_layout_validate()` 会验证 L7/DPI busy/done bit、`NF_FF_BUSY_USE`、`nat_key_t` 偏移和 `natflow_off`，并确认 `app_id` 后紧接 8 字节 DPI context，结构尾部只允许 64 位布局对齐产生的 padding。
+- 编译期通过 `BUILD_BUG_ON()` 验证 L7/DPI busy/done bit、`NF_FF_BUSY_USE`，并确认 `app_id` 后紧接字段连续的 8 字节 DPI context，结构尾部只允许 64 位布局对齐产生的 padding；`natflow_ct_ext_layout_validate()` 运行期只校验探测得到的 `nat_key_t` 偏移和 `natflow_off`。
 
 AI 重建实现时必须显式处理 conntrack ext 内存布局，不能把 `natflow_t` 放进独立哈希表后声称兼容。
 
