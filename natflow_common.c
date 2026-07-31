@@ -284,10 +284,6 @@ int natflow_session_init(struct nf_conn *ct, gfp_t gfp)
 	}
 
 	old = ct->ext;
-	if (natflow_ct_ext_layout_validate() != 0) {
-		clear_bit(IPS_NATFLOW_SESSION_BIT, &ct->status);
-		return -1;
-	}
 	natflow_ct_ext_layout_get(&layout);
 	nkoff = layout.nat_key_off;
 	newoff = layout.natflow_off;
