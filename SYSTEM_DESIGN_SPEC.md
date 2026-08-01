@@ -366,7 +366,7 @@ AI 重建时必须保留“换行结束、256 字节上限、静态半行缓存�
 读接口输出 fakeuser 列表，每行：
 
 ```text
-ip_or_ipv6,mac,auth_type_hex,auth_status_hex,rule_id,idle_time,rx_pkts:rx_bytes,tx_pkts:tx_bytes,rx_speed_pkts:rx_speed_bytes,tx_speed_pkts:tx_speed_bytes
+ip_or_ipv6,mac,auth_type_hex,auth_status_hex,rule_id,idle_time,rx_pkts:rx_bytes,tx_pkts:tx_bytes,rx_speed_pkts:rx_speed_bytes,tx_speed_pkts:tx_speed_bytes,ifname
 ```
 
 写命令：
@@ -383,6 +383,7 @@ ip_or_ipv6,mac,auth_type_hex,auth_status_hex,rule_id,idle_time,rx_pkts:rx_bytes,
 - 单次 read 如果生成行长度大于用户提供 buffer，会返回 `-EINVAL`，这会破坏 shell 中按 1 字节读的用法。代码中已有 FIXME，重建实现若追求兼容应保留，若修复需在变更记录说明。
 - fakeuser 是特殊 conntrack，不是独立用户态表。
 - `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数，不再从当前 `no_flow_timeout` 反推；该 timestamp 在 fakeuser 创建/获取时写入，user pre hook 中普通活动最多每 32 秒刷新一次，`IP_CT_NEW` 新连接包距离上次刷新超过 2 秒也会刷新。
+- `ifname` 保存最近一次与 MAC 同步学习到的源流量入口设备名；普通流量沿用 timestamp 的 32 秒/新连接 2 秒刷新节流，ARP/ND 学习路径立即更新 MAC 和设备名。
 - 每个打开实例缓存最多 4096 条用户快照；扫描 conntrack hash 超过时间片或缓存上限时会保存 `next_bucket` 并返回 `-EAGAIN`。
 - 速度字段来自 4 个 2 秒窗口；如果超过 8 秒无更新，速度输出为 0。
 
@@ -419,12 +420,14 @@ struct natflow_userinfo_event_hdr {
 	__u32 rx_speed_bytes;
 	__u32 tx_speed_packets;
 	__u32 tx_speed_bytes;
+	__u8 ifname[IFNAMSIZ];
 } __packed;
 ```
 
-- `version=2`，`header_len=record_len=sizeof(struct natflow_userinfo_event_hdr)`。
+- `version=3`，`header_len=record_len=sizeof(struct natflow_userinfo_event_hdr)`。
 - 除地址字节数组外，整数按内核本机端序输出；`family` 为 `AF_INET` 或 `AF_INET6`，IPv4 地址存放在 `ip[0..3]`，IPv6 地址使用完整 16 字节。
 - `idle_time`、认证字段、计数和速度字段语义与 `/dev/natflow_userinfo_ctl` 文本输出一致。
+- `ifname` 是以 NUL 结尾的源流量入口设备名，字段固定占用 `IFNAMSIZ` 字节。
 
 ### 7.7 `/dev/natflow_conntrackinfo_ctl`
 
@@ -690,7 +693,7 @@ fakeuser 不是普通用户态对象，而是特殊 conntrack：
 
 - IPv4 fakeuser tuple：源地址为用户 IP，目标地址为 `NATFLOW_FAKEUSER_DADDR`，UDP 源端口 0、目标端口 65535。
 - IPv6 fakeuser tuple：源地址为用户 IPv6，目标地址以前缀 `ffff::` 形式构造。
-- fakeuser 扩展尾部挂 `fakeuser_data_t`，保存 MAC、认证状态、规则 id、vline LAN 侧标志、速度窗口、token ctrl 等。
+- fakeuser 扩展尾部挂 `fakeuser_data_t`，保存 MAC、源流量入口设备名、认证状态、规则 id、vline LAN 侧标志、速度窗口、token ctrl 等。
 - fakeuser 生命周期依赖 conntrack timeout；默认无流超时 1800 秒。
 - `NATFLOW_FAKEUSER_DADDR` 定义为 `htonl(0x7fffffff)`；实现注释把它作为 fakeuser 专用目的地址，不应与真实业务 tuple 混用。
 

@@ -3393,7 +3393,7 @@ out:
 								struct arphdr *arph = arp_hdr(skb);
 								ipaddr = get_byte4((void *)arph + 8 + ETH_ALEN); /* sip */
 								get_byte6((void *)arph + 8, macaddr); /* sha */
-								user = natflow_user_in_get(ipaddr, macaddr); /* Learn or update MAC cache. */
+								user = natflow_user_in_get(ipaddr, macaddr, skb->dev); /* Learn or update source cache. */
 								if (user) {
 									struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 									if ((skb->dev->flags & IFF_VLINE_IS_LAN)) {
@@ -5248,7 +5248,8 @@ out6:
 							do {
 								unsigned char *opt_ptr;
 								eth = eth_hdr(skb);
-								user = natflow_user_in_get6((const union nf_inet_addr *)&IPV6H->saddr, eth->h_source);
+								user = natflow_user_in_get6((const union nf_inet_addr *)&IPV6H->saddr,
+								                            eth->h_source, skb->dev);
 								if (user) {
 									struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 									if ((skb->dev->flags & IFF_VLINE_IS_LAN)) {

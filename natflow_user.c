@@ -71,6 +71,7 @@ struct userinfo {
 	unsigned int rx_speed_bytes;
 	unsigned int tx_speed_packets;
 	unsigned int tx_speed_bytes;
+	char ifname[IFNAMSIZ];
 };
 
 struct userinfo_event {
@@ -139,6 +140,17 @@ static inline unsigned int natflow_user_idle_time(const struct fakeuser_data_t *
 	return (uint32_t)((uint32_t)jiffies - timestamp) / HZ;
 }
 
+static inline void natflow_user_source_update(struct fakeuser_data_t *fud,
+        const uint8_t *macaddr, const struct net_device *dev)
+{
+	if (macaddr && memcmp(macaddr, fud->macaddr, ETH_ALEN) != 0)
+		memcpy(fud->macaddr, macaddr, ETH_ALEN);
+	if (dev && strncmp(fud->ifname, dev->name, IFNAMSIZ) != 0) {
+		strncpy(fud->ifname, dev->name, IFNAMSIZ);
+		fud->ifname[IFNAMSIZ - 1] = '\0';
+	}
+}
+
 static inline void userinfo_event_queue(natflow_fakeuser_t *user)
 {
 	struct nf_conn_acct *acct;
@@ -168,6 +180,7 @@ static inline void userinfo_event_queue(natflow_fakeuser_t *user)
 		user_i->ipv6 = user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
 	}
 	memcpy(user_i->macaddr, fud->macaddr, ETH_ALEN);
+	memcpy(user_i->ifname, fud->ifname, IFNAMSIZ);
 	user_i->auth_type = fud->auth_type;
 	user_i->auth_status = fud->auth_status;
 	user_i->auth_rule_id = fud->auth_rule_id;
@@ -844,7 +857,8 @@ static natflow_fakeuser_t *natflow_user_lookup_in(struct nf_conn *ct, int dir)
 }
 
 /* Must release via natflow_user_release_put(). */
-natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
+natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr,
+                                        const struct net_device *dev)
 {
 	natflow_fakeuser_t *user = NULL;
 	int ret;
@@ -932,11 +946,9 @@ natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 
 	natflow_user_timeout_touch(user);
 
-	/* Update MAC address. */
+	/* Update source interface and MAC address. */
 	fud = natflow_fakeuser_data(user);
-	if (memcmp(macaddr, fud->macaddr, ETH_ALEN) != 0) {
-		memcpy(fud->macaddr, macaddr, ETH_ALEN);
-	}
+	natflow_user_source_update(fud, macaddr, dev);
 	fud->timestamp = jiffies;
 
 	nf_conntrack_get(&user->ct_general);
@@ -947,7 +959,8 @@ natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 }
 
 /* Must release via natflow_user_release_put(). */
-natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3, const uint8_t *macaddr)
+natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3,
+        const uint8_t *macaddr, const struct net_device *dev)
 {
 	natflow_fakeuser_t *user = NULL;
 	int ret;
@@ -1032,11 +1045,9 @@ natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3, const uin
 
 	natflow_user_timeout_touch(user);
 
-	/* Update MAC address. */
+	/* Update source interface and MAC address. */
 	fud = natflow_fakeuser_data(user);
-	if (memcmp(macaddr, fud->macaddr, ETH_ALEN) != 0) {
-		memcpy(fud->macaddr, macaddr, ETH_ALEN);
-	}
+	natflow_user_source_update(fud, macaddr, dev);
 	fud->timestamp = jiffies;
 
 	nf_conntrack_get(&user->ct_general);
@@ -2091,9 +2102,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		        (ctinfo != IP_CT_NEW || idle_jiffies < NATFLOW_USER_TIMESTAMP_NEW_REFRESH)) {
 			break;
 		}
-		if (memcmp(eth_hdr(skb)->h_source, fud->macaddr, ETH_ALEN) != 0) {
-			memcpy(fud->macaddr, eth_hdr(skb)->h_source, ETH_ALEN);
-		}
+		natflow_user_source_update(fud, eth_hdr(skb)->h_source, in);
 		fud->timestamp = jiffies;
 		natflow_user_timeout_touch(user);
 		userinfo_event_queue(user);
@@ -3798,6 +3807,7 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 						user_i->ipv6 = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
 					}
 					memcpy(user_i->macaddr, fud->macaddr, ETH_ALEN);
+					memcpy(user_i->ifname, fud->ifname, IFNAMSIZ);
 					user_i->auth_type = fud->auth_type;
 					user_i->auth_status = fud->auth_status;
 					user_i->auth_rule_id = fud->auth_rule_id;
@@ -3859,17 +3869,19 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 	user_i = list_first_entry_or_null(&user->head, struct userinfo, list);
 	if (user_i) {
 		if (user_i->l2num == 0) {
-			len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
+			len = sprintf(user->data, "%pI4,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u,%s\n",
 			              &user_i->ip, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
 			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->idle_time,
 			              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
-			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
+			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes,
+			              user_i->ifname);
 		} else {
-			len = sprintf(user->data, "%pI6,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u\n",
+			len = sprintf(user->data, "%pI6,%02x:%02x:%02x:%02x:%02x:%02x,0x%x,0x%x,%u,%u,%llu:%llu,%llu:%llu,%u:%u,%u:%u,%s\n",
 			              &user_i->ipv6, user_i->macaddr[0], user_i->macaddr[1], user_i->macaddr[2], user_i->macaddr[3], user_i->macaddr[4], user_i->macaddr[5],
 			              user_i->auth_type, user_i->auth_status, user_i->auth_rule_id, user_i->idle_time,
 			              user_i->rx_packets, user_i->rx_bytes, user_i->tx_packets, user_i->tx_bytes,
-			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes);
+			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes,
+			              user_i->ifname);
 		}
 		/*
 		 * FIXME: Returning -EINVAL when len > count breaks single-byte reads
@@ -4057,6 +4069,7 @@ static void userinfo_event_hdr_fill(struct natflow_userinfo_event_hdr *hdr,
 	hdr->rx_speed_bytes = user->rx_speed_bytes;
 	hdr->tx_speed_packets = user->tx_speed_packets;
 	hdr->tx_speed_bytes = user->tx_speed_bytes;
+	memcpy(hdr->ifname, user->ifname, sizeof(hdr->ifname));
 }
 
 static void userinfo_event_cache_set(unsigned int cache_limit)

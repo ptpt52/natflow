@@ -8,6 +8,7 @@
 #include <linux/bitops.h>
 #include <linux/compiler.h>
 #include <linux/atomic.h>
+#include <linux/if.h>
 #include <linux/if_ether.h>
 #include <net/netfilter/nf_conntrack.h>
 #include <linux/netfilter/ipset/ip_set.h>
@@ -49,11 +50,12 @@ typedef struct fakeuser_data_t {
 		struct token_ctrl rx;
 		struct token_ctrl tx;
 	} tc;
+	char ifname[IFNAMSIZ];
 } fakeuser_data_t;
 
 typedef struct nf_conn natflow_fakeuser_t;
 
-#define NATFLOW_USERINFO_EVENT_VERSION 2
+#define NATFLOW_USERINFO_EVENT_VERSION 3
 
 struct natflow_userinfo_event_hdr {
 	__u16 version;
@@ -74,6 +76,7 @@ struct natflow_userinfo_event_hdr {
 	__u32 rx_speed_bytes;
 	__u32 tx_speed_packets;
 	__u32 tx_speed_bytes;
+	__u8 ifname[IFNAMSIZ];
 } __packed;
 
 extern int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf);
@@ -138,8 +141,10 @@ extern void natflow_user_release_put(natflow_fakeuser_t *user);
 extern natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir);
 extern natflow_fakeuser_t *natflow_user_find_get(__be32 ip);
 extern natflow_fakeuser_t *natflow_user_find_get6(const union nf_inet_addr *u3);
-extern natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr);
-extern natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3, const uint8_t *macaddr);
+extern natflow_fakeuser_t *natflow_user_in_get(__be32 ip,
+        const uint8_t *macaddr, const struct net_device *dev);
+extern natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3,
+        const uint8_t *macaddr, const struct net_device *dev);
 
 static inline void natflow_auth_convert_tcprst(struct sk_buff *skb)
 {

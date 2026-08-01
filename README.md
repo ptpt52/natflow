@@ -416,7 +416,7 @@ cat /dev/natflow_userinfo_ctl
 输出格式：
 
 ```text
-ip_or_ipv6,mac,auth_type,auth_status,rule_id,idle_time,rx_pkts:rx_bytes,tx_pkts:tx_bytes,rx_speed_pkts:rx_speed_bytes,tx_speed_pkts:tx_speed_bytes
+ip_or_ipv6,mac,auth_type,auth_status,rule_id,idle_time,rx_pkts:rx_bytes,tx_pkts:tx_bytes,rx_speed_pkts:rx_speed_bytes,tx_speed_pkts:tx_speed_bytes,ifname
 ```
 
 命令：
@@ -431,6 +431,7 @@ echo 'set-token-ctrl <ip_or_ipv6> <rxbytes> <txbytes>' >/dev/natflow_userinfo_ct
 说明：
 
 - `idle_time` 是该 fakeuser 内部活动时间戳至今经过的秒数；该时间戳在 fakeuser 创建/获取时写入，普通活动最多每 32 秒刷新一次，新连接包距离上次刷新超过 2 秒也会刷新。
+- `ifname` 是最近一次与 MAC 同步学习到的源流量入口设备名。普通流量沿用上述刷新节流；ARP/ND 学习会立即更新 MAC 和设备名。
 - `kickall` 清理所有用户认证状态和统计。
 - `kick`、`set-status`、`set-token-ctrl` 找不到用户时返回 `-ENOENT`。
 - `set-token-ctrl` 单位是 Bytes/s；rx 或 tx 非 0 时启用该用户 token control，两者都为 0 时关闭。
@@ -472,15 +473,17 @@ struct natflow_userinfo_event_hdr {
 	__u32 rx_speed_bytes;
 	__u32 tx_speed_packets;
 	__u32 tx_speed_bytes;
+	__u8 ifname[16];
 } __packed;
 ```
 
 字段说明：
 
-- `version=2`，`header_len=record_len=sizeof(struct natflow_userinfo_event_hdr)`。
+- `version=3`，`header_len=record_len=sizeof(struct natflow_userinfo_event_hdr)`。
 - 除地址字节数组外，整数按内核本机端序输出；用户态 reader 与内核运行在同一机器时直接按结构体读取即可。
 - `family` 是 `AF_INET` 或 `AF_INET6`；IPv4 地址放在 `ip[0..3]`，IPv6 地址使用完整 16 字节。
 - `idle_time` 是该 fakeuser 内部活动时间戳至今经过的秒数。
+- `ifname` 是以 NUL 结尾的源流量入口设备名，更新规则与文本接口一致。
 - 计数字段与 `/dev/natflow_userinfo_ctl` 文本输出一致；速度字段来自 4 个 2 秒窗口，超过 8 秒无更新时为 0。
 
 C 读者样例：
@@ -517,6 +520,7 @@ struct natflow_userinfo_event_hdr {
 	uint32_t rx_speed_bytes;
 	uint32_t tx_speed_packets;
 	uint32_t tx_speed_bytes;
+	uint8_t ifname[16];
 } __attribute__((packed));
 
 #define CACHE_LIMIT 256
@@ -619,7 +623,7 @@ int main(void)
 				const struct natflow_userinfo_event_hdr *ev = &events[i];
 				char ip[INET6_ADDRSTRLEN];
 
-				if (ev->version != 2 ||
+				if (ev->version != 3 ||
 				    ev->header_len != sizeof(*ev) ||
 				    ev->record_len != sizeof(*ev)) {
 					fprintf(stderr, "skip unsupported userinfo event\n");
@@ -639,7 +643,7 @@ int main(void)
 				printf("%s %02x:%02x:%02x:%02x:%02x:%02x "
 				       "auth=0x%x status=0x%x rule=%u idle=%u "
 				       "rx=%" PRIu64 ":%" PRIu64 " tx=%" PRIu64 ":%" PRIu64 " "
-				       "rx_speed=%u:%u tx_speed=%u:%u\n",
+				       "rx_speed=%u:%u tx_speed=%u:%u ifname=%.*s\n",
 				       ip,
 				       ev->mac[0], ev->mac[1], ev->mac[2],
 				       ev->mac[3], ev->mac[4], ev->mac[5],
@@ -647,7 +651,8 @@ int main(void)
 				       ev->idle_time, ev->rx_packets, ev->rx_bytes,
 				       ev->tx_packets, ev->tx_bytes,
 				       ev->rx_speed_packets, ev->rx_speed_bytes,
-				       ev->tx_speed_packets, ev->tx_speed_bytes);
+				       ev->tx_speed_packets, ev->tx_speed_bytes,
+				       (int)sizeof(ev->ifname), (const char *)ev->ifname);
 			}
 		}
 	}
