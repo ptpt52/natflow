@@ -6036,8 +6036,6 @@ static void netdev_hold_workfn(struct work_struct *work)
 	struct netdev_hold_wq *wq = container_of(work, struct netdev_hold_wq, work);
 
 	synchronize_net();
-	natflow_update_magic(0);
-	synchronize_net();
 	dev_put(wq->dev);
 	kfree(wq);
 }
@@ -6161,6 +6159,9 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 	if (event != NETDEV_UNREGISTER)
 		return NOTIFY_DONE;
 
+	/* Invalidate every cached path before any fallible cleanup step. */
+	natflow_update_magic(0);
+
 #ifdef CONFIG_NETFILTER_INGRESS
 	natflow_unhook_device(dev);
 #endif
@@ -6173,15 +6174,22 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 	NATFLOW_println("caught NETDEV_UNREGISTER event for dev=%s", dev->name);
 
 	do {
-		struct netdev_hold_wq *wq = (struct netdev_hold_wq *)kzalloc(sizeof(struct netdev_hold_wq), GFP_KERNEL);
+		struct netdev_hold_wq *wq = kzalloc(sizeof(*wq), GFP_KERNEL);
 
-		if (wq) {
-			dev_hold(dev);
-			wq->dev = dev;
-			INIT_WORK(&wq->work, &netdev_hold_workfn);
-			queue_work(natflow_netdev_wq, &wq->work);
-		} else {
+		if (!wq) {
 			NATFLOW_println("failed to allocate dev hold workqueue for dev=%s", dev->name);
+			synchronize_net();
+			break;
+		}
+
+		dev_hold(dev);
+		wq->dev = dev;
+		INIT_WORK(&wq->work, &netdev_hold_workfn);
+		if (!queue_work(natflow_netdev_wq, &wq->work)) {
+			NATFLOW_println("failed to queue dev hold work for dev=%s", dev->name);
+			synchronize_net();
+			dev_put(dev);
+			kfree(wq);
 		}
 	} while (0);
 

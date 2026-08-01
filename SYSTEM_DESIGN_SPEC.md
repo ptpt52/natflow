@@ -1175,11 +1175,12 @@ path notifier：
 - `NETDEV_DOWN`：
   - 从 PPE cache 清理设备。
 - `NETDEV_UNREGISTER`：
+  - 在任何动态分配或异步排队之前同步 bump path magic，使旧 fastnat node 和 `natflow_t.rroute[].outdev` 立即失效。
   - 注销 ingress hook。
   - 停止相关硬件 offload。
   - 清除 vline map 对该设备的引用。
-  - 通过工作队列延迟同步和 `dev_put()`。
-  - bump path magic。
+  - 正常路径持有设备引用，通过工作队列等待 `synchronize_net()` 后 `dev_put()`。
+  - work 分配或排队失败时在 notifier 内执行 `synchronize_net()`；安全性不依赖临时分配成功。
 
 不适合 ingress hook 的设备包括 loopback、bridge、ovs、bond、macvlan 等；rawip 有例外路径。
 
