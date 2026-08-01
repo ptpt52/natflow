@@ -1904,14 +1904,15 @@ static int natflow_hostacl_init(void)
 
 	hostacl_class = natflow_class_create("hostacl_class");
 	if (IS_ERR(hostacl_class)) {
-		NATFLOW_println("failed to create class");
-		ret = -EINVAL;
+		ret = PTR_ERR(hostacl_class);
+		NATFLOW_println("failed to create class, error=%d", ret);
 		goto class_create_failed;
 	}
 
 	hostacl_dev = device_create(hostacl_class, NULL, devno, NULL, hostacl_dev_name);
 	if (IS_ERR(hostacl_dev)) {
-		ret = -EINVAL;
+		ret = PTR_ERR(hostacl_dev);
+		NATFLOW_println("failed to create device, error=%d", ret);
 		goto device_create_failed;
 	}
 
@@ -1977,14 +1978,15 @@ int natflow_urllogger_init(void)
 
 	urllogger_class = natflow_class_create("urllogger_class");
 	if (IS_ERR(urllogger_class)) {
-		NATFLOW_println("failed to create class");
-		ret = -EINVAL;
+		ret = PTR_ERR(urllogger_class);
+		NATFLOW_println("failed to create class, error=%d", ret);
 		goto class_create_failed;
 	}
 
 	urllogger_dev = device_create(urllogger_class, NULL, devno, NULL, urllogger_dev_name);
 	if (IS_ERR(urllogger_dev)) {
-		ret = -EINVAL;
+		ret = PTR_ERR(urllogger_dev);
+		NATFLOW_println("failed to create device, error=%d", ret);
 		goto device_create_failed;
 	}
 

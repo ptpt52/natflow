@@ -416,22 +416,30 @@ int natflow_zone_init(void)
 
 	natflow_zone_class = natflow_class_create("natflow_zone_class");
 	if (IS_ERR(natflow_zone_class)) {
-		NATFLOW_println("failed to create class");
-		retval = -EINVAL;
+		retval = PTR_ERR(natflow_zone_class);
+		NATFLOW_println("failed to create class, error=%d", retval);
 		goto class_create_failed;
 	}
 
 	natflow_zone_dev = device_create(natflow_zone_class, NULL, devno, NULL, natflow_zone_dev_name);
 	if (IS_ERR(natflow_zone_dev)) {
-		retval = -EINVAL;
+		retval = PTR_ERR(natflow_zone_dev);
+		NATFLOW_println("failed to create device, error=%d", retval);
 		goto device_create_failed;
 	}
 
-	register_netdevice_notifier(&zone_netdev_notifier);
+	retval = register_netdevice_notifier(&zone_netdev_notifier);
+	if (retval) {
+		NATFLOW_println("failed to register netdevice notifier, error=%d", retval);
+		goto register_netdevice_notifier_failed;
+	}
 	natflow_zone_match_refresh();
 
 	return 0;
 
+	/* Notifier registration failed after creating the device node. */
+register_netdevice_notifier_failed:
+	device_destroy(natflow_zone_class, devno);
 	/* device_create() failed before creating a device node. */
 device_create_failed:
 	class_destroy(natflow_zone_class);

@@ -6228,7 +6228,11 @@ int natflow_path_init(void)
 	need_conntrack();
 	natflow_update_magic(1);
 
-	register_netdevice_notifier(&natflow_netdev_notifier);
+	ret = register_netdevice_notifier(&natflow_netdev_notifier);
+	if (ret != 0) {
+		NATFLOW_println("failed to register netdevice notifier, error=%d", ret);
+		goto register_netdevice_notifier_failed;
+	}
 
 	ret = nf_register_hooks(path_hooks, ARRAY_SIZE(path_hooks));
 	if (ret != 0)
@@ -6237,6 +6241,7 @@ int natflow_path_init(void)
 	return 0;
 nf_register_hooks_failed:
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
+register_netdevice_notifier_failed:
 #ifdef CONFIG_NETFILTER_INGRESS
 	kfree(natflow_fast_nat_table);
 alloc_natflow_fast_nat_table_failed:

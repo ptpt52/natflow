@@ -2133,14 +2133,16 @@ static int natflow_dpi_ctl_device_init(void)
 
 	natflow_dpi_ctl_class = natflow_class_create("natflow_dpi_ctl_class");
 	if (IS_ERR(natflow_dpi_ctl_class)) {
-		ret = -EINVAL;
+		ret = PTR_ERR(natflow_dpi_ctl_class);
+		NATFLOW_println("failed to create DPI ctl class, error=%d", ret);
 		goto class_create_failed;
 	}
 
 	natflow_dpi_ctl_dev = device_create(natflow_dpi_ctl_class, NULL, devno,
 	                                    NULL, natflow_dpi_ctl_dev_name);
 	if (IS_ERR(natflow_dpi_ctl_dev)) {
-		ret = -EINVAL;
+		ret = PTR_ERR(natflow_dpi_ctl_dev);
+		NATFLOW_println("failed to create DPI ctl device, error=%d", ret);
 		goto device_create_failed;
 	}
 
@@ -2192,14 +2194,16 @@ static int natflow_dpi_queue_device_init(void)
 
 	natflow_dpi_queue_class = natflow_class_create("natflow_dpi_queue_class");
 	if (IS_ERR(natflow_dpi_queue_class)) {
-		ret = -EINVAL;
+		ret = PTR_ERR(natflow_dpi_queue_class);
+		NATFLOW_println("failed to create DPI queue class, error=%d", ret);
 		goto class_create_failed;
 	}
 
 	natflow_dpi_queue_dev = device_create(natflow_dpi_queue_class, NULL, devno,
 	                                      NULL, natflow_dpi_queue_dev_name);
 	if (IS_ERR(natflow_dpi_queue_dev)) {
-		ret = -EINVAL;
+		ret = PTR_ERR(natflow_dpi_queue_dev);
+		NATFLOW_println("failed to create DPI queue device, error=%d", ret);
 		goto device_create_failed;
 	}
 

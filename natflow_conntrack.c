@@ -649,14 +649,15 @@ int conntrackinfo_init(void)
 
 	conntrackinfo_class = natflow_class_create("conntrackinfo_class");
 	if (IS_ERR(conntrackinfo_class)) {
-		NATFLOW_println("failed to create class");
-		retval = -EINVAL;
+		retval = PTR_ERR(conntrackinfo_class);
+		NATFLOW_println("failed to create class, error=%d", retval);
 		goto class_create_failed;
 	}
 
 	conntrackinfo_dev = device_create(conntrackinfo_class, NULL, devno, NULL, conntrackinfo_dev_name);
 	if (IS_ERR(conntrackinfo_dev)) {
-		retval = -EINVAL;
+		retval = PTR_ERR(conntrackinfo_dev);
+		NATFLOW_println("failed to create device, error=%d", retval);
 		goto device_create_failed;
 	}
 

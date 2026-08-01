@@ -423,14 +423,15 @@ static int __init natflow_init(void)
 
 	natflow_class = natflow_class_create("natflow_class");
 	if (IS_ERR(natflow_class)) {
-		NATFLOW_println("failed to create class");
-		retval = -EINVAL;
+		retval = PTR_ERR(natflow_class);
+		NATFLOW_println("failed to create class, error=%d", retval);
 		goto class_create_failed;
 	}
 
 	natflow_dev = device_create(natflow_class, NULL, devno, NULL, natflow_dev_name);
 	if (IS_ERR(natflow_dev)) {
-		retval = -EINVAL;
+		retval = PTR_ERR(natflow_dev);
+		NATFLOW_println("failed to create device, error=%d", retval);
 		goto device_create_failed;
 	}
 

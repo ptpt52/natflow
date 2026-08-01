@@ -44,6 +44,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - `/dev/natflow_userinfo_ctl` 的 `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数；timestamp 创建/获取 fakeuser 时写入，user pre hook 中普通活动最多每 32 秒刷新一次，新连接包超过 2 秒可刷新；不要用当前 `no_flow_timeout` 和 conntrack 剩余超时反推。
 - path 默认关闭，通常通过 `/dev/natflow_ctl` 的 `disabled=0` 开启。
 - `CONFIG_NATFLOW_PATH` 控制 fast path、vline/relay 和硬件 offload 相关能力。
+- 字符设备初始化必须返回并记录 `class_create()`/`device_create()` 的真实 `PTR_ERR()`；zone/path netdevice notifier 注册返回值必须检查，失败时中止初始化并只回滚已经成功注册的资源。
 - `NETDEV_UNREGISTER` 必须在任何动态分配或 work 排队之前无条件推进 path magic；正常 work 和 allocation/queue failure 的同步 fallback 都要经过 `synchronize_net()`，保证旧 generation 的在途 fast-path 读者退出后才释放设备引用。
 - `CONFIG_NATFLOW_URLLOGGER` 控制 URL logger、Host ACL 和相关 sysctl。
 - L7 shared hook 固定注册 IPv4、IPv6 和 bridge `NF_INET_FORWARD`，不提供 URL local-in 变体；URLLogger 和 DPI 共享同一组 FORWARD hook，由 active consumer mask 独立启停。

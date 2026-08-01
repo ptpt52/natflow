@@ -3996,14 +3996,15 @@ static int userinfo_init(void)
 
 	userinfo_class = natflow_class_create("userinfo_class");
 	if (IS_ERR(userinfo_class)) {
-		NATFLOW_println("failed to create class");
-		retval = -EINVAL;
+		retval = PTR_ERR(userinfo_class);
+		NATFLOW_println("failed to create class, error=%d", retval);
 		goto class_create_failed;
 	}
 
 	userinfo_dev = device_create(userinfo_class, NULL, devno, NULL, userinfo_dev_name);
 	if (IS_ERR(userinfo_dev)) {
-		retval = -EINVAL;
+		retval = PTR_ERR(userinfo_dev);
+		NATFLOW_println("failed to create device, error=%d", retval);
 		goto device_create_failed;
 	}
 
@@ -4267,14 +4268,15 @@ static int userinfo_event_init(void)
 
 	userinfo_event_class = natflow_class_create("userinfo_event_class");
 	if (IS_ERR(userinfo_event_class)) {
-		NATFLOW_println("failed to create class");
-		retval = -EINVAL;
+		retval = PTR_ERR(userinfo_event_class);
+		NATFLOW_println("failed to create class, error=%d", retval);
 		goto class_create_failed;
 	}
 
 	userinfo_event_dev = device_create(userinfo_event_class, NULL, devno, NULL, userinfo_event_dev_name);
 	if (IS_ERR(userinfo_event_dev)) {
-		retval = -EINVAL;
+		retval = PTR_ERR(userinfo_event_dev);
+		NATFLOW_println("failed to create device, error=%d", retval);
 		goto device_create_failed;
 	}
 
@@ -4744,14 +4746,15 @@ static int qos_init(void)
 
 	qos_class = natflow_class_create("qos_class");
 	if (IS_ERR(qos_class)) {
-		NATFLOW_println("failed to create class");
-		retval = -EINVAL;
+		retval = PTR_ERR(qos_class);
+		NATFLOW_println("failed to create class, error=%d", retval);
 		goto class_create_failed;
 	}
 
 	qos_dev = device_create(qos_class, NULL, devno, NULL, qos_dev_name);
 	if (IS_ERR(qos_dev)) {
-		retval = -EINVAL;
+		retval = PTR_ERR(qos_dev);
+		NATFLOW_println("failed to create device, error=%d", retval);
 		goto device_create_failed;
 	}
 
@@ -4825,14 +4828,15 @@ int natflow_user_init(void)
 
 	natflow_user_class = natflow_class_create("natflow_user_class");
 	if (IS_ERR(natflow_user_class)) {
-		NATFLOW_println("failed to create class");
-		retval = -EINVAL;
+		retval = PTR_ERR(natflow_user_class);
+		NATFLOW_println("failed to create class, error=%d", retval);
 		goto class_create_failed;
 	}
 
 	natflow_user_dev = device_create(natflow_user_class, NULL, devno, NULL, natflow_user_dev_name);
 	if (IS_ERR(natflow_user_dev)) {
-		retval = -EINVAL;
+		retval = PTR_ERR(natflow_user_dev);
+		NATFLOW_println("failed to create device, error=%d", retval);
 		goto device_create_failed;
 	}
 

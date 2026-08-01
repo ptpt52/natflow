@@ -187,6 +187,8 @@ Natflow 分为控制面、策略面、数据面和观测面。
 设计含义：
 
 - zone 和 user 在 path 前初始化，因此 fast path 可依赖 zone/user 状态位。
+- 所有字符设备初始化必须保留 `class_create()`、`device_create()` 的 `PTR_ERR()`，并在日志中输出真实错误码；不能把 `-ENOMEM`、`-EEXIST` 等失败压平为 `-EINVAL`。
+- zone/path 的 netdevice notifier 注册失败会中止对应子模块初始化并按已完成阶段回滚；只有注册成功后，失败路径和正常退出才调用 `unregister_netdevice_notifier()`。
 - user 子系统初始化时，`userinfo_event_store_init()` 在 `/dev/natflow_userinfo_queue` 的 `cdev_add()` 之前执行；设备节点一旦可打开，事件队列的 spinlock、list 和 waitqueue 已经有效。
 - URL logger 在 path 后初始化，shared L7 解析通过 `NF_FF_L7_USE` 与 path 协调，避免未完成 URL/DPI host 处理的流被快速转发。
 - L7 hook lifecycle 在 URL logger 资源初始化之后初始化 TCP TLS SNI cache、QUIC cache，并尝试初始化 QUIC crypto ctx；QUIC crypto 初始化失败只告警并禁用 QUIC hostname parser，不导致 URL logger 或 L7 初始化失败。随后注册 shared L7 hook ops；hook 签名兼容包装由 L7 持有，数据面中 TCP HTTP/TLS 和 UDP/443 QUIC 都由 L7 producer 解析后 fan-out 到当前 active consumer。退出时先注销 hook、释放 QUIC crypto/cache 和 TCP TLS SNI cache，再释放 URL logger 资源。
