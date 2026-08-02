@@ -1447,6 +1447,7 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 			return;
 	}
 #endif
+	natflow_user_path_ingress_update(ct, dir, dev);
 	if (nf->magic != path_magic) {
 		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
@@ -3393,7 +3394,7 @@ out:
 								struct arphdr *arph = arp_hdr(skb);
 								ipaddr = get_byte4((void *)arph + 8 + ETH_ALEN); /* sip */
 								get_byte6((void *)arph + 8, macaddr); /* sha */
-								user = natflow_user_in_get(ipaddr, macaddr, skb->dev); /* Learn or update source cache. */
+								user = natflow_user_in_get(ipaddr, macaddr); /* Learn or update MAC cache. */
 								if (user) {
 									struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 									if ((skb->dev->flags & IFF_VLINE_IS_LAN)) {
@@ -5249,7 +5250,7 @@ out6:
 								unsigned char *opt_ptr;
 								eth = eth_hdr(skb);
 								user = natflow_user_in_get6((const union nf_inet_addr *)&IPV6H->saddr,
-								                            eth->h_source, skb->dev);
+								                            eth->h_source);
 								if (user) {
 									struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
 									if ((skb->dev->flags & IFF_VLINE_IS_LAN)) {

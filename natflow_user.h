@@ -141,10 +141,11 @@ extern void natflow_user_release_put(natflow_fakeuser_t *user);
 extern natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir);
 extern natflow_fakeuser_t *natflow_user_find_get(__be32 ip);
 extern natflow_fakeuser_t *natflow_user_find_get6(const union nf_inet_addr *u3);
-extern natflow_fakeuser_t *natflow_user_in_get(__be32 ip,
-        const uint8_t *macaddr, const struct net_device *dev);
+extern natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr);
 extern natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3,
-        const uint8_t *macaddr, const struct net_device *dev);
+        const uint8_t *macaddr);
+extern void natflow_user_path_ingress_update(struct nf_conn *ct, int dir,
+        const struct net_device *dev);
 
 static inline void natflow_auth_convert_tcprst(struct sk_buff *skb)
 {

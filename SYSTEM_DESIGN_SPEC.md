@@ -385,7 +385,7 @@ ip_or_ipv6,mac,auth_type_hex,auth_status_hex,rule_id,idle_time,rx_pkts:rx_bytes,
 - 单次 read 如果生成行长度大于用户提供 buffer，会返回 `-EINVAL`，这会破坏 shell 中按 1 字节读的用法。代码中已有 FIXME，重建实现若追求兼容应保留，若修复需在变更记录说明。
 - fakeuser 是特殊 conntrack，不是独立用户态表。
 - `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数，不再从当前 `no_flow_timeout` 反推；该 timestamp 在 fakeuser 创建/获取时写入，user pre hook 中普通活动最多每 32 秒刷新一次，`IP_CT_NEW` 新连接包距离上次刷新超过 2 秒也会刷新。
-- `ifname` 保存最近一次与 MAC 同步学习到的源流量入口设备名；普通流量沿用 timestamp 的 32 秒/新连接 2 秒刷新节流，ARP/ND 学习路径立即更新 MAC 和设备名。
+- `ifname` 由 path ingress 的 `natflow_session_learn()` 从用户侧流量写入，保存 path 学习时 `skb->dev` 对应的三层入口设备名。用户侧通过 fakeuser 地址与当前 conntrack 方向源地址匹配判定：用户主动发起连接通常在 original 方向学习，外网主动进入连接可在 reply 方向学习；公网侧 ingress、user pre hook 和 ARP/ND MAC 学习不更新该字段。设备名变化时追加一条 userinfo 事件；path 关闭或当时尚未关联 fakeuser 时字段可以为空。
 - 每个打开实例缓存最多 4096 条用户快照；扫描 conntrack hash 超过时间片或缓存上限时会保存 `next_bucket` 并返回 `-EAGAIN`。
 - 速度字段来自 4 个 2 秒窗口；如果超过 8 秒无更新，速度输出为 0。
 
@@ -429,7 +429,7 @@ struct natflow_userinfo_event_hdr {
 - `version=3`，`header_len=record_len=sizeof(struct natflow_userinfo_event_hdr)`。
 - 除地址字节数组外，整数按内核本机端序输出；`family` 为 `AF_INET` 或 `AF_INET6`，IPv4 地址存放在 `ip[0..3]`，IPv6 地址使用完整 16 字节。
 - `idle_time`、认证字段、计数和速度字段语义与 `/dev/natflow_userinfo_ctl` 文本输出一致。
-- `ifname` 是以 NUL 结尾的源流量入口设备名，字段固定占用 `IFNAMSIZ` 字节。
+- `ifname` 是以 NUL 结尾的用户侧三层入口设备名，字段固定占用 `IFNAMSIZ` 字节。
 
 ### 7.7 `/dev/natflow_conntrackinfo_ctl`
 

@@ -431,7 +431,7 @@ echo 'set-token-ctrl <ip_or_ipv6> <rxbytes> <txbytes>' >/dev/natflow_userinfo_ct
 说明：
 
 - `idle_time` 是该 fakeuser 内部活动时间戳至今经过的秒数；该时间戳在 fakeuser 创建/获取时写入，普通活动最多每 32 秒刷新一次，新连接包距离上次刷新超过 2 秒也会刷新。
-- `ifname` 是最近一次与 MAC 同步学习到的源流量入口设备名。普通流量沿用上述刷新节流；ARP/ND 学习会立即更新 MAC 和设备名。
+- `ifname` 是 path ingress 从用户侧流量学习到的三层入口设备名，取自 path 学习时的 `skb->dev`。用户侧由 fakeuser 地址与当前 conntrack 方向源地址是否一致判定，因此用户主动发起的连接通常在 original 方向学习，外网主动进入的连接则可在 reply 方向学习；公网侧 ingress、user pre hook 和 ARP/ND MAC 学习不会覆盖它。接口名变化时会产生一条新的 userinfo 事件；path 关闭或尚未关联 fakeuser 时该字段可以为空。
 - `kickall` 清理所有用户认证状态和统计。
 - `kick`、`set-status`、`set-token-ctrl` 找不到用户时返回 `-ENOENT`。
 - `set-token-ctrl` 单位是 Bytes/s；rx 或 tx 非 0 时启用该用户 token control，两者都为 0 时关闭。
@@ -483,7 +483,7 @@ struct natflow_userinfo_event_hdr {
 - 除地址字节数组外，整数按内核本机端序输出；用户态 reader 与内核运行在同一机器时直接按结构体读取即可。
 - `family` 是 `AF_INET` 或 `AF_INET6`；IPv4 地址放在 `ip[0..3]`，IPv6 地址使用完整 16 字节。
 - `idle_time` 是该 fakeuser 内部活动时间戳至今经过的秒数。
-- `ifname` 是以 NUL 结尾的源流量入口设备名，更新规则与文本接口一致。
+- `ifname` 是以 NUL 结尾的用户侧三层入口设备名，更新规则与文本接口一致。
 - 计数字段与 `/dev/natflow_userinfo_ctl` 文本输出一致；速度字段来自 4 个 2 秒窗口，超过 8 秒无更新时为 0。
 
 C 读者样例：
