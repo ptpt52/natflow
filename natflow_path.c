@@ -1424,8 +1424,7 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 #endif
 #endif
 
-void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf,
-                           int dir, u_int8_t pf)
+void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir)
 {
 	unsigned short path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)));
 	struct iphdr *iph = ip_hdr(skb);
@@ -1447,10 +1446,6 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 		if (*(__be16 *)((void *)ip_hdr(skb) - 2) == __constant_htons(PPP_IP) || *(__be16 *)((void *)ip_hdr(skb) - 2) == __constant_htons(PPP_IPV6))
 			return;
 	}
-#endif
-#ifdef CONFIG_NETFILTER_INGRESS
-	if (pf == NFPROTO_NETDEV)
-		natflow_user_path_ingress_update(ct, dir, dev);
 #endif
 	if (nf->magic != path_magic) {
 		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
@@ -1537,6 +1532,40 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 	}
 }
 
+const struct net_device *natflow_session_ingress_dev(struct nf_conn *ct, int dir)
+{
+#ifdef CONFIG_NETFILTER_INGRESS
+	unsigned short path_magic;
+	unsigned int ok;
+	natflow_t *nf;
+	int route_dir;
+
+	if (!ct || disabled || (dir != IP_CT_DIR_ORIGINAL && dir != IP_CT_DIR_REPLY))
+		return NULL;
+
+	nf = natflow_session_get(ct);
+	if (!nf)
+		return NULL;
+
+	path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK &
+	                               atomic_read_acquire(&natflow_path_magic)));
+	if (READ_ONCE(nf->magic) != path_magic)
+		return NULL;
+
+	route_dir = !dir;
+	ok = route_dir == NF_FF_DIR_ORIGINAL ? NF_FF_ORIGINAL_OK : NF_FF_REPLY_OK;
+	if (!(READ_ONCE(nf->status) & ok))
+		return NULL;
+
+	smp_rmb();
+	return READ_ONCE(nf->rroute[route_dir].outdev);
+#else
+	(void)ct;
+	(void)dir;
+	return NULL;
+#endif
+}
+
 #if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_path_pre_ct_in_hook(unsigned int hooknum,
         struct sk_buff *skb,
@@ -1544,7 +1573,9 @@ static unsigned int natflow_path_pre_ct_in_hook(unsigned int hooknum,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
+#ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = PF_INET;
+#endif
 #elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
@@ -1552,14 +1583,18 @@ static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
+#ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = ops->pf;
+#endif
 	unsigned int hooknum = ops->hooknum;
 #elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
+#ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = state->pf;
+#endif
 	unsigned int hooknum = state->hook;
 	//const struct net_device *in = state->in;
 	//const struct net_device *out = state->out;
@@ -1568,7 +1603,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
+#ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = state->pf;
+#endif
 	unsigned int hooknum = state->hook;
 	//const struct net_device *in = state->in;
 #if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
@@ -1730,9 +1767,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		if (skb->pkt_type == PACKET_BROADCAST ||
 		        skb->pkt_type == PACKET_MULTICAST ||
 		        ipv4_is_multicast(iph->daddr) || ipv4_is_lbcast(iph->daddr)) {
-			union nf_inet_addr src = { .ip = iph->saddr };
-
-			natflow_user_path_ingress_addr_update(&src, AF_INET, skb->dev);
 			goto out;
 		}
 
@@ -2286,7 +2320,7 @@ slow_fastpath:
 	}
 #endif
 #endif
-	natflow_session_learn(skb, ct, nf, dir, pf);
+	natflow_session_learn(skb, ct, nf, dir);
 	if (!nf_ct_is_confirmed(ct)) {
 		goto out;
 	}
@@ -3666,8 +3700,6 @@ __hook_ipv6_main:
 		if (skb->pkt_type == PACKET_BROADCAST ||
 		        skb->pkt_type == PACKET_MULTICAST ||
 		        ipv6_addr_is_multicast(&IPV6H->daddr)) {
-			natflow_user_path_ingress_addr_update(
-			    (const union nf_inet_addr *)&IPV6H->saddr, AF_INET6, skb->dev);
 			goto out6;
 		}
 
@@ -4184,7 +4216,7 @@ slow_fastpath6:
 	}
 #endif
 #endif
-	natflow_session_learn(skb, ct, nf, dir, pf);
+	natflow_session_learn(skb, ct, nf, dir);
 	if (!nf_ct_is_confirmed(ct)) {
 		goto out6;
 	}

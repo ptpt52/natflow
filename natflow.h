@@ -117,6 +117,9 @@ typedef struct natflow_t {
 	unsigned char dpi_reserved;
 } natflow_t;
 
+struct nf_conn;
+const struct net_device *natflow_session_ingress_dev(struct nf_conn *ct, int dir);
+
 /*XXX don't change */
 #define NATCAP_MAGIC 0x43415099
 struct nat_key_t {

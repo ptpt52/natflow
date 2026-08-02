@@ -341,8 +341,7 @@ static inline struct net_device *get_macvlan_real_dev(struct net_device *dev)
 	return dev;
 }
 
-void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf,
-                           int dir, u_int8_t pf);
+void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir);
 
 /* define IFF_PPPOE indicate pppoe dev (ref: include/uapi/linux/if.h) */
 #define IFF_PPPOE (1<<25)

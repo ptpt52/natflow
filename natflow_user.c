@@ -147,6 +147,19 @@ static inline void natflow_user_mac_update(struct fakeuser_data_t *fud,
 		memcpy(fud->macaddr, macaddr, ETH_ALEN);
 }
 
+static inline void natflow_user_source_update(struct fakeuser_data_t *fud,
+        const uint8_t *macaddr, struct nf_conn *ct, int dir)
+{
+	const struct net_device *dev;
+
+	natflow_user_mac_update(fud, macaddr);
+	dev = natflow_session_ingress_dev(ct, dir);
+	if (dev && strncmp(fud->ifname, dev->name, IFNAMSIZ) != 0) {
+		strncpy(fud->ifname, dev->name, IFNAMSIZ);
+		fud->ifname[IFNAMSIZ - 1] = '\0';
+	}
+}
+
 static inline void userinfo_event_queue(natflow_fakeuser_t *user)
 {
 	struct nf_conn_acct *acct;
@@ -232,73 +245,6 @@ static inline void userinfo_event_queue(natflow_fakeuser_t *user)
 	spin_unlock_bh(&userinfo_event_store.lock);
 
 	wake_up(&userinfo_event_store.wait);
-}
-
-static inline void natflow_user_path_dev_update(natflow_fakeuser_t *user,
-        const struct net_device *dev)
-{
-	struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
-
-	if (strncmp(fud->ifname, dev->name, IFNAMSIZ) == 0)
-		return;
-
-	strncpy(fud->ifname, dev->name, IFNAMSIZ);
-	fud->ifname[IFNAMSIZ - 1] = '\0';
-	userinfo_event_queue(user);
-}
-
-void natflow_user_path_ingress_update(struct nf_conn *ct, int dir,
-                                      const struct net_device *dev)
-{
-	natflow_fakeuser_t *user;
-	const struct nf_conntrack_tuple *user_tuple;
-	const struct nf_conntrack_tuple *flow_tuple;
-
-	if (!ct || !dev || (dir != IP_CT_DIR_ORIGINAL && dir != IP_CT_DIR_REPLY))
-		return;
-
-	user = natflow_user_get(ct);
-	if (!user)
-		return;
-
-	user_tuple = &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
-	flow_tuple = &ct->tuplehash[dir].tuple;
-	if (user_tuple->src.l3num != flow_tuple->src.l3num)
-		return;
-	if (flow_tuple->src.l3num == AF_INET) {
-		if (user_tuple->src.u3.ip != flow_tuple->src.u3.ip)
-			return;
-	} else if (flow_tuple->src.l3num == AF_INET6) {
-		if (memcmp(&user_tuple->src.u3, &flow_tuple->src.u3,
-		           sizeof(union nf_inet_addr)) != 0)
-			return;
-	} else {
-		return;
-	}
-
-	natflow_user_path_dev_update(user, dev);
-}
-
-void natflow_user_path_ingress_addr_update(const union nf_inet_addr *u3,
-        u_int16_t l3num, const struct net_device *dev)
-{
-	natflow_fakeuser_t *user;
-
-	if (!u3 || !dev)
-		return;
-
-	if (l3num == AF_INET)
-		user = natflow_user_find_get(u3->ip);
-	else if (l3num == AF_INET6)
-		user = natflow_user_find_get6(u3);
-	else
-		return;
-
-	if (!user)
-		return;
-
-	natflow_user_path_dev_update(user, dev);
-	natflow_user_release_put(user);
 }
 
 static int natflow_user_major = 0;
@@ -2164,7 +2110,8 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		        (ctinfo != IP_CT_NEW || idle_jiffies < NATFLOW_USER_TIMESTAMP_NEW_REFRESH)) {
 			break;
 		}
-		natflow_user_mac_update(fud, eth_hdr(skb)->h_source);
+		natflow_user_source_update(fud, eth_hdr(skb)->h_source, ct,
+		                           CTINFO2DIR(ctinfo));
 		fud->timestamp = jiffies;
 		natflow_user_timeout_touch(user);
 		userinfo_event_queue(user);

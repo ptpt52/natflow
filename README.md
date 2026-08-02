@@ -431,7 +431,7 @@ echo 'set-token-ctrl <ip_or_ipv6> <rxbytes> <txbytes>' >/dev/natflow_userinfo_ct
 说明：
 
 - `idle_time` 是该 fakeuser 内部活动时间戳至今经过的秒数；该时间戳在 fakeuser 创建/获取时写入，普通活动最多每 32 秒刷新一次，新连接包距离上次刷新超过 2 秒也会刷新。
-- `ifname` 只在 `pf == NFPROTO_NETDEV` 的 path ingress 中从用户侧流量学习，取自 path 学习时的 `skb->dev`。普通连接通过 fakeuser 地址与当前 conntrack 方向源地址是否一致判定，因此用户主动发起的连接通常在 original 方向学习，外网主动进入的连接则可在 reply 方向学习；无 conntrack 的 IPv4/IPv6 广播或组播包在 NETDEV ingress 早退前通过源 IP 查找已有 fakeuser，使只产生广播/组播流量的设备也能更新。PF_INET/PF_INET6、公网侧 ingress、user pre hook 和 ARP/ND MAC 学习不会覆盖它。接口名变化时会产生一条新的 userinfo 事件；未启用 NETDEV ingress、path 关闭或尚未创建 fakeuser 时该字段可以为空。
+- `ifname` 由 user 模块在刷新用户 MAC 时同步更新，设备名来自当前连接 path 缓存中与包方向相反的 `rroute[!dir].outdev`，即该方向数据包进入 path 时学习到的入口设备。读取前会校验 path 已启用、generation 一致且对应 route 的 `*_OK` 状态有效；path 模块不再为维护 ifname 查找或修改 fakeuser。ARP/ND MAC 学习没有连接 route 上下文，因此只更新 MAC；广播/组播早退路径也不直接更新 ifname。未启用 NETDEV ingress、path 未完成学习或尚无有效连接缓存时该字段可以为空。
 - `kickall` 清理所有用户认证状态和统计。
 - `kick`、`set-status`、`set-token-ctrl` 找不到用户时返回 `-ENOENT`。
 - `set-token-ctrl` 单位是 Bytes/s；rx 或 tx 非 0 时启用该用户 token control，两者都为 0 时关闭。
