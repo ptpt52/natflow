@@ -385,7 +385,7 @@ ip_or_ipv6,mac,auth_type_hex,auth_status_hex,rule_id,idle_time,rx_pkts:rx_bytes,
 - 单次 read 如果生成行长度大于用户提供 buffer，会返回 `-EINVAL`，这会破坏 shell 中按 1 字节读的用法。代码中已有 FIXME，重建实现若追求兼容应保留，若修复需在变更记录说明。
 - fakeuser 是特殊 conntrack，不是独立用户态表。
 - `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数，不再从当前 `no_flow_timeout` 反推；该 timestamp 在 fakeuser 创建/获取时写入，user pre hook 中普通活动最多每 32 秒刷新一次，`IP_CT_NEW` 新连接包距离上次刷新超过 2 秒也会刷新。
-- `ifname` 由 path ingress 从用户侧流量写入，保存 path 学习时 `skb->dev` 对应的三层入口设备名。普通连接在 `natflow_session_learn()` 中通过 fakeuser 地址与当前 conntrack 方向源地址匹配判定：用户主动发起连接通常在 original 方向学习，外网主动进入连接可在 reply 方向学习；仅 `pf == NFPROTO_NETDEV` 时，无 conntrack 的 IPv4/IPv6 广播或组播包在早退前通过源 IP 查找已有 fakeuser 并更新，PF_INET/PF_INET6 公共路径保持原有早退行为。公网侧 ingress、user pre hook 和 ARP/ND MAC 学习不更新该字段。设备名变化时追加一条 userinfo 事件；path 关闭或当时尚未创建 fakeuser 时字段可以为空。
+- `ifname` 只在 `pf == NFPROTO_NETDEV` 的 path ingress 中从用户侧流量写入，保存 path 学习时 `skb->dev` 对应的三层入口设备名。普通连接把当前 hook 的 `pf` 直接传给 `natflow_session_learn()`，函数仅在 `pf == NFPROTO_NETDEV` 时通过 fakeuser 地址与当前 conntrack 方向源地址匹配判定：用户主动发起连接通常在 original 方向学习，外网主动进入连接可在 reply 方向学习；无 conntrack 的 IPv4/IPv6 广播或组播包也只在 NETDEV ingress 早退前通过源 IP 查找已有 fakeuser 并更新。PF_INET/PF_INET6 公共路径、公网侧 ingress、user pre hook 和 ARP/ND MAC 学习不更新该字段。设备名变化时追加一条 userinfo 事件；未启用 NETDEV ingress、path 关闭或当时尚未创建 fakeuser 时字段可以为空。
 - 每个打开实例缓存最多 4096 条用户快照；扫描 conntrack hash 超过时间片或缓存上限时会保存 `next_bucket` 并返回 `-EAGAIN`。
 - 速度字段来自 4 个 2 秒窗口；如果超过 8 秒无更新，速度输出为 0。
 

@@ -1424,7 +1424,8 @@ static struct natflow_offload *natflow_offload_alloc(struct nf_conn *ct, natflow
 #endif
 #endif
 
-void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf, int dir)
+void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *nf,
+                           int dir, u_int8_t pf)
 {
 	unsigned short path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)));
 	struct iphdr *iph = ip_hdr(skb);
@@ -1447,7 +1448,10 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 			return;
 	}
 #endif
-	natflow_user_path_ingress_update(ct, dir, dev);
+#ifdef CONFIG_NETFILTER_INGRESS
+	if (pf == NFPROTO_NETDEV)
+		natflow_user_path_ingress_update(ct, dir, dev);
+#endif
 	if (nf->magic != path_magic) {
 		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_OK_BIT, &nf->status);
@@ -1540,9 +1544,7 @@ static unsigned int natflow_path_pre_ct_in_hook(unsigned int hooknum,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
-#ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = PF_INET;
-#endif
 #elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
@@ -1550,18 +1552,14 @@ static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
-#ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = ops->pf;
-#endif
 	unsigned int hooknum = ops->hooknum;
 #elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
-#ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = state->pf;
-#endif
 	unsigned int hooknum = state->hook;
 	//const struct net_device *in = state->in;
 	//const struct net_device *out = state->out;
@@ -1570,9 +1568,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
-#ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = state->pf;
-#endif
 	unsigned int hooknum = state->hook;
 	//const struct net_device *in = state->in;
 #if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
@@ -2290,7 +2286,7 @@ slow_fastpath:
 	}
 #endif
 #endif
-	natflow_session_learn(skb, ct, nf, dir);
+	natflow_session_learn(skb, ct, nf, dir, pf);
 	if (!nf_ct_is_confirmed(ct)) {
 		goto out;
 	}
@@ -4188,7 +4184,7 @@ slow_fastpath6:
 	}
 #endif
 #endif
-	natflow_session_learn(skb, ct, nf, dir);
+	natflow_session_learn(skb, ct, nf, dir, pf);
 	if (!nf_ct_is_confirmed(ct)) {
 		goto out6;
 	}
