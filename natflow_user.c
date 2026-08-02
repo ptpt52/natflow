@@ -234,11 +234,23 @@ static inline void userinfo_event_queue(natflow_fakeuser_t *user)
 	wake_up(&userinfo_event_store.wait);
 }
 
+static inline void natflow_user_path_dev_update(natflow_fakeuser_t *user,
+        const struct net_device *dev)
+{
+	struct fakeuser_data_t *fud = natflow_fakeuser_data(user);
+
+	if (strncmp(fud->ifname, dev->name, IFNAMSIZ) == 0)
+		return;
+
+	strncpy(fud->ifname, dev->name, IFNAMSIZ);
+	fud->ifname[IFNAMSIZ - 1] = '\0';
+	userinfo_event_queue(user);
+}
+
 void natflow_user_path_ingress_update(struct nf_conn *ct, int dir,
                                       const struct net_device *dev)
 {
 	natflow_fakeuser_t *user;
-	struct fakeuser_data_t *fud;
 	const struct nf_conntrack_tuple *user_tuple;
 	const struct nf_conntrack_tuple *flow_tuple;
 
@@ -264,13 +276,29 @@ void natflow_user_path_ingress_update(struct nf_conn *ct, int dir,
 		return;
 	}
 
-	fud = natflow_fakeuser_data(user);
-	if (strncmp(fud->ifname, dev->name, IFNAMSIZ) == 0)
+	natflow_user_path_dev_update(user, dev);
+}
+
+void natflow_user_path_ingress_addr_update(const union nf_inet_addr *u3,
+        u_int16_t l3num, const struct net_device *dev)
+{
+	natflow_fakeuser_t *user;
+
+	if (!u3 || !dev)
 		return;
 
-	strncpy(fud->ifname, dev->name, IFNAMSIZ);
-	fud->ifname[IFNAMSIZ - 1] = '\0';
-	userinfo_event_queue(user);
+	if (l3num == AF_INET)
+		user = natflow_user_find_get(u3->ip);
+	else if (l3num == AF_INET6)
+		user = natflow_user_find_get6(u3);
+	else
+		return;
+
+	if (!user)
+		return;
+
+	natflow_user_path_dev_update(user, dev);
+	natflow_user_release_put(user);
 }
 
 static int natflow_user_major = 0;

@@ -1722,10 +1722,6 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			goto out;
 		}
 
-		if (skb->pkt_type == PACKET_BROADCAST || skb->pkt_type == PACKET_MULTICAST) {
-			goto out;
-		}
-
 		if (!pskb_may_pull(skb, sizeof(struct iphdr))) {
 			return NF_DROP;
 		}
@@ -1735,7 +1731,12 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			goto out;
 		}
 
-		if (ipv4_is_multicast(iph->daddr) || ipv4_is_lbcast(iph->daddr)) {
+		if (skb->pkt_type == PACKET_BROADCAST ||
+		        skb->pkt_type == PACKET_MULTICAST ||
+		        ipv4_is_multicast(iph->daddr) || ipv4_is_lbcast(iph->daddr)) {
+			union nf_inet_addr src = { .ip = iph->saddr };
+
+			natflow_user_path_ingress_addr_update(&src, AF_INET, skb->dev);
 			goto out;
 		}
 
@@ -3666,7 +3667,11 @@ __hook_ipv6_main:
 			goto out6;
 		}
 
-		if (ipv6_addr_is_multicast(&IPV6H->daddr)) {
+		if (skb->pkt_type == PACKET_BROADCAST ||
+		        skb->pkt_type == PACKET_MULTICAST ||
+		        ipv6_addr_is_multicast(&IPV6H->daddr)) {
+			natflow_user_path_ingress_addr_update(
+			    (const union nf_inet_addr *)&IPV6H->saddr, AF_INET6, skb->dev);
 			goto out6;
 		}
 
