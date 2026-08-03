@@ -295,7 +295,6 @@ void natflow_user_ingress_ifname_learn(struct sk_buff *skb,
 	struct fakeuser_data_t *fud;
 	struct net_device *dev;
 	struct net_device *master;
-	const uint8_t *macaddr = NULL;
 
 	if (READ_ONCE(disabled) || !skb || !skb->dev || !saddr)
 		return;
@@ -305,23 +304,17 @@ void natflow_user_ingress_ifname_learn(struct sk_buff *skb,
 	if (!natflow_is_lan_zone(dev) &&
 	        (!master || !natflow_is_lan_zone(master)))
 		return;
-	if (dev->type == ARPHRD_ETHER && skb_mac_header_was_set(skb))
-		macaddr = eth_hdr(skb)->h_source;
 
 	if (l3num == AF_INET) {
 		if (ipv4_is_zeronet(saddr->ip) || ipv4_is_loopback(saddr->ip) ||
 		        ipv4_is_multicast(saddr->ip) || ipv4_is_lbcast(saddr->ip))
 			return;
 		user = natflow_user_find_get(saddr->ip);
-		if (!user)
-			user = natflow_user_in_get(saddr->ip, macaddr);
 	} else if (l3num == AF_INET6) {
 		if (ipv6_addr_any(&saddr->in6) || ipv6_addr_is_multicast(&saddr->in6) ||
 		        saddr->in6.s6_addr16[0] == __constant_htons(0xfe80))
 			return;
 		user = natflow_user_find_get6(saddr);
-		if (!user)
-			user = natflow_user_in_get6(saddr, macaddr);
 	} else {
 		return;
 	}
