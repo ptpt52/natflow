@@ -44,7 +44,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - `/dev/natflow_userinfo_ctl` 的 `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数；timestamp 创建/获取 fakeuser 时写入，user pre hook 中普通活动最多每 32 秒刷新一次，新连接包超过 2 秒可刷新；不要用当前 `no_flow_timeout` 和 conntrack 剩余超时反推。
 - path 默认关闭，通常通过 `/dev/natflow_ctl` 的 `disabled=0` 开启。
 - `CONFIG_NATFLOW_PATH` 控制 fast path、vline/relay 和硬件 offload 相关能力。
-- fakeuser 的 `ifname` 归 user 模块维护：path 仅为该字段提供已学习 `rroute` 的只读 accessor，不得为维护 ifname 查找或修改 fakeuser。user pre hook 按既有节流刷新 MAC 时，通过 `natflow_session_ingress_dev(ct, dir)` 校验 path enabled、generation 和对应 `NF_FF_*_OK`，再从 `rroute[!dir].outdev` 同步入口设备名。ARP/ND 无连接 route 上下文时只更新 MAC，广播/组播早退路径不直接更新 ifname；path 未完成有效学习时字段允许为空。
+- fakeuser 的 `ifname` 归 user 模块维护且规格依赖 path：普通 TCP/UDP 单播由 user pre hook 通过 path accessor 同步；广播、组播和 ICMP/ICMPv6 由启用的 path 在 NETDEV ingress 原有早退分支调用 user 专用入口。入口消费 path 已解析的源地址，仅接受 LAN zone 设备或其 bridge slave，查找或创建 fakeuser，记录原始 `skb->dev`，有效 Ethernet 源 MAC 在创建时一并更新，并在 ifname 变化时发布事件。ARP 不经过该入口；path 未启用或未启用 NETDEV ingress 时字段允许为空。
 - 字符设备初始化必须返回并记录 `class_create()`/`device_create()` 的真实 `PTR_ERR()`；zone/path netdevice notifier 注册返回值必须检查，失败时中止初始化并只回滚已经成功注册的资源。
 - `NETDEV_UNREGISTER` 必须在任何动态分配或 work 排队之前无条件推进 path magic；正常 work 和 allocation/queue failure 的同步 fallback 都要经过 `synchronize_net()`，保证旧 generation 的在途 fast-path 读者退出后才释放设备引用。
 - `CONFIG_NATFLOW_URLLOGGER` 控制 URL logger、Host ACL 和相关 sysctl。

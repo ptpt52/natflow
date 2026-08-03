@@ -1767,6 +1767,8 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		if (skb->pkt_type == PACKET_BROADCAST ||
 		        skb->pkt_type == PACKET_MULTICAST ||
 		        ipv4_is_multicast(iph->daddr) || ipv4_is_lbcast(iph->daddr)) {
+			natflow_user_ingress_ifname_learn(skb,
+			                                  (const union nf_inet_addr *)&iph->saddr, AF_INET);
 			goto out;
 		}
 
@@ -1775,6 +1777,9 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 			goto out;
 		}
 		if (iph->protocol != IPPROTO_TCP && iph->protocol != IPPROTO_UDP) {
+			if (iph->protocol == IPPROTO_ICMP)
+				natflow_user_ingress_ifname_learn(skb,
+				                                  (const union nf_inet_addr *)&iph->saddr, AF_INET);
 			goto out;
 		}
 
@@ -3700,6 +3705,8 @@ __hook_ipv6_main:
 		if (skb->pkt_type == PACKET_BROADCAST ||
 		        skb->pkt_type == PACKET_MULTICAST ||
 		        ipv6_addr_is_multicast(&IPV6H->daddr)) {
+			natflow_user_ingress_ifname_learn(skb,
+			                                  (const union nf_inet_addr *)&IPV6H->saddr, AF_INET6);
 			goto out6;
 		}
 
@@ -3708,6 +3715,9 @@ __hook_ipv6_main:
 			goto out6;
 		}
 		if (IPV6H->nexthdr != IPPROTO_TCP && IPV6H->nexthdr != IPPROTO_UDP) {
+			if (IPV6H->nexthdr == IPPROTO_ICMPV6)
+				natflow_user_ingress_ifname_learn(skb,
+				                                  (const union nf_inet_addr *)&IPV6H->saddr, AF_INET6);
 			goto out6;
 		}
 

@@ -147,6 +147,17 @@ static inline void natflow_user_mac_update(struct fakeuser_data_t *fud,
 		memcpy(fud->macaddr, macaddr, ETH_ALEN);
 }
 
+static inline int natflow_user_ifname_update(struct fakeuser_data_t *fud,
+        const struct net_device *dev)
+{
+	if (!dev || strncmp(fud->ifname, dev->name, IFNAMSIZ) == 0)
+		return 0;
+
+	strncpy(fud->ifname, dev->name, IFNAMSIZ);
+	fud->ifname[IFNAMSIZ - 1] = '\0';
+	return 1;
+}
+
 static inline void natflow_user_source_update(struct fakeuser_data_t *fud,
         const uint8_t *macaddr, struct nf_conn *ct, int dir)
 {
@@ -154,10 +165,7 @@ static inline void natflow_user_source_update(struct fakeuser_data_t *fud,
 
 	natflow_user_mac_update(fud, macaddr);
 	dev = natflow_session_ingress_dev(ct, dir);
-	if (dev && strncmp(fud->ifname, dev->name, IFNAMSIZ) != 0) {
-		strncpy(fud->ifname, dev->name, IFNAMSIZ);
-		fud->ifname[IFNAMSIZ - 1] = '\0';
-	}
+	natflow_user_ifname_update(fud, dev);
 }
 
 static inline void userinfo_event_queue(natflow_fakeuser_t *user)
@@ -279,6 +287,54 @@ static inline int auth_rule_add_one(struct auth_rule_t *rule)
 }
 
 static int disabled = 1;
+
+void natflow_user_ingress_ifname_learn(struct sk_buff *skb,
+                                       const union nf_inet_addr *saddr, u_int16_t l3num)
+{
+	natflow_fakeuser_t *user;
+	struct fakeuser_data_t *fud;
+	struct net_device *dev;
+	struct net_device *master;
+	const uint8_t *macaddr = NULL;
+
+	if (READ_ONCE(disabled) || !skb || !skb->dev || !saddr)
+		return;
+
+	dev = skb->dev;
+	master = netdev_master_upper_dev_get_rcu(dev);
+	if (!natflow_is_lan_zone(dev) &&
+	        (!master || !natflow_is_lan_zone(master)))
+		return;
+	if (dev->type == ARPHRD_ETHER && skb_mac_header_was_set(skb))
+		macaddr = eth_hdr(skb)->h_source;
+
+	if (l3num == AF_INET) {
+		if (ipv4_is_zeronet(saddr->ip) || ipv4_is_loopback(saddr->ip) ||
+		        ipv4_is_multicast(saddr->ip) || ipv4_is_lbcast(saddr->ip))
+			return;
+		user = natflow_user_find_get(saddr->ip);
+		if (!user)
+			user = natflow_user_in_get(saddr->ip, macaddr);
+	} else if (l3num == AF_INET6) {
+		if (ipv6_addr_any(&saddr->in6) || ipv6_addr_is_multicast(&saddr->in6) ||
+		        saddr->in6.s6_addr16[0] == __constant_htons(0xfe80))
+			return;
+		user = natflow_user_find_get6(saddr);
+		if (!user)
+			user = natflow_user_in_get6(saddr, macaddr);
+	} else {
+		return;
+	}
+
+	if (!user)
+		return;
+
+	fud = natflow_fakeuser_data(user);
+	if (natflow_user_ifname_update(fud, dev))
+		userinfo_event_queue(user);
+	natflow_user_release_put(user);
+}
+
 void natflow_user_disabled_set(int v)
 {
 	disabled = v;
