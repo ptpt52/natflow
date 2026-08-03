@@ -173,6 +173,26 @@ static inline void natflow_user_source_update(struct fakeuser_data_t *fud,
 	natflow_user_ifname_update_from_session(fud, ct, dir);
 }
 
+static inline bool natflow_user_matches_flow_source(const natflow_fakeuser_t *user,
+        const struct nf_conn *ct, int dir)
+{
+	const struct nf_conntrack_tuple *user_tuple;
+	const struct nf_conntrack_tuple *flow_tuple;
+
+	user_tuple = &user->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
+	flow_tuple = &ct->tuplehash[dir].tuple;
+	if (user_tuple->src.l3num != flow_tuple->src.l3num)
+		return false;
+
+	if (flow_tuple->src.l3num == AF_INET)
+		return user_tuple->src.u3.ip == flow_tuple->src.u3.ip;
+	if (flow_tuple->src.l3num == AF_INET6)
+		return ipv6_addr_equal(&user_tuple->src.u3.in6,
+		                       &flow_tuple->src.u3.in6);
+
+	return false;
+}
+
 static inline void userinfo_event_queue(natflow_fakeuser_t *user)
 {
 	struct nf_conn_acct *acct;
@@ -2131,6 +2151,10 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		user = natflow_user_get(ct);
 		if (!user)
 			goto out;
+		if (!natflow_user_matches_flow_source(user, ct, dir)) {
+			natflow_user_release_put(user);
+			goto out;
+		}
 		fud = natflow_fakeuser_data(user);
 		natflow_user_source_refresh(user, fud, skb, ct, ctinfo);
 		goto out;
