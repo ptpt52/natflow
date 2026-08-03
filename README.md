@@ -431,7 +431,7 @@ echo 'set-token-ctrl <ip_or_ipv6> <rxbytes> <txbytes>' >/dev/natflow_userinfo_ct
 说明：
 
 - `idle_time` 是该 fakeuser 内部活动时间戳至今经过的秒数；该时间戳在 fakeuser 创建/获取时写入，普通活动最多每 32 秒刷新一次，新连接包距离上次刷新超过 2 秒也会刷新。
-- `ifname` 由 user 模块维护并依赖 path。普通 TCP/UDP 单播在刷新用户 MAC 时，从当前连接 path 缓存中与包方向相反的 `rroute[!dir].outdev` 同步设备名。对于 path 不建立 route 的广播、组播和 ICMP/ICMPv6，启用的 path 在 NETDEV ingress 原有早退分支调用 user 专用入口，按已解析的源地址只查找已有 fakeuser，并记录 LAN zone 设备或其 bridge master 下的原始入接口；用户不存在时不创建，入口不更新 MAC，ifname 变化时发布 userinfo 事件。ARP 不经过该 IP 入口。path 未启用、未启用 NETDEV ingress 或没有可用入口信息时该字段可以为空。
+- `ifname` 由 user 模块维护并依赖 path。普通 TCP/UDP 单播从当前连接 path 缓存中与包方向相反的 `rroute[!dir].outdev` 同步设备名：用户主动连接使用 original 方向，外网主动进入并已在 post hook 关联用户的连接使用 LAN 应答的 reply 方向；reply 分支只刷新已有用户来源，不执行认证和重定向。字段为空时每个用户侧包都会先尝试补齐 ifname，不受普通活动 32 秒、新连接 2 秒节流限制。对于 path 不建立 route 的广播、组播和 ICMP/ICMPv6，启用的 path 保持原有校验和早退顺序，仅在调用 user 专用入口前由局部包装器独立验证 IPv4 长度/checksum 或 IPv6 长度；入口按源地址只查找已有 fakeuser，用户不存在时不创建，入口不更新 MAC，已有非零用户 MAC 必须与 Ethernet 源 MAC 一致，ifname 变化时发布 userinfo 事件。ARP 不经过该 IP 入口。path 未启用、未启用 NETDEV ingress 或没有可用入口信息时该字段可以为空。
 - `kickall` 清理所有用户认证状态和统计。
 - `kick`、`set-status`、`set-token-ctrl` 找不到用户时返回 `-ENOENT`。
 - `set-token-ctrl` 单位是 Bytes/s；rx 或 tx 非 0 时启用该用户 token control，两者都为 0 时关闭。

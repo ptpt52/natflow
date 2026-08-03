@@ -8,6 +8,7 @@
 #include <linux/seq_file.h>
 #include <linux/device.h>
 #include <linux/if_ether.h>
+#include <linux/etherdevice.h>
 #include <linux/if_packet.h>
 #include <linux/if_arp.h>
 #include <linux/init.h>
@@ -158,14 +159,18 @@ static inline int natflow_user_ifname_update(struct fakeuser_data_t *fud,
 	return 1;
 }
 
+static inline int natflow_user_ifname_update_from_session(struct fakeuser_data_t *fud,
+        struct nf_conn *ct, int dir)
+{
+	return natflow_user_ifname_update(fud,
+	                                  natflow_session_ingress_dev(ct, dir));
+}
+
 static inline void natflow_user_source_update(struct fakeuser_data_t *fud,
         const uint8_t *macaddr, struct nf_conn *ct, int dir)
 {
-	const struct net_device *dev;
-
 	natflow_user_mac_update(fud, macaddr);
-	dev = natflow_session_ingress_dev(ct, dir);
-	natflow_user_ifname_update(fud, dev);
+	natflow_user_ifname_update_from_session(fud, ct, dir);
 }
 
 static inline void userinfo_event_queue(natflow_fakeuser_t *user)
@@ -255,6 +260,32 @@ static inline void userinfo_event_queue(natflow_fakeuser_t *user)
 	wake_up(&userinfo_event_store.wait);
 }
 
+static inline void natflow_user_source_refresh(natflow_fakeuser_t *user,
+        struct fakeuser_data_t *fud, struct sk_buff *skb,
+        struct nf_conn *ct, enum ip_conntrack_info ctinfo)
+{
+	unsigned int idle_jiffies;
+	int ifname_updated = 0;
+
+	if (READ_ONCE(fud->ifname[0]) == '\0')
+		ifname_updated = natflow_user_ifname_update_from_session(fud, ct,
+		                 CTINFO2DIR(ctinfo));
+
+	idle_jiffies = timestamp_offset(fud->timestamp, jiffies);
+	if (idle_jiffies < NATFLOW_USER_TIMESTAMP_REFRESH &&
+	        (ctinfo != IP_CT_NEW || idle_jiffies < NATFLOW_USER_TIMESTAMP_NEW_REFRESH)) {
+		if (ifname_updated)
+			userinfo_event_queue(user);
+		return;
+	}
+
+	natflow_user_source_update(fud, eth_hdr(skb)->h_source, ct,
+	                           CTINFO2DIR(ctinfo));
+	fud->timestamp = jiffies;
+	natflow_user_timeout_touch(user);
+	userinfo_event_queue(user);
+}
+
 static int natflow_user_major = 0;
 static int natflow_user_minor = 0;
 static struct cdev natflow_user_cdev;
@@ -295,6 +326,7 @@ void natflow_user_ingress_ifname_learn(struct sk_buff *skb,
 	struct fakeuser_data_t *fud;
 	struct net_device *dev;
 	struct net_device *master;
+	const uint8_t *macaddr;
 
 	if (READ_ONCE(disabled) || !skb || !skb->dev || !saddr)
 		return;
@@ -304,6 +336,9 @@ void natflow_user_ingress_ifname_learn(struct sk_buff *skb,
 	if (!natflow_is_lan_zone(dev) &&
 	        (!master || !natflow_is_lan_zone(master)))
 		return;
+	if (dev->type != ARPHRD_ETHER || !skb_mac_header_was_set(skb))
+		return;
+	macaddr = eth_hdr(skb)->h_source;
 
 	if (l3num == AF_INET) {
 		if (ipv4_is_zeronet(saddr->ip) || ipv4_is_loopback(saddr->ip) ||
@@ -323,6 +358,11 @@ void natflow_user_ingress_ifname_learn(struct sk_buff *skb,
 		return;
 
 	fud = natflow_fakeuser_data(user);
+	if (!is_zero_ether_addr(fud->macaddr) &&
+	        !ether_addr_equal(fud->macaddr, macaddr)) {
+		natflow_user_release_put(user);
+		return;
+	}
 	if (natflow_user_ifname_update(fud, dev))
 		userinfo_event_queue(user);
 	natflow_user_release_put(user);
@@ -2026,6 +2066,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	natflow_fakeuser_t *user;
 	struct nf_conn *ct;
 	enum ip_conntrack_info ctinfo;
+	int dir;
 	int bridge = 0;
 
 	if (disabled)
@@ -2061,17 +2102,15 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	if ((ct->status & IPS_NATFLOW_USER_BYPASS) && (nf_ct_protonum(ct) != IPPROTO_ICMP && nf_ct_protonum(ct) != IPPROTO_ICMPV6)) {
 		goto out;
 	}
-	if (CTINFO2DIR(ctinfo) != IP_CT_DIR_ORIGINAL) {
+	dir = CTINFO2DIR(ctinfo);
+	if (ct->tuplehash[dir].tuple.src.l3num == AF_INET &&
+	        (ipv4_is_zeronet(ct->tuplehash[dir].tuple.src.u3.ip) ||
+	         ipv4_is_loopback(ct->tuplehash[dir].tuple.src.u3.ip) ||
+	         ipv4_is_multicast(ct->tuplehash[dir].tuple.src.u3.ip) ||
+	         ipv4_is_lbcast(ct->tuplehash[dir].tuple.src.u3.ip))) {
 		goto out;
-	}
-	if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET &&
-	        (ipv4_is_zeronet(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
-	         ipv4_is_loopback(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
-	         ipv4_is_multicast(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip) ||
-	         ipv4_is_lbcast(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip))) {
-		goto out;
-	} else if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET6 &&
-	           (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.in6.s6_addr16[0] == __constant_htons(0xfe80))) {
+	} else if (ct->tuplehash[dir].tuple.src.l3num == AF_INET6 &&
+	           (ct->tuplehash[dir].tuple.src.u3.in6.s6_addr16[0] == __constant_htons(0xfe80))) {
 		goto out;
 	}
 
@@ -2085,6 +2124,15 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	        && (br_in == NULL || !natflow_is_lan_zone(br_in))
 #endif
 	   ) {
+		goto out;
+	}
+
+	if (dir == IP_CT_DIR_REPLY) {
+		user = natflow_user_get(ct);
+		if (!user)
+			goto out;
+		fud = natflow_fakeuser_data(user);
+		natflow_user_source_refresh(user, fud, skb, ct, ctinfo);
 		goto out;
 	}
 
@@ -2152,19 +2200,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		}
 	}
 
-	do {
-		unsigned int idle_jiffies = timestamp_offset(fud->timestamp, jiffies);
-
-		if (idle_jiffies < NATFLOW_USER_TIMESTAMP_REFRESH &&
-		        (ctinfo != IP_CT_NEW || idle_jiffies < NATFLOW_USER_TIMESTAMP_NEW_REFRESH)) {
-			break;
-		}
-		natflow_user_source_update(fud, eth_hdr(skb)->h_source, ct,
-		                           CTINFO2DIR(ctinfo));
-		fud->timestamp = jiffies;
-		natflow_user_timeout_touch(user);
-		userinfo_event_queue(user);
-	} while (0);
+	natflow_user_source_refresh(user, fud, skb, ct, ctinfo);
 
 	if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
 		if (fud->auth_status == AUTH_REQ && fud->auth_type == AUTH_TYPE_WEB && https_redirect_en != 0) {

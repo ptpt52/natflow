@@ -1566,6 +1566,40 @@ const struct net_device *natflow_session_ingress_dev(struct nf_conn *ct, int dir
 #endif
 }
 
+#ifdef CONFIG_NETFILTER_INGRESS
+static inline void natflow_user_ingress_ifname_learn_ipv4(struct sk_buff *skb)
+{
+	struct iphdr *iph = ip_hdr(skb);
+	u32 len = ntohs(iph->tot_len);
+
+	if (skb->len < len || len < iph->ihl * 4)
+		return;
+	if (!pskb_may_pull(skb, iph->ihl * 4))
+		return;
+
+	iph = ip_hdr(skb);
+	if (unlikely(ip_fast_csum((u8 *)iph, iph->ihl)))
+		return;
+
+	natflow_user_ingress_ifname_learn(skb,
+	                                  (const union nf_inet_addr *)&iph->saddr,
+	                                  AF_INET);
+}
+
+static inline void natflow_user_ingress_ifname_learn_ipv6(struct sk_buff *skb)
+{
+	struct ipv6hdr *ip6h = ipv6_hdr(skb);
+	u32 len = ntohs(ip6h->payload_len) + sizeof(struct ipv6hdr);
+
+	if (skb->len < len)
+		return;
+
+	natflow_user_ingress_ifname_learn(skb,
+	                                  (const union nf_inet_addr *)&ip6h->saddr,
+	                                  AF_INET6);
+}
+#endif
+
 #if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_path_pre_ct_in_hook(unsigned int hooknum,
         struct sk_buff *skb,
@@ -1767,8 +1801,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		if (skb->pkt_type == PACKET_BROADCAST ||
 		        skb->pkt_type == PACKET_MULTICAST ||
 		        ipv4_is_multicast(iph->daddr) || ipv4_is_lbcast(iph->daddr)) {
-			natflow_user_ingress_ifname_learn(skb,
-			                                  (const union nf_inet_addr *)&iph->saddr, AF_INET);
+			natflow_user_ingress_ifname_learn_ipv4(skb);
 			goto out;
 		}
 
@@ -1778,8 +1811,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		}
 		if (iph->protocol != IPPROTO_TCP && iph->protocol != IPPROTO_UDP) {
 			if (iph->protocol == IPPROTO_ICMP)
-				natflow_user_ingress_ifname_learn(skb,
-				                                  (const union nf_inet_addr *)&iph->saddr, AF_INET);
+				natflow_user_ingress_ifname_learn_ipv4(skb);
 			goto out;
 		}
 
@@ -3705,8 +3737,7 @@ __hook_ipv6_main:
 		if (skb->pkt_type == PACKET_BROADCAST ||
 		        skb->pkt_type == PACKET_MULTICAST ||
 		        ipv6_addr_is_multicast(&IPV6H->daddr)) {
-			natflow_user_ingress_ifname_learn(skb,
-			                                  (const union nf_inet_addr *)&IPV6H->saddr, AF_INET6);
+			natflow_user_ingress_ifname_learn_ipv6(skb);
 			goto out6;
 		}
 
