@@ -385,7 +385,7 @@ ip_or_ipv6,mac,auth_type_hex,auth_status_hex,rule_id,idle_time,rx_pkts:rx_bytes,
 - 单次 read 如果生成行长度大于用户提供 buffer，会返回 `-EINVAL`，这会破坏 shell 中按 1 字节读的用法。代码中已有 FIXME，重建实现若追求兼容应保留，若修复需在变更记录说明。
 - fakeuser 是特殊 conntrack，不是独立用户态表。
 - `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数，不再从当前 `no_flow_timeout` 反推；该 timestamp 在 fakeuser 创建/获取时写入，user pre hook 中普通活动最多每 32 秒刷新一次，`IP_CT_NEW` 新连接包距离上次刷新超过 2 秒也会刷新。
-- `ifname` 的所有权在 user 模块，功能规格依赖 path。普通 TCP/UDP 单播由 user pre hook 在按既有节流刷新 MAC 时，通过 `natflow_session_ingress_dev(ct, dir)` 读取当前 generation 下 `rroute[!dir].outdev`。对于不建立 route 的广播、组播和 ICMP/ICMPv6，启用的 path 在 NETDEV ingress 完成基础头部校验后，于原有早退分支调用 `natflow_user_ingress_ifname_learn(skb, saddr, family)`；该入口仅接受 LAN zone 设备或其 bridge slave，按 path 已解析的源地址查找或创建 fakeuser，记录原始 `skb->dev`，并在 Ethernet 头有效时同步源 MAC、在 ifname 变化时发布 userinfo 事件。ARP 不经过该 IP 入口；path 未启用、未启用 NETDEV ingress 或没有可用入口信息时字段可以为空。
+- `ifname` 的所有权在 user 模块，规格上依赖 `CONFIG_NATFLOW_PATH` 且仅在 path 运行时启用时生效。user pre hook 按既有节流刷新 MAC 时，优先调用 `natflow_session_ingress_dev(ct, dir)`，读取当前 generation 下有效的 `rroute[!dir].outdev`；route 尚未学习或已经失效时，再读取 `skb->skb_iif`，使用 `dev_get_by_index_rcu(dev_net(skb->dev), skb_iif)` 在 RCU 临界区内解析原始入接口并复制名称。`skb_iif` 和 `dev_get_by_index_rcu()` 覆盖仓库当前兼容目标内核，不增加版本分支。path 广播、组播和 ICMP/ICMPv6 早退路径不查找或创建 fakeuser；只有进入 user 的 conntrack/MAC 刷新流程时才同步 ifname，ARP 等无该上下文的流量不会单独更新。
 - 每个打开实例缓存最多 4096 条用户快照；扫描 conntrack hash 超过时间片或缓存上限时会保存 `next_bucket` 并返回 `-EAGAIN`。
 - 速度字段来自 4 个 2 秒窗口；如果超过 8 秒无更新，速度输出为 0。
 

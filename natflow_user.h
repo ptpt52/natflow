@@ -144,8 +144,6 @@ extern natflow_fakeuser_t *natflow_user_find_get6(const union nf_inet_addr *u3);
 extern natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr);
 extern natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3,
         const uint8_t *macaddr);
-extern void natflow_user_ingress_ifname_learn(struct sk_buff *skb,
-        const union nf_inet_addr *saddr, u_int16_t l3num);
 
 static inline void natflow_auth_convert_tcprst(struct sk_buff *skb)
 {
