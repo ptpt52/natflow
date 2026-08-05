@@ -115,6 +115,7 @@ typedef struct natflow_t {
 	unsigned char dpi_packet_count[NF_FF_DIR_MAX];
 	unsigned char dpi_detector_mask;
 	unsigned char dpi_reserved;
+	unsigned char layout_pad[4];
 } natflow_t;
 
 struct nf_conn;

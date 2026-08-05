@@ -149,9 +149,11 @@ int natflow_ct_ext_layout_validate(void)
 	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_reserved) +
 	             sizeof(((struct natflow_t *)0)->dpi_reserved) -
 	             offsetof(struct natflow_t, dpi_byte_count) != 8);
-	BUILD_BUG_ON(ALIGN(offsetof(struct natflow_t, dpi_reserved) +
-	                   sizeof(((struct natflow_t *)0)->dpi_reserved),
-	                   __ALIGN_64BITS) != sizeof(struct natflow_t));
+	BUILD_BUG_ON(offsetof(struct natflow_t, layout_pad) !=
+	             offsetof(struct natflow_t, dpi_reserved) +
+	             sizeof(((struct natflow_t *)0)->dpi_reserved));
+	BUILD_BUG_ON(sizeof(((struct natflow_t *)0)->layout_pad) != 4);
+	BUILD_BUG_ON(sizeof(struct natflow_t) % __ALIGN_64BITS != 0);
 
 	natflow_ct_ext_layout_get(&layout);
 
