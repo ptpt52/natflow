@@ -371,7 +371,7 @@ static int zone_netdev_event(struct notifier_block *this, unsigned long event, v
 	if (event != NETDEV_UP)
 		return NOTIFY_DONE;
 
-	NATFLOW_DEBUG("caught NETDEV_UP event for dev=%s\n", dev ? dev->name : "(null)");
+	NATFLOW_DEBUG("caught event NETDEV_UP for dev=%s\n", dev ? dev->name : "(null)");
 
 	if (natflow_zone_match_update(dev) == 1) {
 		NATFLOW_WARN("dev=%s set zone=%u type=%u\n",

@@ -6135,7 +6135,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 			dev->netdev_ops->ndo_flow_offload_check(&path);
 			if ((path.flags & FLOW_OFFLOAD_PATH_PPPOE)) {
 				dev->flags |= IFF_PPPOE;
-				NATFLOW_println("caught event %lu for dev=%s: set flags IFF_PPPOE", event, dev->name);
+				NATFLOW_println("caught event %s for dev=%s: set flags IFF_PPPOE", event == NETDEV_UP ? "NETDEV_UP" : "NETDEV_CHANGE", dev->name);
 			}
 		}
 		if (dev->netdev_ops->ndo_flow_offload) {
@@ -6151,7 +6151,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 					}
 				}
 				rcu_assign_pointer(ppe_dev, ppe_dev_cache[0]);
-				NATFLOW_println("caught event %lu for dev=%s: set ppe=%s", event, dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
+				NATFLOW_println("caught event %s for dev=%s: set ppe=%s", event == NETDEV_UP ? "NETDEV_UP" : "NETDEV_CHANGE", dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
 				mutex_unlock(&ppe_dev_cache_lock);
 			} else {
 				mutex_lock(&ppe_dev_cache_lock);
@@ -6167,7 +6167,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 					++i;
 				}
 				rcu_assign_pointer(ppe_dev, ppe_dev_cache[0]);
-				NATFLOW_println("caught event %lu for dev=%s: set ppe=%s", event, dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
+				NATFLOW_println("caught event %s for dev=%s: set ppe=%s", event == NETDEV_UP ? "NETDEV_UP" : "NETDEV_CHANGE", dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
 				mutex_unlock(&ppe_dev_cache_lock);
 			}
 		}
@@ -6175,7 +6175,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 		if (dev->type == ARPHRD_PPP &&
 		        (dev->name[0] == 'p' && dev->name[1] == 'p' && dev->name[2] == 'p' && dev->name[3] == 'o' && dev->name[4] == 'e')) {
 			dev->flags |= IFF_PPPOE;
-			NATFLOW_println("caught event %lu for dev=%s: set flags IFF_PPPOE", event, dev->name);
+			NATFLOW_println("caught event %s for dev=%s: set flags IFF_PPPOE", event == NETDEV_UP ? "NETDEV_UP" : "NETDEV_CHANGE", dev->name);
 		}
 #endif
 		vline_fwd_map_ifup_handle(dev);
@@ -6196,7 +6196,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 				++i;
 			}
 			rcu_assign_pointer(ppe_dev, ppe_dev_cache[0]);
-			NATFLOW_println("caught event %lu for dev=%s: set ppe=%s", event, dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
+			NATFLOW_println("caught event NETDEV_DOWN for dev=%s: set ppe=%s", dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
 			mutex_unlock(&ppe_dev_cache_lock);
 		}
 #endif
@@ -6219,7 +6219,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 		        dev->type == ARPHRD_RAWIP) {
 			netdev_features_t features = dev->features;
 			netdev_features_t vlan_features = netdev_intersect_features(features, dev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
-			NATFLOW_println("caught NETDEV_UP event for dev=%s(tso=%d,%d,hw_csum=%d,%d), added ingress hook",
+			NATFLOW_println("caught event NETDEV_UP for dev=%s(tso=%d,%d,hw_csum=%d,%d), added ingress hook",
 			                dev->name,
 			                !!(features & NETIF_F_TSO),
 			                !!(vlan_features & NETIF_F_TSO),
@@ -6246,7 +6246,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 #endif
 	vline_fwd_map_unregister_handle(dev);
 
-	NATFLOW_println("caught NETDEV_UNREGISTER event for dev=%s", dev->name);
+	NATFLOW_println("caught event NETDEV_UNREGISTER for dev=%s", dev->name);
 
 	do {
 		struct netdev_hold_wq *wq = kzalloc(sizeof(*wq), GFP_KERNEL);
