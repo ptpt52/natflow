@@ -187,14 +187,14 @@ extern const char *const hooknames[];
 
 #define MAC_HEADER_FMT "%02X:%02X:%02X:%02X:%02X:%02X->%02X:%02X:%02X:%02X:%02X:%02X h_proto=%04X"
 #define MAC_HEADER_ARG(eth) \
-	((struct ethhdr *)(eth))->h_source[0],((struct ethhdr *)(eth))->h_source[1],((struct ethhdr *)(eth))->h_source[2], \
-	((struct ethhdr *)(eth))->h_source[3],((struct ethhdr *)(eth))->h_source[4],((struct ethhdr *)(eth))->h_source[5], \
-	((struct ethhdr *)(eth))->h_dest[0],((struct ethhdr *)(eth))->h_dest[1],((struct ethhdr *)(eth))->h_dest[2],\
-	((struct ethhdr *)(eth))->h_dest[3],((struct ethhdr *)(eth))->h_dest[4],((struct ethhdr *)(eth))->h_dest[5],\
+	((struct ethhdr *)(eth))->h_source[0], ((struct ethhdr *)(eth))->h_source[1], ((struct ethhdr *)(eth))->h_source[2], \
+	((struct ethhdr *)(eth))->h_source[3], ((struct ethhdr *)(eth))->h_source[4], ((struct ethhdr *)(eth))->h_source[5], \
+	((struct ethhdr *)(eth))->h_dest[0], ((struct ethhdr *)(eth))->h_dest[1], ((struct ethhdr *)(eth))->h_dest[2], \
+	((struct ethhdr *)(eth))->h_dest[3], ((struct ethhdr *)(eth))->h_dest[4], ((struct ethhdr *)(eth))->h_dest[5], \
 	((struct ethhdr *)(eth))->h_proto
 
 #define IP_TCPUDP_FMT	"%pI4:%u->%pI4:%u"
-#define IP_TCPUDP_ARG(i,t)	&(i)->saddr, ntohs(((struct tcphdr *)(t))->source), &(i)->daddr, ntohs(((struct tcphdr *)(t))->dest)
+#define IP_TCPUDP_ARG(i, t)	&(i)->saddr, ntohs(((struct tcphdr *)(t))->source), &(i)->daddr, ntohs(((struct tcphdr *)(t))->dest)
 #define TCP_ST_FMT	"%c%c%c%c%c%c%c%c"
 #define TCP_ST_ARG(t) \
 	((struct tcphdr *)(t))->cwr ? 'C' : '.', \
@@ -209,10 +209,10 @@ extern const char *const hooknames[];
 #define UDP_ST_ARG(u) ntohs(((struct udphdr *)(u))->len), ntohs(((struct udphdr *)(u))->check)
 
 #define DEBUG_FMT_TCP "[" IP_TCPUDP_FMT "|ID:%04X,IL:%u|" TCP_ST_FMT "]"
-#define DEBUG_ARG_TCP(i, t) IP_TCPUDP_ARG(i,t), ntohs(((struct iphdr *)(i))->id), ntohs(((struct iphdr *)(i))->tot_len), TCP_ST_ARG(t)
+#define DEBUG_ARG_TCP(i, t) IP_TCPUDP_ARG(i, t), ntohs(((struct iphdr *)(i))->id), ntohs(((struct iphdr *)(i))->tot_len), TCP_ST_ARG(t)
 
 #define DEBUG_FMT_UDP "[" IP_TCPUDP_FMT "|ID:%04X,IL:%u|" UDP_ST_FMT "]"
-#define DEBUG_ARG_UDP(i, u) IP_TCPUDP_ARG(i,u), ntohs((i)->id), ntohs((i)->tot_len), UDP_ST_ARG(u)
+#define DEBUG_ARG_UDP(i, u) IP_TCPUDP_ARG(i, u), ntohs((i)->id), ntohs((i)->tot_len), UDP_ST_ARG(u)
 
 #define DEBUG_TCP_FMT "[%s]" DEBUG_FMT_TCP
 #define DEBUG_TCP_ARG(i, t) hooknames[hooknum], DEBUG_ARG_TCP(i, t)
@@ -224,17 +224,17 @@ extern const char *const hooknames[];
 #define TUPLE_ARG(t) &((struct tuple *)(t))->ip, ntohs(((struct tuple *)(t))->port), ((struct tuple *)(t))->encryption ? 'e' : 'o'
 
 #define IPV6_TCPUDP_FMT	"[%pI6c]:%u->[%pI6c]:%u"
-#define IPV6_TCPUDP_ARG(i,t)	&((struct ipv6hdr *)i)->saddr, ntohs(((struct tcphdr *)(t))->source), &((struct ipv6hdr *)i)->daddr, ntohs(((struct tcphdr *)(t))->dest)
+#define IPV6_TCPUDP_ARG(i, t)	&((struct ipv6hdr *)i)->saddr, ntohs(((struct tcphdr *)(t))->source), &((struct ipv6hdr *)i)->daddr, ntohs(((struct tcphdr *)(t))->dest)
 
 #define DEBUG_FMT6_TCP "[" IPV6_TCPUDP_FMT "|FL:%08X,HL:%u,PL:%u|" TCP_ST_FMT "]"
-#define DEBUG_ARG6_TCP(i, t) IPV6_TCPUDP_ARG(i,t), \
+#define DEBUG_ARG6_TCP(i, t) IPV6_TCPUDP_ARG(i, t), \
 	ntohl((__force __be32)(((((struct ipv6hdr *)i)->flow_lbl[0] & 0xF) << 16) | (((struct ipv6hdr *)i)->flow_lbl[1] << 8) | ((struct ipv6hdr *)i)->flow_lbl[2])), \
 	((struct ipv6hdr *)i)->hop_limit, \
 	ntohs(((struct ipv6hdr *)i)->payload_len), \
 	TCP_ST_ARG(t)
 
 #define DEBUG_FMT6_UDP "[" IPV6_TCPUDP_FMT "|FL:%08X,HL:%u,PL:%u|" UDP_ST_FMT "]"
-#define DEBUG_ARG6_UDP(i, u) IPV6_TCPUDP_ARG(i,u), \
+#define DEBUG_ARG6_UDP(i, u) IPV6_TCPUDP_ARG(i, u), \
 	ntohl((__force __be32)(((((struct ipv6hdr *)i)->flow_lbl[0] & 0xF) << 16) | (((struct ipv6hdr *)i)->flow_lbl[1] << 8) | ((struct ipv6hdr *)i)->flow_lbl[2])), \
 	((struct ipv6hdr *)i)->hop_limit, \
 	ntohs(((struct ipv6hdr *)i)->payload_len), \

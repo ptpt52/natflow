@@ -2373,11 +2373,11 @@ slow_fastpath:
 	if (!(nf->status & NF_FF_REPLY_OK) || !(nf->status & NF_FF_ORIGINAL_OK)) {
 		switch (iph->protocol) {
 		case IPPROTO_TCP:
-			NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": dir=%d reply:%d original:%d, dev=%s\n", DEBUG_TCP_ARG(iph,l4), dir,
+			NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": dir=%d reply:%d original:%d, dev=%s\n", DEBUG_TCP_ARG(iph, l4), dir,
 			              !!(nf->status & NF_FF_REPLY_OK), !!(nf->status & NF_FF_ORIGINAL_OK), skb->dev->name);
 			break;
 		case IPPROTO_UDP:
-			NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": dir=%d reply:%d original:%d, dev=%s\n", DEBUG_UDP_ARG(iph,l4), dir,
+			NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": dir=%d reply:%d original:%d, dev=%s\n", DEBUG_UDP_ARG(iph, l4), dir,
 			              !!(nf->status & NF_FF_REPLY_OK), !!(nf->status & NF_FF_ORIGINAL_OK), skb->dev->name);
 			break;
 		}
@@ -2421,7 +2421,7 @@ slow_fastpath:
 				switch (iph->protocol) {
 				case IPPROTO_TCP:
 					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) go slowpath\n",
-					             DEBUG_TCP_ARG(iph,l4),
+					             DEBUG_TCP_ARG(iph, l4),
 					             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
 					             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
 					             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
@@ -2429,7 +2429,7 @@ slow_fastpath:
 					break;
 				case IPPROTO_UDP:
 					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) go slowpath\n",
-					             DEBUG_UDP_ARG(iph,l4),
+					             DEBUG_UDP_ARG(iph, l4),
 					             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
 					             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
 					             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
@@ -2466,11 +2466,11 @@ slow_fastpath:
 				switch (iph->protocol) {
 				case IPPROTO_TCP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": pmtu=%u FRAG=%p\n",
-					              DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+					              DEBUG_TCP_ARG(iph, l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
 					break;
 				case IPPROTO_UDP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%p\n",
-					              DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+					              DEBUG_UDP_ARG(iph, l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
 					break;
 				}
 				goto out;
@@ -2695,13 +2695,13 @@ fastnat_check:
 							switch (iph->protocol) {
 							case IPPROTO_TCP:
 								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d use hash=%d outdev=%s(vlan:%d pppoe=%d) l2_len=%d\n",
-								             DEBUG_TCP_ARG(iph,l4), d, hash, nfn->outdev->name,
+								             DEBUG_TCP_ARG(iph, l4), d, hash, nfn->outdev->name,
 								             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
 								             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1, nf->rroute[d].l2_head_len);
 								break;
 							case IPPROTO_UDP:
 								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d use hash=%d outdev=%s(vlan:%d pppoe=%d) l2_len=%d\n",
-								             DEBUG_UDP_ARG(iph,l4), d, hash, nfn->outdev->name,
+								             DEBUG_UDP_ARG(iph, l4), d, hash, nfn->outdev->name,
 								             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
 								             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1, nf->rroute[d].l2_head_len);
 								break;
@@ -2711,10 +2711,10 @@ fastnat_check:
 							simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
 							switch (iph->protocol) {
 							case IPPROTO_TCP:
-								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d skip hash=%d\n", DEBUG_TCP_ARG(iph,l4), d, hash);
+								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT ": dir=%d skip hash=%d\n", DEBUG_TCP_ARG(iph, l4), d, hash);
 								break;
 							case IPPROTO_UDP:
-								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d skip hash=%d\n", DEBUG_UDP_ARG(iph,l4), d, hash);
+								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT ": dir=%d skip hash=%d\n", DEBUG_UDP_ARG(iph, l4), d, hash);
 								break;
 							}
 						}
@@ -2897,12 +2897,12 @@ fastnat_check:
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT
 														             ": failed to set hwnat offload1 for dir%d\n",
-														             DEBUG_TCP_ARG(iph,l4), dir);
+														             DEBUG_TCP_ARG(iph, l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT
 														             ": failed to set hwnat offload1 for dir%d\n",
-														             DEBUG_UDP_ARG(iph,l4), dir);
+														             DEBUG_UDP_ARG(iph, l4), dir);
 														break;
 													}
 												}
@@ -3018,12 +3018,12 @@ fastnat_check:
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT
 														             ": failed to set hwnat offload2 for dir%d\n",
-														             DEBUG_TCP_ARG(iph,l4), dir);
+														             DEBUG_TCP_ARG(iph, l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT
 														             ": failed to set hwnat offload2 for dir%d\n",
-														             DEBUG_UDP_ARG(iph,l4), dir);
+														             DEBUG_UDP_ARG(iph, l4), dir);
 														break;
 													}
 												}
@@ -3138,12 +3138,12 @@ fastnat_check:
 												case IPPROTO_TCP:
 													NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT
 													             ": failed to set hwnat offload3 for dir%d\n",
-													             DEBUG_TCP_ARG(iph,l4), dir);
+													             DEBUG_TCP_ARG(iph, l4), dir);
 													break;
 												case IPPROTO_UDP:
 													NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT
 													             ": failed to set hwnat offload3 for dir%d\n",
-													             DEBUG_UDP_ARG(iph,l4), dir);
+													             DEBUG_UDP_ARG(iph, l4), dir);
 													break;
 												}
 											}
@@ -3240,12 +3240,12 @@ fastnat_check:
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT
 														             ": failed to set hwnat offload4 for dir%d\n",
-														             DEBUG_TCP_ARG(iph,l4), dir);
+														             DEBUG_TCP_ARG(iph, l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT
 														             ": failed to set hwnat offload4 for dir%d\n",
-														             DEBUG_UDP_ARG(iph,l4), dir);
+														             DEBUG_UDP_ARG(iph, l4), dir);
 														break;
 													}
 												}
@@ -4272,11 +4272,11 @@ slow_fastpath6:
 	if (!(nf->status & NF_FF_REPLY_OK) || !(nf->status & NF_FF_ORIGINAL_OK)) {
 		switch (IPV6H->nexthdr) {
 		case IPPROTO_TCP:
-			NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": dir=%d reply:%d original:%d, dev=%s\n", DEBUG_TCP_ARG6(iph,l4), dir,
+			NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": dir=%d reply:%d original:%d, dev=%s\n", DEBUG_TCP_ARG6(iph, l4), dir,
 			              !!(nf->status & NF_FF_REPLY_OK), !!(nf->status & NF_FF_ORIGINAL_OK), skb->dev->name);
 			break;
 		case IPPROTO_UDP:
-			NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": dir=%d reply:%d original:%d, dev=%s\n", DEBUG_UDP_ARG6(iph,l4), dir,
+			NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": dir=%d reply:%d original:%d, dev=%s\n", DEBUG_UDP_ARG6(iph, l4), dir,
 			              !!(nf->status & NF_FF_REPLY_OK), !!(nf->status & NF_FF_ORIGINAL_OK), skb->dev->name);
 			break;
 		}
@@ -4320,7 +4320,7 @@ slow_fastpath6:
 				switch (IPV6H->nexthdr) {
 				case IPPROTO_TCP:
 					NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6 ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) not matched\n",
-					             DEBUG_TCP_ARG6(iph,l4),
+					             DEBUG_TCP_ARG6(iph, l4),
 					             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
 					             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
 					             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
@@ -4328,7 +4328,7 @@ slow_fastpath6:
 					break;
 				case IPPROTO_UDP:
 					NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6 ": ifname filter orig dev=%s(vlan:%d) reply dev=%s(vlan:%d) not matched\n",
-					             DEBUG_UDP_ARG6(iph,l4),
+					             DEBUG_UDP_ARG6(iph, l4),
 					             nf->rroute[NF_FF_DIR_ORIGINAL].outdev->name,
 					             nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present ? (int)nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci : -1,
 					             nf->rroute[NF_FF_DIR_REPLY].outdev->name,
@@ -4365,11 +4365,11 @@ slow_fastpath6:
 				switch (IPV6H->nexthdr) {
 				case IPPROTO_TCP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": pmtu=%u len=%u\n",
-					              DEBUG_TCP_ARG6(iph,l4), nf->rroute[dir].mtu, skb->len);
+					              DEBUG_TCP_ARG6(iph, l4), nf->rroute[dir].mtu, skb->len);
 					break;
 				case IPPROTO_UDP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": pmtu=%u len=%u\n",
-					              DEBUG_UDP_ARG6(iph,l4), nf->rroute[dir].mtu, skb->len);
+					              DEBUG_UDP_ARG6(iph, l4), nf->rroute[dir].mtu, skb->len);
 					break;
 				}
 				goto out6;
@@ -4590,13 +4590,13 @@ fastnat_check6:
 							switch (IPV6H->nexthdr) {
 							case IPPROTO_TCP:
 								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6 ": dir=%d use hash=%d outdev=%s(vlan:%d pppoe=%d)\n",
-								             DEBUG_TCP_ARG6(iph,l4), d, hash, nfn->outdev->name,
+								             DEBUG_TCP_ARG6(iph, l4), d, hash, nfn->outdev->name,
 								             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
 								             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1);
 								break;
 							case IPPROTO_UDP:
 								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6 ": dir=%d use hash=%d outdev=%s(vlan:%d pppoe=%d)\n",
-								             DEBUG_UDP_ARG6(iph,l4), d, hash, nfn->outdev->name,
+								             DEBUG_UDP_ARG6(iph, l4), d, hash, nfn->outdev->name,
 								             nfn->vlan_present ? (int)nfn->vlan_tci : -1,
 								             (nfn->flags & FASTNAT_PPPOE_FLAG) ? (int)ntohs(nfn->pppoe_sid) : -1);
 								break;
@@ -4606,10 +4606,10 @@ fastnat_check6:
 							simple_set_bit(NF_FF_FAIL_BIT, &nf->status);
 							switch (IPV6H->nexthdr) {
 							case IPPROTO_TCP:
-								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6 ": dir=%d skip hash=%d\n", DEBUG_TCP_ARG6(iph,l4), d, hash);
+								NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6 ": dir=%d skip hash=%d\n", DEBUG_TCP_ARG6(iph, l4), d, hash);
 								break;
 							case IPPROTO_UDP:
-								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6 ": dir=%d skip hash=%d\n", DEBUG_UDP_ARG6(iph,l4), d, hash);
+								NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6 ": dir=%d skip hash=%d\n", DEBUG_UDP_ARG6(iph, l4), d, hash);
 								break;
 							}
 						}
@@ -4790,12 +4790,12 @@ fastnat_check6:
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
 														             ": failed to set hwnat offload1 for dir%d\n",
-														             DEBUG_TCP_ARG6(iph,l4), dir);
+														             DEBUG_TCP_ARG6(iph, l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6
 														             ": failed to set hwnat offload1 for dir%d\n",
-														             DEBUG_UDP_ARG6(iph,l4), dir);
+														             DEBUG_UDP_ARG6(iph, l4), dir);
 														break;
 													}
 												}
@@ -4911,12 +4911,12 @@ fastnat_check6:
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
 														             ": failed to set hwnat offload2 for dir%d\n",
-														             DEBUG_TCP_ARG6(iph,l4), dir);
+														             DEBUG_TCP_ARG6(iph, l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6
 														             ": failed to set hwnat offload2 for dir%d\n",
-														             DEBUG_UDP_ARG6(iph,l4), dir);
+														             DEBUG_UDP_ARG6(iph, l4), dir);
 														break;
 													}
 												}
@@ -5031,12 +5031,12 @@ fastnat_check6:
 												case IPPROTO_TCP:
 													NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
 													             ": failed to set hwnat offload3 for dir%d\n",
-													             DEBUG_TCP_ARG6(iph,l4), dir);
+													             DEBUG_TCP_ARG6(iph, l4), dir);
 													break;
 												case IPPROTO_UDP:
 													NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6
 													             ": failed to set hwnat offload3 for dir%d\n",
-													             DEBUG_UDP_ARG6(iph,l4), dir);
+													             DEBUG_UDP_ARG6(iph, l4), dir);
 													break;
 												}
 											}
@@ -5133,12 +5133,12 @@ fastnat_check6:
 													case IPPROTO_TCP:
 														NATFLOW_INFO("(PCO)" DEBUG_TCP_FMT6
 														             ": failed to set hwnat offload4 for dir%d\n",
-														             DEBUG_TCP_ARG6(iph,l4), dir);
+														             DEBUG_TCP_ARG6(iph, l4), dir);
 														break;
 													case IPPROTO_UDP:
 														NATFLOW_INFO("(PCO)" DEBUG_UDP_FMT6
 														             ": failed to set hwnat offload4 for dir%d\n",
-														             DEBUG_UDP_ARG6(iph,l4), dir);
+														             DEBUG_UDP_ARG6(iph, l4), dir);
 														break;
 													}
 												}
@@ -5878,11 +5878,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 				switch (iph->protocol) {
 				case IPPROTO_TCP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl %d -> %d no change, pf=%d\n",
-					              DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+					              DEBUG_TCP_ARG(iph, l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
 					break;
 				case IPPROTO_UDP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl %d -> %d no change, pf=%d\n",
-					              DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+					              DEBUG_UDP_ARG(iph, l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
 					break;
 				}
 			} else {
@@ -5890,11 +5890,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 				switch (iph->protocol) {
 				case IPPROTO_TCP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": dir=%d ttl %d -> %d, pf=%d\n",
-					              DEBUG_TCP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+					              DEBUG_TCP_ARG(iph, l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
 					break;
 				case IPPROTO_UDP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": dir=%d ttl %d -> %d, pf=%d\n",
-					              DEBUG_UDP_ARG(iph,l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
+					              DEBUG_UDP_ARG(iph, l4), dir, nf->rroute[!dir].ttl_in, iph->ttl, pf);
 					break;
 				}
 			}
@@ -5905,11 +5905,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 				switch (IPV6H->nexthdr) {
 				case IPPROTO_TCP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": dir=%d hoplimit %d -> %d no change, pf=%d\n",
-					              DEBUG_TCP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
+					              DEBUG_TCP_ARG6(iph, l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				case IPPROTO_UDP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": dir=%d hoplimit %d -> %d no change, pf=%d\n",
-					              DEBUG_UDP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
+					              DEBUG_UDP_ARG6(iph, l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				}
 			} else {
@@ -5917,11 +5917,11 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 				switch (IPV6H->nexthdr) {
 				case IPPROTO_TCP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": dir=%d hoplimit %d -> %d, pf=%d\n",
-					              DEBUG_TCP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
+					              DEBUG_TCP_ARG6(iph, l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				case IPPROTO_UDP:
 					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": dir=%d hoplimit %d -> %d, pf=%d\n",
-					              DEBUG_UDP_ARG6(iph,l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
+					              DEBUG_UDP_ARG6(iph, l4), dir, nf->rroute[!dir].ttl_in, IPV6H->hop_limit, pf);
 					break;
 				}
 			}
@@ -5936,19 +5936,19 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 		if (iph->version == 4) {
 			switch (iph->protocol) {
 			case IPPROTO_TCP:
-				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": update pmtu from %u to %u\n", DEBUG_TCP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
+				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": update pmtu from %u to %u\n", DEBUG_TCP_ARG(iph, l4), nf->rroute[dir].mtu, mtu);
 				break;
 			case IPPROTO_UDP:
-				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": update pmtu from %u to %u\n", DEBUG_UDP_ARG(iph,l4), nf->rroute[dir].mtu, mtu);
+				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": update pmtu from %u to %u\n", DEBUG_UDP_ARG(iph, l4), nf->rroute[dir].mtu, mtu);
 				break;
 			}
 		} else {
 			switch (IPV6H->nexthdr) {
 			case IPPROTO_TCP:
-				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": update pmtu from %u to %u\n", DEBUG_TCP_ARG6(iph,l4), nf->rroute[dir].mtu, mtu);
+				NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT6 ": update pmtu from %u to %u\n", DEBUG_TCP_ARG6(iph, l4), nf->rroute[dir].mtu, mtu);
 				break;
 			case IPPROTO_UDP:
-				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": update pmtu from %u to %u\n", DEBUG_UDP_ARG6(iph,l4), nf->rroute[dir].mtu, mtu);
+				NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT6 ": update pmtu from %u to %u\n", DEBUG_UDP_ARG6(iph, l4), nf->rroute[dir].mtu, mtu);
 				break;
 			}
 		}

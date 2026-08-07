@@ -779,7 +779,7 @@ static inline void natflow_urllogger_tcp_reply_rstack(const struct net_device *d
 	ntcph->source = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
 	ntcph->dest = otcph->source;
 	ntcph->seq = otcph->ack_seq;
-	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->tot_len) - (oiph->ihl<<2) - (otcph->doff<<2));
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->tot_len) - (oiph->ihl * 4) - (otcph->doff * 4));
 	ntcph->doff = 5;
 	ntcph->ack = 1;
 	ntcph->rst = 1;
@@ -787,7 +787,7 @@ static inline void natflow_urllogger_tcp_reply_rstack(const struct net_device *d
 	ntcph->fin = 0;
 	ntcph->window = 0;
 	/* Checksum. */
-	len = ntohs(niph->tot_len) - (niph->ihl<<2);
+	len = ntohs(niph->tot_len) - (niph->ihl * 4);
 	csum = csum_partial((char*)ntcph, len, 0);
 	ntcph->check = tcp_v4_check(len, niph->saddr, niph->daddr, csum);
 	/* Ready to send out. */
@@ -870,7 +870,7 @@ static inline void natflow_urllogger_tcp_reply_rstack6(const struct net_device *
 	ntcph->source = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
 	ntcph->dest = otcph->source;
 	ntcph->seq = otcph->ack_seq;
-	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff<<2));
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff * 4));
 	ntcph->doff = 5;
 	ntcph->ack = 1;
 	ntcph->rst = 1;
@@ -973,7 +973,7 @@ static inline void natflow_urllogger_tcp_reply_302(const struct net_device *dev,
 	ntcph->source = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
 	ntcph->dest = otcph->source;
 	ntcph->seq = otcph->ack_seq;
-	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->tot_len) - (oiph->ihl<<2) - (otcph->doff<<2));
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->tot_len) - (oiph->ihl * 4) - (otcph->doff * 4));
 	ntcph->doff = 5;
 	ntcph->ack = 1;
 	ntcph->rst = 0;
@@ -983,7 +983,7 @@ static inline void natflow_urllogger_tcp_reply_302(const struct net_device *dev,
 	/* Payload */
 	memcpy((char *)ntcph + sizeof(struct tcphdr), redirect->payload, redirect_payload_len);
 	/* Checksum. */
-	len = ntohs(niph->tot_len) - (niph->ihl<<2);
+	len = ntohs(niph->tot_len) - (niph->ihl * 4);
 	csum = csum_partial((char*)ntcph, len, 0);
 	ntcph->check = tcp_v4_check(len, niph->saddr, niph->daddr, csum);
 	/* Ready to send out. */
@@ -1076,7 +1076,7 @@ static inline void natflow_urllogger_tcp_reply_302_v6(const struct net_device *d
 	ntcph->source = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all;
 	ntcph->dest = otcph->source;
 	ntcph->seq = otcph->ack_seq;
-	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff<<2));
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff * 4));
 	ntcph->doff = 5;
 	ntcph->ack = 1;
 	ntcph->rst = 0;

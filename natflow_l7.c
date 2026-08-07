@@ -1577,11 +1577,11 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_HOOK_ARGS,
 			        append_len > NATFLOW_L7_TLS_CACHE_DATA_LIMIT - prev_data_len) {
 				if (flow->l3num == AF_INET6)
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": sni cache data too large, prev_data_len=%u, data_len=%u\n",
-					              DEBUG_TCP_ARG6(flow->iph,flow->l4),
+					              DEBUG_TCP_ARG6(flow->iph, flow->l4),
 					              prev_data_len, append_len);
 				else
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": sni cache data too large, prev_data_len=%u, data_len=%u\n",
-					              DEBUG_TCP_ARG(flow->iph,flow->l4),
+					              DEBUG_TCP_ARG(flow->iph, flow->l4),
 					              prev_data_len, append_len);
 				goto terminal;
 			}
@@ -1591,10 +1591,10 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_HOOK_ARGS,
 			if (!new_data) {
 				if (flow->l3num == AF_INET6)
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to krealloc data\n",
-					              DEBUG_TCP_ARG6(flow->iph,flow->l4));
+					              DEBUG_TCP_ARG6(flow->iph, flow->l4));
 				else
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to krealloc data\n",
-					              DEBUG_TCP_ARG(flow->iph,flow->l4));
+					              DEBUG_TCP_ARG(flow->iph, flow->l4));
 				kfree(prev_data);
 				prev_data = NULL;
 				goto terminal;
@@ -1614,11 +1614,11 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_HOOK_ARGS,
 				                                        prev_data_len) != 0) {
 					if (flow->l3num == AF_INET6)
 						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach l7 tls cache6, prev_data_len=%u\n",
-						              DEBUG_TCP_ARG6(flow->iph,flow->l4),
+						              DEBUG_TCP_ARG6(flow->iph, flow->l4),
 						              prev_data_len);
 					else
 						NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach l7 tls cache, prev_data_len=%u\n",
-						              DEBUG_TCP_ARG(flow->iph,flow->l4),
+						              DEBUG_TCP_ARG(flow->iph, flow->l4),
 						              prev_data_len);
 					goto terminal;
 				}
@@ -1635,10 +1635,10 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_HOOK_ARGS,
 			                                    prev_data_len) != 0) {
 				if (flow->l3num == AF_INET6)
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach l7 tls cache6\n",
-					              DEBUG_TCP_ARG6(flow->iph,flow->l4));
+					              DEBUG_TCP_ARG6(flow->iph, flow->l4));
 				else
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach l7 tls cache\n",
-					              DEBUG_TCP_ARG(flow->iph,flow->l4));
+					              DEBUG_TCP_ARG(flow->iph, flow->l4));
 				goto terminal;
 			}
 			prev_data = NULL;
@@ -1661,10 +1661,10 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_HOOK_ARGS,
 			        flow->data_len) != 0) {
 				if (flow->l3num == AF_INET6)
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT6 ": failed to attach l7 tls cache6\n",
-					              DEBUG_TCP_ARG6(flow->iph,flow->l4));
+					              DEBUG_TCP_ARG6(flow->iph, flow->l4));
 				else
 					NATFLOW_ERROR("(NUHv1)" DEBUG_TCP_FMT ": failed to attach l7 tls cache\n",
-					              DEBUG_TCP_ARG(flow->iph,flow->l4));
+					              DEBUG_TCP_ARG(flow->iph, flow->l4));
 				goto terminal;
 			}
 			prev_data = NULL;

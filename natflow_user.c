@@ -1456,14 +1456,14 @@ static inline void natflow_auth_reply_fmt_fin(int max_payload_len, struct sk_buf
 	ntcph->source = otcph->dest;
 	ntcph->dest = otcph->source;
 	ntcph->seq = otcph->ack_seq;
-	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->tot_len) - (oiph->ihl<<2) - (otcph->doff<<2));
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->tot_len) - (oiph->ihl * 4) - (otcph->doff * 4));
 	ntcph->doff = 5;
 	ntcph->ack = 1;
 	ntcph->psh = 1;
 	ntcph->fin = 1;
 	ntcph->window = 65535;
 	/* Checksum. */
-	len = ntohs(niph->tot_len) - (niph->ihl<<2);
+	len = ntohs(niph->tot_len) - (niph->ihl * 4);
 	csum = csum_partial((char*)ntcph, len, 0);
 	ntcph->check = tcp_v4_check(len, niph->saddr, niph->daddr, csum);
 	/* Ready to send out. */
@@ -1563,7 +1563,7 @@ static inline void natflow_auth_reply_fmt_fin6(int max_payload_len, struct sk_bu
 	ntcph->source = otcph->dest;
 	ntcph->dest = otcph->source;
 	ntcph->seq = otcph->ack_seq;
-	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff<<2));
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff * 4));
 	ntcph->doff = 5;
 	ntcph->ack = 1;
 	ntcph->psh = 1;
@@ -1659,14 +1659,14 @@ static inline void natflow_auth_reply_payload_fin(const char *payload, int paylo
 	ntcph->source = otcph->dest;
 	ntcph->dest = otcph->source;
 	ntcph->seq = otcph->ack_seq;
-	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->tot_len) - (oiph->ihl<<2) - (otcph->doff<<2));
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->tot_len) - (oiph->ihl * 4) - (otcph->doff * 4));
 	ntcph->doff = 5;
 	ntcph->ack = 1;
 	ntcph->psh = 1;
 	ntcph->fin = 1;
 	ntcph->window = 65535;
 	/* Checksum. */
-	len = ntohs(niph->tot_len) - (niph->ihl<<2);
+	len = ntohs(niph->tot_len) - (niph->ihl * 4);
 	csum = csum_partial((char*)ntcph, len, 0);
 	ntcph->check = tcp_v4_check(len, niph->saddr, niph->daddr, csum);
 	/* Ready to send out. */
@@ -1749,7 +1749,7 @@ static inline void natflow_auth_reply_payload_fin6(const char *payload, int payl
 	ntcph->source = otcph->dest;
 	ntcph->dest = otcph->source;
 	ntcph->seq = otcph->ack_seq;
-	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff<<2));
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff * 4));
 	ntcph->doff = 5;
 	ntcph->ack = 1;
 	ntcph->psh = 1;
@@ -1926,7 +1926,7 @@ static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, s
 	ntcph->source = otcph->dest;
 	ntcph->dest = otcph->source;
 	ntcph->seq = otcph->ack_seq;
-	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->tot_len) - (oiph->ihl<<2) - (otcph->doff<<2) + 1);
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->tot_len) - (oiph->ihl * 4) - (otcph->doff * 4) + 1);
 	ntcph->doff = 5;
 	ntcph->ack = 1;
 	ntcph->rst = 1;
@@ -1934,7 +1934,7 @@ static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, s
 	ntcph->fin = 0;
 	ntcph->window = 0;
 	/* Checksum. */
-	len = ntohs(niph->tot_len) - (niph->ihl<<2);
+	len = ntohs(niph->tot_len) - (niph->ihl * 4);
 	csum = csum_partial((char*)ntcph, len, 0);
 	ntcph->check = tcp_v4_check(len, niph->saddr, niph->daddr, csum);
 	/* Ready to send out. */
@@ -2014,7 +2014,7 @@ static inline void natflow_auth_tcp_reply_finack6(const struct net_device *dev, 
 	ntcph->source = otcph->dest;
 	ntcph->dest = otcph->source;
 	ntcph->seq = otcph->ack_seq;
-	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff<<2) + 1);
+	ntcph->ack_seq = htonl(ntohl(otcph->seq) + ntohs(oiph->payload_len) - (otcph->doff * 4) + 1);
 	ntcph->doff = 5;
 	ntcph->ack = 1;
 	ntcph->rst = 1;
@@ -2257,7 +2257,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 						rcu_read_unlock();
 
 						if (newdst) {
-							NATFLOW_DEBUG(DEBUG_TCP_FMT ": new connection https redirect to %pI4:%u\n", DEBUG_TCP_ARG(iph,l4), &newdst, ntohs(https_redirect_port));
+							NATFLOW_DEBUG(DEBUG_TCP_FMT ": new connection https redirect to %pI4:%u\n", DEBUG_TCP_ARG(iph, l4), &newdst, ntohs(https_redirect_port));
 							natflow_dnat_setup(ct, newdst, https_redirect_port);
 							set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 						}
@@ -2287,7 +2287,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 						struct in6_addr newdst;
 
 						if (natflow_auth_dev_addr6(in, &newdst) == 0) {
-							NATFLOW_DEBUG(DEBUG_FMT6_TCP ": new connection https redirect to [%pI6c]:%u\n", DEBUG_ARG6_TCP(ip6h,l4), &newdst, ntohs(https_redirect_port));
+							NATFLOW_DEBUG(DEBUG_FMT6_TCP ": new connection https redirect to [%pI6c]:%u\n", DEBUG_ARG6_TCP(ip6h, l4), &newdst, ntohs(https_redirect_port));
 							natflow_dnat_setup6(ct, &newdst, https_redirect_port);
 							set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
 						}
@@ -2609,11 +2609,11 @@ static unsigned int natflow_user_forward_hook(void *priv,
 					switch (iph->protocol) {
 					case IPPROTO_TCP:
 						NATFLOW_INFO("(NUF)" DEBUG_TCP_FMT ": matched qos id=%d\n",
-						             DEBUG_TCP_ARG(iph,l4), nf->qos_id);
+						             DEBUG_TCP_ARG(iph, l4), nf->qos_id);
 						break;
 					case IPPROTO_UDP:
 						NATFLOW_INFO("(NUF)" DEBUG_UDP_FMT ": matched qos id=%d\n",
-						             DEBUG_UDP_ARG(iph,l4), nf->qos_id);
+						             DEBUG_UDP_ARG(iph, l4), nf->qos_id);
 						break;
 					}
 
@@ -2767,11 +2767,11 @@ static unsigned int natflow_user_forward_hook(void *priv,
 					switch (ip6h->nexthdr) {
 					case IPPROTO_TCP:
 						NATFLOW_INFO("(NUF)" DEBUG_TCP_FMT6 ": matched qos id=%d\n",
-						             DEBUG_TCP_ARG6(ip6h,l4), nf->qos_id);
+						             DEBUG_TCP_ARG6(ip6h, l4), nf->qos_id);
 						break;
 					case IPPROTO_UDP:
 						NATFLOW_INFO("(NUF)" DEBUG_UDP_FMT6 ": matched qos id=%d\n",
-						             DEBUG_UDP_ARG6(ip6h,l4), nf->qos_id);
+						             DEBUG_UDP_ARG6(ip6h, l4), nf->qos_id);
 						break;
 					}
 
@@ -2823,10 +2823,10 @@ static unsigned int natflow_user_forward_hook(void *priv,
 					goto out;
 				}
 
-				data = skb->data + (iph->ihl << 2) + (TCPH(l4)->doff << 2);
-				data_len = ntohs(iph->tot_len) - ((iph->ihl << 2) + (TCPH(l4)->doff << 2));
+				data = skb->data + (iph->ihl * 4) + (TCPH(l4)->doff * 4);
+				data_len = ntohs(iph->tot_len) - ((iph->ihl * 4) + (TCPH(l4)->doff * 4));
 				if ((data_len > 4 && strncasecmp(data, "GET ", 4) == 0) || (data_len > 5 && strncasecmp(data, "POST ", 5) == 0)) {
-					NATFLOW_INFO(DEBUG_TCP_FMT ": sending HTTP 302 redirect dev=%s\n", DEBUG_TCP_ARG(iph,l4), in->name);
+					NATFLOW_INFO(DEBUG_TCP_FMT ": sending HTTP 302 redirect dev=%s\n", DEBUG_TCP_ARG(iph, l4), in->name);
 					natflow_auth_http_302(in, skb, user, bridge);
 					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 					ret = NF_DROP;
@@ -2878,10 +2878,10 @@ static unsigned int natflow_user_forward_hook(void *priv,
 					goto out;
 				}
 
-				data = skb->data + sizeof(struct ipv6hdr) + (TCPH(l4)->doff << 2);
-				data_len = ntohs(ip6h->payload_len) - (TCPH(l4)->doff << 2);
+				data = skb->data + sizeof(struct ipv6hdr) + (TCPH(l4)->doff * 4);
+				data_len = ntohs(ip6h->payload_len) - (TCPH(l4)->doff * 4);
 				if ((data_len > 4 && strncasecmp(data, "GET ", 4) == 0) || (data_len > 5 && strncasecmp(data, "POST ", 5) == 0)) {
-					NATFLOW_INFO(DEBUG_FMT6_TCP ": sending HTTP 302 redirect dev=%s\n", DEBUG_ARG6_TCP(ip6h,l4), in->name);
+					NATFLOW_INFO(DEBUG_FMT6_TCP ": sending HTTP 302 redirect dev=%s\n", DEBUG_ARG6_TCP(ip6h, l4), in->name);
 					natflow_auth_http_302(in, skb, user, bridge);
 					set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 					ret = NF_DROP;
@@ -2908,8 +2908,8 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			void *l4 = (void *)iph + iph->ihl * 4;
 
 			if (iph->protocol == IPPROTO_TCP && auth_open_weixin_reply != 0) {
-				data = skb->data + (iph->ihl << 2) + (TCPH(l4)->doff << 2);
-				data_len = ntohs(iph->tot_len) - ((iph->ihl << 2) + (TCPH(l4)->doff << 2));
+				data = skb->data + (iph->ihl * 4) + (TCPH(l4)->doff * 4);
+				data_len = ntohs(iph->tot_len) - ((iph->ihl * 4) + (TCPH(l4)->doff * 4));
 				if (data_len > 0) {
 					if (TCPH(l4)->dest == __constant_htons(80)) {
 						int i = 0;
@@ -3537,7 +3537,7 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 			goto done;
 		}
 	} else if (strncmp(data, "redirect_ip=", 12) == 0) {
-		unsigned int a, b, c,d;
+		unsigned int a, b, c, d;
 		n = sscanf(data, "redirect_ip=%u.%u.%u.%u", &a, &b, &c, &d);
 		if ( n == 4 &&
 		        (((a & 0xff) == a) &&
