@@ -5856,7 +5856,7 @@ static unsigned int natflow_path_post_ct_out_hook(void *priv,
 	if (NULL == nf) {
 		goto out;
 	}
-	iph = iph->version == 4 ? ip_hdr(skb) : (void *)ipv6_hdr(skb);
+	iph = (void *)skb_network_header(skb);
 	l4 = (void *)iph + (iph->version == 4 ? iph->ihl * 4 : sizeof(struct ipv6hdr));
 
 	dir = CTINFO2DIR(ctinfo);
