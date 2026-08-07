@@ -55,7 +55,7 @@ static struct net_device __rcu *vline_fwd_map[VLINE_FWD_MAX_NUM];
 static unsigned char vline_fwd_map_config[VLINE_FWD_MAP_CONFIG_NUM][2][IFNAMSIZ];
 static unsigned char vline_fwd_map_family_config[VLINE_FWD_MAP_CONFIG_NUM];
 
-static inline unsigned int natflow_skb_dst_mtu(struct sk_buff *skb, bool is_ipv6)
+static noinline unsigned int natflow_skb_dst_mtu(struct sk_buff *skb, bool is_ipv6)
 {
 	if (is_ipv6)
 		return ip6_skb_dst_mtu(skb);
@@ -102,17 +102,17 @@ static inline void vline_fwd_family_flags_set(struct net_device *dev, unsigned c
 		dev->flags |= IFF_VLINE_FAMILY_IPV6;
 }
 
-static inline int vline_fwd_family_ipv4_enabled(const struct net_device *dev)
+static noinline int vline_fwd_family_ipv4_enabled(const struct net_device *dev)
 {
 	return !(dev->flags & IFF_VLINE_FAMILY_IPV6);
 }
 
-static inline int vline_fwd_family_ipv6_enabled(const struct net_device *dev)
+static noinline int vline_fwd_family_ipv6_enabled(const struct net_device *dev)
 {
 	return !(dev->flags & IFF_VLINE_FAMILY_IPV4);
 }
 
-static inline int vline_fwd_prepare_noarp_to_ether6_head(struct sk_buff *skb)
+static noinline int vline_fwd_prepare_noarp_to_ether6_head(struct sk_buff *skb)
 {
 	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr)))
 		return -EINVAL;
@@ -123,7 +123,7 @@ static inline int vline_fwd_prepare_noarp_to_ether6_head(struct sk_buff *skb)
 	return 0;
 }
 
-static inline int vline_fwd_is_local_ether_frame(struct sk_buff *skb)
+static noinline int vline_fwd_is_local_ether_frame(struct sk_buff *skb)
 {
 	struct net_device *upper_dev;
 
@@ -139,7 +139,7 @@ static inline int vline_fwd_is_local_ether_frame(struct sk_buff *skb)
 	return ether_addr_equal(skb->dev->dev_addr, eth_hdr(skb)->h_dest);
 }
 
-static inline int vline_fwd_is_ndisc6(struct sk_buff *skb)
+static noinline int vline_fwd_is_ndisc6(struct sk_buff *skb)
 {
 	struct ipv6hdr *ipv6h;
 	struct icmp6hdr *icmp6h;
@@ -163,7 +163,7 @@ static inline int vline_fwd_is_ndisc6(struct sk_buff *skb)
 	       icmp6h->icmp6_type == NDISC_ROUTER_ADVERTISEMENT;
 }
 
-static inline int vline_fwd_is_non_ndisc_icmpv6(struct sk_buff *skb)
+static noinline int vline_fwd_is_non_ndisc_icmpv6(struct sk_buff *skb)
 {
 	struct ipv6hdr *ipv6h;
 
@@ -592,7 +592,7 @@ static inline void natflow_update_ct_timeout(struct nf_conn *ct, unsigned long e
 	}
 }
 
-static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn) {
+static noinline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn) {
 	unsigned short path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)));
 	unsigned int hash;
 	unsigned long diff_jiffies;
@@ -653,7 +653,7 @@ static inline natflow_fastnat_node_t *nfn_invert_get(natflow_fastnat_node_t *nfn
 	return NULL;
 }
 
-static inline natflow_fastnat_node_t *nfn_invert_get6(natflow_fastnat_node_t *nfn) {
+static noinline natflow_fastnat_node_t *nfn_invert_get6(natflow_fastnat_node_t *nfn) {
 	unsigned short path_magic = ((unsigned short)(NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)));
 	unsigned int hash;
 	unsigned long diff_jiffies;
@@ -1567,7 +1567,7 @@ const struct net_device *natflow_session_ingress_dev(struct nf_conn *ct, int dir
 }
 
 #ifdef CONFIG_NETFILTER_INGRESS
-static inline void natflow_user_ingress_ifname_learn_ipv4(struct sk_buff *skb)
+static noinline void natflow_user_ingress_ifname_learn_ipv4(struct sk_buff *skb)
 {
 	struct iphdr *iph = ip_hdr(skb);
 	u32 len = ntohs(iph->tot_len);
@@ -1586,7 +1586,7 @@ static inline void natflow_user_ingress_ifname_learn_ipv4(struct sk_buff *skb)
 	                                  AF_INET);
 }
 
-static inline void natflow_user_ingress_ifname_learn_ipv6(struct sk_buff *skb)
+static noinline void natflow_user_ingress_ifname_learn_ipv6(struct sk_buff *skb)
 {
 	struct ipv6hdr *ip6h = ipv6_hdr(skb);
 	u32 len = ntohs(ip6h->payload_len) + sizeof(struct ipv6hdr);
