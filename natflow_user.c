@@ -953,15 +953,22 @@ static natflow_fakeuser_t *natflow_user_lookup_in(struct nf_conn *ct, int dir)
 		if (user) {
 			natflow_user_timeout_touch(user);
 
+			/* Safely increment refcount only if user is alive (>0) to avoid "refcount_t: addition on 0" UAF warning */
 			if (ct->master && !(IPS_NATFLOW_USER & ct->master->status)) {
 				if (!test_and_set_bit(IPS_NATFLOW_MASTER_BIT, &ct->master->status)) {
-					nf_conntrack_get(&user->ct_general);
-					ct->master->master = user;
+					if (likely(REFCOUNT_inc_not_zero(&user->ct_general.use))) {
+						ct->master->master = user;
+					} else {
+						clear_bit(IPS_NATFLOW_MASTER_BIT, &ct->master->status);
+					}
 				}
 			} else {
 				if (!test_and_set_bit(IPS_NATFLOW_MASTER_BIT, &ct->status)) {
-					nf_conntrack_get(&user->ct_general);
-					ct->master = user;
+					if (likely(REFCOUNT_inc_not_zero(&user->ct_general.use))) {
+						ct->master = user;
+					} else {
+						clear_bit(IPS_NATFLOW_MASTER_BIT, &ct->status);
+					}
 				}
 			}
 
@@ -1053,10 +1060,10 @@ natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 		return NULL;
 	}
 	/* Note: in a race condition, loser_ct may be replaced in nf_conntrack_confirm,
-	 * here reload ct(user) from uskb, and it can't be NULL
+	 * reload user from uskb and acquire refcount safely if not dying and refcount > 0.
 	 */
 	user = nf_ct_get(uskb, &ctinfo);
-	if (!user || nf_ct_is_dying(user)) {
+	if (!user || nf_ct_is_dying(user) || !REFCOUNT_inc_not_zero(&user->ct_general.use)) {
 		skb_nfct_reset(uskb);
 		return NULL;
 	}
@@ -1067,8 +1074,6 @@ natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 	fud = natflow_fakeuser_data(user);
 	natflow_user_mac_update(fud, macaddr);
 	fud->timestamp = jiffies;
-
-	nf_conntrack_get(&user->ct_general);
 
 	skb_nfct_reset(uskb);
 
@@ -1152,10 +1157,10 @@ natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3,
 		return NULL;
 	}
 	/* Note: in a race condition, loser_ct may be replaced in nf_conntrack_confirm,
-	 * here reload ct(user) from uskb, and it can't be NULL
+	 * reload user from uskb and acquire refcount safely if not dying and refcount > 0.
 	 */
 	user = nf_ct_get(uskb, &ctinfo);
-	if (!user || nf_ct_is_dying(user)) {
+	if (!user || nf_ct_is_dying(user) || !REFCOUNT_inc_not_zero(&user->ct_general.use)) {
 		skb_nfct_reset(uskb);
 		return NULL;
 	}
@@ -1166,8 +1171,6 @@ natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3,
 	fud = natflow_fakeuser_data(user);
 	natflow_user_mac_update(fud, macaddr);
 	fud->timestamp = jiffies;
-
-	nf_conntrack_get(&user->ct_general);
 
 	skb_nfct_reset(uskb);
 
@@ -1351,15 +1354,22 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 
 		natflow_user_timeout_touch(user);
 
+		/* Safely increment refcount only if user is alive (>0) to avoid "refcount_t: addition on 0" UAF warning */
 		if (ct->master && !(IPS_NATFLOW_USER & ct->master->status)) {
 			if (!test_and_set_bit(IPS_NATFLOW_MASTER_BIT, &ct->master->status)) {
-				nf_conntrack_get(&user->ct_general);
-				ct->master->master = user;
+				if (likely(REFCOUNT_inc_not_zero(&user->ct_general.use))) {
+					ct->master->master = user;
+				} else {
+					clear_bit(IPS_NATFLOW_MASTER_BIT, &ct->master->status);
+				}
 			}
 		} else {
 			if (!test_and_set_bit(IPS_NATFLOW_MASTER_BIT, &ct->status)) {
-				nf_conntrack_get(&user->ct_general);
-				ct->master = user;
+				if (likely(REFCOUNT_inc_not_zero(&user->ct_general.use))) {
+					ct->master = user;
+				} else {
+					clear_bit(IPS_NATFLOW_MASTER_BIT, &ct->status);
+				}
 			}
 		}
 
