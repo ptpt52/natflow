@@ -395,6 +395,79 @@ static inline ip_set_id_t natflow_ip_set_get_byname(const char *ip_set_name, str
 }
 #endif
 
+static inline int natflow_ip_set_test(struct ip_set *set, const struct sk_buff *skb,
+                                      const struct xt_action_param *par, struct ip_set_adt_opt *opt)
+{
+	int ret;
+
+	if (unlikely(!set || !set->type || !set->variant || !set->variant->kadt))
+		return 0;
+
+	if (opt->dim < set->type->dimension ||
+	        !(opt->family == set->family || set->family == NFPROTO_UNSPEC))
+		return 0;
+
+	ret = set->variant->kadt(set, skb, par, IPSET_TEST, opt);
+
+	if (ret == -EAGAIN) {
+		if (!set->variant->region_lock)
+			spin_lock_bh(&set->lock);
+		set->variant->kadt(set, skb, par, IPSET_ADD, opt);
+		if (!set->variant->region_lock)
+			spin_unlock_bh(&set->lock);
+		ret = 1;
+	} else {
+		if ((opt->cmdflags & IPSET_FLAG_RETURN_NOMATCH) &&
+		        (set->type->features & IPSET_TYPE_NOMATCH) &&
+		        (ret > 0 || ret == -ENOTEMPTY))
+			ret = -ret;
+	}
+
+	return (ret < 0 ? 0 : ret);
+}
+
+static inline int natflow_ip_set_add(struct ip_set *set, const struct sk_buff *skb,
+                                     const struct xt_action_param *par, struct ip_set_adt_opt *opt)
+{
+	int ret;
+
+	if (unlikely(!set || !set->type || !set->variant || !set->variant->kadt))
+		return -IPSET_ERR_TYPE_MISMATCH;
+
+	if (opt->dim < set->type->dimension ||
+	        !(opt->family == set->family || set->family == NFPROTO_UNSPEC))
+		return -IPSET_ERR_TYPE_MISMATCH;
+
+	if (!set->variant->region_lock)
+		spin_lock_bh(&set->lock);
+	ret = set->variant->kadt(set, skb, par, IPSET_ADD, opt);
+	if (!set->variant->region_lock)
+		spin_unlock_bh(&set->lock);
+
+	return ret;
+}
+
+static inline int natflow_ip_set_del(struct ip_set *set, const struct sk_buff *skb,
+                                     const struct xt_action_param *par, struct ip_set_adt_opt *opt)
+{
+	int ret;
+
+	if (unlikely(!set || !set->type || !set->variant || !set->variant->kadt))
+		return -IPSET_ERR_TYPE_MISMATCH;
+
+	if (opt->dim < set->type->dimension ||
+	        !(opt->family == set->family || set->family == NFPROTO_UNSPEC))
+		return -IPSET_ERR_TYPE_MISMATCH;
+
+	if (!set->variant->region_lock)
+		spin_lock_bh(&set->lock);
+	ret = set->variant->kadt(set, skb, par, IPSET_DEL, opt);
+	if (!set->variant->region_lock)
+		spin_unlock_bh(&set->lock);
+
+	return ret;
+}
+
 const char *const hooknames[] = {
 	[NF_INET_PRE_ROUTING] = "PRE",
 	[NF_INET_LOCAL_IN] = "IN",
@@ -447,11 +520,11 @@ int ip_set_test_src_ip(const struct net_device *in, const struct net_device *out
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
-	if (id == IPSET_INVALID_ID) {
+	if (id == IPSET_INVALID_ID || !set) {
 		return -EINVAL;
 	}
 
-	ret = ip_set_test(id, skb, &par, &opt);
+	ret = natflow_ip_set_test(set, skb, &par, &opt);
 
 #if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
@@ -506,12 +579,12 @@ int ip_set_test_dst_ip(const struct net_device *in, const struct net_device *out
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
-	if (id == IPSET_INVALID_ID) {
+	if (id == IPSET_INVALID_ID || !set) {
 		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
 		return 0;
 	}
 
-	ret = ip_set_test(id, skb, &par, &opt);
+	ret = natflow_ip_set_test(set, skb, &par, &opt);
 
 #if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
@@ -566,12 +639,12 @@ int ip_set_test_dst_netport(const struct net_device *in, const struct net_device
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
-	if (id == IPSET_INVALID_ID) {
+	if (id == IPSET_INVALID_ID || !set) {
 		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
 		return 0;
 	}
 
-	ret = ip_set_test(id, skb, &par, &opt);
+	ret = natflow_ip_set_test(set, skb, &par, &opt);
 
 #if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
@@ -626,12 +699,12 @@ int ip_set_add_src_ip(const struct net_device *in, const struct net_device *out,
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
-	if (id == IPSET_INVALID_ID) {
+	if (id == IPSET_INVALID_ID || !set) {
 		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
 		return 0;
 	}
 
-	ret = ip_set_add(id, skb, &par, &opt);
+	ret = natflow_ip_set_add(set, skb, &par, &opt);
 
 #if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
@@ -686,12 +759,12 @@ int ip_set_add_dst_ip(const struct net_device *in, const struct net_device *out,
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
-	if (id == IPSET_INVALID_ID) {
+	if (id == IPSET_INVALID_ID || !set) {
 		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
 		return 0;
 	}
 
-	ret = ip_set_add(id, skb, &par, &opt);
+	ret = natflow_ip_set_add(set, skb, &par, &opt);
 
 #if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
@@ -746,12 +819,12 @@ int ip_set_del_src_ip(const struct net_device *in, const struct net_device *out,
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
-	if (id == IPSET_INVALID_ID) {
+	if (id == IPSET_INVALID_ID || !set) {
 		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
 		return 0;
 	}
 
-	ret = ip_set_del(id, skb, &par, &opt);
+	ret = natflow_ip_set_del(set, skb, &par, &opt);
 
 #if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
@@ -806,12 +879,12 @@ int ip_set_del_dst_ip(const struct net_device *in, const struct net_device *out,
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
-	if (id == IPSET_INVALID_ID) {
+	if (id == IPSET_INVALID_ID || !set) {
 		NATFLOW_DEBUG("ip_set '%s' not found\n", ip_set_name);
 		return 0;
 	}
 
-	ret = ip_set_del(id, skb, &par, &opt);
+	ret = natflow_ip_set_del(set, skb, &par, &opt);
 
 #if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
@@ -866,11 +939,11 @@ int ip_set_test_src_mac(const struct net_device *in, const struct net_device *ou
 #else
 	id = natflow_ip_set_get_byname(ip_set_name, &set);
 #endif
-	if (id == IPSET_INVALID_ID) {
+	if (id == IPSET_INVALID_ID || !set) {
 		return -EINVAL;
 	}
 
-	ret = ip_set_test(id, skb, &par, &opt);
+	ret = natflow_ip_set_test(set, skb, &par, &opt);
 
 #if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);
