@@ -15,7 +15,11 @@ src_install:
 		natflow_common.h \
 		natflow_conntrack.c \
 		natflow_conntrack.h \
+		natflow_dpi.c \
+		natflow_dpi.h \
 		natflow.h \
+		natflow_l7.c \
+		natflow_l7.h \
 		natflow_main.c \
 		natflow_path.c \
 		natflow_path.h \
