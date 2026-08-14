@@ -227,7 +227,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 - 一条命令必须以 `\n` 结束。
 - `cat /dev/*_ctl` 通常会输出 usage 和可重放配置。
 - 未识别命令多数情况下只写内核日志并返回已消费字节；三个 `natflow_*_queue` 的写接口只接受 `cache=N`，未识别命令返回 `-EINVAL`。
-- `natflow_userinfo_ctl` 不支持小 buffer partial read。三个 `natflow_*_queue` 不会拆分单条记录；用户 buffer 小于单条记录时返回 `-EINVAL`，buffer 足够时一次 `read()` 可返回多条完整记录。
+- `natflow_userinfo_ctl` 支持 partial read，用户 buffer 小于单条记录时会分多次读取完成。三个 `natflow_*_queue` 不会拆分单条记录；用户 buffer 小于单条记录时返回 `-EINVAL`，buffer 足够时一次 `read()` 可返回多条完整记录。
 - `/dev/natflow_userinfo_queue`、`/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应以 `O_RDWR` 打开并保持 fd，写入 `cache=N\n` 设置最多缓存 N 条事件后才会缓存新事件；写入 `cache=0\n` 会关闭缓存并清空未读事件。
 - 多个 writer 并发写同一控制设备时，半行缓存可能互相干扰；生产脚本应串行写入。
 

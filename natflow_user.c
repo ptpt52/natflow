@@ -3630,6 +3630,8 @@ struct userinfo_user {
 	unsigned int next_bucket;
 	unsigned int count;
 	unsigned int status;
+	unsigned int data_off;
+	unsigned int data_len;
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
 	unsigned char data[];
 #else
@@ -3994,6 +3996,10 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 		rcu_read_unlock();
 	}
 
+	/* Serve residual data from a previous partial read first. */
+	if (user->data_len > 0)
+		goto copy_out;
+
 	user_i = list_first_entry_or_null(&user->head, struct userinfo, list);
 	if (user_i) {
 		if (user_i->l2num == 0) {
@@ -4011,29 +4017,31 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 			              user_i->rx_speed_packets, user_i->rx_speed_bytes, user_i->tx_speed_packets, user_i->tx_speed_bytes,
 			              user_i->ifname);
 		}
-		/*
-		 * FIXME: Returning -EINVAL when len > count breaks single-byte reads
-		 * (e.g. `while read` in shell scripts). It should be refactored to
-		 * handle partial reads like conntrackinfo_read() or use seq_file.
-		 */
-		if (len > count) {
-			ret = -EINVAL;
-			goto out;
-		}
-		if (copy_to_user(buf, user->data, len)) {
-			ret = -EFAULT;
-			goto out;
-		}
-		ret = len;
+		user->data_off = 0;
+		user->data_len = len;
 		list_del(&user_i->list);
 		kfree(user_i);
 		user->count--;
+		goto copy_out;
 	} else if (user->status == 0) {
 		ret = -EAGAIN;
 	} else {
 		user->status = 0;
 		ret = 0;
 	}
+	goto out;
+
+copy_out:
+	len = user->data_len;
+	if (len > count)
+		len = count;
+	if (copy_to_user(buf, user->data + user->data_off, len)) {
+		ret = -EFAULT;
+		goto out;
+	}
+	user->data_off += len;
+	user->data_len -= len;
+	ret = len;
 
 out:
 	mutex_unlock(&user->lock);
@@ -4055,6 +4063,8 @@ static int userinfo_open(struct inode *inode, struct file *file)
 	user->next_bucket = 0;
 	user->count = 0;
 	user->status = 0;
+	user->data_off = 0;
+	user->data_len = 0;
 	INIT_LIST_HEAD(&user->head);
 
 	file->private_data = user;

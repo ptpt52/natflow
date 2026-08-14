@@ -35,7 +35,7 @@
 - `natflow_conntrackinfo_ctl` 的 `kickall` 当前没有实际清理行为。
 - [x] `/dev/natflow_userinfo_queue` 写接口不再返回 `-ENOSYS`，已统一为 queue `cache=N` 协议。
 - [x] `natflow_userinfo_queue`、`natflow_urllogger_queue`、`natflow_dpi_queue` 已支持单次 `read()` 返回多条完整记录；三个 queue 仍不拆分单条记录，小于单条记录的用户 buffer 返回 `-EINVAL`，这是当前 ABI 限制。
-- `natflow_userinfo_ctl` 小 buffer read 当前返回 `-EINVAL`，不是 partial read；是否改善已作为 P1-1 兼容性任务保留。
+- [x] `natflow_userinfo_ctl` 小 buffer read 已改为 per-open residual buffer partial read，与 `conntrackinfo_read()` 行为一致。（P1-1 Done）
 
 退出条件：
 
@@ -46,11 +46,11 @@
 
 ### P1-1：评估 `natflow_userinfo_ctl` 小 buffer read 兼容性
 
-状态：Planned
+状态：Done
 
 目标：评估是否把 `natflow_userinfo_ctl` 的小 buffer 读取从直接 `-EINVAL` 改为更兼容的 partial read 或 per-open buffer 行为，或明确保留当前限制。
 
-注意：这是用户可见行为变化，必须同步文档。三个 `natflow_*_queue` 已支持 batch complete-record read，且当前 ABI 明确不返回 partial record，不再纳入本项改造范围。
+结果：采用方案 A（per-open residual buffer），在 `userinfo_user` 中增加 `data_off`/`data_len` 字段跟踪残留数据，仿照 `conntrackinfo_read()` 模式实现 partial read。改动约 15 行净变化，不引入新分配，不改变输出格式和遍历逻辑。已同步 `README.md`、`SYSTEM_DESIGN_SPEC.md` 和 `ROADMAP.md`。三个 `natflow_*_queue` 已明确为 batch complete-record read，不纳入本项改造范围。
 
 ### P1-2：增强控制输入长度校验
 

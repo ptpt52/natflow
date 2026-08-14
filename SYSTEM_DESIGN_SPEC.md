@@ -215,7 +215,7 @@ AI 重建时必须保留“换行结束、256 字节上限、静态半行缓存�
 | --- | --- |
 | `-EACCES` | `copy_from_user()` 失败。 |
 | `-EFAULT` | `copy_to_user()` 失败。 |
-| `-EINVAL` | 控制行超过 256 字节、命令字段格式非法、部分 read buffer 过小。 |
+| `-EINVAL` | 控制行超过 256 字节、命令字段格式非法、queue read buffer 小于单条记录。 |
 | `-ENOMEM` | 规则、per-open 缓冲、skb 或工作队列分配失败。 |
 | `-ENOENT` | 用户控制命令找不到指定 fakeuser。 |
 | `-ENODEV` | vline/relay 应用时找不到配置的 endpoint 设备。 |
@@ -226,8 +226,8 @@ AI 重建时必须保留“换行结束、256 字节上限、静态半行缓存�
 读接口分为三类：
 
 - `seq_file` 配置接口：`natflow_ctl`、`natflow_zone_ctl`、`natflow_user_ctl`、`natflow_qos_ctl`、`hostacl_ctl`。
-- 支持 partial read 的流接口：`natflow_conntrackinfo_ctl`，可把一条长记录分多次 copy 到用户 buffer。
-- 不支持 partial record 的接口：`natflow_userinfo_ctl` 仍按单条文本快照读取；三个 `natflow_*_queue` 不拆分单条二进制记录，用户 buffer 小于单条记录时返回 `-EINVAL`，buffer 足够时一次 `read()` 可返回多条完整记录。
+- 支持 partial read 的流接口：`natflow_conntrackinfo_ctl` 和 `natflow_userinfo_ctl`，都使用 per-open residual buffer 把一条长记录分多次 copy 到用户 buffer。
+- 不支持 partial record 的接口：三个 `natflow_*_queue` 不拆分单条二进制记录，用户 buffer 小于单条记录时返回 `-EINVAL`，buffer 足够时一次 `read()` 可返回多条完整记录。
 
 ## 7. 字符设备规格
 
@@ -382,7 +382,7 @@ ip_or_ipv6,mac,auth_type_hex,auth_status_hex,rule_id,idle_time,rx_pkts:rx_bytes,
 
 限制：
 
-- 单次 read 如果生成行长度大于用户提供 buffer，会返回 `-EINVAL`，这会破坏 shell 中按 1 字节读的用法。代码中已有 FIXME，重建实现若追求兼容应保留，若修复需在变更记录说明。
+- 单次 read 如果生成行长度大于用户提供 buffer，会先拷贝 buffer 能容纳的部分，剩余数据保留在 per-open residual buffer 中，下次 `read()` 继续输出，与 `conntrackinfo_read()` 行为一致。
 - fakeuser 是特殊 conntrack，不是独立用户态表。
 - `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数，不再从当前 `no_flow_timeout` 反推；该 timestamp 在 fakeuser 创建/获取时写入，user pre hook 中普通活动最多每 32 秒刷新一次，`IP_CT_NEW` 新连接包距离上次刷新超过 2 秒也会刷新。
 - `ifname` 的所有权在 user 模块，功能规格依赖 path。普通 TCP/UDP 单播由 user pre hook 通过 `natflow_session_ingress_dev(ct, dir)` 读取当前 generation 下 `rroute[!dir].outdev`：original 方向覆盖用户主动连接，已由 post hook 关联 fakeuser 的外网主动连接在 LAN reply 方向仅当 fakeuser 地址与 reply 源地址一致时刷新已有用户来源并立即退出，避免 LAN-to-LAN/hairpin 应答污染原用户，且不进入认证或重定向流程。字段为空时先于活动节流尝试 path accessor，成功后立即发布事件；普通 MAC/ifname/timeout 刷新仍沿用 32 秒和新连接 2 秒节流。对于不建立 route 的广播、组播和 ICMP/ICMPv6，NETDEV ingress 必须保持 path 原有校验及早退顺序；新增的局部 IPv4/IPv6 包装器只在对应早退分支内独立验证 IPv4 total length、header checksum 或 IPv6 payload length，验证通过后才调用 `natflow_user_ingress_ifname_learn(skb, saddr, family)`。该入口仅接受 LAN zone 设备或其 bridge slave以及带有效 Ethernet 头的报文，按源地址只查找已有 fakeuser，用户不存在时直接返回，不创建 fakeuser、不更新 MAC；已有用户 MAC 非零时必须与报文 Ethernet 源 MAC 一致，验证后才记录原始 `skb->dev`，并在 ifname 变化时发布 userinfo 事件。ARP 不经过该 IP 入口；path 未启用、未启 NETDEV ingress 或没有可用入口信息时字段可以为空。
@@ -1216,7 +1216,7 @@ path notifier：
 - URL logger 只有 `enable=1` 时才处理 host ACL。
 - host ACL 的 redirect action 支持配置 `redirect_url` 并通过 HTTP 302 重定向。
 - `natflow_conntrackinfo_ctl` 的 `kickall` 没有实际清理。
-- `natflow_userinfo_ctl` 对小 buffer 不支持 partial read；`natflow_userinfo_queue`、`natflow_urllogger_queue`、`natflow_dpi_queue` 对小 buffer 不返回 partial record，但可在一次 `read()` 中返回多条完整记录。
+- `natflow_userinfo_ctl` 已支持 per-open residual buffer partial read；`natflow_userinfo_queue`、`natflow_urllogger_queue`、`natflow_dpi_queue` 对小 buffer 不返回 partial record，但可在一次 `read()` 中返回多条完整记录。
 - vline 配置非事务、无冲突检测、运行 ifindex key 小于 64。
 - fastnat 哈希表固定大小，冲突处理有限。
 - `disabled` 默认值：path 默认为 1，user 默认为 1，URL store 默认为 0；模块加载后需要用户态显式开启相关能力。
@@ -1283,7 +1283,7 @@ path notifier：
 ### 21.5 SHOULD：工程质量
 
 - SHOULD 把会静默截断的用户输入改为显式长度校验，尤其 auth rule 和 bypass ipset 名称；若保持兼容，则必须保留当前截断语义。
-- SHOULD 评估是否把 `natflow_userinfo_ctl` 小 buffer read 改成兼容性更好的 seq_file 或 per-open buffer，但必须记录行为变化；三个 `natflow_*_queue` 已明确为 batch complete-record read，不做 partial record，除非先记录 ABI 变更决策。
+- DONE `natflow_userinfo_ctl` 小 buffer read 已改为 per-open residual buffer partial read，与 `conntrackinfo_read()` 行为一致；三个 `natflow_*_queue` 已明确为 batch complete-record read，不做 partial record，除非先记录 ABI 变更决策。
 - SHOULD 为 vline 配置提供事务/冲突检查，但若追求完全兼容，应保留当前非事务行为。
 - SHOULD 避免继续复用 `net_device->flags` 高位和 `dev->name` 隐藏字节；若改动，必须提供兼容适配层。
 - SHOULD 为 fastnat hash 冲突、URL parser、QoS CIDR、认证状态机、vline NOARP/ND 路径增加测试。
