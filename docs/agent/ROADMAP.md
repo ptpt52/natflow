@@ -128,11 +128,21 @@ GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链降到 17
 
 ### P2-4：设计并开发 DPI 能力
 
-状态：M2 Detector Done，Production Shadow Pending
+状态：Hardcoded Classifier Redesign Accepted，M1 Done
 
 目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，先统一 L7 parser/context/consumer 生命周期，再实现轻量 DPI 能力，用于协议/应用分类、审计记录和后续策略匹配。
 
-当前设计基线：`DPI_DESIGN.md`。Draft v7 把内部目标统一为 `natflow_l7` core：共享 read-only packet view、bounded prefix、HTTP/TLS/QUIC parser、hostname normalize、consumer fan-out 和资源生命周期；legacy URL logger/Host ACL 作为 URL consumer 保持外部 ABI，DPI 作为 classifier consumer 新增独立控制和事件 ABI；运行时配置变化不枚举或清理已标记连接；protocol detector 按 `ORIGINAL_ONLY`、`REPLY_ONLY`、`EITHER` 或 `BOTH` 声明方向，并仅在等待方向、跨包或关联状态时分配 bounded context。本文档仍是目标设计，不代表源码已实现全部规划行为。
+当前 shared L7 基线仍由 `DPI_DESIGN.md` 描述。2026-08-15 已接受
+`DPI_HARDCODED_STATE_MACHINE_DESIGN.md` 的分类器重设计：取消用户 domain/proto
+规则，改为固定 app catalog 和第五层手写 C 应用状态机，终态直接发布固定
+`app_id`；保留 enable、统计和事件观测。迁移必须分阶段进行，不能在 detector、
+控制 ABI、测试和文档未同步时删除现有 ruleset。
+
+当前迁移进度：M0 设计、ADR 和路线图已冻结；M1 已在 `natflow_dpi.h` 固定首批
+18 个协议应用 ID 和 category ID，在 `natflow_dpi.c` 增加静态 metadata catalog
+及模块初始化一致性校验。M1 不改变当前 ruleset 驱动的数据面行为；M2 将把
+protocol detector、active mask、queue 断言和 corpus 一起切换，避免形成一半固定
+ID、一半用户映射的混合语义。
 
 实现进度：M0-M1e 的 shared L7、控制/事件 ABI、A 级 detector、双向 bounded context 和测试工具已完成。M2 已加入 FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB 共 12 个 audit-only detector；它们按文本、数据库、二进制三组复用剩余 detector mask bit，不扩大 8 字节 conntrack 瞬态 context，并有协议专属正反 corpus。当前自动 corpus 共 75 项；生产 shadow 数据和新增 B 级 detector 的真机 IPv4/IPv6 回归尚未完成。
 
@@ -146,7 +156,18 @@ GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链降到 17
 
 实现基线：`docs/agent/DPI_IMPLEMENTATION_CHECKLIST.md` 记录每步实现前后的自审口径、legacy URL/Host ACL 兼容基线、conntrack/fast path 约束和自动检查建议。
 
-计划：
+既有 M0-M4 历史计划保留为当前实现来源。新迁移计划：
+
+1. M0：冻结硬编码分类器设计、固定 ID、状态合同和 ABI 迁移边界。
+2. M1：增加固定 app catalog、静态 metadata 和统一 terminal commit helper。
+3. M2：让现有 18 个 protocol detector 直接产生固定 `app_id`，同步 corpus。
+4. M3：加入 HTTP/TLS/QUIC/DNS 结构化 feature 驱动的静态域名应用状态机。
+5. M4：删除用户 ruleset、RCU 规则发布和相关 ctl 命令，同步 README/规格/工具。
+6. M5：在不扩大 8 字节 context 的前提下引入 compact automaton word，并只为
+   确有多包证据需求的协议实现 A -> B -> C。
+7. M6：完成构建矩阵、corpus、queue、栈和代码体积验证。
+
+历史实现阶段：
 
 1. M0：建立 `natflow_l7` core，抽出 read-only packet view、hostname normalize、共享 HTTP/TLS/QUIC parser、bounded prefix 和 consumer mask，保持 legacy URL/Host ACL ABI。
 2. M1a：完成 DPI owner bit gate、`app_id` 尾增、layout guard、terminal state、enable/disable、空 ruleset 事务和版本化事件骨架；默认关闭并 fail-open。仅在后续 parser 确需更强跨包状态时增加最小 context，不为配置变化实现 conntrack drain。

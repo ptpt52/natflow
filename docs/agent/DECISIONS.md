@@ -231,3 +231,41 @@ queue pressure 和 queue stream 也已验证。继续扩展 IPv6 extension heade
   的连接也不属于本次清理保证。
 - 真机验证必须同时证明普通 IPv4/IPv6 连接被删除、fakeuser/NATCAP peer 保留、
   无权限调用返回 `-EPERM`。
+
+## ADR-0009：DPI 采用固定应用目录和手写应用状态机
+
+日期：2026-08-15
+
+状态：Accepted
+
+### 背景
+
+当前 DPI 通过运行时 domain/proto ruleset 把 detector 结果映射为用户指定
+`app_id`。维护者明确希望只识别有限且确定的协议和应用，并让识别行为完全由
+内核模块中的硬编码 C 状态机决定，不再维护用户规则或通用规则 compiler。
+
+### 决策
+
+- L3/L4、基础协议 parser 和结构化 feature producer 负责前四层分类；第五层按
+  基础协议选择手写 C 应用状态机。
+- 固定 `app_id` 和应用 metadata 编译进模块，状态机只有到达终态才直接写入
+  `app_id`，不经过用户规则重映射。
+- HTTP Host、TLS/QUIC SNI 和 DNS QNAME 可共享静态域名 matcher，但必须保留
+  feature source；DNS 查询不能自动证明后续独立连接属于该应用。
+- 禁止逐包遍历全部应用。discovery 只裁剪小型候选集合，claimed 后只运行一台
+  机器。
+- 保持 `app_id` 是唯一常驻分类结果；多包状态优先复用现有 8 字节瞬态 context，
+  不保存域名、payload、指针或动态 candidate 数组。
+- 保留 DPI enable、统计和事件观测；移除 domain/proto 规则事务。事件 ABI 迁移
+  首期保留 v3 结构，`generation` 表示静态 catalog revision，`rule_id=0`。
+- 迁移按 catalog、protocol detector、domain classifier、ruleset removal、compact
+  automaton 分阶段实施，每阶段必须保持可构建、可测试和可审查。
+
+### 后果
+
+- 新增应用、域名或 detector 必须修改源码、补 corpus 并重新编译模块。
+- 固定 `app_id` 成为稳定接口，发布后不得改号或复用。
+- 模块不再支持用户自定义分类规则，控制面只负责启停、状态和事件观测。
+- generic TLS/QUIC 等基础协议不能过早写入 `app_id`，否则会阻止后续应用细分。
+- 详细数据模型、并发合同和里程碑见
+  `DPI_HARDCODED_STATE_MACHINE_DESIGN.md`。

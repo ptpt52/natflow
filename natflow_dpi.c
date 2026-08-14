@@ -101,6 +101,95 @@ struct natflow_dpi_detector {
 	unsigned char packet_budget_reply;
 };
 
+struct natflow_dpi_app_meta {
+	unsigned int app_id;
+	unsigned int category_id;
+	unsigned int proto;
+	const char *name;
+};
+
+static const struct natflow_dpi_app_meta natflow_dpi_app_catalog[] = {
+	{	NATFLOW_DPI_APP_DNS, NATFLOW_DPI_CATEGORY_INFRASTRUCTURE,
+		NATFLOW_DPI_PROTO_DNS, "dns"
+	},
+	{	NATFLOW_DPI_APP_SSH, NATFLOW_DPI_CATEGORY_REMOTE_ACCESS,
+		NATFLOW_DPI_PROTO_SSH, "ssh"
+	},
+	{	NATFLOW_DPI_APP_WIREGUARD, NATFLOW_DPI_CATEGORY_VPN_TUNNEL,
+		NATFLOW_DPI_PROTO_WIREGUARD, "wireguard"
+	},
+	{	NATFLOW_DPI_APP_STUN, NATFLOW_DPI_CATEGORY_REALTIME,
+		NATFLOW_DPI_PROTO_STUN, "stun"
+	},
+	{	NATFLOW_DPI_APP_TURN, NATFLOW_DPI_CATEGORY_REALTIME,
+		NATFLOW_DPI_PROTO_TURN, "turn"
+	},
+	{	NATFLOW_DPI_APP_BITTORRENT, NATFLOW_DPI_CATEGORY_FILE_SHARING,
+		NATFLOW_DPI_PROTO_BITTORRENT, "bittorrent"
+	},
+	{	NATFLOW_DPI_APP_FTP, NATFLOW_DPI_CATEGORY_FILE_TRANSFER,
+		NATFLOW_DPI_PROTO_FTP, "ftp"
+	},
+	{	NATFLOW_DPI_APP_SMTP, NATFLOW_DPI_CATEGORY_EMAIL,
+		NATFLOW_DPI_PROTO_SMTP, "smtp"
+	},
+	{	NATFLOW_DPI_APP_POP3, NATFLOW_DPI_CATEGORY_EMAIL,
+		NATFLOW_DPI_PROTO_POP3, "pop3"
+	},
+	{	NATFLOW_DPI_APP_IMAP, NATFLOW_DPI_CATEGORY_EMAIL,
+		NATFLOW_DPI_PROTO_IMAP, "imap"
+	},
+	{	NATFLOW_DPI_APP_SIP, NATFLOW_DPI_CATEGORY_VOIP,
+		NATFLOW_DPI_PROTO_SIP, "sip"
+	},
+	{	NATFLOW_DPI_APP_RTSP, NATFLOW_DPI_CATEGORY_REALTIME,
+		NATFLOW_DPI_PROTO_RTSP, "rtsp"
+	},
+	{	NATFLOW_DPI_APP_MQTT, NATFLOW_DPI_CATEGORY_IOT,
+		NATFLOW_DPI_PROTO_MQTT, "mqtt"
+	},
+	{	NATFLOW_DPI_APP_RESP, NATFLOW_DPI_CATEGORY_DATABASE,
+		NATFLOW_DPI_PROTO_RESP, "resp"
+	},
+	{	NATFLOW_DPI_APP_MYSQL, NATFLOW_DPI_CATEGORY_DATABASE,
+		NATFLOW_DPI_PROTO_MYSQL, "mysql"
+	},
+	{	NATFLOW_DPI_APP_POSTGRESQL, NATFLOW_DPI_CATEGORY_DATABASE,
+		NATFLOW_DPI_PROTO_POSTGRESQL, "postgresql"
+	},
+	{	NATFLOW_DPI_APP_RDP, NATFLOW_DPI_CATEGORY_REMOTE_ACCESS,
+		NATFLOW_DPI_PROTO_RDP, "rdp"
+	},
+	{	NATFLOW_DPI_APP_SMB, NATFLOW_DPI_CATEGORY_FILE_SHARING,
+		NATFLOW_DPI_PROTO_SMB, "smb"
+	},
+};
+
+static int natflow_dpi_app_catalog_validate(void)
+{
+	unsigned int i;
+	unsigned int j;
+
+	for (i = 0; i < ARRAY_SIZE(natflow_dpi_app_catalog); i++) {
+		const struct natflow_dpi_app_meta *app =
+			    &natflow_dpi_app_catalog[i];
+
+		if (app->app_id == NATFLOW_DPI_APP_UNKNOWN ||
+		        app->category_id == NATFLOW_DPI_CATEGORY_UNKNOWN ||
+		        app->proto == 0 || app->proto > NATFLOW_DPI_PROTO_SMB ||
+		        !app->name || app->name[0] == 0)
+			return -EINVAL;
+
+		for (j = i + 1; j < ARRAY_SIZE(natflow_dpi_app_catalog); j++) {
+			if (app->app_id == natflow_dpi_app_catalog[j].app_id ||
+			        app->proto == natflow_dpi_app_catalog[j].proto)
+				return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+
 struct natflow_dpi_domain_rule {
 	unsigned int rule_id;
 	unsigned int app_id;
@@ -2796,6 +2885,11 @@ int natflow_dpi_init(void)
 	             NATFLOW_DPI_EVENT_HEADER_LEN);
 	BUILD_BUG_ON(NATFLOW_DPI_DETECTOR_MAX > 8);
 	BUILD_BUG_ON(NATFLOW_DPI_PROTO_SMB > 32);
+	BUILD_BUG_ON(ARRAY_SIZE(natflow_dpi_app_catalog) != 18);
+
+	ret = natflow_dpi_app_catalog_validate();
+	if (ret != 0)
+		return ret;
 
 	init_waitqueue_head(&natflow_dpi_wait);
 	natflow_dpi_counters_clear();
