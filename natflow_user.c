@@ -3875,6 +3875,11 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 	ret = mutex_lock_interruptible(&user->lock);
 	if (ret != 0)
 		return -EAGAIN;
+
+	/* Serve residual data from a previous partial read first. */
+	if (user->data_len > 0)
+		goto copy_out;
+
 	if (user->status == 0 && list_empty(&user->head)) {
 		unsigned int i, hashsz;
 		struct nf_conntrack_tuple_hash *h;
@@ -3995,10 +4000,6 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 
 		rcu_read_unlock();
 	}
-
-	/* Serve residual data from a previous partial read first. */
-	if (user->data_len > 0)
-		goto copy_out;
 
 	user_i = list_first_entry_or_null(&user->head, struct userinfo, list);
 	if (user_i) {
