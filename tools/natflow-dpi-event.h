@@ -20,6 +20,18 @@ enum natflow_dpi_event_source {
 	NATFLOW_DPI_EVENT_SOURCE_STUN = 7,
 	NATFLOW_DPI_EVENT_SOURCE_TURN = 8,
 	NATFLOW_DPI_EVENT_SOURCE_BITTORRENT = 9,
+	NATFLOW_DPI_EVENT_SOURCE_FTP = 10,
+	NATFLOW_DPI_EVENT_SOURCE_SMTP = 11,
+	NATFLOW_DPI_EVENT_SOURCE_POP3 = 12,
+	NATFLOW_DPI_EVENT_SOURCE_IMAP = 13,
+	NATFLOW_DPI_EVENT_SOURCE_SIP = 14,
+	NATFLOW_DPI_EVENT_SOURCE_RTSP = 15,
+	NATFLOW_DPI_EVENT_SOURCE_MQTT = 16,
+	NATFLOW_DPI_EVENT_SOURCE_RESP = 17,
+	NATFLOW_DPI_EVENT_SOURCE_MYSQL = 18,
+	NATFLOW_DPI_EVENT_SOURCE_POSTGRESQL = 19,
+	NATFLOW_DPI_EVENT_SOURCE_RDP = 20,
+	NATFLOW_DPI_EVENT_SOURCE_SMB = 21,
 };
 
 struct natflow_dpi_event_hdr {
@@ -45,7 +57,7 @@ struct natflow_dpi_event_hdr {
 } __attribute__((packed));
 
 _Static_assert(sizeof(struct natflow_dpi_event_hdr) ==
-	       NATFLOW_DPI_EVENT_HEADER_LEN,
-	       "unexpected DPI event header size");
+               NATFLOW_DPI_EVENT_HEADER_LEN,
+               "unexpected DPI event header size");
 
 #endif /* NATFLOW_DPI_EVENT_H */

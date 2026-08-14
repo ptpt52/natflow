@@ -598,7 +598,7 @@ M0 若改变 HTTP 跨包识别、TLS cache 跨 CPU 行为或 enable 只影响新
 | M1b | HTTP、TLS、QUIC parser 统一和 domain exact/suffix rules。 |
 | M1c | DNS 标准 query、SSH banner、WireGuard 结构校验 protocol-only detector；端口只选择解析候选，不单独产生分类。 |
 | M1d | STUN/TURN protocol-only、BitTorrent TCP handshake 与 UDP uTP/DHT 子集。 |
-| M2 | MQTT、MySQL、PostgreSQL、SMB、FTP、SMTP、POP3、IMAP、SIP、RTSP、RESP、RDP 等 shadow 评估。 |
+| M2 | 已实现 MQTT、MySQL、PostgreSQL、SMB、FTP、SMTP、POP3、IMAP、SIP、RTSP、RESP、RDP 的 audit-only 有界 detector 和 corpus；生产 shadow 评估后再决定是否开放 policy。 |
 | M4 | OpenVPN、SoftEther、Kerberos、RTP/RTCP、私有游戏/聊天、代理/VPN、IP/证书/cache/JA4 等专项评审。 |
 
 默认域名规则包由用户态从 nDPI `host_match[]`、生成域名表和维护者样本整理后事务提交。内核不内置品牌名称、长域名列表或中文展示名。IP-only/CDN/证书/cache 类证据默认只作为审计或 QoS hint，不能单独触发可阻断 `app_id`。

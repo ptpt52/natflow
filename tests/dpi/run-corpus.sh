@@ -266,6 +266,18 @@ proto_values()
 	stun) printf '%s\n' '7 7104 6104' ;;
 	turn) printf '%s\n' '8 7105 6105' ;;
 	bittorrent) printf '%s\n' '9 7106 6106' ;;
+	ftp) printf '%s\n' '10 7107 6107' ;;
+	smtp) printf '%s\n' '11 7108 6108' ;;
+	pop3) printf '%s\n' '12 7109 6109' ;;
+	imap) printf '%s\n' '13 7110 6110' ;;
+	sip) printf '%s\n' '14 7111 6111' ;;
+	rtsp) printf '%s\n' '15 7112 6112' ;;
+	mqtt) printf '%s\n' '16 7113 6113' ;;
+	resp) printf '%s\n' '17 7114 6114' ;;
+	mysql) printf '%s\n' '18 7115 6115' ;;
+	postgresql) printf '%s\n' '19 7116 6116' ;;
+	rdp) printf '%s\n' '20 7117 6117' ;;
+	smb) printf '%s\n' '21 7118 6118' ;;
 	*) return 1 ;;
 	esac
 }
@@ -292,7 +304,8 @@ validate_case()
 	rule_id=$3
 	case $l4 in tcp|udp) ;; *) fail "$case_file: invalid L4 in $name" ;; esac
 	case $proto:$l4 in
-	ssh:udp|wireguard:tcp) fail "$case_file: invalid protocol/L4 pair in $name" ;;
+	ssh:udp|wireguard:tcp|ftp:udp|smtp:udp|pop3:udp|imap:udp|rtsp:udp|mqtt:udp|resp:udp|mysql:udp|postgresql:udp|rdp:udp|smb:udp)
+		fail "$case_file: invalid protocol/L4 pair in $name" ;;
 	esac
 	case $direction in original|reply) ;; *) fail "$case_file: invalid direction in $name" ;; esac
 	case $port in ""|*[!0-9]*) fail "$case_file: invalid port in $name" ;; esac
@@ -631,6 +644,18 @@ else
 	write_ctl "proto id=6104 app=7104 proto=stun"
 	write_ctl "proto id=6105 app=7105 proto=turn"
 	write_ctl "proto id=6106 app=7106 proto=bittorrent"
+	write_ctl "proto id=6107 app=7107 proto=ftp"
+	write_ctl "proto id=6108 app=7108 proto=smtp"
+	write_ctl "proto id=6109 app=7109 proto=pop3"
+	write_ctl "proto id=6110 app=7110 proto=imap"
+	write_ctl "proto id=6111 app=7111 proto=sip"
+	write_ctl "proto id=6112 app=7112 proto=rtsp"
+	write_ctl "proto id=6113 app=7113 proto=mqtt"
+	write_ctl "proto id=6114 app=7114 proto=resp"
+	write_ctl "proto id=6115 app=7115 proto=mysql"
+	write_ctl "proto id=6116 app=7116 proto=postgresql"
+	write_ctl "proto id=6117 app=7117 proto=rdp"
+	write_ctl "proto id=6118 app=7118 proto=smb"
 fi
 write_ctl rules_commit
 write_ctl enable=1

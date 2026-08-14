@@ -73,6 +73,30 @@ static const char *source_name(uint32_t flags)
 		return "turn";
 	case NATFLOW_DPI_EVENT_SOURCE_BITTORRENT:
 		return "bittorrent";
+	case NATFLOW_DPI_EVENT_SOURCE_FTP:
+		return "ftp";
+	case NATFLOW_DPI_EVENT_SOURCE_SMTP:
+		return "smtp";
+	case NATFLOW_DPI_EVENT_SOURCE_POP3:
+		return "pop3";
+	case NATFLOW_DPI_EVENT_SOURCE_IMAP:
+		return "imap";
+	case NATFLOW_DPI_EVENT_SOURCE_SIP:
+		return "sip";
+	case NATFLOW_DPI_EVENT_SOURCE_RTSP:
+		return "rtsp";
+	case NATFLOW_DPI_EVENT_SOURCE_MQTT:
+		return "mqtt";
+	case NATFLOW_DPI_EVENT_SOURCE_RESP:
+		return "resp";
+	case NATFLOW_DPI_EVENT_SOURCE_MYSQL:
+		return "mysql";
+	case NATFLOW_DPI_EVENT_SOURCE_POSTGRESQL:
+		return "postgresql";
+	case NATFLOW_DPI_EVENT_SOURCE_RDP:
+		return "rdp";
+	case NATFLOW_DPI_EVENT_SOURCE_SMB:
+		return "smb";
 	default:
 		return "unknown";
 	}

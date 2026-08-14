@@ -83,6 +83,10 @@ segmentation, non-linear skb, and long-duration soak are deferred. Failure
 injection remains separate integration work. Queue pressure and stream modes
 currently use the IPv4 topology.
 
+The checked-in corpus has 75 cases: 51 for the A-tier DNS, SSH, WireGuard,
+STUN/TURN, and BitTorrent subsets, plus 24 positive/negative cases for the 12
+B-tier text, database, IoT, RDP, and SMB detectors.
+
 Current fixtures:
 
 - `cases/dns-ssh.cases`: DNS UDP/TCP original/reply, compressed question,

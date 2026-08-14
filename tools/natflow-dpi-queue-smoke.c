@@ -189,7 +189,7 @@ static void validate_event(const struct natflow_dpi_event_hdr *event)
 	if (event->app_id == 0 || event->rule_id == 0)
 		fail_message("event has an empty app or rule id");
 	if (event->flags < NATFLOW_DPI_EVENT_SOURCE_HTTP ||
-	        event->flags > NATFLOW_DPI_EVENT_SOURCE_BITTORRENT)
+	        event->flags > NATFLOW_DPI_EVENT_SOURCE_SMB)
 		fail_message("event has an unknown source");
 }
 

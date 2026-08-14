@@ -42,6 +42,18 @@ enum natflow_dpi_proto {
 	NATFLOW_DPI_PROTO_STUN = 4,
 	NATFLOW_DPI_PROTO_TURN = 5,
 	NATFLOW_DPI_PROTO_BITTORRENT = 6,
+	NATFLOW_DPI_PROTO_FTP = 7,
+	NATFLOW_DPI_PROTO_SMTP = 8,
+	NATFLOW_DPI_PROTO_POP3 = 9,
+	NATFLOW_DPI_PROTO_IMAP = 10,
+	NATFLOW_DPI_PROTO_SIP = 11,
+	NATFLOW_DPI_PROTO_RTSP = 12,
+	NATFLOW_DPI_PROTO_MQTT = 13,
+	NATFLOW_DPI_PROTO_RESP = 14,
+	NATFLOW_DPI_PROTO_MYSQL = 15,
+	NATFLOW_DPI_PROTO_POSTGRESQL = 16,
+	NATFLOW_DPI_PROTO_RDP = 17,
+	NATFLOW_DPI_PROTO_SMB = 18,
 };
 
 #define NATFLOW_DPI_PROTO_BIT(proto) (1U << ((proto) - 1))
@@ -65,6 +77,9 @@ enum natflow_dpi_detector_id {
 	NATFLOW_DPI_DETECTOR_SSH,
 	NATFLOW_DPI_DETECTOR_WIREGUARD,
 	NATFLOW_DPI_DETECTOR_BITTORRENT,
+	NATFLOW_DPI_DETECTOR_B_TEXT,
+	NATFLOW_DPI_DETECTOR_B_DATABASE,
+	NATFLOW_DPI_DETECTOR_B_BINARY,
 	NATFLOW_DPI_DETECTOR_MAX,
 };
 
@@ -73,7 +88,7 @@ enum natflow_dpi_detector_id {
 #define NATFLOW_DPI_L4_UDP 0x02
 #define NATFLOW_DPI_DIRECTION_PACKET_BUDGET 4
 
-#define NATFLOW_DPI_EVENT_SOURCE_MAX NATFLOW_DPI_EVENT_SOURCE_BITTORRENT
+#define NATFLOW_DPI_EVENT_SOURCE_MAX NATFLOW_DPI_EVENT_SOURCE_SMB
 
 struct natflow_dpi_detector {
 	unsigned int proto_mask;
@@ -320,7 +335,33 @@ static int natflow_dpi_proto_parse(const char *name, unsigned char *proto)
 		*proto = NATFLOW_DPI_PROTO_BITTORRENT;
 		return 0;
 	}
-	return -EINVAL;
+	if (strcmp(name, "ftp") == 0)
+		*proto = NATFLOW_DPI_PROTO_FTP;
+	else if (strcmp(name, "smtp") == 0)
+		*proto = NATFLOW_DPI_PROTO_SMTP;
+	else if (strcmp(name, "pop3") == 0)
+		*proto = NATFLOW_DPI_PROTO_POP3;
+	else if (strcmp(name, "imap") == 0)
+		*proto = NATFLOW_DPI_PROTO_IMAP;
+	else if (strcmp(name, "sip") == 0)
+		*proto = NATFLOW_DPI_PROTO_SIP;
+	else if (strcmp(name, "rtsp") == 0)
+		*proto = NATFLOW_DPI_PROTO_RTSP;
+	else if (strcmp(name, "mqtt") == 0)
+		*proto = NATFLOW_DPI_PROTO_MQTT;
+	else if (strcmp(name, "resp") == 0 || strcmp(name, "redis") == 0)
+		*proto = NATFLOW_DPI_PROTO_RESP;
+	else if (strcmp(name, "mysql") == 0)
+		*proto = NATFLOW_DPI_PROTO_MYSQL;
+	else if (strcmp(name, "postgresql") == 0 || strcmp(name, "postgres") == 0)
+		*proto = NATFLOW_DPI_PROTO_POSTGRESQL;
+	else if (strcmp(name, "rdp") == 0)
+		*proto = NATFLOW_DPI_PROTO_RDP;
+	else if (strcmp(name, "smb") == 0)
+		*proto = NATFLOW_DPI_PROTO_SMB;
+	else
+		return -EINVAL;
+	return 0;
 }
 
 static int natflow_dpi_ruleset_domain_add(char *data)
@@ -849,6 +890,30 @@ static unsigned int natflow_dpi_proto_event_source(unsigned int proto)
 		return NATFLOW_DPI_EVENT_SOURCE_TURN;
 	case NATFLOW_DPI_PROTO_BITTORRENT:
 		return NATFLOW_DPI_EVENT_SOURCE_BITTORRENT;
+	case NATFLOW_DPI_PROTO_FTP:
+		return NATFLOW_DPI_EVENT_SOURCE_FTP;
+	case NATFLOW_DPI_PROTO_SMTP:
+		return NATFLOW_DPI_EVENT_SOURCE_SMTP;
+	case NATFLOW_DPI_PROTO_POP3:
+		return NATFLOW_DPI_EVENT_SOURCE_POP3;
+	case NATFLOW_DPI_PROTO_IMAP:
+		return NATFLOW_DPI_EVENT_SOURCE_IMAP;
+	case NATFLOW_DPI_PROTO_SIP:
+		return NATFLOW_DPI_EVENT_SOURCE_SIP;
+	case NATFLOW_DPI_PROTO_RTSP:
+		return NATFLOW_DPI_EVENT_SOURCE_RTSP;
+	case NATFLOW_DPI_PROTO_MQTT:
+		return NATFLOW_DPI_EVENT_SOURCE_MQTT;
+	case NATFLOW_DPI_PROTO_RESP:
+		return NATFLOW_DPI_EVENT_SOURCE_RESP;
+	case NATFLOW_DPI_PROTO_MYSQL:
+		return NATFLOW_DPI_EVENT_SOURCE_MYSQL;
+	case NATFLOW_DPI_PROTO_POSTGRESQL:
+		return NATFLOW_DPI_EVENT_SOURCE_POSTGRESQL;
+	case NATFLOW_DPI_PROTO_RDP:
+		return NATFLOW_DPI_EVENT_SOURCE_RDP;
+	case NATFLOW_DPI_PROTO_SMB:
+		return NATFLOW_DPI_EVENT_SOURCE_SMB;
 	default:
 		return 0;
 	}
@@ -928,7 +993,7 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             "#    enable=0|1\n"
 	             "#    rules_begin\n"
 	             "#    domain id=<rule_id> app=<app_id> kind=exact|suffix host=<host>\n"
-	             "#    proto id=<rule_id> app=<app_id> proto=dns|ssh|wireguard|stun|turn|bittorrent\n"
+	             "#    proto id=<rule_id> app=<app_id> proto=dns|ssh|wireguard|stun|turn|bittorrent|ftp|smtp|pop3|imap|sip|rtsp|mqtt|resp|mysql|postgresql|rdp|smb\n"
 	             "#    rules_commit\n"
 	             "#    rules_abort\n"
 	             "#    rules_clear\n"
@@ -953,6 +1018,18 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             "matches_stun=%llu\n"
 	             "matches_turn=%llu\n"
 	             "matches_bittorrent=%llu\n"
+	             "matches_ftp=%llu\n"
+	             "matches_smtp=%llu\n"
+	             "matches_pop3=%llu\n"
+	             "matches_imap=%llu\n"
+	             "matches_sip=%llu\n"
+	             "matches_rtsp=%llu\n"
+	             "matches_mqtt=%llu\n"
+	             "matches_resp=%llu\n"
+	             "matches_mysql=%llu\n"
+	             "matches_postgresql=%llu\n"
+	             "matches_rdp=%llu\n"
+	             "matches_smb=%llu\n"
 	             "events=%llu\n"
 	             "events_suppressed=%llu\n"
 	             "events_lost=%llu\n"
@@ -965,6 +1042,18 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             "events_stun=%llu\n"
 	             "events_turn=%llu\n"
 	             "events_bittorrent=%llu\n"
+	             "events_ftp=%llu\n"
+	             "events_smtp=%llu\n"
+	             "events_pop3=%llu\n"
+	             "events_imap=%llu\n"
+	             "events_sip=%llu\n"
+	             "events_rtsp=%llu\n"
+	             "events_mqtt=%llu\n"
+	             "events_resp=%llu\n"
+	             "events_mysql=%llu\n"
+	             "events_postgresql=%llu\n"
+	             "events_rdp=%llu\n"
+	             "events_smb=%llu\n"
 	             "domain_lookups=%llu\n"
 	             "domain_matches=%llu\n"
 	             "packet_inspect_original=%llu\n"
@@ -1001,6 +1090,18 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_STUN]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_TURN]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_BITTORRENT]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_FTP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_SMTP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_POP3]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_IMAP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_SIP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_RTSP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_MQTT]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_RESP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_MYSQL]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_POSTGRESQL]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_RDP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_SMB]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_events),
 	             (unsigned long long)atomic64_read(&natflow_dpi_events_suppressed),
 	             (unsigned long long)atomic64_read(&natflow_dpi_events_lost),
@@ -1013,6 +1114,18 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_STUN]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_TURN]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_BITTORRENT]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_FTP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_SMTP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_POP3]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_IMAP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_SIP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_RTSP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_MQTT]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_RESP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_MYSQL]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_POSTGRESQL]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_RDP]),
+	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_SMB]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_domain_lookups),
 	             (unsigned long long)atomic64_read(&natflow_dpi_domain_matches),
 	             (unsigned long long)atomic64_read(&natflow_dpi_packet_inspections[IP_CT_DIR_ORIGINAL]),
@@ -1473,6 +1586,350 @@ static unsigned int natflow_dpi_detect_bittorrent_udp(const unsigned char *data,
 	return 0;
 }
 
+static bool natflow_dpi_payload_starts(const unsigned char *data,
+                                       unsigned int inspect_len, const char *prefix, unsigned int prefix_len)
+{
+	return inspect_len >= prefix_len && memcmp(data, prefix, prefix_len) == 0;
+}
+
+static unsigned int natflow_dpi_text_line_len(const unsigned char *data,
+        unsigned int inspect_len)
+{
+	unsigned int i;
+
+	for (i = 0; i + 1 < inspect_len; i++) {
+		if (data[i] == '\r' && data[i + 1] == '\n')
+			return i + 2;
+	}
+	return 0;
+}
+
+static unsigned int natflow_dpi_detect_b_text(const unsigned char *data,
+        unsigned int inspect_len, unsigned int proto_mask)
+{
+	unsigned int line_len;
+	unsigned int i;
+
+	line_len = natflow_dpi_text_line_len(data, inspect_len);
+	if (line_len == 0)
+		return 0;
+	inspect_len = line_len;
+
+	if (proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_SIP)) {
+		static const char * const methods[] = {
+			"INVITE ", "REGISTER ", "ACK ", "BYE ", "CANCEL ",
+			"OPTIONS ", "SUBSCRIBE ", "NOTIFY ", "MESSAGE ",
+		};
+
+		if (inspect_len >= 13 &&
+		        natflow_dpi_payload_starts(data, inspect_len, "SIP/2.0 ", 8) &&
+		        data[8] >= '1' && data[8] <= '6' &&
+		        data[9] >= '0' && data[9] <= '9' &&
+		        data[10] >= '0' && data[10] <= '9')
+			return NATFLOW_DPI_PROTO_SIP;
+		for (i = 0; i < ARRAY_SIZE(methods); i++) {
+			unsigned int len = strlen(methods[i]);
+
+			if (natflow_dpi_payload_starts(data, inspect_len, methods[i], len) &&
+			        natflow_dpi_payload_has_token(data + len,
+			                                      inspect_len - len, " SIP/2.0\r\n", 10) &&
+			        (natflow_dpi_payload_starts(data + len,
+			                                    inspect_len - len, "sip:", 4) ||
+			         natflow_dpi_payload_starts(data + len,
+			                                    inspect_len - len, "sips:", 5)))
+				return NATFLOW_DPI_PROTO_SIP;
+		}
+	}
+
+	if (proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_RTSP)) {
+		static const char * const methods[] = {
+			"OPTIONS ", "DESCRIBE ", "ANNOUNCE ", "SETUP ", "PLAY ",
+			"PAUSE ", "TEARDOWN ", "GET_PARAMETER ", "SET_PARAMETER ",
+		};
+
+		if (inspect_len >= 14 &&
+		        (natflow_dpi_payload_starts(data, inspect_len, "RTSP/1.0 ", 9) ||
+		         natflow_dpi_payload_starts(data, inspect_len, "RTSP/2.0 ", 9)) &&
+		        data[9] >= '1' && data[9] <= '6' &&
+		        data[10] >= '0' && data[10] <= '9' &&
+		        data[11] >= '0' && data[11] <= '9')
+			return NATFLOW_DPI_PROTO_RTSP;
+		for (i = 0; i < ARRAY_SIZE(methods); i++) {
+			unsigned int len = strlen(methods[i]);
+
+			if (natflow_dpi_payload_starts(data, inspect_len, methods[i], len) &&
+			        natflow_dpi_payload_starts(data + len,
+			                                   inspect_len - len, "rtsp://", 7) &&
+			        (natflow_dpi_payload_has_token(data + len,
+			                                       inspect_len - len, " RTSP/1.0\r\n", 11) ||
+			         natflow_dpi_payload_has_token(data + len,
+			                                       inspect_len - len, " RTSP/2.0\r\n", 11)))
+				return NATFLOW_DPI_PROTO_RTSP;
+		}
+	}
+
+	if ((proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_SMTP)) &&
+	        (natflow_dpi_payload_starts(data, inspect_len, "EHLO ", 5) ||
+	         natflow_dpi_payload_starts(data, inspect_len, "HELO ", 5) ||
+	         natflow_dpi_payload_starts(data, inspect_len, "MAIL FROM:<", 11) ||
+	         natflow_dpi_payload_starts(data, inspect_len, "RCPT TO:<", 9)))
+		return NATFLOW_DPI_PROTO_SMTP;
+
+	if ((proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_FTP)) &&
+	        (natflow_dpi_payload_starts(data, inspect_len, "PASV\r\n", 6) ||
+	         natflow_dpi_payload_starts(data, inspect_len, "EPSV\r\n", 6) ||
+	         (natflow_dpi_payload_starts(data, inspect_len, "EPRT |", 6) &&
+	          natflow_dpi_payload_has_token(data + 6, inspect_len - 6, "|", 1)) ||
+	         (natflow_dpi_payload_starts(data, inspect_len, "PORT ", 5) &&
+	          natflow_dpi_payload_has_token(data + 5, inspect_len - 5, ",", 1))))
+		return NATFLOW_DPI_PROTO_FTP;
+
+	if ((proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_POP3)) &&
+	        (natflow_dpi_payload_starts(data, inspect_len, "CAPA\r\n", 6) ||
+	         natflow_dpi_payload_starts(data, inspect_len, "STLS\r\n", 6) ||
+	         natflow_dpi_payload_starts(data, inspect_len, "APOP ", 5)))
+		return NATFLOW_DPI_PROTO_POP3;
+
+	if (proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_IMAP)) {
+		for (i = 1; i < inspect_len && i <= 16; i++) {
+			if (!((data[i - 1] >= 'a' && data[i - 1] <= 'z') ||
+			        (data[i - 1] >= 'A' && data[i - 1] <= 'Z') ||
+			        (data[i - 1] >= '0' && data[i - 1] <= '9')))
+				break;
+			if (data[i] != ' ')
+				continue;
+			if (natflow_dpi_payload_starts(data + i + 1,
+			                               inspect_len - i - 1, "CAPABILITY\r\n", 12) ||
+			        natflow_dpi_payload_starts(data + i + 1,
+			                                   inspect_len - i - 1, "STARTTLS\r\n", 10) ||
+			        natflow_dpi_payload_starts(data + i + 1,
+			                                   inspect_len - i - 1, "LOGIN ", 6) ||
+			        natflow_dpi_payload_starts(data + i + 1,
+			                                   inspect_len - i - 1, "SELECT ", 7))
+				return NATFLOW_DPI_PROTO_IMAP;
+			break;
+		}
+	}
+	return 0;
+}
+
+static int natflow_dpi_parse_decimal(const unsigned char *data,
+                                     unsigned int len, unsigned int *value, unsigned int *consumed)
+{
+	unsigned int number = 0;
+	unsigned int i;
+
+	if (len == 0 || data[0] < '0' || data[0] > '9')
+		return -EINVAL;
+	for (i = 0; i < len && i < 6; i++) {
+		if (data[i] < '0' || data[i] > '9')
+			break;
+		number = number * 10 + data[i] - '0';
+	}
+	if (i == len || i == 6 || data[i] != '\r' || i + 1 >= len ||
+	        data[i + 1] != '\n')
+		return -EINVAL;
+	*value = number;
+	*consumed = i + 2;
+	return 0;
+}
+
+static unsigned int natflow_dpi_detect_resp(const unsigned char *data,
+        unsigned int inspect_len)
+{
+	static const char * const commands[] = {
+		"GET", "SET", "DEL", "MGET", "MSET", "AUTH", "HELLO", "PING",
+		"INFO", "SELECT", "SUBSCRIBE", "PUBLISH", "HGET", "HSET", "EVAL",
+	};
+	unsigned int array_count;
+	unsigned int command_len;
+	unsigned int consumed;
+	unsigned int offset;
+	unsigned int i;
+
+	if (inspect_len < 10 || data[0] != '*' ||
+	        natflow_dpi_parse_decimal(data + 1, inspect_len - 1,
+	                                  &array_count, &consumed) ||
+	        array_count == 0 || array_count > 1024)
+		return 0;
+	offset = 1 + consumed;
+	if (offset >= inspect_len || data[offset++] != '$' ||
+	        natflow_dpi_parse_decimal(data + offset, inspect_len - offset,
+	                                  &command_len, &consumed) ||
+	        command_len == 0 || command_len > 16)
+		return 0;
+	offset += consumed;
+	if (command_len + 2 > inspect_len - offset ||
+	        data[offset + command_len] != '\r' ||
+	        data[offset + command_len + 1] != '\n')
+		return 0;
+	for (i = 0; i < ARRAY_SIZE(commands); i++) {
+		unsigned int len = strlen(commands[i]);
+		unsigned int j;
+
+		if (len != command_len)
+			continue;
+		for (j = 0; j < len; j++) {
+			unsigned char c = data[offset + j];
+			if (c >= 'a' && c <= 'z')
+				c -= 'a' - 'A';
+			if (c != commands[i][j])
+				break;
+		}
+		if (j == len)
+			return NATFLOW_DPI_PROTO_RESP;
+	}
+	return 0;
+}
+
+static unsigned int natflow_dpi_detect_postgresql(const unsigned char *data,
+        unsigned int payload_len, unsigned int inspect_len)
+{
+	unsigned int length;
+	unsigned int code;
+
+	if (inspect_len < 8)
+		return 0;
+	length = ((unsigned int)data[0] << 24) | ((unsigned int)data[1] << 16) |
+	         ((unsigned int)data[2] << 8) | data[3];
+	code = ((unsigned int)data[4] << 24) | ((unsigned int)data[5] << 16) |
+	       ((unsigned int)data[6] << 8) | data[7];
+	if (length > payload_len || length < 8)
+		return 0;
+	if ((length == 8 && code == 80877103U) ||
+	        (length == 16 && code == 80877102U))
+		return NATFLOW_DPI_PROTO_POSTGRESQL;
+	if (code == 0x00030000 && length >= 15 && inspect_len >= 13 &&
+	        memcmp(data + 8, "user\0", 5) == 0)
+		return NATFLOW_DPI_PROTO_POSTGRESQL;
+	return 0;
+}
+
+static unsigned int natflow_dpi_detect_mysql(const unsigned char *data,
+        unsigned int payload_len, unsigned int inspect_len)
+{
+	unsigned int packet_len;
+	unsigned int nul;
+
+	if (inspect_len < 22 || data[3] != 0 || data[4] != 10)
+		return 0;
+	packet_len = data[0] | ((unsigned int)data[1] << 8) |
+	             ((unsigned int)data[2] << 16);
+	if (packet_len < 30 || packet_len + 4 > payload_len)
+		return 0;
+	for (nul = 5; nul < inspect_len && nul < 64; nul++) {
+		if (data[nul] == 0)
+			break;
+		if (data[nul] < 0x20 || data[nul] > 0x7e)
+			return 0;
+	}
+	if (nul < 8 || nul + 16 > inspect_len || data[nul + 13] != 0)
+		return 0;
+	if (data[nul + 14] == 0 && data[nul + 15] == 0)
+		return 0;
+	return NATFLOW_DPI_PROTO_MYSQL;
+}
+
+static unsigned int natflow_dpi_detect_b_database(const unsigned char *data,
+        unsigned int payload_len, unsigned int inspect_len,
+        unsigned char direction, unsigned int proto_mask)
+{
+	if (direction == NATFLOW_L7_DIR_ORIGINAL) {
+		if ((proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_RESP)) &&
+		        natflow_dpi_detect_resp(data, inspect_len))
+			return NATFLOW_DPI_PROTO_RESP;
+		if ((proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_POSTGRESQL)) &&
+		        natflow_dpi_detect_postgresql(data, payload_len, inspect_len))
+			return NATFLOW_DPI_PROTO_POSTGRESQL;
+	} else if ((proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_MYSQL)) &&
+	           natflow_dpi_detect_mysql(data, payload_len, inspect_len)) {
+		return NATFLOW_DPI_PROTO_MYSQL;
+	}
+	return 0;
+}
+
+static unsigned int natflow_dpi_detect_mqtt(const unsigned char *data,
+        unsigned int payload_len, unsigned int inspect_len)
+{
+	unsigned int multiplier = 1;
+	unsigned int remaining = 0;
+	unsigned int offset = 1;
+	unsigned int encoded;
+
+	if (inspect_len < 12 || data[0] != 0x10)
+		return 0;
+	do {
+		if (offset >= inspect_len || offset > 4)
+			return 0;
+		encoded = data[offset++];
+		remaining += (encoded & 0x7f) * multiplier;
+		multiplier *= 128;
+	} while (encoded & 0x80);
+	if (remaining < 10 || remaining > payload_len - offset ||
+	        offset + 9 > inspect_len)
+		return 0;
+	if (data[offset] != 0 || data[offset + 1] != 4 ||
+	        memcmp(data + offset + 2, "MQTT", 4) != 0 ||
+	        (data[offset + 6] != 4 && data[offset + 6] != 5) ||
+	        (data[offset + 7] & 0x01))
+		return 0;
+	return NATFLOW_DPI_PROTO_MQTT;
+}
+
+static unsigned int natflow_dpi_detect_smb(const unsigned char *data,
+        unsigned int payload_len, unsigned int inspect_len)
+{
+	unsigned int offset = 0;
+	unsigned int nbss_len;
+
+	if (inspect_len >= 8 && data[0] == 0) {
+		nbss_len = ((unsigned int)data[1] << 16) |
+		           ((unsigned int)data[2] << 8) | data[3];
+		if (nbss_len <= payload_len - 4)
+			offset = 4;
+	}
+	if (inspect_len - offset >= 64 && data[offset] == 0xfe &&
+	        memcmp(data + offset + 1, "SMB", 3) == 0 &&
+	        data[offset + 4] == 64 && data[offset + 5] == 0)
+		return NATFLOW_DPI_PROTO_SMB;
+	if (inspect_len - offset >= 32 && data[offset] == 0xff &&
+	        memcmp(data + offset + 1, "SMB", 3) == 0)
+		return NATFLOW_DPI_PROTO_SMB;
+	return 0;
+}
+
+static unsigned int natflow_dpi_detect_rdp(const unsigned char *data,
+        unsigned int payload_len, unsigned int inspect_len)
+{
+	unsigned int length;
+
+	if (inspect_len < 11 || data[0] != 3 || data[1] != 0)
+		return 0;
+	length = ((unsigned int)data[2] << 8) | data[3];
+	if (length < 11 || length > payload_len || data[4] != length - 5 ||
+	        (data[5] != 0xe0 && data[5] != 0xd0) ||
+	        data[10] != 0)
+		return 0;
+	return NATFLOW_DPI_PROTO_RDP;
+}
+
+static unsigned int natflow_dpi_detect_b_binary(const unsigned char *data,
+        unsigned int payload_len, unsigned int inspect_len,
+        unsigned char direction, unsigned int proto_mask)
+{
+	if ((proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_SMB)) &&
+	        natflow_dpi_detect_smb(data, payload_len, inspect_len))
+		return NATFLOW_DPI_PROTO_SMB;
+	if ((proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_RDP)) &&
+	        natflow_dpi_detect_rdp(data, payload_len, inspect_len))
+		return NATFLOW_DPI_PROTO_RDP;
+	if (direction == NATFLOW_L7_DIR_ORIGINAL &&
+	        (proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_MQTT)) &&
+	        natflow_dpi_detect_mqtt(data, payload_len, inspect_len))
+		return NATFLOW_DPI_PROTO_MQTT;
+	return 0;
+}
+
 static const struct natflow_dpi_detector natflow_dpi_dns_detector = {
 	.proto_mask = NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_DNS),
 	.byte_budget_original = NATFLOW_DPI_DNS_BYTE_BUDGET,
@@ -1526,11 +1983,93 @@ static const struct natflow_dpi_detector natflow_dpi_payload_detectors[] = {
 		.packet_budget_original = NATFLOW_DPI_DIRECTION_PACKET_BUDGET,
 		.packet_budget_reply = NATFLOW_DPI_DIRECTION_PACKET_BUDGET,
 	},
+	{
+		.proto_mask = NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_FTP) |
+		NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_SMTP) |
+		NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_POP3) |
+		NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_IMAP) |
+		NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_SIP) |
+		NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_RTSP),
+		.byte_budget_original = NATFLOW_DPI_PAYLOAD_BYTE_BUDGET,
+		.byte_budget_reply = NATFLOW_DPI_PAYLOAD_BYTE_BUDGET,
+		.detector_id = NATFLOW_DPI_DETECTOR_B_TEXT,
+		.l4_mask = NATFLOW_DPI_L4_TCP | NATFLOW_DPI_L4_UDP,
+		.direction_mode = NATFLOW_DPI_DIR_EITHER,
+		.packet_budget_original = NATFLOW_DPI_DIRECTION_PACKET_BUDGET,
+		.packet_budget_reply = NATFLOW_DPI_DIRECTION_PACKET_BUDGET,
+	},
+	{
+		.proto_mask = NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_RESP) |
+		NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_MYSQL) |
+		NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_POSTGRESQL),
+		.byte_budget_original = NATFLOW_DPI_PAYLOAD_BYTE_BUDGET,
+		.byte_budget_reply = NATFLOW_DPI_PAYLOAD_BYTE_BUDGET,
+		.detector_id = NATFLOW_DPI_DETECTOR_B_DATABASE,
+		.l4_mask = NATFLOW_DPI_L4_TCP,
+		.direction_mode = NATFLOW_DPI_DIR_EITHER,
+		.packet_budget_original = NATFLOW_DPI_DIRECTION_PACKET_BUDGET,
+		.packet_budget_reply = NATFLOW_DPI_DIRECTION_PACKET_BUDGET,
+	},
+	{
+		.proto_mask = NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_MQTT) |
+		NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_RDP) |
+		NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_SMB),
+		.byte_budget_original = NATFLOW_DPI_PAYLOAD_BYTE_BUDGET,
+		.byte_budget_reply = NATFLOW_DPI_PAYLOAD_BYTE_BUDGET,
+		.detector_id = NATFLOW_DPI_DETECTOR_B_BINARY,
+		.l4_mask = NATFLOW_DPI_L4_TCP,
+		.direction_mode = NATFLOW_DPI_DIR_EITHER,
+		.packet_budget_original = NATFLOW_DPI_DIRECTION_PACKET_BUDGET,
+		.packet_budget_reply = NATFLOW_DPI_DIRECTION_PACKET_BUDGET,
+	},
 };
 
 static unsigned char natflow_dpi_l4_mask(unsigned char l4proto);
 static bool natflow_dpi_detector_direction_allowed(
     const struct natflow_dpi_detector *detector, unsigned char direction);
+
+static unsigned int natflow_dpi_detector_l4_proto_mask(
+    const struct natflow_dpi_detector *detector, unsigned char l4proto)
+{
+	if (!detector || !(detector->l4_mask & natflow_dpi_l4_mask(l4proto)))
+		return 0;
+	if (detector->detector_id == NATFLOW_DPI_DETECTOR_B_TEXT &&
+	        l4proto == IPPROTO_UDP)
+		return detector->proto_mask &
+		       NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_SIP);
+	return detector->proto_mask;
+}
+
+static unsigned int natflow_dpi_detector_packet_proto_mask(
+    const struct natflow_dpi_detector *detector, unsigned char l4proto,
+    unsigned char direction)
+{
+	unsigned int proto_mask;
+
+	proto_mask = natflow_dpi_detector_l4_proto_mask(detector, l4proto);
+	if (direction == NATFLOW_L7_DIR_ORIGINAL) {
+		if (detector->detector_id == NATFLOW_DPI_DETECTOR_B_DATABASE)
+			proto_mask &= ~NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_MYSQL);
+		return proto_mask;
+	}
+	if (direction != NATFLOW_L7_DIR_REPLY)
+		return 0;
+
+	switch (detector->detector_id) {
+	case NATFLOW_DPI_DETECTOR_B_TEXT:
+		return proto_mask &
+		       (NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_SIP) |
+		        NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_RTSP));
+	case NATFLOW_DPI_DETECTOR_B_DATABASE:
+		return proto_mask & NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_MYSQL);
+	case NATFLOW_DPI_DETECTOR_B_BINARY:
+		return proto_mask &
+		       (NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_RDP) |
+		        NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_SMB));
+	default:
+		return proto_mask;
+	}
+}
 
 static const struct natflow_dpi_detector *natflow_dpi_detector_by_id(
     unsigned int detector_id)
@@ -1605,9 +2144,10 @@ static unsigned int natflow_dpi_detector_candidate_mask(unsigned char l4proto,
 	for (i = 0; i < ARRAY_SIZE(natflow_dpi_payload_detectors); i++) {
 		const struct natflow_dpi_detector *detector =
 			    &natflow_dpi_payload_detectors[i];
+		unsigned int l4_proto_mask =
+		    natflow_dpi_detector_l4_proto_mask(detector, l4proto);
 
-		if ((proto_mask & detector->proto_mask) &&
-		        (detector->l4_mask & l4_mask))
+		if (proto_mask & l4_proto_mask)
 			detector_mask |= NATFLOW_DPI_DETECTOR_BIT(detector->detector_id);
 	}
 	return detector_mask;
@@ -1836,16 +2376,20 @@ static unsigned int natflow_dpi_payload_proto_mask(unsigned char l4proto,
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(natflow_dpi_payload_detectors); i++) {
-		if (natflow_dpi_detector_packet_allowed(
-		            &natflow_dpi_payload_detectors[i], l4proto, direction))
-			proto_mask |= natflow_dpi_payload_detectors[i].proto_mask;
+		const struct natflow_dpi_detector *detector =
+			    &natflow_dpi_payload_detectors[i];
+
+		if (natflow_dpi_detector_packet_allowed(detector, l4proto, direction))
+			proto_mask |= natflow_dpi_detector_packet_proto_mask(detector,
+			              l4proto, direction);
 	}
 	return proto_mask;
 }
 
 static unsigned int natflow_dpi_detect_one_payload(
     const struct natflow_dpi_detector *detector, const unsigned char *data,
-    unsigned int payload_len, unsigned int inspect_len, unsigned char l4proto)
+    unsigned int payload_len, unsigned int inspect_len, unsigned char l4proto,
+    unsigned char direction, unsigned int proto_mask)
 {
 	switch (detector->detector_id) {
 	case NATFLOW_DPI_DETECTOR_STUN_TURN:
@@ -1861,6 +2405,16 @@ static unsigned int natflow_dpi_detect_one_payload(
 		if (l4proto == IPPROTO_UDP)
 			return natflow_dpi_detect_bittorrent_udp(data, inspect_len);
 		return 0;
+	case NATFLOW_DPI_DETECTOR_B_TEXT:
+		if (l4proto == IPPROTO_UDP)
+			proto_mask &= NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_SIP);
+		return natflow_dpi_detect_b_text(data, inspect_len, proto_mask);
+	case NATFLOW_DPI_DETECTOR_B_DATABASE:
+		return natflow_dpi_detect_b_database(data, payload_len, inspect_len,
+		                                     direction, proto_mask);
+	case NATFLOW_DPI_DETECTOR_B_BINARY:
+		return natflow_dpi_detect_b_binary(data, payload_len, inspect_len,
+		                                   direction, proto_mask);
 	default:
 		return 0;
 	}
@@ -1879,15 +2433,20 @@ static unsigned int natflow_dpi_detect_payload(const unsigned char *data,
 	for (i = 0; i < ARRAY_SIZE(natflow_dpi_payload_detectors); i++) {
 		const struct natflow_dpi_detector *detector =
 			    &natflow_dpi_payload_detectors[i];
+		unsigned int detector_proto_mask;
 
-		if (!(proto_mask & detector->proto_mask))
+		detector_proto_mask = proto_mask &
+		                      natflow_dpi_detector_packet_proto_mask(detector,
+		                              l4proto, direction);
+		if (!detector_proto_mask)
 			continue;
 		if (!natflow_dpi_detector_packet_allowed(detector, l4proto,
 		        direction))
 			continue;
 
 		proto = natflow_dpi_detect_one_payload(detector, data, payload_len,
-		                                       inspect_len, l4proto);
+		                                       inspect_len, l4proto, direction,
+		                                       detector_proto_mask);
 		if (proto && (proto_mask & NATFLOW_DPI_PROTO_BIT(proto)))
 			return proto;
 	}
@@ -2235,6 +2794,8 @@ int natflow_dpi_init(void)
 
 	BUILD_BUG_ON(sizeof(struct natflow_dpi_event_hdr) !=
 	             NATFLOW_DPI_EVENT_HEADER_LEN);
+	BUILD_BUG_ON(NATFLOW_DPI_DETECTOR_MAX > 8);
+	BUILD_BUG_ON(NATFLOW_DPI_PROTO_SMB > 32);
 
 	init_waitqueue_head(&natflow_dpi_wait);
 	natflow_dpi_counters_clear();
