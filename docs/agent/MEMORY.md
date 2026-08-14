@@ -1,6 +1,6 @@
 # Natflow 智能体记忆
 
-更新时间：2026-07-18
+更新时间：2026-08-15
 
 本文是给智能体快速恢复上下文的压缩记忆，不替代源码。遇到冲突时以源码为准，并修正文档。
 
@@ -33,7 +33,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 | `natflow_user.c/.h` | fakeuser、认证、QoS、用户信息控制设备和 `/dev/natflow_userinfo_queue` 二进制认证事件队列。 |
 | `natflow_urllogger.c/.h` | Legacy URL consumer；通过 `natflow_urllogger_consume_host_view()` 消费 L7 host view，处理 URL record、Host ACL、DPI classify 和 ACL 回复策略，保留 HTTP Host/URI、TLS/QUIC SNI 的 URL 记录、URL store、Host ACL、302/RST 动作和 sysctl 资源。`/dev/natflow_urllogger_queue` 只允许一个 reader；没有 reader 或 reader 未写入正数 `cache=N` 时 URL/SNI record 在 ACL/DPI 处理后直接丢弃，不缓存到 URL store。 |
 | `natflow_zone.c/.h` | LAN/WAN zone 规则、设备 zone 标记、zone notifier。 |
-| `natflow_conntrack.c/.h` | `/dev/natflow_conntrackinfo_ctl` conntrack dump。 |
+| `natflow_conntrack.c/.h` | `/dev/natflow_conntrackinfo_ctl` conntrack dump；`kickall` 清理 `init_net` 中除 fakeuser 和 NATCAP peer 外的已确认 conntrack。 |
 | `natflow_compat.h` | 跨内核版本 API 差异兼容。 |
 | `docs/agent/DPI_IMPLEMENTATION_CHECKLIST.md` | DPI/L7 实现阶段的每步自审基线，覆盖 legacy URL/Host ACL、conntrack layout、fast path gate 和 DPI ABI。 |
 
@@ -41,6 +41,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 
 - 源码是最高优先级事实来源，`SYSTEM_DESIGN_SPEC.md` 是反向整理的长期规格。
 - 字符设备命令大多要求单行命令以 `\n` 结束，单条命令长度上限为 `MAX_IOCTL_LEN = 256`。
+- `/dev/natflow_conntrackinfo_ctl` 的精确 `kickall` 命令要求 `init_net` 的 `CAP_NET_ADMIN`，通过内核 cleanup iterator 同步删除除 `IPS_NATFLOW_USER` 和 `IPS_NATCAP_PEER` 外的已确认 conntrack；普通业务流即使关联 fakeuser 仍会删除，fakeuser/NATCAP peer 对象自身保留。
 - `/dev/natflow_userinfo_ctl` 的 `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数；timestamp 创建/获取 fakeuser 时写入，user pre hook 中普通活动最多每 32 秒刷新一次，新连接包超过 2 秒可刷新；不要用当前 `no_flow_timeout` 和 conntrack 剩余超时反推。
 - path 默认关闭，通常通过 `/dev/natflow_ctl` 的 `disabled=0` 开启。
 - `CONFIG_NATFLOW_PATH` 控制 fast path、vline/relay 和硬件 offload 相关能力。

@@ -214,6 +214,7 @@ AI 重建时必须保留“换行结束、256 字节上限、静态半行缓存�
 | 返回值 | 场景 |
 | --- | --- |
 | `-EACCES` | `copy_from_user()` 失败。 |
+| `-EPERM` | `conntrackinfo_ctl kickall` 调用者缺少 `init_net` 的 `CAP_NET_ADMIN`。 |
 | `-EFAULT` | `copy_to_user()` 失败。 |
 | `-EINVAL` | 控制行超过 256 字节、命令字段格式非法、queue read buffer 小于单条记录。 |
 | `-ENOMEM` | 规则、per-open 缓冲、skb 或工作队列分配失败。 |
@@ -441,13 +442,24 @@ struct natflow_userinfo_event_hdr {
 
 写命令：
 
-- 当前只识别 `kickall`，但没有实际清理行为，主要用于占位/兼容。
+- 只识别精确命令 `kickall`；调用者必须在 `init_net` 所属 user namespace
+  中具有 `CAP_NET_ADMIN`，否则返回 `-EPERM`。
+- `kickall` 通过 conntrack core cleanup iterator 同步删除 `init_net` 中除
+  fakeuser (`IPS_NATFLOW_USER`) 和 NATCAP peer (`IPS_NATCAP_PEER`) 外的所有
+  已确认 conntrack，数据效果等价于带上述保留 predicate 的 `conntrack -F`。
+- 删除 predicate 只检查 conntrack 自身的 status；关联到 fakeuser 的普通业务
+  conntrack 仍会删除，fakeuser 对象本身保留。
+- cleanup API 的跨内核差异由 `natflow_compat.h` 版本宏收敛：旧接口使用
+  `nf_ct_iterate_cleanup()`，4.13 起使用 `nf_ct_iterate_cleanup_net()`，5.19
+  起传递 `struct nf_ct_iter_data`。
 
 性能限制：
 
 - 每次扫描时间片约 100ms。
 - 每个打开实例最多缓存 256 个 4096 对齐 chunk，约 1MB。
 - 未完成扫描时 read 返回 `-EAGAIN`，调用方应继续读。
+- `kickall` 是同步全表 cleanup；大 conntrack 表上的 write 延迟随表规模增长。
+  遍历期间并发新建的连接可能不在本次清理快照内。
 - 输出行长大于用户 buffer 时会 partial copy 并保留剩余数据，这是该仓库中唯一实现 partial read 的长文本接口。
 
 ### 7.8 `/dev/natflow_urllogger_queue`
@@ -1215,7 +1227,9 @@ path notifier：
 
 - URL logger 只有 `enable=1` 时才处理 host ACL。
 - host ACL 的 redirect action 支持配置 `redirect_url` 并通过 HTTP 302 重定向。
-- `natflow_conntrackinfo_ctl` 的 `kickall` 没有实际清理。
+- `natflow_conntrackinfo_ctl` 的 `kickall` 会清理 `init_net` 中除 fakeuser 和
+  NATCAP peer 外的已确认 conntrack；未确认连接是否同时被标记 dying 取决于
+  目标内核 cleanup API，命令不清理 expectation。
 - `natflow_userinfo_ctl` 已支持 per-open residual buffer partial read；`natflow_userinfo_queue`、`natflow_urllogger_queue`、`natflow_dpi_queue` 对小 buffer 不返回 partial record，但可在一次 `read()` 中返回多条完整记录。
 - vline 配置非事务、无冲突检测、运行 ifindex key 小于 64。
 - fastnat 哈希表固定大小，冲突处理有限。
@@ -1226,7 +1240,9 @@ path notifier：
 
 ### 20.4 安全边界
 
-- 控制设备没有在代码内做能力检查，实际安全依赖设备节点权限和系统管理策略。
+- 除破坏性的 `natflow_conntrackinfo_ctl kickall` 显式检查 `init_net` 的
+  `CAP_NET_ADMIN` 外，其他控制设备没有在代码内做能力检查，实际安全仍依赖
+  设备节点权限和系统管理策略。
 - 过长 auth rule/bypass ipset 名称会被截断，可能导致规则引用错误 ipset；部署时必须由用户态校验长度和精确名称。
 - URL/host 解析不能作为强安全 WAF，只能作为流量审计/粗粒度访问控制。
 - fast path 绕过大量慢路径检查，因此任何策略模块在未完成处理前必须设置对应 busy bit，例如 `NF_FF_USER_USE`、`NF_FF_L7_USE` 或 `NF_FF_DPI_USE`。

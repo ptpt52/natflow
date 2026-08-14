@@ -198,3 +198,36 @@ queue pressure 和 queue stream 也已验证。继续扩展 IPv6 extension heade
   queue stream 和构建矩阵为准。
 - 后续路线图不再自动推进上述暂缓项；只有维护者重新调整范围时才恢复。
 - IPv6 extension header 流量不会被当前 DPI 分类，不能据此承诺协议覆盖。
+
+## ADR-0008：conntrackinfo kickall 的清理边界
+
+日期：2026-08-15
+
+状态：Accepted
+
+### 背景
+
+`/dev/natflow_conntrackinfo_ctl` 长期接受 `kickall` 但没有实际动作，成功返回会
+误导控制面。维护者要求该命令具备 `conntrack -F` 等价的数据清理语义，同时
+不能删除 natflow fakeuser 和 NATCAP peer。
+
+### 决策
+
+- `kickall` 只接受精确命令名，并要求调用者在 `init_net` 所属 user namespace
+  中具有 `CAP_NET_ADMIN`。
+- 使用 conntrack core cleanup iterator 同步删除 `init_net` 中所有未带
+  `IPS_NATFLOW_USER` 或 `IPS_NATCAP_PEER` 的已确认 conntrack；不在 natflow
+  自己的 RCU hash 遍历中手工摘链或释放对象。
+- 保留判断只看 conntrack 自身 status。关联 fakeuser 的普通业务连接会被删除，
+  fakeuser 和 NATCAP peer 对象本身保留。
+- cleanup iterator 的签名差异留在兼容分支；不为配置操作维护全局 conntrack
+  registry。
+
+### 后果
+
+- 命令会立即中断普通连接的状态跟踪和 NAT，且在大表上可能同步执行较长时间。
+- 已确认 conntrack 是清理保证；旧内核 cleanup API 可能同时把匹配的未确认
+  conntrack 标记 dying。命令不清理 expectation，遍历期间并发新建而未被访问
+  的连接也不属于本次清理保证。
+- 真机验证必须同时证明普通 IPv4/IPv6 连接被删除、fakeuser/NATCAP peer 保留、
+  无权限调用返回 `-EPERM`。

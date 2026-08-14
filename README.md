@@ -1355,7 +1355,12 @@ cat /dev/natflow_conntrackinfo_ctl
 echo 'kickall' >/dev/natflow_conntrackinfo_ctl
 ```
 
-当前实现只接受该命令但没有额外清理动作，主要保留为兼容控制入口。
+`kickall` 等价于对 `init_net` 执行一次带过滤条件的 `conntrack -F`：删除当前
+conntrack 表中除 fakeuser (`IPS_NATFLOW_USER`) 和 NATCAP peer
+(`IPS_NATCAP_PEER`) 之外的所有已确认连接。命令要求调用进程在 `init_net`
+所属 user namespace 中具有 `CAP_NET_ADMIN`，否则返回 `-EPERM`。这是同步且
+破坏性的操作，会立即中断被删除连接的 NAT 和状态跟踪；执行期间新建的连接
+可能不在本次遍历快照内。
 
 ## 常用 ipset 名称
 

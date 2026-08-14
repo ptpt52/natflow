@@ -3,6 +3,7 @@
  *  Date : Wed, 27 Jun 2018 22:13:17 +0800
  */
 #include <linux/ctype.h>
+#include <linux/capability.h>
 #include <linux/cdev.h>
 #include <linux/fs.h>
 #include <linux/seq_file.h>
@@ -61,6 +62,32 @@ struct conntrackinfo_user {
 	unsigned int status;
 };
 
+static int conntrackinfo_kickall_match(struct nf_conn *ct, void *data)
+{
+	(void)data;
+
+	return !(READ_ONCE(ct->status) & (IPS_NATFLOW_USER | IPS_NATCAP_PEER));
+}
+
+static void conntrackinfo_iterate_cleanup_net(struct net *net,
+        int (*iter)(struct nf_conn *ct, void *data), void *data)
+{
+#if NATFLOW_NF_CT_ITERATE_CLEANUP_USES_ITER_DATA
+	struct nf_ct_iter_data iter_data = {
+		.net = net,
+		.data = data,
+	};
+
+	nf_ct_iterate_cleanup_net(iter, &iter_data);
+#elif NATFLOW_HAVE_NF_CT_ITERATE_CLEANUP_NET
+	nf_ct_iterate_cleanup_net(net, iter, data, 0, 0);
+#elif NATFLOW_NF_CT_ITERATE_CLEANUP_HAS_REPORT
+	nf_ct_iterate_cleanup(net, iter, data, 0, 0);
+#else
+	nf_ct_iterate_cleanup(net, iter, data);
+#endif
+}
+
 static ssize_t conntrackinfo_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
 {
 	int err = 0;
@@ -101,7 +128,11 @@ static ssize_t conntrackinfo_write(struct file *file, const char __user *buf, si
 		l++;
 	}
 
-	if (strncmp(data, "kickall", 7) == 0) {
+	if (strcmp(data, "kickall") == 0) {
+		if (!ns_capable(init_net.user_ns, CAP_NET_ADMIN))
+			return -EPERM;
+
+		conntrackinfo_iterate_cleanup_net(&init_net, conntrackinfo_kickall_match, NULL);
 		goto done;
 	}
 

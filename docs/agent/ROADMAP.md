@@ -1,6 +1,6 @@
 # Natflow 开发路线图
 
-更新时间：2026-07-18
+更新时间：2026-08-15
 
 本文记录当前仓库的下一步开发目标。它是智能体和维护者的任务入口，不替代 `SYSTEM_DESIGN_SPEC.md`；具体实现仍以源码为准。
 
@@ -25,14 +25,16 @@
 
 ### P0-2：明确未完成行为
 
-状态：Planned
+状态：Done
 
 目标：把当前已知但未完整实现的行为逐项分类为“实现”、“保留为不支持”或“废弃”，并同步用户文档和规格。
 
 当前必须覆盖：
 
 - [x] Host ACL 的 `redirect` action 当前没有完整重定向实现。（已实现基于 302 的拦截与配置）
-- `natflow_conntrackinfo_ctl` 的 `kickall` 当前没有实际清理行为。
+- [x] `natflow_conntrackinfo_ctl` 的 `kickall` 已实现为过滤后的 `conntrack -F`
+  语义：清理 `init_net` 中除 fakeuser 和 NATCAP peer 外的已确认 conntrack，
+  并要求 `CAP_NET_ADMIN`。
 - [x] `/dev/natflow_userinfo_queue` 写接口不再返回 `-ENOSYS`，已统一为 queue `cache=N` 协议。
 - [x] `natflow_userinfo_queue`、`natflow_urllogger_queue`、`natflow_dpi_queue` 已支持单次 `read()` 返回多条完整记录；三个 queue 仍不拆分单条记录，小于单条记录的用户 buffer 返回 `-EINVAL`，这是当前 ABI 限制。
 - [x] `natflow_userinfo_ctl` 小 buffer read 已改为 per-open residual buffer partial read，与 `conntrackinfo_read()` 行为一致。（P1-1 Done）
