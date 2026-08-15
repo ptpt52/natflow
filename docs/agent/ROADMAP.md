@@ -128,7 +128,7 @@ GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链降到 17
 
 ### P2-4：设计并开发 DPI 能力
 
-状态：Hardcoded Classifier Redesign Accepted，M6 Done
+状态：Hardcoded Classifier Redesign Accepted，M7 Done
 
 目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，先统一 L7 parser/context/consumer 生命周期，再实现轻量 DPI 能力，用于协议/应用分类、审计记录和后续策略匹配。
 
@@ -139,15 +139,15 @@ GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链降到 17
 测试假设和当前规格；旧设计章节仅保留为历史记录。
 
 当前迁移进度：M0 设计、ADR 和路线图已冻结；M1 已固定首批 18 个协议应用 ID、
-category ID 和 metadata catalog；M2 已让 DPI enabled 直接激活全部内置 protocol
-detector，按 proto O(1) 查固定 catalog，并通过 `cmpxchg` 终态提交固定 app/category。
+category ID 和 metadata catalog；M2 已让 DPI enabled 直接激活全部内置原生协议
+机器，按 proto O(1) 查固定 catalog，并通过 `cmpxchg` 终态提交固定 app/category。
 M3 已增加 YouTube=`0x1001`、Netflix=`0x1002`、Telegram=`0x2001` 和 14 项静态域名
 表，由 HTTP Host、TLS/QUIC SNI 进入单步硬编码应用机器；exact 优先，suffix 按长度
 降序且要求 label boundary。DNS QNAME 只增加 `dns_app_intents`，DNS flow 仍终态为
 DNS。M4 已删除 domain/proto ruleset、pending/active RCU 对象、规则 parser/count 和
 全部规则 ctl 命令；ctl 只保留 enable、catalog、counters 和 `events_clear`。
 
-实现进度：M0-M1e 的 shared L7、控制/事件 ABI、A 级 detector、双向 bounded context 和测试工具已完成。M2 已加入 FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB 共 12 个 audit-only detector；它们按文本、数据库、二进制三组复用剩余 detector mask bit，不扩大 8 字节 conntrack 瞬态 context，并有协议专属正反 corpus。M3 增加 11 项 HTTP Host 静态应用正反 corpus。M5 已把 context 最后两个字节迁移为 16 位 `dpi_automaton`，并以 RDP 实现首台 claimed machine：original X.224 request 与 reply confirm 通过 CAS 单调汇合后才终态，claimed 后不再运行其他 detector。TCP sequence corpus 已覆盖顺序、反序、同时发送、重传、预算和 transport end，当前自动 corpus 共 93 项。M6 已使用 OpenWrt Linux 5.4.281 arm64/GCC 8.4 工具链完成七组合 clean build、静态 fixture/tool/script 检查以及 M4 基线栈和体积对比；DPI packet consumer 栈帧保持 240 字节，完整模块 text 增加 992 字节。审查收口已补齐 conntrack 锁串行、app/context/done 原子终态、packet-only 有界 pull、bridge/inet 去重、`events_clear` quiesce 和 SMB NBSS 长度校验。按维护者“编译验证即可”的验收边界，本轮未加载 arm64 模块，并发双向 packet、bridge、non-linear skb、并发 reset 及新增 corpus 的运行态回归保留为后续目标机验证项。
+实现进度：M0-M1e 的 shared L7、控制/事件 ABI、A 级协议识别、双向 bounded context 和测试工具已完成。M2 已加入 FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB 共 12 个 audit-only 原生协议机器；它们按文本、数据库、二进制三组复用剩余 discovery machine-class bit，不扩大 8 字节 conntrack 瞬态 context，并有协议专属正反 corpus。M3 增加 11 项 HTTP Host 静态应用正反 corpus。M5 已把 context 最后两个字节迁移为 16 位 `dpi_automaton`，并以 RDP 实现首台 claimed machine：original X.224 request 与 reply confirm 通过 CAS 单调汇合后才终态，claimed 后不再运行其他原生机器。TCP sequence corpus 已覆盖顺序、反序、同时发送、重传、预算和 transport end，当前自动 corpus 共 93 项。M6 已使用 OpenWrt Linux 5.4.281 arm64/GCC 8.4 工具链完成七组合 clean build、静态 fixture/tool/script 检查以及 M4 基线栈和体积对比；DPI packet consumer 栈帧保持 240 字节，完整模块 text 增加 992 字节。审查收口已补齐 conntrack 锁串行、app/context/done 原子终态、packet-only 有界 pull、bridge/inet 去重、`events_clear` quiesce 和 SMB NBSS 长度校验。M7 已删除 detector struct、metadata 数组、查找/遍历 helper 和通用 dispatcher，改由固定顺序的原生 machine step 直接编码 L4、方向和 parser 分支；18 个 app ID、证据边界、预算、8 字节 context 和 ABI 保持不变。按维护者“编译验证即可”的验收边界，本轮未加载 arm64 模块，并发双向 packet、bridge、non-linear skb、并发 reset 及新增 corpus 的运行态回归保留为后续目标机验证项。
 
 边界：
 
@@ -163,13 +163,15 @@ DNS。M4 已删除 domain/proto ruleset、pending/active RCU 对象、规则 par
 
 1. M0：冻结硬编码分类器设计、固定 ID、状态合同和 ABI 迁移边界。
 2. M1：增加固定 app catalog、静态 metadata 和统一 terminal commit helper。
-3. M2：让现有 18 个 protocol detector 直接产生固定 `app_id`，同步 corpus。
+3. M2：让现有 18 个 protocol 识别结果直接产生固定 `app_id`，同步 corpus。
 4. M3：加入 HTTP/TLS/QUIC/DNS 结构化 feature 驱动的静态域名应用状态机。
 5. M4：删除用户 ruleset、RCU 规则发布和相关 ctl 命令，同步 README/规格/工具。
 6. M5：在不扩大 8 字节 context 的前提下引入 compact automaton word，并只为
    确有多包证据需求的协议实现 A -> B -> C。
 7. M6：已完成构建矩阵、静态 corpus/tool 检查、栈和代码体积验证；目标机运行态
    corpus/queue 按本轮验收边界保留为部署验证项。
+8. M7：删除 detector metadata/数组和通用遍历 dispatcher，使用固定原生协议
+   machine step；保持识别证据、预算、context 布局和外部 ABI 不变。
 
 历史实现阶段：
 

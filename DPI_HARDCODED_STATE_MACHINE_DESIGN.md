@@ -1,13 +1,15 @@
 # Natflow 硬编码 DPI 状态机设计与实施计划
 
-状态：Accepted，待分阶段实现
+状态：Accepted，M0-M7 已实现
 日期：2026-08-15
 
 实施进度：M0-M4 已完成。首批 18 个固定 protocol app 和 YouTube、Netflix、
 Telegram 静态域名应用已进入数据面；用户 ruleset、RCU 发布和规则控制 ABI 已
 删除。M5 已完成：最后两个 context 字节已迁移为 16 位 `dpi_automaton`，低 8 位
-保持 discovery detector mask；RDP 是首台 claimed machine，以单调 state bit 汇合
-original X.224 Connection Request 和 reply Connection Confirm 后终态。
+保存 discovery machine-class mask；RDP 是首台 claimed machine，以单调 state bit
+汇合 original X.224 Connection Request 和 reply Connection Confirm 后终态。M7 已
+删除 detector struct、metadata 数组和通用遍历 dispatcher，18 个协议由固定顺序的
+原生 parser/机器分支识别。
 
 ## 1. 决策摘要
 
@@ -124,7 +126,7 @@ native high-confidence protocol -> direct terminal app_id
 ```
 
 机器内部使用显式 `switch (state)` 和静态只读 matcher。没有候选的机器不会执行，
-已经由某台机器接管后也不再遍历其他 detector。
+已经由某台机器接管后也不再执行其他原生机器。
 
 ## 4. 结果、状态和 ID
 
@@ -201,10 +203,10 @@ generic TLS 作为兜底终态。
 
 ### 5.1 初始固定目录
 
-第一阶段直接覆盖当前已有高确定性 detector 的 18 个协议，并为后续域名应用
+第一阶段直接覆盖当前已有高确定性识别证据的 18 个协议，并为后续域名应用
 预留固定 ID。首批域名应用应以维护者单独审核过的静态表为准，不从用户规则加载。
 
-当前协议 detector 的直接终态包括：DNS、SSH、WireGuard、STUN、TURN、
+当前原生协议机器的直接终态包括：DNS、SSH、WireGuard、STUN、TURN、
 BitTorrent、FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、
 PostgreSQL、RDP 和 SMB。
 
@@ -291,7 +293,7 @@ natflow_dpi_tls_app_step(struct natflow_dpi_flow *flow,
 
 - 双向 byte counter：4 字节；
 - 双向 packet counter：2 字节；
-- 最后 2 字节逐步从 8-bit detector mask 迁移为 compact automaton word。
+- 最后 2 字节保存 discovery machine-class mask 或 claimed compact automaton word。
 
 概念编码：
 
@@ -316,7 +318,7 @@ bit 15 = 1: claimed machine/state
 - 真正加入多包状态转换前，必须评审 `cmpxchg` 或有界 owner 方案；
 - 不依赖非原子 `nf->status` writer 保证状态机顺序。
 
-第一阶段可先把现有单包 detector 迁移为静态直接终态；只有具备并发测试后才开放
+第一阶段可先把现有单包识别路径迁移为静态直接终态；只有具备并发测试后才开放
 需要严格 A -> B -> C 的跨包机器。
 
 ## 8. 控制面和事件 ABI
@@ -372,18 +374,18 @@ bit 15 = 1: claimed machine/state
 - 在公共 DPI 头中定义稳定 `app_id`、category 和 base protocol。
 - 增加静态 app metadata lookup。
 - 增加统一 terminal commit helper，保证只写合法固定 ID。
-- 暂不改变 detector 行为，用编译检查和用户态测试固定 ID。
+- 暂不改变协议证据边界，用编译检查和用户态测试固定 ID。
 
 退出条件：构建矩阵通过，`natflow_t` 大小不变。
 
-### M2：协议 detector 静态化
+### M2：协议机器静态化
 
-- 现有 18 个 protocol detector 命中后直接映射固定 `app_id`。
-- active detector mask 改为编译期候选，不再来自 proto ruleset。
+- 现有 18 个 protocol 识别结果直接映射固定 `app_id`。
+- active protocol mask 改为编译期候选，不再来自 proto ruleset。
 - 移除 protocol rule lookup 和 `proto_no_rule` 路径。
 - 更新 75 项 corpus，使其不再创建 proto rules。
 
-退出条件：正反 corpus 结果与当前 detector 证据边界一致，只改变 app ID 来源。
+退出条件：正反 corpus 结果与当前协议证据边界一致，只改变 app ID 来源。
 
 ### M3：域名应用状态机
 
@@ -435,6 +437,20 @@ build；`KCFLAGS=-Wno-unused-function` 只用于兼容该内核头中的静态 h
 宿主加载 arm64 模块，因此 92 项运行态 corpus、queue pressure 和 queue stream
 未执行，不阻塞 M6 发布。
 
+### M7：删除 detector 抽象
+
+- 删除 `struct natflow_dpi_detector`、DNS/payload metadata 实例和 detector 数组。
+- 删除按 metadata 查找、方向过滤、预算遍历和通用 detector dispatcher。
+- 保留 8 个 discovery machine class 作为 16 位 context 的紧凑候选状态；它们不
+  是可注册对象，也不携带 parser 函数指针或动态 metadata。
+- 使用固定原生 machine step 直接编码 L4、方向、解析顺序和 `PENDING`、
+  `TERMINAL`、`EXCLUDED` 结果；RDP 继续是唯一持久 claimed machine。
+- 保持 18 个 app ID、证据边界、每方向 4 包/384 字节预算、8 字节 context 和
+  v3 event/control ABI 不变。
+
+退出条件：源码除兼容事件 reason 名称外不再包含 detector 实现符号，93 项 corpus
+静态检查和七组合构建矩阵通过。
+
 ## 11. 提交拆分建议
 
 每个里程碑独立提交，避免把 ABI 删除、数据面迁移和测试重写混成一个不可审查的
@@ -442,9 +458,10 @@ commit：
 
 1. `docs: define hardcoded DPI application state machine`
 2. `dpi: add fixed application catalog`
-3. `dpi: map protocol detectors directly to app ids`
+3. `dpi: map native protocol machines directly to app ids`
 4. `dpi: add static domain application classifier`
 5. `dpi: remove runtime classifier rules`
 6. `dpi: add compact handwritten automaton state`
+7. `dpi: replace detector metadata with native machine dispatch`
 
 本设计文档本身不授权自动提交；提交仍按维护者明确指令执行。

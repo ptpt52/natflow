@@ -29,7 +29,7 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 | `natflow_common.c/.h` | 编译源码/公共头 | 日志、兼容封装、conntrack 扩展探测、natflow 会话扩展、ipset/NAT 封装。 |
 | `natflow.h` | 公共头 | 核心数据结构、fastnat 节点、状态位、哈希算法、表大小和超时常量。 |
 | `natflow_l7.c/.h` | 编译源码/头 | L7 hook 生命周期和共享 feature core；当前持有 URL/DPI shared hook ops、内核 hook 签名兼容包装、PPPoE normalize/restore、基础 conntrack 过滤、TCP HTTP/TLS producer、QUIC UDP producer、TCP TLS SNI cache、QUIC cache/crypto、DPI packet consumer 调度和注册/注销流程，并提供 packet view、host/URI normalize、host view contract、HTTP Host、TLS SNI、QUIC Initial/CRYPTO/SNI 和 DNS QNAME parser。packet view 由 L7 producer 填充 L3/L4/payload 指针、payload 长度和已线性化的有界 payload 窗口。 |
-| `natflow_dpi.c/.h` | 编译源码/头 | DPI 控制/事件接口，提供默认关闭的 `/dev/natflow_dpi_ctl`、YouTube/Netflix/Telegram 静态域名应用状态机、DNS QNAME 查询意图、18 个固定 protocol detector、固定 app/category catalog、L7 packet-view consumer、`app_id` 写入、source counters 和 `/dev/natflow_dpi_queue` match 事件。 |
+| `natflow_dpi.c/.h` | 编译源码/头 | DPI 控制/事件接口，提供默认关闭的 `/dev/natflow_dpi_ctl`、YouTube/Netflix/Telegram 静态域名应用状态机、DNS QNAME 查询意图、18 个固定原生协议状态机、固定 app/category catalog、L7 packet-view consumer、`app_id` 写入、source counters 和 `/dev/natflow_dpi_queue` match 事件。 |
 | `natflow_path.c/.h` | 编译源码/头 | fast path、route 学习、fastnat 表、vline/relay、设备 notifier、硬件 offload。 |
 | `natflow_user.c/.h` | 编译源码/头 | 用户 fakeuser、认证、QoS、用户事件、用户信息控制设备。 |
 | `natflow_urllogger.c/.h` | 编译源码/头 | Legacy URL consumer；通过 `natflow_urllogger_consume_host_view()` 消费 L7 host view，驱动 URL record、Host ACL、DPI classify 和 ACL 回复策略，保留 URL/SNI 记录、URL store、Host ACL、302/RST 动作和 sysctl 资源。 |
@@ -40,7 +40,7 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 | `Makefile.dkms`、`dkms.conf` | DKMS 入口 | 安装到 `/usr/src/natflow-<version>` 并通过 DKMS build/install。 |
 | `README.md` | 文档 | 面向人类的使用手册和对外接口说明。 |
 | `SYSTEM_DESIGN_SPEC.md` | 文档 | 面向开发、审查和自动化重建的系统设计规格。 |
-| `DPI_DESIGN.md` | 文档 | 统一 L7 core 的历史基线；分类器目标已由 `DPI_HARDCODED_STATE_MACHINE_DESIGN.md` 和 ADR-0009 修订。当前源码实现 L7 feature core、3 个静态域名应用、18 个固定 protocol detector、match event producer、source counters 和固定 `app_id` 写入。 |
+| `DPI_DESIGN.md` | 文档 | 统一 L7 core 的历史基线；分类器目标已由 `DPI_HARDCODED_STATE_MACHINE_DESIGN.md` 和 ADR-0009 修订。当前源码实现 L7 feature core、3 个静态域名应用、18 个固定原生协议状态机、match event producer、source counters 和固定 `app_id` 写入。 |
 
 ### 2.1 当前扫描基线
 
@@ -90,7 +90,7 @@ DKMS Makefile：
 | --- | --- |
 | `CONFIG_NATFLOW_PATH` | 编译并初始化 fast path、vline/relay、`natflow_ctl` 中 path 相关命令。未定义时 path 能力不生效。 |
 | `CONFIG_NATFLOW_URLLOGGER` | 编译并初始化 URL logger、host ACL、sysctl。 |
-| `CONFIG_NATFLOW_DPI` | 编译并初始化 DPI 控制/事件接口，提供 `/dev/natflow_dpi_ctl`、3 个静态域名应用、DNS QNAME 查询意图、18 个固定 protocol detector 和 `/dev/natflow_dpi_queue`；默认关闭。DPI enabled 即激活 L7 DPI host/packet consumer，不要求规则或 `/proc/sys/urllogger_store/enable`。 |
+| `CONFIG_NATFLOW_DPI` | 编译并初始化 DPI 控制/事件接口，提供 `/dev/natflow_dpi_ctl`、3 个静态域名应用、DNS QNAME 查询意图、18 个固定原生协议状态机和 `/dev/natflow_dpi_queue`；默认关闭。DPI enabled 即激活 L7 DPI host/packet consumer，不要求规则或 `/proc/sys/urllogger_store/enable`。 |
 | `CONFIG_NETFILTER_INGRESS` | 使用 per-netdev ingress hook；当前源码也只在该模式下分配 `natflow_fast_nat_table` 并编译主要软件 fastnat 命中/建表路径；vline/relay 只在该模式下有实际转发路径。 |
 | `CONFIG_NET_RALINK_OFFLOAD` | 启用 Ralink/MTK 硬件 offload 相关代码。 |
 | `NATFLOW_OFFLOAD_HWNAT_FAKE` + `CONFIG_NET_MEDIATEK_SOC` | 启用 fake HWNAT/MTK offload 分支。 |
@@ -624,7 +624,7 @@ Natflow 不创建 ipset，只按名称查找和测试/添加/删除。用户态�
 - `status`：`NF_FF_*` 状态位。
 - `rroute[2]`：两个方向的 `natflow_route_t`。
 - `app_id`：DPI 的常驻应用分类结果；`0` 表示 unknown、未分类或没有结果。当前 L7 shared hook 在解析前会先确保 natflow session；domain exact/suffix matcher（HTTP Host、TLS/QUIC SNI、DNS QNAME）和 DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only matcher 在规则命中时写入非 0 `app_id`，其他 DPI 细节只进入事件。
-- `dpi_byte_count[2]`、`dpi_packet_count[2]`、`dpi_automaton`：仅在 `NF_FF_DPI_USE` 有效的 8 字节瞬态方向上下文；`dpi_automaton.bit15=0` 时低 8 位保存 discovery detector class mask，`bit15=1` 时 `bits14..8` 保存 claimed machine、`bits7..0` 保存 state。当前 RDP 是首台 claimed machine，整个 16 位 word 通过 `cmpxchg()` 单调更新；这些字段不属于分类结果或事件 ABI。
+- `dpi_byte_count[2]`、`dpi_packet_count[2]`、`dpi_automaton`：仅在 `NF_FF_DPI_USE` 有效的 8 字节瞬态方向上下文；`dpi_automaton.bit15=0` 时低 8 位保存 discovery machine-class mask，`bit15=1` 时 `bits14..8` 保存 claimed machine、`bits7..0` 保存 state。当前 RDP 是首台 claimed machine，整个 16 位 word 通过 `cmpxchg()` 单调更新；这些字段不属于分类结果或事件 ABI。
 
 重要 `NF_FF_*` 位：
 
@@ -643,7 +643,7 @@ Natflow 不创建 ipset，只按名称查找和测试/添加/删除。用户态�
 - `NF_FF_DPI_USE`：`natflow_t` 内 DPI 瞬态 context 有效，packet consumer 正在等待 terminal，fast path 必须暂停。
 - `NF_FF_L7_URL_DONE`：URL/HostACL consumer 已进入终态；不属于 busy bit。
 - `NF_FF_L7_DPI_DOMAIN_DONE`：DPI domain consumer 已进入终态；覆盖 HTTP/TLS/QUIC host 和 DNS QNAME domain 分类，不属于 busy bit。
-- `NF_FF_L7_DPI_PACKET_DONE`：DPI packet consumer 已进入终态；覆盖 DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only detector，不属于 busy bit。
+- `NF_FF_L7_DPI_PACKET_DONE`：DPI packet consumer 已进入终态；覆盖全部固定原生协议机器，不属于 busy bit。
 - `NF_FF_BUSY_USE = NF_FF_USER_USE | NF_FF_L7_USE | NF_FF_DPI_USE`。
 
 ### 10.3 conntrack status 位
@@ -979,8 +979,8 @@ bridge 与 IPv4/IPv6 hook 共用 conntrack 的 `IPS_NATFLOW_SKIP_BRIDGE` 去重�
 - `natflow_l7_copy_host_tolower()` 是 L7 共享 hostname normalize/validate 层；HTTP Host producer、TLS ClientHello/SNI producer、TCP TLS 跨包 SNI cache、QUIC UDP packet producer、Initial header、CRYPTO frame 拼接、SNI 搜索、AES/HKDF crypto context 和分片 cache 已迁移到 `natflow_l7` 生命周期，DNS query 第一问 QNAME 由 `natflow_l7_dns_parse()` 产出共享 feature；`natflow_l7_host_view` 是当前 URL/DPI host consumer 的中立输入 contract，承载 source、host、URI、HTTP method 和 `host_flags`。HTTP TCP producer 可以把 skb 中的原始 Host 指针连同 `NATFLOW_L7_HOST_ALLOW_PORT` 传给 consumer，consumer 必须在 URL record、ACL lookup 或 DPI raw classify 边界执行 normalize；已规范化的 URL record、ACL lookup 和 DNS QNAME 进入 DPI normalized classify 入口，避免沿整条 L7 调用链重复保留 253 字节 hostname 缓冲。具体 URL flags、DPI event source 以及 ACL reset/redirect/drop 回复策略仍由 legacy URL consumer 映射。QUIC crypto 初始化失败仍只禁用 QUIC hostname parser、不导致 URL logger 或 L7 初始化失败。ASCII 大写转小写，去除末尾 root dot；HTTP Host 允许并剥离合法十进制 `:port`；总长度限制为 1..253，单 label 限制为 1..63，只允许 `[a-z0-9.-]`，拒绝空 label、label 开头或结尾的 `-`、NUL、控制字符、空白、逗号、冒号等非 DNS hostname 字节。
 - URL 记录创建前会先完成 hostname/URI 校验，并限制 `normalized_host + uri + NUL <= URLLOGGER_DATALEN`，避免按畸形输入长度做过大的 `GFP_ATOMIC` 分配。
 - Host ACL 失败路径使用 `urllogger_acl_lookup` 栈上视图复用同一 hostname normalize 规则，不依赖 URL store record 分配成功；该大对象只允许在 URL record 分配失败的 `noinline` fallback 中创建，不能常驻正常 URL consumer 调用帧。
-- L7/DPI 热路径栈预算按入口到 consumer 的整条内核调用链评估，不按单个函数帧孤立评估。新增 parser 或 detector 不应在父帧、parser 帧和 consumer 帧中重复保存同一 host/payload scratch；需要复用已规范化输入、per-CPU scratch 或异常路径 helper 来降低叠加峰值。
-- TCP packet-only DPI 路径只用 `pskb_may_pull()` 准备 detector 请求的有界前缀，普通 payload detector 当前最多 96 字节；只有 URL 或 DPI domain host consumer 激活时才为 HTTP/TLS producer 请求完整 TCP payload 可写，避免大包仅因 packet detector 被完整线性化。
+- L7/DPI 热路径栈预算按入口到 consumer 的整条内核调用链评估，不按单个函数帧孤立评估。新增 parser 或原生机器不应在父帧、parser 帧和 consumer 帧中重复保存同一 host/payload scratch；需要复用已规范化输入、per-CPU scratch 或异常路径 helper 来降低叠加峰值。
+- TCP packet-only DPI 路径只用 `pskb_may_pull()` 准备原生协议 parser 请求的有界前缀，当前最多 96 字节；只有 URL 或 DPI domain host consumer 激活时才为 HTTP/TLS producer 请求完整 TCP payload 可写，避免大包仅因 packet machine 被完整线性化。
 - 2026-07-18 使用 x86_64 GCC 9.4、完整 PATH+URLLOGGER+DPI 配置生成 `.su` 后，最大单函数帧为 360 字节；显式传递 narrowed consumer mask 并让 TCP/UDP producer 复用入口 packet view 后，模块内部最坏累计 L7 调用链由约 1936 字节降至约 1624 字节。该累计值不包含进入 hook 前的 Netfilter/conntrack 栈和外部内核函数内部栈。8 KiB 是完整 L7 功能的最低支持线程栈，不代表所有 8 KiB 目标已经完成运行时余量验证。
 - TLS/QUIC SNI server_name type 0 的内容会按 DNS hostname 规则校验后使用；严格校验会拒绝包含 `_`、非 ASCII U-label、通配符、IPv6 literal 或其他非标准 DNS hostname 的输入。
 - HTTP Host、TLS SNI、QUIC SNI 的识别是审计和粗粒度 ACL 能力，不是不可绕过的 WAF/域名防火墙边界。
@@ -1006,26 +1006,26 @@ bridge 与 IPv4/IPv6 hook 共用 conntrack 的 `IPS_NATFLOW_SKIP_BRIDGE` 去重�
 
 ### 15.4 DPI 静态应用分类与固定 protocol MVP
 
-`CONFIG_NATFLOW_DPI` 当前启用默认关闭的控制面、YouTube/Netflix/Telegram 静态域名应用状态机、DNS QNAME 查询意图分类、A/B 级固定 protocol detector、固定 app/category catalog、source counters 和 match event 队列：
+`CONFIG_NATFLOW_DPI` 当前启用默认关闭的控制面、YouTube/Netflix/Telegram 静态域名应用状态机、DNS QNAME 查询意图分类、A/B 级固定原生协议状态机、固定 app/category catalog、source counters 和 match event 队列：
 
 - `/dev/natflow_dpi_ctl` 使用 seq_file 输出状态，只支持 `enable=0|1`、`enable`、`disable` 和 `events_clear`；全部旧规则命令和其他未知命令返回 `-EINVAL`。状态输出固定 `catalog_revision`、`catalog_apps` 和 counters，不再输出 generation/rules/domain_rules/txn_active。
 - `events_clear` 保存当前 enable 状态，临时禁用 DPI producer 并执行 `synchronize_net()` 等待在途 Netfilter hook 退出，然后清空 `/dev/natflow_dpi_queue` 和全部 match、event、domain、packet、context、`proto_*` shadow counters，最后恢复原 enable 状态；固定 catalog revision 不变。复位窗口内的数据包不执行 DPI，命令返回后不会再出现复位前 producer 延迟写入的新事件或计数；持续流量仍可立即产生复位后的新值。
 - 固定 protocol app ID 为 DNS=1、SSH=2、WireGuard=3、STUN=4、TURN=5、BitTorrent=6、FTP=7、SMTP=8、POP3=9、IMAP=10、SIP=11、RTSP=12、MQTT=13、RESP=14、MySQL=15、PostgreSQL=16、RDP=17、SMB=18；固定域名应用 ID 为 YouTube=`0x1001`、Netflix=`0x1002`、Telegram=`0x2001`，category 为 streaming=11 和 communication=12；发布后不改号或复用。
 - 静态域名状态机由 HTTP Host、TLS SNI 和 QUIC v1 Initial SNI 驱动，先 exact，再按长度从长到短做 label-boundary suffix 匹配。表项和固定 app metadata 在模块初始化时校验顺序、重复项和引用关系；热路径最多遍历当前 14 个域名项，命中后 O(1) 取得固定 app metadata。
-- DNS QNAME detector 在 original direction 的 TCP/UDP 53 标准 query 中解析第一问 QNAME，支持有界 compression pointer 展开；最多跳转 16 次并记录已访问 offset，拒绝环、越界、非法 label 和展开后超长名称。QNAME 经过同一静态 matcher，但只记录 `dns_app_intents` 查询意图，不把目标应用写入 DNS flow；该 flow 仍终态为 DNS。
+- DNS QNAME 路径在 original direction 的 TCP/UDP 53 标准 query 中解析第一问 QNAME，支持有界 compression pointer 展开；最多跳转 16 次并记录已访问 offset，拒绝环、越界、非法 label 和展开后超长名称。QNAME 经过同一静态 matcher，但只记录 `dns_app_intents` 查询意图，不把目标应用写入 DNS flow；该 flow 仍由 DNS 原生协议机器终态为 DNS。
 - 端口只选择有界解析候选和 payload pull budget，不直接写入 `app_id`；当前 TCP/UDP 53 用作 DNS 候选，TCP 22 和 UDP 51820 不再单独构成 SSH/WireGuard 分类证据。
-- 有界 payload detector 在 original/reply 任一方向识别 SSH banner、WireGuard、STUN/TURN 和 BitTorrent TCP/UDP 子集；uTP 子集校验 version/type 和最多 4 段的有界 extension chain，并拒绝 connection ID 为 0 的 DATA packet，避免与 WireGuard type 1 重叠。DPI enabled 后全部固定 detector 可用，但每包只运行当前 L4、方向、candidate mask 和预算允许的 parser。IPv6 只处理固定 IPv6 header 后的 TCP/UDP，不解析 extension header；其他 `nexthdr` fail-open。
-- B 级协议仍为 audit-only，并按文本、数据库、二进制三组占用剩余 3 个 detector mask bit：文本组接受 FTP/SMTP/POP3/IMAP 的协议专属命令和 SIP/RTSP request/status line；数据库组接受 original RESP command、PostgreSQL v3 startup/SSL/cancel request 和 reply MySQL protocol-v10 greeting；二进制组接受 original MQTT CONNECT 和任一方向的 SMB1/2，带 NBSS 头时声明长度必须至少覆盖 SMB1 的 32 字节或 SMB2 的 64 字节 header。RDP 使用首台 compact automaton，original X.224 Connection Request 与 reply Connection Confirm 分别设置单调 state bit，两个事实任意顺序汇合后才提交固定 RDP app；claimed 后不再运行其他 detector，重复事实不改变状态。所有循环、长度和 prefix inspection 均受 96 字节、每方向 4 payload packet 的既有预算约束；歧义 `USER`、端口或普通 banner 不分类。
+- 有界 payload 原生机器在 original/reply 任一方向识别 SSH banner、WireGuard、STUN/TURN 和 BitTorrent TCP/UDP 子集；uTP 子集校验 version/type 和最多 4 段的有界 extension chain，并拒绝 connection ID 为 0 的 DATA packet，避免与 WireGuard type 1 重叠。DPI enabled 后全部固定机器可用，但每包只运行当前 L4、方向、discovery machine-class mask 和预算允许的 parser。IPv6 只处理固定 IPv6 header 后的 TCP/UDP，不解析 extension header；其他 `nexthdr` fail-open。
+- B 级协议仍为 audit-only，并按文本、数据库、二进制三组占用剩余 3 个 discovery machine-class bit：文本组接受 FTP/SMTP/POP3/IMAP 的协议专属命令和 SIP/RTSP request/status line；数据库组接受 original RESP command、PostgreSQL v3 startup/SSL/cancel request 和 reply MySQL protocol-v10 greeting；二进制组接受 original MQTT CONNECT 和任一方向的 SMB1/2，带 NBSS 头时声明长度必须至少覆盖 SMB1 的 32 字节或 SMB2 的 64 字节 header。RDP 使用首台 compact automaton，original X.224 Connection Request 与 reply Connection Confirm 分别设置单调 state bit，两个事实任意顺序汇合后才提交固定 RDP app；claimed 后不再运行其他原生机器，重复事实不改变状态。所有循环、长度和 prefix inspection 均受 96 字节、每方向 4 payload packet 的既有预算约束；歧义 `USER`、端口或普通 banner 不分类。
 - DPI 默认 `disabled`。reply 包进入公共入口后，consumer mask 强制收窄为 `DPI_PACKET`；URL、Host ACL、HTTP/TLS/QUIC host 和 DNS QNAME domain 不消费 reply。DNS protocol reply 需要通过 response header、标准 opcode、question count 和支持有界 compression pointer 的第一问结构校验；端口本身不分类。
 - `natflow_l7` 统一持有 shared hook 入口、`NATFLOW_L7_CONSUMER_URL/DPI_DOMAIN/DPI_PACKET` mask 和 packet dispatcher；active mask 按 `/proc/sys/urllogger_store/enable` 发布 URL consumer，DPI enable 直接发布静态 host 和固定 protocol packet consumer，不再要求存在 domain/proto rule。L7 入口先检查 `IPS_NATFLOW_L7_HANDLED` L7_SKIP hint，未命中时再统一调用 `natflow_session_in()`，然后使用 `natflow_t.status` 中的 `NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE` 和 `NF_FF_L7_DPI_PACKET_DONE` 独立记录终态；若无法创建 session，则 fail-open 跳过解析，不产生无状态 URL/DPI terminal。`IPS_NATFLOW_L7_HANDLED` 只是从当前 active consumer 全部 done 派生出来的短路缓存，不替代 per-consumer done bit；运行时开启新的 URL/DPI consumer 不会自动重新武装已设置 L7_SKIP 的旧连接。
 - DPI enable 和 URL enable 只改变后续数据包看到的 active consumer。控制面不枚举 conntrack，不强制完成、不退出、也不清理已经设置 `NF_FF_L7_USE` 或 consumer done bit 的连接；已设置 L7_SKIP 的连接不重新武装。既有连接可以自然终态，也可以保留原 L7 状态直到 conntrack 生命周期结束。
 - HTTP Host、TCP TLS SNI 和 QUIC v1 Initial SNI 解析出 host view 后进入 host consumer；HTTP host view 可携带原始 Host 和 `NATFLOW_L7_HOST_ALLOW_PORT`，URL record、ACL lookup 或 DPI raw classify 边界负责 normalize，已规范化的 URL/DNS host 走 DPI normalized classify 入口。`CONFIG_NATFLOW_URLLOGGER` 存在时通过 `natflow_urllogger_consume_host_view()` 同时保留 URL record、Host ACL 和 DPI host classify，URL record 分配失败时也会通过 `urllogger_acl_lookup` 的最小 host 视图调用 DPI；DPI-only 构建则由 L7 直接调用 `natflow_dpi_classify_host_flags()`。DNS QNAME 由 DPI packet consumer 调用共享 DNS parser 后进入同一 domain classifier。Host ACL 行为和 `/dev/natflow_urllogger_queue` 输出不因 DPI 改变。
-- 静态 domain app 或固定 protocol 命中时，统一 commit helper 在 `ct->lock` 下对当前连接的 `natflow_t.app_id` 执行 `cmpxchg()`；仅第一个从 0 变为固定 app ID 的结果产生事件。app/context 提交和 packet detector 的 automaton、双向 packet/byte budget、owner clear、packet-done 写入共享同一 conntrack 临界区；任何 app 或 packet terminal 都在解锁前清理 owner 并写 done，防止并发包在终态后重新武装 `NF_FF_DPI_USE`。L7 入口已经在解析前统一确保 natflow session。
+- 静态 domain app 或固定 protocol 命中时，统一 commit helper 在 `ct->lock` 下对当前连接的 `natflow_t.app_id` 执行 `cmpxchg()`；仅第一个从 0 变为固定 app ID 的结果产生事件。app/context 提交和 packet machine 的 automaton、双向 packet/byte budget、owner clear、packet-done 写入共享同一 conntrack 临界区；任何 app 或 packet terminal 都在解锁前清理 owner 并写 done，防止并发包在终态后重新武装 `NF_FF_DPI_USE`。L7 入口已经在解析前统一确保 natflow session。
 - `/dev/natflow_dpi_queue` 输出固定头二进制事件，只允许一个 reader，第二个 reader 打开返回 `-EBUSY`；没有 reader 或 reader 未写入正数 `cache=N` 时 match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时 cache 默认为 0 并清空残留事件，正数 `cache=N` 最多缓存 N 条新事件，队列满、溢出或分配失败会丢弃新事件并增加 `events_lost`，`cache=0` 或关闭时清空未读事件。队列为空时 `read()` 返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，buffer 足够时单次 `read()` 可返回多条完整固定头事件，`poll()` 在有事件时返回 readable。
 - `/dev/natflow_dpi_ctl` status 中，`matches`/`matches_*` 统计全部 static-domain/fixed-protocol 终态，`events`/`events_*` 只统计成功入队，`events_suppressed` 统计 reader/cache 未启用导致的主动抑制，`events_lost` 统计分配失败或队列满。稳定采样时满足 `matches = events + events_suppressed + events_lost`；新 producer 在 match 与最终 queue outcome 之间可造成短暂不一致，但 `events_clear` 的 quiesce 边界保证复位前 producer 不会在命令返回后写入复位后的区间。`domain_lookups`/`domain_matches` 统计 hostname lookup 和静态表命中，`dns_app_intents` 统计 QNAME 静态应用意图；`packet_inspect_original/reply` 每个实际进入有界 protocol parser 的 packet 最多增加一次，`packet_match_original/reply` 记录直接协议证据方向；`context_armed`、各 `context_cleared_*` 和 `context_aborted` 记录 bounded context 累计转换。conntrack 自然销毁不回调 DPI，不能用累计 arm/clear 差值推导当前 active context。`proto_no_session` 和 `proto_app_exists` 解释固定 terminal commit 未产生新结果的原因；不存在 `proto_no_rule`。
 - 固定事件头为 packed `struct natflow_dpi_event_hdr`，`version=3`，固定 78 字节，并由编译期约束防止结构长度漂移；包含 `header_len`、`record_len`、`reason`、`generation`、`app_id`、`category_id`、`rule_id`、`flags`、`timestamp`、original tuple 和 `evidence_dir`。所有 event 使用 `generation=NATFLOW_DPI_CATALOG_REVISION=1`、静态 app/category ID 和 `rule_id=0`。`flags=1..21` 表示具体 feature/protocol source；`evidence_dir=0/1` 分别表示命中证据来自 original/reply。
 - `tools/natflow-dpi-event.h` 固化用户态工具共享的 v3/78 字节 event ABI；reader、queue smoke/pressure 和 corpus 工具验证事件与压力路径。traffic/corpus 工具的 TCP sequence 模式可构造双向顺序、反序、同时发送、重复证据、预算耗尽和 transport end；`evidence_dir=either` 只用于并发测试断言实际终态方向仍为 original/reply。`tools/natflow-dpi-ctl-smoke.sh` 验证静态控制命令、已删除规则命令和 enable 恢复；`tools/build-matrix.sh` 对七种基础/URL/DPI/PATH/NO_DEBUG 组合逐项 clean build。这些工具是回归入口，不是常驻用户态控制面。
-- `tests/dpi/run-corpus.sh` 是 detector 黑盒 corpus 入口：默认使用两个 IPv4 network namespace，`--ipv6` 使用两个 IPv6 `/64`，让 fixture 经过 root namespace 的 FORWARD hook并断言固定 catalog revision、app/category、`rule_id=0` 和 evidence direction。测试修改 forwarding、iptables/ip6tables、DPI enable 和事件统计，只适用于隔离测试环境；不再有空 ruleset 前置条件。
+- `tests/dpi/run-corpus.sh` 是原生协议机器黑盒 corpus 入口：默认使用两个 IPv4 network namespace，`--ipv6` 使用两个 IPv6 `/64`，让 fixture 经过 root namespace 的 FORWARD hook并断言固定 catalog revision、app/category、`rule_id=0` 和 evidence direction。测试修改 forwarding、iptables/ip6tables、DPI enable 和事件统计，只适用于隔离测试环境；不再有空 ruleset 前置条件。
 - 当前不会执行 drop/reset/QoS，不覆盖认证、Host ACL 或 conntrack drop 结果；未命中、禁用、无 parser、无法创建 session 或事件队列丢失都 fail-open。
 
 ### 15.5 DPI 方向识别目标合同
@@ -1033,12 +1033,11 @@ bridge 与 IPv4/IPv6 hook 共用 conntrack 的 `IPS_NATFLOW_SKIP_BRIDGE` 去重�
 以下方向合同已完成首期实现：
 
 - packet view 增加明确的 conntrack direction，并提供方向感知的 client/server port 语义。original/reply 仍以 original tuple 作为稳定连接身份，reply packet 的服务端口来自当前 `sport`，不能继续按 `dport` 解释。
-- 编译期 detector metadata 声明 `ORIGINAL_ONLY`、`REPLY_ONLY`、`EITHER` 或 `BOTH`。方向模式属于 detector 正确性，不作为首期 ruleset 参数开放。
-- `ORIGINAL_ONLY` 不等待 reply；`REPLY_ONLY` 只消费 reply；`EITHER` 允许任一方向确认，但一个方向未命中不能关闭另一方向；`BOTH` 必须有界关联两个方向，不能简单拼接上下行 payload。
-- DNS QNAME domain、URL logger、Host ACL、HTTP request Host、TLS ClientHello SNI 和 QUIC client Initial SNI 保持 original-only。reply 首期只进入 DPI packet consumer。DNS protocol、SSH、WireGuard、STUN/TURN 和 BitTorrent protocol detector 目标模式为 `EITHER`。
-- 纯单包 `ORIGINAL_ONLY` detector 可以无 context 执行；等待 reply、任一方向后续证据或跨包 prefix 时使用 `natflow_t` 尾部 8 字节 context，并设置 `NF_FF_DPI_USE`。
+- 原生协议机器的方向约束直接编码在固定 dispatcher 分支中，不存在运行时或编译期 detector metadata。文本 TCP original 可识别 FTP/SMTP/POP3/IMAP/SIP/RTSP，reply 只识别 SIP/RTSP；UDP 文本只识别 SIP。数据库 original 只识别 RESP/PostgreSQL，reply 只识别 MySQL；二进制 original 识别 RDP/SMB/MQTT，reply 识别 RDP/SMB。
+- DNS QNAME domain、URL logger、Host ACL、HTTP request Host、TLS ClientHello SNI 和 QUIC client Initial SNI 保持 original-only。reply 首期只进入 DPI packet consumer。DNS protocol、SSH、WireGuard、STUN/TURN 和 BitTorrent 原生协议机器允许任一方向的结构证据终态，但一个方向未命中不能关闭另一方向。
+- 单包原生机器直接从 parser 结果返回 `PENDING` 或 `TERMINAL`；等待 reply、任一方向后续证据或跨包事实时使用 `natflow_t` 尾部 8 字节 context，并设置 `NF_FF_DPI_USE`。当前只有 RDP 持久认领 compact automaton machine/state。
 - context 存续期间允许 `NF_FF_L7_USE | NF_FF_DPI_USE` 同时设置：L7 bit 保证 shared hook 继续提供 packet view，DPI bit 表示 context owner。arm/terminal 写入顺序不能产生两个 busy bit 都未设置而 context 仍活跃的 fast-path 窗口。
-- 初始 hard limit 为 original/reply 各 4 个 payload 包，不设置 wall-clock deadline。任一 detector 命中，或全部 active detector 因 FIN/RST、packet/byte budget 终态后，才设置 packet done；已有非 0 `app_id` 时以 `APP_EXISTS` 终态。
+- 初始 hard limit 为 original/reply 各 4 个 payload 包，不设置 wall-clock deadline。任一原生机器命中，或全部 active machine class 因 FIN/RST、packet/byte budget 终态后，才设置 packet done；已有非 0 `app_id` 时以 `APP_EXISTS` 终态。
 - runtime enable、rules commit/clear 不枚举、不 drain、不清理已标记连接或 active context；已设置 L7_SKIP 的连接不重新武装。
 - `app_id` 继续是唯一分类结果；packet/byte counter 和 16 位 discovery/claimed automaton word 是 `natflow_t` 内瞬态 context。所需方向始终没有 payload 时，context 可以保留到 conntrack 生命周期结束。
 

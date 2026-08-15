@@ -53,7 +53,7 @@ requires exactly `cache` valid STUN events and verifies the ctl counters:
 `matches=generated`, `events=cache`, `events_lost=generated-cache`,
 `events_suppressed=0`, and the corresponding STUN source counters. This mode
 has the same isolated-host, state-restoration, and final cleanup
-requirements as the detector corpus.
+requirements as the native-machine corpus.
 
 Concurrent reader/producer operation can be tested with:
 
@@ -85,7 +85,7 @@ currently use the IPv4 topology.
 
 The checked-in corpus has 93 cases: 51 for the A-tier DNS, SSH, WireGuard,
 STUN/TURN, and BitTorrent subsets, 31 positive/negative cases for the 12
-B-tier text, database, IoT, RDP, and SMB detectors, and 11 HTTP Host cases for
+B-tier text, database, IoT, RDP, and SMB native machines, and 11 HTTP Host cases for
 the static YouTube, Netflix, and Telegram application classifier.
 
 Current fixtures:

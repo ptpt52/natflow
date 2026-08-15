@@ -7,7 +7,7 @@
 每个实现步骤按以下顺序执行：
 
 1. 修改前确认 `git status --short`，避免覆盖未提交改动。
-2. 只做当前阶段的最小改动，不把后续阶段的 ABI、策略动作或 detector 顺手塞进同一提交。
+2. 只做当前阶段的最小改动，不把后续阶段的 ABI、策略动作或新协议机器顺手塞进同一提交。
 3. 修改后先做代码自审，重点看热路径、锁、RCU、conntrack extension、skb 读写边界和旧 ABI。
 4. 修复自审发现的问题后再提交。
 5. 人工流量验证、生产 shadow 和需要外部用户态工具的测试可以暂时跳过，但必须记录未执行原因。
@@ -36,18 +36,18 @@ M0/M1 期间必须保持：
 M0/M1 期间必须保持：
 
 - `NF_FF_L7_USE` 和 `NF_FF_DPI_USE` 必须纳入 `NF_FF_BUSY_USE`；shared parser 使用 L7 busy bit，`natflow_t` 内瞬态 DPI context 使用 DPI busy bit，三个 consumer done bit 不纳入 busy mask。
-- `natflow_t` 的常驻 DPI 分类结果只有 `app_id`；允许尾部 8 字节瞬态 context 保存双向 packet/byte counter 和 detector mask，不保存证据、规则详情或指针。
+- `natflow_t` 的常驻 DPI 分类结果只有 `app_id`；允许尾部 8 字节瞬态 context 保存双向 packet/byte counter，以及 discovery machine-class mask 或 claimed machine/state，不保存证据、规则详情或指针。
 - 追加字段前必须验证 shared conntrack extension 布局，失败时不能注册 DPI/L7 hook。
 - L7 入口必须先调用 `natflow_session_in()` 统一确保 URL/DPI 终态有 `natflow_t.status` 可写；已 confirm 且没有 natflow session 的 flow 仍不能安全追加扩展，必须 fail-open 跳过 L7 解析，不能退回无状态 DPI/URL 事件。
 - writer 顺序保持为：写结果、写对应 consumer terminal done bit、所有 active consumer 均 done 后清 busy bit 并设置 `IPS_NATFLOW_L7_HANDLED` L7_SKIP 派生 hint。
 - 运行时 URL/DPI enable 只改变后续数据包看到的 active consumer；不得为配置变化增加 conntrack 全表扫描、强制 terminal 或 owner bit 清理。固定分类器由 DPI enable 统一控制，已标记连接允许自然终态或保留状态直到 conntrack 生命周期结束。
 - 已设置 `IPS_NATFLOW_L7_HANDLED` 的连接不因 enable 变化重新武装。
 - reply 准入前必须让 packet view 携带 conntrack direction，并提供方向感知的 client/server port 语义；不能在 reply 包上继续把 `dport` 当服务端口。
-- detector 必须声明 `ORIGINAL_ONLY`、`REPLY_ONLY`、`EITHER` 或 `BOTH`。一个方向未命中不能让 `EITHER`/`BOTH` detector 或整个 DPI packet consumer 提前终态。
-- 只有等待方向或后续 packet 的 detector 才启用 bounded context；等待时设置 `NF_FF_DPI_USE`，match、已有 app、FIN/RST 或双向 packet/byte budget 耗尽时清除。不使用时间 deadline，所需方向始终无 payload 时允许 context 保留到 conntrack 结束。
+- 原生协议机器的方向约束必须由固定 dispatcher 分支明确编码。允许任一方向提供证据的机器不能因单个方向未命中而让整个 DPI packet consumer 提前终态；要求双向事实的机器必须使用有界、单调、幂等状态转换。
+- 只有等待方向或后续 packet 的原生机器才启用 bounded context；等待时设置 `NF_FF_DPI_USE`，match、已有 app、FIN/RST 或双向 packet/byte budget 耗尽时清除。不使用时间 deadline，所需方向始终无 payload 时允许 context 保留到 conntrack 结束。
 - context 存续期间可同时设置 `NF_FF_L7_USE | NF_FF_DPI_USE`，但 arm/terminal 顺序不能出现 context 活跃而两个 busy bit 都未设置的窗口；已有非 0 `app_id` 时 packet consumer 应以 `APP_EXISTS` 终态。
-- 同一 conntrack 的 detector、compact automaton、双向 packet/byte budget、`app_id`、context owner 和 DPI packet done 必须由 `ct->lock` 串行；terminal 必须在解锁前完成 app 提交、owner clear 和 done 写入，不能留下终态后重新 arm context 的窗口。事件分配和入队应放在解锁后，避免扩大 conntrack 临界区。
-- IPv4/IPv6 TCP 只有 DPI packet consumer 激活时，只能 pull detector 需要的有界 payload 前缀；只有 URL 或 DPI domain host consumer 激活时才允许按现有 HTTP/TLS producer 需求线性化完整 TCP payload。
+- 同一 conntrack 的原生协议机器、compact automaton、双向 packet/byte budget、`app_id`、context owner 和 DPI packet done 必须由 `ct->lock` 串行；terminal 必须在解锁前完成 app 提交、owner clear 和 done 写入，不能留下终态后重新 arm context 的窗口。事件分配和入队应放在解锁后，避免扩大 conntrack 临界区。
+- IPv4/IPv6 TCP 只有 DPI packet consumer 激活时，只能 pull 原生协议 parser 需要的有界 payload 前缀；只有 URL 或 DPI domain host consumer 激活时才允许按现有 HTTP/TLS producer 需求线性化完整 TCP payload。
 - IPv4、IPv6 和 bridge FORWARD hook 必须沿用 `IPS_NATFLOW_SKIP_BRIDGE` 去重，避免 `br_netfilter` 让同一包重复消费预算、推进 automaton 或累计统计；修改 hook 兼容包装时要覆盖旧内核 hook 签名。
 - reply 首期只进入 DPI packet consumer；URL logger、Host ACL、HTTP/TLS/QUIC host producer 和 DNS QNAME domain 保持 original-only，除非后续单独修改并审核其外部行为。
 
