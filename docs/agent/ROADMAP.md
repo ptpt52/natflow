@@ -128,7 +128,7 @@ GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链降到 17
 
 ### P2-4：设计并开发 DPI 能力
 
-状态：Hardcoded Classifier Redesign Accepted，M5 Done
+状态：Hardcoded Classifier Redesign Accepted，M6 Done
 
 目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，先统一 L7 parser/context/consumer 生命周期，再实现轻量 DPI 能力，用于协议/应用分类、审计记录和后续策略匹配。
 
@@ -147,7 +147,7 @@ M3 已增加 YouTube=`0x1001`、Netflix=`0x1002`、Telegram=`0x2001` 和 14 项�
 DNS。M4 已删除 domain/proto ruleset、pending/active RCU 对象、规则 parser/count 和
 全部规则 ctl 命令；ctl 只保留 enable、catalog、counters 和 `events_clear`。
 
-实现进度：M0-M1e 的 shared L7、控制/事件 ABI、A 级 detector、双向 bounded context 和测试工具已完成。M2 已加入 FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB 共 12 个 audit-only detector；它们按文本、数据库、二进制三组复用剩余 detector mask bit，不扩大 8 字节 conntrack 瞬态 context，并有协议专属正反 corpus。M3 增加 11 项 HTTP Host 静态应用正反 corpus。M5 已把 context 最后两个字节迁移为 16 位 `dpi_automaton`，并以 RDP 实现首台 claimed machine：original X.224 request 与 reply confirm 通过 CAS 单调汇合后才终态，claimed 后不再运行其他 detector。TCP sequence corpus 已覆盖顺序、反序、同时发送、重传、预算和 transport end，当前自动 corpus 共 92 项；新增静态应用、B 级 detector 和 RDP automaton 的真机 IPv4/IPv6 回归尚未完成。下一步为 M6 构建、栈、体积和回归验证。
+实现进度：M0-M1e 的 shared L7、控制/事件 ABI、A 级 detector、双向 bounded context 和测试工具已完成。M2 已加入 FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB 共 12 个 audit-only detector；它们按文本、数据库、二进制三组复用剩余 detector mask bit，不扩大 8 字节 conntrack 瞬态 context，并有协议专属正反 corpus。M3 增加 11 项 HTTP Host 静态应用正反 corpus。M5 已把 context 最后两个字节迁移为 16 位 `dpi_automaton`，并以 RDP 实现首台 claimed machine：original X.224 request 与 reply confirm 通过 CAS 单调汇合后才终态，claimed 后不再运行其他 detector。TCP sequence corpus 已覆盖顺序、反序、同时发送、重传、预算和 transport end，当前自动 corpus 共 92 项。M6 已使用 OpenWrt Linux 5.4.281 arm64/GCC 8.4 工具链完成七组合 clean build、静态 fixture/tool/script 检查以及 M4 基线栈和体积对比；DPI packet consumer 栈帧保持 240 字节，完整模块 text 增加 992 字节。按维护者“编译验证即可”的验收边界，本轮未加载 arm64 模块，新增静态应用、B 级 detector、RDP automaton 以及 queue 的运行态回归保留为后续目标机验证项。
 
 边界：
 
@@ -168,7 +168,8 @@ DNS。M4 已删除 domain/proto ruleset、pending/active RCU 对象、规则 par
 5. M4：删除用户 ruleset、RCU 规则发布和相关 ctl 命令，同步 README/规格/工具。
 6. M5：在不扩大 8 字节 context 的前提下引入 compact automaton word，并只为
    确有多包证据需求的协议实现 A -> B -> C。
-7. M6：完成构建矩阵、corpus、queue、栈和代码体积验证。
+7. M6：已完成构建矩阵、静态 corpus/tool 检查、栈和代码体积验证；目标机运行态
+   corpus/queue 按本轮验收边界保留为部署验证项。
 
 历史实现阶段：
 

@@ -421,6 +421,20 @@ C 是两个 state bit 汇合后的固定 RDP 终态。16 位 word 整体使用 `
 - 运行 corpus、queue pressure、queue stream；真机项目无法执行时明确记录。
 - 使用 `.su`/`size`/`nm` 复核栈、代码体积和热路径增长。
 
+发布结果（2026-08-15）：M5 涉及的 C/H 文件已完成 `astyle -t -n`，92 项
+fixture 静态检查、用户态工具 `-Werror` 编译、shell 语法检查和 `git diff --check`
+均通过。使用 OpenWrt Linux 5.4.281、arm64、GCC 8.4 工具链完成七组合 clean
+build；`KCFLAGS=-Wno-unused-function` 只用于兼容该内核头中的静态 helper 告警，
+项目其余 `-Werror` 保持生效。
+
+完整 `NO_DEBUG` 配置的 `.su` 对比 M4 基线 `92e8e30`：
+`natflow_dpi_consume_packet_view()` 栈帧保持 240 字节，主要 L7 TCP 入口栈帧也未
+增长。`natflow_dpi.o` text 从 22381 增至 23373 字节，`natflow.ko` text 从
+236354 增至 237346 字节，data/bss 不变；新增 992 字节分别占 DPI object 约
+4.4%、完整模块约 0.4%。按维护者本轮“编译验证即可”的验收边界，未在当前 x86
+宿主加载 arm64 模块，因此 92 项运行态 corpus、queue pressure 和 queue stream
+未执行，不阻塞 M6 发布。
+
 ## 11. 提交拆分建议
 
 每个里程碑独立提交，避免把 ABI 删除、数据面迁移和测试重写混成一个不可审查的
