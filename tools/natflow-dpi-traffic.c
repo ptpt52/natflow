@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -15,6 +16,7 @@
 #include <unistd.h>
 
 #define TRAFFIC_PAYLOAD_MAX 2048U
+#define TRAFFIC_SEQUENCE_STEPS_MAX 16U
 #define TRAFFIC_TIMEOUT_SECONDS 3
 
 static const unsigned char traffic_ack = 0xa5;
@@ -39,8 +41,10 @@ static void usage(FILE *stream, const char *program)
 {
 	fprintf(stream,
 	        "Usage: %s server tcp|udp bind-ip port original|reply hex ready-file\n"
-	        "       %s client tcp|udp server-ip port original|reply hex\n",
-	        program, program);
+	        "       %s client tcp|udp server-ip port original|reply hex\n"
+	        "       %s server-sequence tcp bind-ip port script ready-file\n"
+	        "       %s client-sequence tcp server-ip port script\n",
+	        program, program, program, program);
 }
 
 static void fail(const char *operation)
@@ -78,9 +82,9 @@ static int hex_digit(char value)
 	return -1;
 }
 
-static size_t parse_payload(const char *hex, unsigned char *payload)
+static size_t parse_payload_span(const char *hex, size_t hex_length,
+                                 unsigned char *payload)
 {
-	size_t hex_length = strlen(hex);
 	size_t payload_length;
 	size_t i;
 
@@ -99,6 +103,11 @@ static size_t parse_payload(const char *hex, unsigned char *payload)
 		payload[i] = (unsigned char)((high << 4) | low);
 	}
 	return payload_length;
+}
+
+static size_t parse_payload(const char *hex, unsigned char *payload)
+{
+	return parse_payload_span(hex, strlen(hex), payload);
 }
 
 static struct traffic_endpoint parse_address(const char *address,
@@ -148,6 +157,15 @@ static void configure_socket(int fd)
 		fail("configure socket");
 }
 
+static void configure_tcp_connection(int fd)
+{
+	int enabled = 1;
+
+	if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &enabled,
+	               sizeof(enabled)) != 0)
+		fail("configure TCP connection");
+}
+
 static void mark_ready(const char *path)
 {
 	int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
@@ -195,6 +213,68 @@ static void receive_exact(int fd, const unsigned char *expected, size_t length)
 	}
 	if (memcmp(received, expected, length) != 0)
 		fail_message("received payload differs from fixture");
+}
+
+static void run_tcp_sequence(int fd, enum traffic_role role,
+                             const char *script)
+{
+	unsigned char first_payload[TRAFFIC_PAYLOAD_MAX];
+	unsigned char second_payload[TRAFFIC_PAYLOAD_MAX];
+	const char *step = script;
+	unsigned int step_count = 0;
+
+	if (!script || *script == '\0')
+		fail_message("empty TCP sequence");
+
+	for (;;) {
+		const char *end = strchr(step, ',');
+		size_t step_len = end ? (size_t)(end - step) : strlen(step);
+		size_t first_len;
+
+		if (++step_count > TRAFFIC_SEQUENCE_STEPS_MAX)
+			fail_message("TCP sequence has too many steps");
+		if (step_len < 2)
+			fail_message("invalid TCP sequence step");
+
+		if (step[0] == 's' || step[0] == 'r') {
+			int client_sends = step[0] == 's';
+
+			first_len = parse_payload_span(step + 1, step_len - 1,
+			                               first_payload);
+			if ((role == TRAFFIC_CLIENT) == client_sends)
+				send_all(fd, first_payload, first_len);
+			else
+				receive_exact(fd, first_payload, first_len);
+		} else if (step[0] == 'x') {
+			const char *separator = memchr(step + 1, '/', step_len - 1);
+			size_t second_len;
+
+			if (!separator || memchr(separator + 1, '/',
+			                         (step + step_len) - separator - 1))
+				fail_message("invalid TCP exchange step");
+			first_len = parse_payload_span(step + 1,
+			                               (size_t)(separator - step - 1),
+			                               first_payload);
+			second_len = parse_payload_span(separator + 1,
+			                                (size_t)((step + step_len) - separator - 1),
+			                                second_payload);
+			if (role == TRAFFIC_CLIENT) {
+				send_all(fd, first_payload, first_len);
+				receive_exact(fd, second_payload, second_len);
+			} else {
+				send_all(fd, second_payload, second_len);
+				receive_exact(fd, first_payload, first_len);
+			}
+		} else {
+			fail_message("unknown TCP sequence operation");
+		}
+
+		if (!end)
+			break;
+		step = end + 1;
+		if (*step == '\0')
+			fail_message("empty trailing TCP sequence step");
+	}
 }
 
 static void run_tcp_server(const struct traffic_endpoint *endpoint,
@@ -248,6 +328,48 @@ static void run_tcp_client(const struct traffic_endpoint *endpoint,
 		receive_exact(fd, payload, payload_length);
 		send_all(fd, &traffic_ack, sizeof(traffic_ack));
 	}
+	close(fd);
+}
+
+static void run_tcp_sequence_server(const struct traffic_endpoint *endpoint,
+                                    const char *script,
+                                    const char *ready_file)
+{
+	int listener = socket(endpoint->family, SOCK_STREAM, 0);
+	int connection;
+
+	if (listener < 0)
+		fail("create TCP listener");
+	configure_socket(listener);
+	if (bind(listener, (const struct sockaddr *)&endpoint->address,
+	         endpoint->address_len) != 0)
+		fail("bind TCP listener");
+	if (listen(listener, 1) != 0)
+		fail("listen TCP");
+	mark_ready(ready_file);
+	connection = accept(listener, NULL, NULL);
+	if (connection < 0)
+		fail("accept TCP connection");
+	configure_socket(connection);
+	configure_tcp_connection(connection);
+	run_tcp_sequence(connection, TRAFFIC_SERVER, script);
+	close(connection);
+	close(listener);
+}
+
+static void run_tcp_sequence_client(const struct traffic_endpoint *endpoint,
+                                    const char *script)
+{
+	int fd = socket(endpoint->family, SOCK_STREAM, 0);
+
+	if (fd < 0)
+		fail("create TCP client");
+	configure_socket(fd);
+	if (connect(fd, (const struct sockaddr *)&endpoint->address,
+	            endpoint->address_len) != 0)
+		fail("connect TCP client");
+	configure_tcp_connection(fd);
+	run_tcp_sequence(fd, TRAFFIC_CLIENT, script);
 	close(fd);
 }
 
@@ -326,8 +448,9 @@ int main(int argc, char **argv)
 	size_t payload_length;
 	unsigned int port;
 	int protocol;
+	int sequence = 0;
 
-	if (argc != 7 && argc != 8) {
+	if (argc < 2) {
 		usage(stderr, argv[0]);
 		return EXIT_FAILURE;
 	}
@@ -335,6 +458,13 @@ int main(int argc, char **argv)
 		role = TRAFFIC_SERVER;
 	else if (strcmp(argv[1], "client") == 0 && argc == 7)
 		role = TRAFFIC_CLIENT;
+	else if (strcmp(argv[1], "server-sequence") == 0 && argc == 7) {
+		role = TRAFFIC_SERVER;
+		sequence = 1;
+	} else if (strcmp(argv[1], "client-sequence") == 0 && argc == 6) {
+		role = TRAFFIC_CLIENT;
+		sequence = 1;
+	}
 	else {
 		usage(stderr, argv[0]);
 		return EXIT_FAILURE;
@@ -345,7 +475,20 @@ int main(int argc, char **argv)
 		protocol = IPPROTO_UDP;
 	else
 		fail_message("invalid transport protocol");
+	if (sequence && protocol != IPPROTO_TCP)
+		fail_message("sequence mode requires TCP");
 	port = parse_port(argv[4]);
+	endpoint = parse_address(argv[3], port);
+	signal(SIGPIPE, SIG_IGN);
+
+	if (sequence) {
+		if (role == TRAFFIC_SERVER)
+			run_tcp_sequence_server(&endpoint, argv[5], argv[6]);
+		else
+			run_tcp_sequence_client(&endpoint, argv[5]);
+		return EXIT_SUCCESS;
+	}
+
 	if (strcmp(argv[5], "original") == 0)
 		direction = TRAFFIC_ORIGINAL;
 	else if (strcmp(argv[5], "reply") == 0)
@@ -353,8 +496,6 @@ int main(int argc, char **argv)
 	else
 		fail_message("invalid traffic direction");
 	payload_length = parse_payload(argv[6], payload);
-	endpoint = parse_address(argv[3], port);
-	signal(SIGPIPE, SIG_IGN);
 
 	if (role == TRAFFIC_SERVER && protocol == IPPROTO_TCP)
 		run_tcp_server(&endpoint, direction, payload, payload_length, argv[7]);

@@ -5,8 +5,9 @@
 
 实施进度：M0-M4 已完成。首批 18 个固定 protocol app 和 YouTube、Netflix、
 Telegram 静态域名应用已进入数据面；用户 ruleset、RCU 发布和规则控制 ABI 已
-删除。M5 已把最后两个 context 字节迁移为 16 位 `dpi_automaton`，低 8 位保持
-discovery detector mask 语义；claimed machine/state 尚未启用。
+删除。M5 已完成：最后两个 context 字节已迁移为 16 位 `dpi_automaton`，低 8 位
+保持 discovery detector mask；RDP 是首台 claimed machine，以单调 state bit 汇合
+original X.224 Connection Request 和 reply Connection Confirm 后终态。
 
 ## 1. 决策摘要
 
@@ -405,6 +406,11 @@ bit 15 = 1: claimed machine/state
 - 把最后两个 context 字节迁移为 automaton word。
 - 先实现一台确有 A -> B -> C 需要的机器。
 - 补双向并发、乱序、重传、预算和 transport end 测试。
+
+实现结果：RDP machine 的 A 是未认领 discovery，B 是 request/confirm 任一事实，
+C 是两个 state bit 汇合后的固定 RDP 终态。16 位 word 整体使用 `cmpxchg()` 更新；
+状态只做 OR，反序、并发和重复事实均不回退。checked-in TCP sequence corpus 覆盖
+顺序、反序、同时发送、重复 request、双向预算、FIN 和 malformed confirm。
 
 退出条件：状态转换单调可证明，未扩大 `natflow_t`，没有无界等待或扫描。
 

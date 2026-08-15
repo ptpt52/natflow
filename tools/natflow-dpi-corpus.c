@@ -42,7 +42,7 @@ static void usage(FILE *stream, const char *program)
 {
 	fprintf(stream,
 	        "Usage: %s -S src -T dst -P tcp|udp -p port -s source "
-	        "-D original|reply -a app -c category -r rule [-N] [-t ms] "
+	        "-D original|reply|either -a app -c category -r rule [-N] [-t ms] "
 	        "[-d queue] -- command [args...]\n",
 	        program);
 }
@@ -162,8 +162,9 @@ static void validate_matching_event(
 {
 	if (expectation->negative)
 		fail_message("negative case produced a DPI match event");
-	if (event->tuple_dir != 0 ||
-	        event->evidence_dir != expectation->evidence_dir)
+	if (event->tuple_dir != 0 || event->evidence_dir > 1 ||
+	        (expectation->evidence_dir <= 1 &&
+	         event->evidence_dir != expectation->evidence_dir))
 		fail_message("event direction does not match expectation");
 	if (event->reason != NATFLOW_DPI_REASON_MATCHED ||
 	        event->flags != expectation->source ||
@@ -285,6 +286,8 @@ int main(int argc, char **argv)
 				expectation.evidence_dir = 0;
 			else if (strcmp(optarg, "reply") == 0)
 				expectation.evidence_dir = 1;
+			else if (strcmp(optarg, "either") == 0)
+				expectation.evidence_dir = 2;
 			else
 				fail_message("invalid evidence direction");
 			have_direction = 1;

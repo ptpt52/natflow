@@ -72,19 +72,19 @@ cover at least one parallel batch.
 Case files use seven pipe-separated fields:
 
 ```text
-name|proto|tcp-or-udp|original-or-reply|server-port|payload-hex|positive-or-negative
+name|proto|tcp-or-udp|original-or-reply-or-either|server-port|payload|positive-or-negative
 ```
 
 Every case uses a new connection. Positive cases require the expected source,
-fixed `app_id`, category, `rule_id=0`, catalog revision, original tuple, and evidence direction. Negative cases
+fixed `app_id`, category, `rule_id=0`, catalog revision, original tuple, and evidence direction. `either` is only valid for a TCP sequence whose concurrent terminal direction is intentionally unspecified. A payload is normally hex; `seq:` introduces a comma-separated client-view TCP script where `sHEX` sends, `rHEX` receives, and `xCLIENTHEX/SERVERHEX` exchanges both payloads concurrently. Negative cases
 fail on any DPI event for that tuple. IPv4 and base IPv6 TCP/UDP are supported;
 IPv6 extension headers are outside the supported DPI scope. Exact TCP
 segmentation, non-linear skb, and long-duration soak are deferred. Failure
 injection remains separate integration work. Queue pressure and stream modes
 currently use the IPv4 topology.
 
-The checked-in corpus has 86 cases: 51 for the A-tier DNS, SSH, WireGuard,
-STUN/TURN, and BitTorrent subsets, 24 positive/negative cases for the 12
+The checked-in corpus has 92 cases: 51 for the A-tier DNS, SSH, WireGuard,
+STUN/TURN, and BitTorrent subsets, 30 positive/negative cases for the 12
 B-tier text, database, IoT, RDP, and SMB detectors, and 11 HTTP Host cases for
 the static YouTube, Netflix, and Telegram application classifier.
 
@@ -99,3 +99,6 @@ Current fixtures:
 - `cases/udp-protocols.cases`: WireGuard message types and length/reserved-byte
   negatives; STUN/TURN UDP/TCP headers, method, length and cookie cases;
   BitTorrent TCP handshake, UDP uTP and DHT positive/negative cases.
+- `cases/b-tier.cases`: single-packet B-tier signatures plus RDP compact
+  automaton sequences covering ordered, reversed, concurrent, retransmitted,
+  budget-exhausted, transport-end, and malformed-confirm flows.

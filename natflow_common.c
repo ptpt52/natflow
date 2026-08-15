@@ -143,6 +143,7 @@ int natflow_ct_ext_layout_validate(void)
 	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_automaton) !=
 	             offsetof(struct natflow_t, dpi_packet_count) +
 	             sizeof(((struct natflow_t *)0)->dpi_packet_count));
+	BUILD_BUG_ON(sizeof(((struct natflow_t *)0)->dpi_automaton) != 2);
 	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_automaton) +
 	             sizeof(((struct natflow_t *)0)->dpi_automaton) -
 	             offsetof(struct natflow_t, dpi_byte_count) != 8);

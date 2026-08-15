@@ -268,6 +268,54 @@ proto_values()
 	esac
 }
 
+validate_hex_payload()
+{
+	case_name=$1
+	hex=$2
+	case $hex in
+	""|*[!0-9a-fA-F]*) fail "invalid payload hex in $case_name" ;;
+	esac
+	[ $((${#hex} % 2)) -eq 0 ] ||
+		fail "odd payload hex length in $case_name"
+}
+
+validate_sequence()
+{
+	case_name=$1
+	sequence=${2#seq:}
+	old_ifs=$IFS
+	IFS=,
+	set -f
+	set -- $sequence
+	set +f
+	IFS=$old_ifs
+	[ "$#" -gt 0 ] && [ "$#" -le 16 ] ||
+		fail "invalid sequence step count in $case_name"
+
+	for sequence_step in "$@"; do
+		case $sequence_step in
+		s*|r*)
+			validate_hex_payload "$case_name" "${sequence_step#?}"
+			;;
+		x*)
+			sequence_pair=${sequence_step#?}
+			case $sequence_pair in
+			*/*) ;;
+			*) fail "missing exchange separator in $case_name" ;;
+			esac
+			sequence_client=${sequence_pair%%/*}
+			sequence_server=${sequence_pair#*/}
+			case $sequence_server in
+			*/*) fail "multiple exchange separators in $case_name" ;;
+			esac
+			validate_hex_payload "$case_name" "$sequence_client"
+			validate_hex_payload "$case_name" "$sequence_server"
+			;;
+		*) fail "invalid sequence operation in $case_name" ;;
+		esac
+	done
+}
+
 validate_case()
 {
 	case_file=$1
@@ -294,13 +342,21 @@ validate_case()
 	ssh:udp|wireguard:tcp|ftp:udp|smtp:udp|pop3:udp|imap:udp|rtsp:udp|mqtt:udp|resp:udp|mysql:udp|postgresql:udp|rdp:udp|smb:udp)
 		fail "$case_file: invalid protocol/L4 pair in $name" ;;
 	esac
-	case $direction in original|reply) ;; *) fail "$case_file: invalid direction in $name" ;; esac
+	case $direction in original|reply|either) ;; *) fail "$case_file: invalid direction in $name" ;; esac
 	case $port in ""|*[!0-9]*) fail "$case_file: invalid port in $name" ;; esac
 	[ "$port" -gt 0 ] && [ "$port" -le 65535 ] ||
 		fail "$case_file: port out of range in $name"
-	case $payload in ""|*[!0-9a-fA-F]*) fail "$case_file: invalid payload hex in $name" ;; esac
-	[ $((${#payload} % 2)) -eq 0 ] ||
-		fail "$case_file: odd payload hex length in $name"
+	case $payload in
+	seq:*)
+		[ "$l4" = tcp ] || fail "$case_file: sequence requires TCP in $name"
+		validate_sequence "$name" "$payload"
+		;;
+	*)
+		[ "$direction" != either ] ||
+			fail "$case_file: either direction requires a sequence in $name"
+		validate_hex_payload "$name" "$payload"
+		;;
+	esac
 	case $expectation in
 	positive) negative= ;;
 	negative) negative=-N ;;
@@ -346,16 +402,42 @@ inject_case()
 	ready_file=$TMP_DIR/ready.$$.${port}
 
 	rm -f "$ready_file"
-	ip netns exec "$SERVER_NS" "$TRAFFIC_BIN" server "$l4" \
-		"$SERVER_IP" "$port" "$direction" "$payload" "$ready_file" &
+	case $payload in
+	seq:*)
+		sequence=${payload#seq:}
+		ip netns exec "$SERVER_NS" "$TRAFFIC_BIN" server-sequence tcp \
+			"$SERVER_IP" "$port" "$sequence" "$ready_file" &
+		;;
+	*)
+		ip netns exec "$SERVER_NS" "$TRAFFIC_BIN" server "$l4" \
+			"$SERVER_IP" "$port" "$direction" "$payload" "$ready_file" &
+		;;
+	esac
 	server_pid=$!
 	if ! wait_ready "$ready_file"; then
 		kill "$server_pid" 2>/dev/null || true
 		wait "$server_pid" 2>/dev/null || true
 		fail "traffic server did not become ready"
 	fi
-	if ! ip netns exec "$CLIENT_NS" "$TRAFFIC_BIN" client "$l4" \
-		"$SERVER_IP" "$port" "$direction" "$payload"; then
+	case $payload in
+	seq:*)
+		if ! ip netns exec "$CLIENT_NS" "$TRAFFIC_BIN" client-sequence tcp \
+			"$SERVER_IP" "$port" "$sequence"; then
+			traffic_failed=1
+		else
+			traffic_failed=0
+		fi
+		;;
+	*)
+		if ! ip netns exec "$CLIENT_NS" "$TRAFFIC_BIN" client "$l4" \
+			"$SERVER_IP" "$port" "$direction" "$payload"; then
+			traffic_failed=1
+		else
+			traffic_failed=0
+		fi
+		;;
+	esac
+	if [ "$traffic_failed" = 1 ]; then
 		kill "$server_pid" 2>/dev/null || true
 		wait "$server_pid" 2>/dev/null || true
 		fail "traffic client failed"
