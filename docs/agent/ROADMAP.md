@@ -99,7 +99,7 @@ GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链降到 17
 
 目标：形成可重复的验证入口，至少覆盖基础构建、`CONFIG_NATFLOW_PATH`、`CONFIG_NATFLOW_URLLOGGER`、`NO_DEBUG=1`，并逐步补 URL parser、QoS、认证状态机和 vline 回归验证。
 
-当前进度：`tools/build-matrix.sh` 已固化七组合 clean build；用户态 v3 ABI 已抽到 `tools/natflow-dpi-event.h`，`tools/natflow-dpi-reader.c`、`tools/natflow-dpi-queue-smoke.c` 和 `tools/natflow-dpi-ctl-smoke.sh` 已提供 DPI queue、结构边界、真实事件固定头和空 ruleset 控制事务入口；`tests/dpi/run-corpus.sh` 已建立双向 TCP/UDP 注入和 queue event 断言框架，IPv4 首批 51 项于 2026-07-26 真机全部通过；runner 使用 conntrack state match 消除对 path 开关和系统既有 conntrack 使用者的依赖后，同日在 path disabled 状态完成 IPv6 DNS/SSH 20 项和 UDP protocol 31 项真机验证，IPv6 首批 51 项同样全部通过。`tools/natflow-dpi-queue-pressure.c` 和 runner 的 `--queue-pressure` 模式已补小 cache、并发 producer、drop-new 和 lost/accounting 自动化，默认 cache=8/generated=32 已于 2026-07-26 真机通过；`--queue-stream` 的默认 cache=64/generated=128/parallel=16 同日真机通过，128 条事件全部读取且零丢失。IPv6 extension header 明确不支持；精确 TCP segmentation、non-linear skb 专项验证和长时间 soak 暂缓。当前回归矩阵后续重点保留 URL parser corpus、QoS、认证状态机和 vline 自动化。
+当前进度：`tools/build-matrix.sh` 已固化七组合 clean build；用户态 v3 ABI 已抽到 `tools/natflow-dpi-event.h`，`tools/natflow-dpi-reader.c`、`tools/natflow-dpi-queue-smoke.c` 和 `tools/natflow-dpi-ctl-smoke.sh` 已提供 DPI queue、结构边界、真实事件固定头和静态控制面冒烟入口；`tests/dpi/run-corpus.sh` 已建立双向 TCP/UDP 注入和 queue event 断言框架，IPv4 首批 51 项于 2026-07-26 真机全部通过；runner 使用 conntrack state match 消除对 path 开关和系统既有 conntrack 使用者的依赖后，同日在 path disabled 状态完成 IPv6 DNS/SSH 20 项和 UDP protocol 31 项真机验证，IPv6 首批 51 项同样全部通过。`tools/natflow-dpi-queue-pressure.c` 和 runner 的 `--queue-pressure` 模式已补小 cache、并发 producer、drop-new 和 lost/accounting 自动化，默认 cache=8/generated=32 已于 2026-07-26 真机通过；`--queue-stream` 的默认 cache=64/generated=128/parallel=16 同日真机通过，128 条事件全部读取且零丢失。IPv6 extension header 明确不支持；精确 TCP segmentation、non-linear skb 专项验证和长时间 soak 暂缓。当前回归矩阵后续重点保留 URL parser corpus、QoS、认证状态机和 vline 自动化。
 
 ### P2-2：评估用户态控制面/authd/portal
 
@@ -128,15 +128,15 @@ GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链降到 17
 
 ### P2-4：设计并开发 DPI 能力
 
-状态：Hardcoded Classifier Redesign Accepted，M3 Done
+状态：Hardcoded Classifier Redesign Accepted，M4 Done
 
 目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，先统一 L7 parser/context/consumer 生命周期，再实现轻量 DPI 能力，用于协议/应用分类、审计记录和后续策略匹配。
 
 当前 shared L7 基线仍由 `DPI_DESIGN.md` 描述。2026-08-15 已接受
 `DPI_HARDCODED_STATE_MACHINE_DESIGN.md` 的分类器重设计：取消用户 domain/proto
 规则，改为固定 app catalog 和第五层手写 C 应用状态机，终态直接发布固定
-`app_id`；保留 enable、统计和事件观测。迁移必须分阶段进行，不能在 detector、
-控制 ABI、测试和文档未同步时删除现有 ruleset。
+`app_id`；保留 enable、统计和事件观测。M4 已同步删除旧 ruleset 的实现、控制 ABI、
+测试假设和当前规格；旧设计章节仅保留为历史记录。
 
 当前迁移进度：M0 设计、ADR 和路线图已冻结；M1 已固定首批 18 个协议应用 ID、
 category ID 和 metadata catalog；M2 已让 DPI enabled 直接激活全部内置 protocol
@@ -144,8 +144,8 @@ detector，按 proto O(1) 查固定 catalog，并通过 `cmpxchg` 终态提交�
 M3 已增加 YouTube=`0x1001`、Netflix=`0x1002`、Telegram=`0x2001` 和 14 项静态域名
 表，由 HTTP Host、TLS/QUIC SNI 进入单步硬编码应用机器；exact 优先，suffix 按长度
 降序且要求 label boundary。DNS QNAME 只增加 `dns_app_intents`，DNS flow 仍终态为
-DNS。proto rule、动态 proto mask、命中后 RCU proto lookup 和 `proto_no_rule` 已删除；
-domain 用户 ruleset 暂留到 M4 控制面清理。
+DNS。M4 已删除 domain/proto ruleset、pending/active RCU 对象、规则 parser/count 和
+全部规则 ctl 命令；ctl 只保留 enable、catalog、counters 和 `events_clear`。
 
 实现进度：M0-M1e 的 shared L7、控制/事件 ABI、A 级 detector、双向 bounded context 和测试工具已完成。M2 已加入 FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB 共 12 个 audit-only detector；它们按文本、数据库、二进制三组复用剩余 detector mask bit，不扩大 8 字节 conntrack 瞬态 context，并有协议专属正反 corpus。M3 增加 11 项 HTTP Host 静态应用正反 corpus，当前自动 corpus 共 86 项；新增静态应用和 B 级 detector 的真机 IPv4/IPv6 回归尚未完成。
 
@@ -195,4 +195,4 @@ domain 用户 ruleset 暂留到 M4 控制面清理。
 - 加密、ECH、异常分片和规避流量导致识别率不可控。
 - 输出格式或控制 ABI 设计不当会增加后续兼容成本。
 - DPI 与 fast path、Host ACL、QoS、认证状态机的状态同步错误可能导致策略绕过或误拦截。
-- 运行时 enable 和 ruleset 变化不枚举、不退出、不清理已标记连接；既有连接允许自然终态或保留 L7 状态直到 conntrack 生命周期结束。
+- 运行时 enable 变化不枚举、不退出、不清理已标记连接；既有连接允许自然终态或保留 L7 状态直到 conntrack 生命周期结束。

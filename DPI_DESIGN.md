@@ -8,8 +8,8 @@
 关于用户 proto rule、用户 app 映射和通用规则扩展的目标。当前 protocol detector
 在 DPI enabled 时全部可用，命中后直接提交固定 app/category；本文的 shared L7、
 方向预算、owner bit 和 legacy URL/HostACL 合同仍有效。YouTube、Netflix 和
-Telegram 静态域名应用已由 HTTP Host、TLS/QUIC SNI 驱动；domain 用户规则将在
-下一阶段移除。
+Telegram 静态域名应用已由 HTTP Host、TLS/QUIC SNI 驱动；domain/proto 用户
+ruleset、RCU 发布对象和规则控制 ABI 已全部移除。
 
 实现状态：本文描述目标架构。当前源码使用 `NF_FF_L7_USE` 和 `NF_FF_DPI_USE` 协调 shared L7 与 `natflow_t` 尾部的有界 DPI 瞬态上下文；`app_id` 仍是唯一分类结果。packet view 携带 conntrack direction、当前 packet `sport/dport` 和方向感知的 client/server port。reply 包只准入 DPI packet consumer，URL、Host ACL、HTTP/TLS/QUIC host 和 DNS QNAME domain 保持 original-only；DNS response 与 payload detector 可作为 reply 协议证据。
 
@@ -165,7 +165,7 @@ bounded parser/detector
                     |
                     +-- URL consumer: URL event + Host ACL
                     |
-                    +-- DPI consumer: ruleset -> app_id/event
+                    +-- DPI consumer: fixed catalog -> app_id/event
                     |
                     v
              clear completed owner bits
@@ -240,7 +240,7 @@ struct natflow_dpi_flow {
 约束：
 
 - `app_id=0` 永久表示 unknown、未命中、未分类或尚无结果。
-- 非 0 表示当前连接由 DPI ruleset 识别出应用。
+- 非 0 表示当前连接由内置分类器识别出固定应用。
 - `app_id` 是唯一常驻分类结果。
 - packet/byte counter 和 detector mask 作为 8 字节瞬态 context 保存在 `natflow_t`；`rule_id`、generation、proto、evidence、confidence、reason 和 policy action 不进入常驻分类结果。
 - 不在 flow 中保存 host、URI、payload、证书、名称字符串或指针。
@@ -323,7 +323,7 @@ struct natflow_l7_parser_ops {
 
 - 每个 parser/detector 声明方向、最大 payload packet、最大 bytes、最大循环次数和最大状态大小。
 - 不支持运行时 plugin、用户态 bytecode 或任意函数指针注册 ABI。
-- detector 是编译期静态实现，由 ruleset 或 enable mask 控制是否参与。
+- detector 是编译期静态实现；DPI enabled 时由 L4、方向、候选 mask 和预算裁剪。
 - parser/detector 不能直接执行 policy，只返回 feature、reason 和 confidence。
 
 ### 8.4 Direction contract
@@ -471,9 +471,9 @@ reason 描述观察为什么结束，不直接表示连接动作。
 
 ## 11. DPI ruleset
 
-> 历史设计：本节关于 app/proto 用户规则、proto rule ABI 和规则规模的内容已被
-> ADR-0009 废弃。当前仅保留过渡期 domain ruleset；protocol detector 使用固定
-> catalog，最终 domain ruleset 也将由静态应用分类器替代。
+> 历史设计：本节关于 app/domain/proto 用户规则、RCU snapshot 和规则规模的内容
+> 已被 ADR-0009 废弃。当前实现已删除全部运行时 ruleset；保留本节只用于解释
+> 旧提交和 ABI 迁移，不是当前实现规格。
 
 ### 11.1 MVP 规则
 
@@ -685,7 +685,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成：增加 `NF_FF_L7_USE`、`NF_FF_DPI_USE`、`NF_FF_L7_URL_DONE`、`NF_FF_L7_DPI_DOMAIN_DONE`、`NF_FF_L7_DPI_PACKET_DONE` 和扩展后的 `NF_FF_BUSY_USE`。
 - 已完成：在 `natflow_t` 尾部追加 `app_id`，并完成 shared conntrack extension layout guard。
 - 后续仅在 parser/detector 确需更强跨包状态时增加最小 context；不为运行时配置变更实现 conntrack drain。
-- 已完成骨架：实现 `/dev/natflow_dpi_ctl` 的 status、enable/disable、空 ruleset 事务。
+- 已完成骨架：实现 `/dev/natflow_dpi_ctl` 的 status、enable/disable；后续已删除过渡期 ruleset 事务。
 - 已完成骨架：实现 `/dev/natflow_dpi_queue` 固定 header ABI；后续 M1b/M1c 已增加 match event producer。
 - M1a 当时不宣称应用识别；后续 M1b/M1c 已加入 audit-only 的 domain/proto match。
 
@@ -701,7 +701,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 - 已完成 MVP：增加 DNS、SSH、WireGuard protocol-only 规则，并通过 L7 shared hook 的 DPI packet-view consumer 运行。
 - 已完成 MVP：DNS 需要解析 TCP/UDP 53 标准 query，SSH 可以在 TCP 任一方向匹配 `SSH-<version>-` banner，WireGuard 需要校验 UDP message type、reserved bytes 和长度；端口只选择解析候选，不直接写入 `app_id`。protocol detector 命中后通过固定 catalog 写 `app_id`、category 并输出 `rule_id=0` 的 match event。
-- 已完成 MVP：DNS query 第一问 QNAME 由 `natflow_l7_dns_parse()` 解析并进入 domain exact/suffix ruleset，命中事件 source 为 DNS。
+- 已完成 MVP：DNS query 第一问 QNAME 由 `natflow_l7_dns_parse()` 解析；当前静态应用命中只累计查询意图，DNS flow 仍分类为 DNS。
 - 已完成阶段性迁移：DPI packet consumer 不再自行按 IPv4/IPv6 重解析 skb，而是消费 L7 packet view 的 L4/payload 指针、payload 长度和有界 `payload_linear_len`。
 - 全部 audit-only，不执行 app ACL/QoS。
 
@@ -710,7 +710,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成 MVP：增加 STUN/TURN 子集，识别 STUN header、length、magic cookie，并按 TURN 方法区分 TURN。
 - 已完成 MVP：增加 BitTorrent TCP handshake，以及 UDP uTP v1 header 和 DHT bencode token 前缀窗口子集；uTP 会校验版本、类型和扩展号。
 - 已完成 MVP：`/dev/natflow_dpi_ctl` status 输出不依赖 reader 的 match/source counters、成功入队/主动抑制/资源丢失 counters、domain lookup、双向 packet inspect/match、bounded context transition 和 protocol-only reason counters。
-- 已完成 MVP：增加 `events_clear` 测试辅助命令，用于清空已排队 match event 并重置 `events*` shadow 统计和 `proto_*` reason 统计，不改变 ruleset、enable 状态或 generation。
+- 已完成 MVP：增加 `events_clear` 测试辅助命令，用于清空已排队 match event 并重置 `events*` shadow 统计和 `proto_*` reason 统计，不改变 enable 状态或固定 catalog revision。
 - 已完成基础设施：packet view 增加 direction、当前 packet `sport/dport` 和 client/server port helper；reply 只准入 DPI packet consumer。
 - 已完成基础设施：DNS 与 payload detector 使用静态 metadata 声明 L4、方向模式和双向预算；DNS query/response 第一问共享有界 compression pointer walker，最多跳转 16 次并拒绝环和越界。
 - 已完成基础设施：`natflow_t` 内置 8 字节 bounded context，使用 `NF_FF_DPI_USE`、双向 packet/byte counter 和 detector mask 保持 packet consumer pending。
@@ -769,17 +769,17 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 - waiting flow 不建 fastnat/HWNAT。
 - URL 和 DPI owner 独立完成。
-- 正常 parser terminal、明确 timeout、cache full 和 NO_MEMORY 路径按各自状态机清 bit；disable、ruleset 变化和 module exit 不要求清理已标记连接。
+- 正常 parser terminal、明确 timeout、cache full 和 NO_MEMORY 路径按各自状态机清 bit；disable 和 module exit 不要求清理已标记连接。
 - `nf->status` lost-owner/early-fastpath 计数。
 - RPS/RFS 跨 CPU prefix 不丢。
 
 ### 19.5 ABI 与资源
 
-- DPI ctl line 长度、未知命令、事务冲突、generation 回放、`events_clear` 后队列和统计归零。
+- DPI ctl line 长度、未知及已删除规则命令、enable 切换、`events_clear` 后队列和统计归零。
 - DPI queue 小 buffer、poll、event lost、record_len 跳过；`tests/dpi/run-corpus.sh --queue-pressure` 已提供小 cache、并发 producer、drop-new 和计数恒等式真机入口，`--queue-stream` 提供 reader 持续 poll/read 与 producer 分批并发、端口去重、零 lost/suppressed 的真机入口。
-- ruleset memory、retired generation、hash collision、suffix probes。
+- 静态 catalog 一致性、domain exact/suffix 边界和 suffix probes。
 - malformed packet 不刷日志。
-- `tools/natflow-dpi-reader.c` 提供 v3 queue ABI 参考读取器；`tools/natflow-dpi-queue-smoke.c` 提供单 reader、不可 seek、小 buffer、空队列、cache/close 和可选真实事件固定头验证；`tools/natflow-dpi-ctl-smoke.sh` 提供仅允许空 ruleset 的控制事务冒烟入口；`tools/natflow-dpi-queue-pressure.c` 与 `tests/dpi/run-corpus.sh --queue-pressure` 提供小 cache、并发 STUN producer、drop-new 和计数核验入口，`--queue-stream` 提供 reader/producer 同时运行、每流去重和零丢失核验。queue-full 和 stream 默认场景已于 2026-07-26 真机通过；长时间 soak 当前暂缓，内存分配失败注入尚未覆盖。
+- `tools/natflow-dpi-reader.c` 提供 v3 queue ABI 参考读取器；`tools/natflow-dpi-queue-smoke.c` 提供单 reader、不可 seek、小 buffer、空队列、cache/close 和可选真实事件固定头验证；`tools/natflow-dpi-ctl-smoke.sh` 验证静态 catalog 状态、enable、`events_clear` 以及已删除规则命令返回 `-EINVAL`；`tools/natflow-dpi-queue-pressure.c` 与 `tests/dpi/run-corpus.sh --queue-pressure` 提供小 cache、并发 STUN producer、drop-new 和计数核验入口，`--queue-stream` 提供 reader/producer 同时运行、每流去重和零丢失核验。queue-full 和 stream 默认场景已于 2026-07-26 真机通过；长时间 soak 当前暂缓，内存分配失败注入尚未覆盖。
 
 ### 19.6 性能
 
@@ -787,10 +787,8 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 
 1. DPI off。
 2. URL only。
-3. DPI empty ruleset。
-4. domain rules 满载。
-5. protocol detector 全开。
-6. URL + DPI 全开。
+3. DPI 静态分类器全开。
+4. URL + DPI 全开。
 
 指标包括 PPS、CPU、首包延迟、context occupancy、prefix bytes、event lost、URL queue 延迟和 fast path 命中率。
 

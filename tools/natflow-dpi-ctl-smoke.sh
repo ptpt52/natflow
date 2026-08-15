@@ -4,15 +4,14 @@ set -eu
 
 CTL=${NATFLOW_DPI_CTL:-/dev/natflow_dpi_ctl}
 original_enable=
-temporary_rules=0
 
 usage()
 {
 	cat <<EOF
 Usage: NATFLOW_DPI_CTL=/dev/natflow_dpi_ctl $0
 
-Runs a destructive DPI domain-rule transaction smoke test. The current ruleset
-must be empty. The script restores the original enable state before exit.
+Runs a destructive DPI static-control smoke test. The script clears event
+counters and restores the original enable state before exit.
 EOF
 }
 
@@ -47,10 +46,6 @@ cleanup()
 	status=$?
 	trap - EXIT HUP INT TERM
 	set +e
-	write_cmd rules_abort 2>/dev/null
-	if [ "$temporary_rules" = 1 ]; then
-		write_cmd rules_clear 2>/dev/null
-	fi
 	if [ -n "$original_enable" ]; then
 		write_cmd "enable=$original_enable" 2>/dev/null
 	fi
@@ -76,8 +71,6 @@ esac
 original_enable=$(field enable) || fail "missing control field: enable"
 [ "$original_enable" = 0 ] || [ "$original_enable" = 1 ] ||
 	fail "invalid enable state: $original_enable"
-expect_field rules 0
-expect_field txn_active 0
 expect_field catalog_revision 1
 expect_field catalog_apps 21
 
@@ -86,39 +79,24 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-if write_cmd __natflow_invalid_command__ 2>/dev/null; then
-	fail "unknown command unexpectedly succeeded"
-fi
-
-write_cmd rules_begin
-expect_field txn_active 1
-write_cmd rules_abort
-expect_field txn_active 0
+for removed_command in \
+	"rules_begin" \
+	"domain id=900001 app=900001 kind=exact host=natflow-smoke.invalid" \
+	"proto id=900002 app=900002 proto=ssh" \
+	"rules_commit" \
+	"rules_abort" \
+	"rules_clear" \
+	"__natflow_invalid_command__"; do
+	if write_cmd "$removed_command" 2>/dev/null; then
+		fail "removed or unknown command unexpectedly succeeded: $removed_command"
+	fi
+done
 
 write_cmd enable=0
+expect_field enable 0
+write_cmd enable=1
+expect_field enable 1
 write_cmd events_clear
-generation_before=$(field generation) || fail "missing generation"
-
-write_cmd rules_begin
-temporary_rules=1
-write_cmd "domain id=900001 app=900001 kind=exact host=natflow-smoke.invalid"
-if write_cmd "proto id=900002 app=900002 proto=ssh" 2>/dev/null; then
-	fail "removed proto rule command unexpectedly succeeded"
-fi
-write_cmd rules_commit
-
-generation_after=$(field generation) || fail "missing generation after commit"
-[ "$generation_after" -gt "$generation_before" ] ||
-	fail "generation did not increase after commit"
-expect_field rules 1
-expect_field domain_rules 1
-expect_field txn_active 0
-
-write_cmd rules_clear
-temporary_rules=0
-expect_field rules 0
-expect_field domain_rules 0
-expect_field txn_active 0
 
 write_cmd "enable=$original_enable"
-printf 'PASS: DPI control transaction smoke test\n'
+printf 'PASS: DPI static control smoke test\n'

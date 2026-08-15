@@ -124,7 +124,7 @@ make
 | --- | --- |
 | `CONFIG_NATFLOW_PATH` | 启用 fast path、vline/relay、硬件 offload 相关控制。 |
 | `CONFIG_NATFLOW_URLLOGGER` | 启用 URL logger、Host ACL 和 `/proc/sys/urllogger_store`。 |
-| `CONFIG_NATFLOW_DPI` | 启用 DPI 控制/事件接口、YouTube/Netflix/Telegram 静态域名应用、迁移期 domain 规则、DNS QNAME 查询意图、18 个固定 protocol detector 和 `/dev/natflow_dpi_queue`；默认关闭。DPI enabled 即激活 host/packet consumer，不依赖规则或 `/proc/sys/urllogger_store/enable`。 |
+| `CONFIG_NATFLOW_DPI` | 启用 DPI 控制/事件接口、YouTube/Netflix/Telegram 静态域名应用、DNS QNAME 查询意图、18 个固定 protocol detector 和 `/dev/natflow_dpi_queue`；默认关闭。DPI enabled 即激活 host/packet consumer，不依赖规则或 `/proc/sys/urllogger_store/enable`。 |
 | `CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH` | MTK 外部设备硬件 offload 使用 VLAN hash 模式；会影响 bridge VLAN filter。 |
 | `CONFIG_HWNAT_EXTDEV_DISABLED` | 禁用部分外部设备硬件 offload 分支。 |
 | `NO_DEBUG=1` | 追加 `-DNO_DEBUG -Os`，编译期关闭日志宏。 |
@@ -243,7 +243,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 | `/dev/natflow_qos_ctl` | char device | 全局 QoS 规则和 `tc_classid_mode`。 |
 | `/dev/hostacl_ctl` | char device | Host ACL 规则和默认动作。 |
 | `/dev/natflow_urllogger_queue` | char device | URL/SNI/ACL 命中二进制事件队列，只允许一个 reader，默认不缓存。 |
-| `/dev/natflow_dpi_ctl` | char device | DPI enable 状态、domain ruleset 事务、固定 catalog 信息和统计。 |
+| `/dev/natflow_dpi_ctl` | char device | DPI enable 状态、固定 catalog 信息、统计和事件清理。 |
 | `/dev/natflow_dpi_queue` | char device | DPI 二进制事件队列，只允许一个 reader，默认不缓存，当前输出 domain/fixed-protocol match v3 固定头事件、original tuple 和 evidence direction。 |
 | `/dev/natflow_conntrackinfo_ctl` | char device | conntrack 文本快照。 |
 | `/proc/sys/urllogger_store/*` | sysctl | URL logger 开关、合并窗口和当前队列条数。 |
@@ -987,9 +987,9 @@ int main(void)
 
 ## DPI static application classifier and fixed protocol detectors
 
-需要编译 `CONFIG_NATFLOW_DPI`。当前 DPI 默认关闭，支持 YouTube、Netflix、Telegram 静态域名应用分类、迁移期 domain exact/suffix ruleset、DNS QNAME 查询意图统计和 18 个编译期固定 protocol detector。`enable=1` 会直接激活 DPI host/packet consumer 并运行全部内置分类器，不需要 proto/domain rule。HTTP Host、TLS SNI 或 QUIC v1 Initial SNI 命中静态域名时直接写固定 `app_id` 和 category；固定结果不能由用户规则重映射。`/proc/sys/urllogger_store/enable=0` 仍只表示 URL logger 事件和 Host ACL 不执行。URL、DPI domain 和 DPI packet 的 L7 终态分别记录在 `natflow_t.status` 中：URL 失败不会关闭 DPI，DPI packet 结束不会关闭仍在等待 Host/SNI 的 DPI domain，DPI domain 完成也不会影响 URL；当前 active consumer 全部完成后才释放 fast path，并设置 `IPS_NATFLOW_L7_HANDLED` 作为后续包的 L7_SKIP 快速短路 hint。
+需要编译 `CONFIG_NATFLOW_DPI`。当前 DPI 默认关闭，支持 YouTube、Netflix、Telegram 静态域名应用分类、DNS QNAME 查询意图统计和 18 个编译期固定 protocol detector。`enable=1` 会直接激活 DPI host/packet consumer 并运行全部内置分类器，不需要任何运行时规则。HTTP Host、TLS SNI 或 QUIC v1 Initial SNI 命中静态域名时直接写固定 `app_id` 和 category。`/proc/sys/urllogger_store/enable=0` 仍只表示 URL logger 事件和 Host ACL 不执行。URL、DPI domain 和 DPI packet 的 L7 终态分别记录在 `natflow_t.status` 中：URL 失败不会关闭 DPI，DPI packet 结束不会关闭仍在等待 Host/SNI 的 DPI domain，DPI domain 完成也不会影响 URL；当前 active consumer 全部完成后才释放 fast path，并设置 `IPS_NATFLOW_L7_HANDLED` 作为后续包的 L7_SKIP 快速短路 hint。
 
-运行时 `enable=0`、`rules_commit` 或 `rules_clear` 只改变后续数据包看到的 DPI consumer 和 domain ruleset，不扫描或清理已经标记为 L7 处理中的连接，也不会重新武装已经设置 L7_SKIP 的连接。已标记连接可以由后续数据包自然完成，也可以保留原 L7 状态直到 conntrack 生命周期结束；配置切换不保证立即释放这些既有连接的 fast path gate。
+运行时 `enable=0` 只改变后续数据包看到的 DPI consumer，不扫描或清理已经标记为 L7 处理中的连接，也不会重新武装已经设置 L7_SKIP 的连接。已标记连接可以由后续数据包自然完成，也可以保留原 L7 状态直到 conntrack 生命周期结束；配置切换不保证立即释放这些既有连接的 fast path gate。
 
 protocol detector 未命中时会在 `natflow_t` 尾部保存 8 字节瞬态双向预算 context，并设置 `NF_FF_DPI_USE`；`app_id` 仍是唯一分类结果。当前每方向最多观察 4 个 payload 包，不设置时间 deadline。所需方向始终没有 payload 时，该 context 可以保留到 conntrack 生命周期结束。
 
@@ -1003,23 +1003,14 @@ reply 方向只进入 DPI packet consumer；URL logger、Host ACL、HTTP/TLS/QUI
 cat /dev/natflow_dpi_ctl
 echo enable=1 >/dev/natflow_dpi_ctl
 echo enable=0 >/dev/natflow_dpi_ctl
-echo rules_begin >/dev/natflow_dpi_ctl
-echo 'domain id=1 app=100 kind=exact host=example.com' >/dev/natflow_dpi_ctl
-echo 'domain id=2 app=100 kind=suffix host=example.net' >/dev/natflow_dpi_ctl
-echo rules_commit >/dev/natflow_dpi_ctl
-echo rules_abort >/dev/natflow_dpi_ctl
-echo rules_clear >/dev/natflow_dpi_ctl
 echo events_clear >/dev/natflow_dpi_ctl
 ```
 
 规则说明：
 
-- `rules_begin` 创建待提交 domain ruleset，`domain ...` 只能在事务中写入。`proto ...` 已删除并返回 `-EINVAL`。
-- `rules_commit` 原子发布新 ruleset 并递增 `generation`；`rules_abort` 放弃待提交 ruleset。
-- `rules_clear` 发布空 ruleset 并递增 `generation`。
-- `events_clear` 清空 `/dev/natflow_dpi_queue` 中已排队事件，并把全部 match、event、domain、packet、context 和 `proto_*` shadow counters 归零；不改变 enable 状态、ruleset 或 `generation`。持续流量下可能立刻产生新计数和事件，单项测试前建议先暂停流量或临时 `enable=0`。
-- domain rule 的 `id` 和 `app` 必须为非 0 整数；同一事务内 `id` 不能重复；单个 ruleset 当前最多 128 条 domain 规则。
-- `host` 会转小写、去掉末尾点，并校验 DNS label；HTTP Host 中的端口由 URL logger normalize 时剥离。静态 matcher 固定使用 exact 优先、suffix 长度降序和 label-boundary 语义；迁移期用户 domain rule 只在静态表未命中时尝试。
+- `events_clear` 清空 `/dev/natflow_dpi_queue` 中已排队事件，并把全部 match、event、domain、packet、context 和 `proto_*` shadow counters 归零；不改变 enable 状态或固定 catalog revision。持续流量下可能立刻产生新计数和事件，单项测试前建议先暂停流量或临时 `enable=0`。
+- `rules_begin`、`domain ...`、`proto ...`、`rules_commit`、`rules_abort` 和 `rules_clear` 已全部删除，写入返回 `-EINVAL`。
+- Host/SNI 会转小写、去掉末尾点，并校验 DNS label；HTTP Host 中的端口由 URL logger normalize 时剥离。静态 matcher 固定使用 exact 优先、suffix 长度降序和 label-boundary 语义。
 - `kind=suffix` 同时匹配完全相同的 host 和带点边界的子域名，例如规则 `example.net` 可匹配 `example.net` 与 `www.example.net`。
 - 固定 protocol app ID 为：DNS=1、SSH=2、WireGuard=3、STUN=4、TURN=5、BitTorrent=6、FTP=7、SMTP=8、POP3=9、IMAP=10、SIP=11、RTSP=12、MQTT=13、RESP=14、MySQL=15、PostgreSQL=16、RDP=17、SMB=18。已发布 ID 不改号或复用。
 - 固定域名应用 ID 为 YouTube=`0x1001`、Netflix=`0x1002`、Telegram=`0x2001`；category 分别为 streaming=11、streaming=11、communication=12。首批静态表只包含品牌专属域名：YouTube 使用 `youtu.be` exact 以及 `youtube.com`、`youtube-nocookie.com`、`googlevideo.com`、`ytimg.com` suffix；Netflix 使用 `netflix.com`、`nflxvideo.net`、`nflximg.com/.net`、`nflxso.net`、`nflxext.com` suffix；Telegram 使用 `telegram.org`、`telegram.me`、`t.me` suffix。
@@ -1031,7 +1022,7 @@ echo events_clear >/dev/natflow_dpi_ctl
 - `domain_lookups`/`domain_matches` 统计 hostname 静态/迁移期规则查找和产生应用终态的命中；`dns_app_intents` 统计 QNAME 命中静态应用域名但未写 resident app 的次数；`packet_inspect_original/reply` 按实际进入有界 protocol parser 的 packet 计数，每包最多增加一次，不按 detector 个数累加；`packet_match_original/reply` 统计直接协议证据方向。
 - `context_armed` 和各 `context_cleared_*` 记录 bounded context 的累计状态转换；`context_aborted` 表示 L7 强制终态清理。conntrack 自然销毁不会回调 DPI，因此这些累计值不能相减推导当前活跃 context 数。`proto_no_session` 和 `proto_app_exists` 解释 protocol detector 未产生新分类结果的原因；固定映射不存在 `proto_no_rule`。
 
-空 domain ruleset 的测试环境可运行 `tools/natflow-dpi-ctl-smoke.sh` 验证未知命令、已删除 proto 命令、domain 事务 begin/abort/commit、generation、规则计数和 clear。脚本会临时禁用 DPI、清空事件统计并发布一条测试 domain 规则，因此会改变 generation；为避免覆盖运行配置，启动时只要发现 ruleset 非空或已有事务就会拒绝执行，退出时会恢复原 enable 状态。
+可运行 `tools/natflow-dpi-ctl-smoke.sh` 验证 enable、catalog、`events_clear`、未知命令以及全部已删除规则命令。脚本会清空事件统计并临时切换 enable，退出时恢复原 enable 状态。
 
 `/dev/natflow_dpi_queue` 使用版本化二进制记录，只允许一个 reader，第二个 reader 打开会返回 `-EBUSY`。没有 reader 或 reader 未写入正数 `cache=N\n` 时，match event 直接丢弃，不分配、不缓存，也不增加 `events_lost`；reader 打开时 cache 默认为 0 并会先清空残留事件，写入 `cache=N\n` 后最多缓存 N 条新事件，队列满、溢出或分配失败会丢弃新事件并增加 `events_lost`；写入 `cache=0\n` 或关闭 fd 会关闭缓存并清空未读事件。当前 record 是 v3 固定头，包含规则命中摘要、original direction tuple 和实际证据方向；`read()` 在队列为空时返回 0，用户 buffer 小于固定头时返回 `-EINVAL`，`poll()` 在有事件时返回 readable。
 
@@ -1072,8 +1063,8 @@ struct natflow_dpi_event_hdr {
 
 - `version=3`，`header_len=record_len=sizeof(struct natflow_dpi_event_hdr)=78`。
 - `reason=6` 表示 rule matched。
-- `generation` 是命中时的 ruleset generation。
-- domain event 的 `app_id` 和 `rule_id` 仍来自 domain rule，`category_id=0`、`generation` 为 domain ruleset generation。protocol event 使用固定 catalog：`generation=1`、`app_id` 和 `category_id` 来自静态 metadata、`rule_id=0`。
+- `generation` 固定为 catalog revision；当前为 1。
+- 所有事件的 `app_id` 和 `category_id` 来自静态 metadata，`rule_id=0`。
 - `category_id=0` 预留。
 - `flags` 当前记录事件来源：1=`HTTP`，2=`TLS`，3=`QUIC`，4=`DNS`，5=`SSH`，6=`WireGuard`，7=`STUN`，8=`TURN`，9=`BitTorrent`，10=`FTP`，11=`SMTP`，12=`POP3`，13=`IMAP`，14=`SIP`，15=`RTSP`，16=`MQTT`，17=`RESP`，18=`MySQL`，19=`PostgreSQL`，20=`RDP`，21=`SMB`。
 - `timestamp` 是基于系统 uptime 的秒数，不是 Unix epoch，与 URL logger 事件语义一致。
@@ -1101,9 +1092,9 @@ cc -std=c11 -O2 -Wall -Wextra -Werror \
 ./natflow-dpi-queue-smoke -c 256 -w 10000
 ```
 
-queue smoke 打开设备时会按 ABI 清空残留事件并独占 reader；不要与生产 reader 同时运行。`-w` 模式运行前应先配置并启用至少一条可产生匹配流量的 DPI 规则，并在等待窗口内生成对应流量。
+queue smoke 打开设备时会按 ABI 清空残留事件并独占 reader；不要与生产 reader 同时运行。`-w` 模式运行前应启用 DPI，并在等待窗口内生成内置分类器可识别的流量。
 
-协议 detector 黑盒 corpus 入口为 `tests/dpi/run-corpus.sh`。它在 root namespace 中建立两个 network namespace，让 TCP/UDP fixture 经过真实 FORWARD hook，并对 queue event 的 original tuple、source、`app_id`、`rule_id` 和 `evidence_dir` 做断言。runner 要求 root 权限、`ip`、对应 family 的 `iptables`/`ip6tables`、C 编译器、已加载的 DPI 模块和空 ruleset；临时 FORWARD 规则带 conntrack state match，确保所选地址族不依赖系统已有 NAT/firewall 或 natflow path 开关获得 conntrack。它会临时修改对应 forwarding、FORWARD 规则、DPI enable/ruleset/generation 和事件统计，只能用于隔离测试环境。最终 PASS 仅在 DPI 状态、FORWARD 规则、namespace/veth 和 forwarding 清理结果均核验通过后输出。样本格式和清理边界见 `tests/dpi/README.md`。
+协议 detector 黑盒 corpus 入口为 `tests/dpi/run-corpus.sh`。它在 root namespace 中建立两个 network namespace，让 TCP/UDP fixture 经过真实 FORWARD hook，并对 queue event 的 original tuple、source、`app_id`、`rule_id` 和 `evidence_dir` 做断言。runner 要求 root 权限、`ip`、对应 family 的 `iptables`/`ip6tables`、C 编译器和已加载的 DPI 模块；临时 FORWARD 规则带 conntrack state match，确保所选地址族不依赖系统已有 NAT/firewall 或 natflow path 开关获得 conntrack。它会临时修改对应 forwarding、FORWARD 规则、DPI enable 和事件统计，只能用于隔离测试环境。最终 PASS 仅在 DPI 状态、FORWARD 规则、namespace/veth 和 forwarding 清理结果均核验通过后输出。样本格式和清理边界见 `tests/dpi/README.md`。
 
 `--ipv6` 使用两个 IPv6 `/64`、`ip6tables` 和 IPv6 forwarding 运行同一批 fixture，并验证 event 中完整 16 字节 original tuple；它覆盖基础 IPv6 TCP/UDP，DPI 不解析 IPv6 extension header：
 
@@ -1111,7 +1102,7 @@ queue smoke 打开设备时会按 ABI 清空残留事件并独占 reader；不�
 sudo tests/dpi/run-corpus.sh --ipv6 tests/dpi/cases/*.cases
 ```
 
-同一 runner 的 `--queue-pressure [cache [generated]]` 模式用于 queue 满载和并发 producer 回归，默认以 cache=8 并发生成 32 条独立 STUN 流。测试期间单一 reader 不读取事件，注入完成后断言只保留 8 条合法 v3 event，并核对 `matches=32`、`events=8`、`events_lost=24`、`events_suppressed=0` 及 STUN 分项。该模式同样要求空 ruleset 和隔离测试环境：
+同一 runner 的 `--queue-pressure [cache [generated]]` 模式用于 queue 满载和并发 producer 回归，默认以 cache=8 并发生成 32 条独立 STUN 流。测试期间单一 reader 不读取事件，注入完成后断言只保留 8 条合法 v3 event，并核对 `matches=32`、`events=8`、`events_lost=24`、`events_suppressed=0` 及 STUN 分项。该模式同样要求隔离测试环境：
 
 ```sh
 sudo tests/dpi/run-corpus.sh --queue-pressure

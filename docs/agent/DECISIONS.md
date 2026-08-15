@@ -240,8 +240,8 @@ queue pressure 和 queue stream 也已验证。继续扩展 IPv6 extension heade
 
 ### 背景
 
-当前 DPI 通过运行时 domain/proto ruleset 把 detector 结果映射为用户指定
-`app_id`。维护者明确希望只识别有限且确定的协议和应用，并让识别行为完全由
+迁移前 DPI 通过运行时 domain/proto ruleset 把 detector 结果映射为用户指定
+`app_id`；M4 已删除这套机制。维护者明确希望只识别有限且确定的协议和应用，并让识别行为完全由
 内核模块中的硬编码 C 状态机决定，不再维护用户规则或通用规则 compiler。
 
 ### 决策

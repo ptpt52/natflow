@@ -6,12 +6,12 @@ fixture. It enables the compiled-in protocol catalog, opens the DPI queue
 before injection, and checks the v3 event against the fixed catalog revision,
 `app_id`, category, `rule_id=0`, original tuple and expected evidence direction.
 
-The runner is destructive to the DPI test state: it requires an empty domain
-ruleset, clears event counters, and temporarily changes DPI enable. It also
+The runner is destructive to the DPI test state: it clears event counters and
+temporarily changes DPI enable. It also
 inserts two interface-specific firewall rules and temporarily
 enables forwarding for the selected address family. Before reporting the final
-PASS, cleanup restores and verifies the DPI enable value, empty domain ruleset and
-inactive transaction, forwarding value, firewall-rule removal, namespace and
+PASS, cleanup restores and verifies the DPI enable value, forwarding value,
+firewall-rule removal, namespace and
 veth removal, and temporary-directory removal. Signal and failure exits
 attempt the same cleanup and report any failed postcondition as `CLEANUP FAIL`.
 
@@ -52,7 +52,7 @@ runner opens one reader, does not read while the flows run concurrently, then
 requires exactly `cache` valid STUN events and verifies the ctl counters:
 `matches=generated`, `events=cache`, `events_lost=generated-cache`,
 `events_suppressed=0`, and the corresponding STUN source counters. This mode
-has the same empty-domain-ruleset, isolated-host, state-restoration, and final cleanup
+has the same isolated-host, state-restoration, and final cleanup
 requirements as the detector corpus.
 
 Concurrent reader/producer operation can be tested with:

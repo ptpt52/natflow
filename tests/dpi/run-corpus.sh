@@ -60,7 +60,7 @@ Case format, one pipe-separated record per line:
   name|proto|transport|direction|port|payload_hex|expectation
 
 Blank lines and lines beginning with # are ignored. This destructive test
-requires an empty DPI domain ruleset and root privileges. Queue pressure defaults to
+requires root privileges. Queue pressure defaults to
 cache=$PRESSURE_CACHE_DEFAULT and generated=$PRESSURE_EVENTS_DEFAULT.
 Queue stream defaults to cache=$STREAM_CACHE_DEFAULT,
 generated=$STREAM_EVENTS_DEFAULT and parallel=$STREAM_PARALLEL_DEFAULT.
@@ -124,12 +124,6 @@ cleanup_resources()
 			cleanup_error "could not restore DPI enable=$original_enable"
 		fi
 	fi
-	for expected_field in rules domain_rules txn_active; do
-		actual_value=$(field "$expected_field" 2>/dev/null)
-		if [ "$actual_value" != 0 ]; then
-			cleanup_error "$expected_field is ${actual_value:-unreadable}, expected 0"
-		fi
-	done
 	if [ -n "$original_enable" ]; then
 		actual_value=$(field enable 2>/dev/null)
 		if [ "$actual_value" != "$original_enable" ]; then
@@ -565,8 +559,6 @@ need_command "$CC"
 original_enable=$(field enable) || fail "missing DPI enable field"
 [ "$original_enable" = 0 ] || [ "$original_enable" = 1 ] ||
 	fail "invalid DPI enable field: $original_enable"
-[ "$(field rules)" = 0 ] || fail "DPI ruleset must be empty"
-[ "$(field txn_active)" = 0 ] || fail "DPI transaction is already active"
 original_forward=$(cat "$FORWARD_CTL")
 
 mkdir "$TMP_DIR" || fail "temporary directory already exists: $TMP_DIR"
