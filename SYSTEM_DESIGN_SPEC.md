@@ -624,7 +624,7 @@ Natflow 不创建 ipset，只按名称查找和测试/添加/删除。用户态�
 - `status`：`NF_FF_*` 状态位。
 - `rroute[2]`：两个方向的 `natflow_route_t`。
 - `app_id`：DPI 的常驻应用分类结果；`0` 表示 unknown、未分类或没有结果。当前 L7 shared hook 在解析前会先确保 natflow session；domain exact/suffix matcher（HTTP Host、TLS/QUIC SNI、DNS QNAME）和 DNS/SSH/WireGuard/STUN/TURN/BitTorrent protocol-only matcher 在规则命中时写入非 0 `app_id`，其他 DPI 细节只进入事件。
-- `dpi_byte_count[2]`、`dpi_packet_count[2]`、`dpi_detector_mask`：仅在 `NF_FF_DPI_USE` 有效的 8 字节瞬态方向上下文；不属于分类结果或事件 ABI。
+- `dpi_byte_count[2]`、`dpi_packet_count[2]`、`dpi_automaton`：仅在 `NF_FF_DPI_USE` 有效的 8 字节瞬态方向上下文；`dpi_automaton` 的低 8 位在 discovery 阶段保存 detector class mask，高 8 位为后续 claimed machine/state 保留，当前尚不启用 claimed 编码；这些字段不属于分类结果或事件 ABI。
 
 重要 `NF_FF_*` 位：
 

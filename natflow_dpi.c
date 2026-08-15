@@ -1260,6 +1260,20 @@ static const struct file_operations natflow_dpi_queue_fops = {
 	(NATFLOW_DPI_DIRECTION_PACKET_BUDGET * NATFLOW_DPI_PAYLOAD_INSPECT_MAX)
 #define NATFLOW_DPI_DNS_BYTE_BUDGET \
 	(NATFLOW_DPI_DIRECTION_PACKET_BUDGET * NATFLOW_DPI_DNS_INSPECT_MAX)
+#define NATFLOW_DPI_AUTOMATON_DISCOVERY_MASK 0x00ffu
+
+static unsigned int natflow_dpi_context_detector_mask(const natflow_t *nf)
+{
+	return READ_ONCE(nf->dpi_automaton) &
+	       NATFLOW_DPI_AUTOMATON_DISCOVERY_MASK;
+}
+
+static void natflow_dpi_context_set_detector_mask(natflow_t *nf,
+        unsigned int detector_mask)
+{
+	WRITE_ONCE(nf->dpi_automaton,
+	           detector_mask & NATFLOW_DPI_AUTOMATON_DISCOVERY_MASK);
+}
 
 static bool natflow_dpi_payload_has_token(const unsigned char *data,
         unsigned int data_len, const char *token, unsigned int token_len)
@@ -1962,8 +1976,7 @@ static bool natflow_dpi_context_clear(natflow_t *nf)
 	nf->dpi_byte_count[NF_FF_DIR_REPLY] = 0;
 	nf->dpi_packet_count[NF_FF_DIR_ORIGINAL] = 0;
 	nf->dpi_packet_count[NF_FF_DIR_REPLY] = 0;
-	nf->dpi_detector_mask = 0;
-	nf->dpi_reserved = 0;
+	WRITE_ONCE(nf->dpi_automaton, 0);
 	return active;
 }
 
@@ -2052,11 +2065,13 @@ static bool natflow_dpi_detector_exhausted(
 static bool natflow_dpi_context_detectors_exhausted(const natflow_t *nf)
 {
 	const struct natflow_dpi_detector *detector;
+	unsigned int detector_mask;
 	unsigned int detector_id;
 
+	detector_mask = natflow_dpi_context_detector_mask(nf);
 	for (detector_id = 0; detector_id < NATFLOW_DPI_DETECTOR_MAX;
 	        detector_id++) {
-		if (!(nf->dpi_detector_mask & NATFLOW_DPI_DETECTOR_BIT(detector_id)))
+		if (!(detector_mask & NATFLOW_DPI_DETECTOR_BIT(detector_id)))
 			continue;
 		detector = natflow_dpi_detector_by_id(detector_id);
 		if (detector && !natflow_dpi_detector_exhausted(detector, nf))
@@ -2115,6 +2130,7 @@ static enum natflow_dpi_context_result natflow_dpi_context_observe(
 {
 	unsigned int inspect_len;
 	unsigned int byte_count;
+	unsigned int context_detector_mask;
 	int dir;
 
 	if (!nf || detector_mask == 0)
@@ -2124,16 +2140,18 @@ static enum natflow_dpi_context_result natflow_dpi_context_observe(
 		return NATFLOW_DPI_CONTEXT_EMPTY;
 
 	if (READ_ONCE(nf->status) & NF_FF_DPI_USE) {
-		nf->dpi_detector_mask &= detector_mask;
-		if (nf->dpi_detector_mask == 0)
+		context_detector_mask =
+		    natflow_dpi_context_detector_mask(nf) & detector_mask;
+		natflow_dpi_context_set_detector_mask(nf, context_detector_mask);
+		if (context_detector_mask == 0)
 			return NATFLOW_DPI_CONTEXT_EMPTY;
 	} else {
 		nf->dpi_byte_count[NF_FF_DIR_ORIGINAL] = 0;
 		nf->dpi_byte_count[NF_FF_DIR_REPLY] = 0;
 		nf->dpi_packet_count[NF_FF_DIR_ORIGINAL] = 0;
 		nf->dpi_packet_count[NF_FF_DIR_REPLY] = 0;
-		nf->dpi_detector_mask = detector_mask;
-		nf->dpi_reserved = 0;
+		context_detector_mask = detector_mask;
+		natflow_dpi_context_set_detector_mask(nf, context_detector_mask);
 	}
 
 	if (payload_len > 0 && observed_detector_mask != 0) {
@@ -2143,7 +2161,7 @@ static enum natflow_dpi_context_result natflow_dpi_context_observe(
 		inspect_len = payload_linear_len;
 		if (inspect_len > payload_len)
 			inspect_len = payload_len;
-		if (nf->dpi_detector_mask &
+		if (context_detector_mask &
 		        ~NATFLOW_DPI_DETECTOR_BIT(NATFLOW_DPI_DETECTOR_DNS)) {
 			if (inspect_len > NATFLOW_DPI_PAYLOAD_INSPECT_MAX)
 				inspect_len = NATFLOW_DPI_PAYLOAD_INSPECT_MAX;

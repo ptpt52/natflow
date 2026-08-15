@@ -147,7 +147,7 @@ M3 已增加 YouTube=`0x1001`、Netflix=`0x1002`、Telegram=`0x2001` 和 14 项�
 DNS。M4 已删除 domain/proto ruleset、pending/active RCU 对象、规则 parser/count 和
 全部规则 ctl 命令；ctl 只保留 enable、catalog、counters 和 `events_clear`。
 
-实现进度：M0-M1e 的 shared L7、控制/事件 ABI、A 级 detector、双向 bounded context 和测试工具已完成。M2 已加入 FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB 共 12 个 audit-only detector；它们按文本、数据库、二进制三组复用剩余 detector mask bit，不扩大 8 字节 conntrack 瞬态 context，并有协议专属正反 corpus。M3 增加 11 项 HTTP Host 静态应用正反 corpus，当前自动 corpus 共 86 项；新增静态应用和 B 级 detector 的真机 IPv4/IPv6 回归尚未完成。
+实现进度：M0-M1e 的 shared L7、控制/事件 ABI、A 级 detector、双向 bounded context 和测试工具已完成。M2 已加入 FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB 共 12 个 audit-only detector；它们按文本、数据库、二进制三组复用剩余 detector mask bit，不扩大 8 字节 conntrack 瞬态 context，并有协议专属正反 corpus。M3 增加 11 项 HTTP Host 静态应用正反 corpus，当前自动 corpus 共 86 项；新增静态应用和 B 级 detector 的真机 IPv4/IPv6 回归尚未完成。M5 已先把 context 最后两个字节迁移为 16 位 `dpi_automaton`，低 8 位保持 discovery detector mask，claimed machine/state 和首台多包机器待下一步启用。
 
 边界：
 

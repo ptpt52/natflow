@@ -5,7 +5,8 @@
 
 实施进度：M0-M4 已完成。首批 18 个固定 protocol app 和 YouTube、Netflix、
 Telegram 静态域名应用已进入数据面；用户 ruleset、RCU 发布和规则控制 ABI 已
-删除，compact automaton 尚未实施。
+删除。M5 已把最后两个 context 字节迁移为 16 位 `dpi_automaton`，低 8 位保持
+discovery detector mask 语义；claimed machine/state 尚未启用。
 
 ## 1. 决策摘要
 
