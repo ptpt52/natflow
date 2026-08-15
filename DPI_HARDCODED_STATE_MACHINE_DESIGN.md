@@ -1,15 +1,16 @@
 # Natflow 硬编码 DPI 状态机设计与实施计划
 
-状态：Accepted，M0-M7 已实现
-日期：2026-08-15
+状态：Accepted，M0-M8 已实现
+日期：2026-08-16
 
-实施进度：M0-M4 已完成。首批 18 个固定 protocol app 和 YouTube、Netflix、
-Telegram 静态域名应用已进入数据面；用户 ruleset、RCU 发布和规则控制 ABI 已
+实施进度：M0-M4 已完成。18 个固定 protocol app 和 YouTube、Netflix、爱奇艺、
+Telegram、微信、QQ、钉钉、淘宝、TikTok 固定应用已进入数据面；用户 ruleset、RCU 发布和规则控制 ABI 已
 删除。M5 已完成：最后两个 context 字节已迁移为 16 位 `dpi_automaton`，低 8 位
 保存 discovery machine-class mask；RDP 是首台 claimed machine，以单调 state bit
 汇合 original X.224 Connection Request 和 reply Connection Confirm 后终态。M7 已
 删除 detector struct、metadata 数组和通用遍历 dispatcher，18 个协议由固定顺序的
-原生 parser/机器分支识别。
+原生 parser/机器分支识别。M8 从 nDPI 提取 48 项有界 hostname 特征和钉钉、
+QQ/OICQ、爱奇艺直接 payload 特征，并加入单包有界 HTTP request/response view。
 
 ## 1. 决策摘要
 
@@ -142,6 +143,8 @@ native high-confidence protocol -> direct terminal app_id
 0x00001000-0x00001fff   视频/流媒体应用
 0x00002000-0x00002fff   通信应用
 0x00003000-0x00003fff   游戏应用
+0x00004000-0x00004fff   购物应用
+0x00005000-0x00005fff   社交应用
 ```
 
 应用名称、类别和基础协议由静态元数据表表达：
@@ -210,10 +213,12 @@ generic TLS 作为兜底终态。
 BitTorrent、FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、
 PostgreSQL、RDP 和 SMB。
 
-首批静态域名应用固定为 YouTube=`0x1001`、Netflix=`0x1002`、
-Telegram=`0x2001`。域名表只收录品牌专属后缀，避免把 `google.com`、通用 AWS/CDN
-等共享基础设施误判为应用；YouTube 的 `youtu.be` 只做 exact。Netflix Open
-Connect 与 Telegram 官方 FAQ 是首批域名选择的官方依据：
+固定域名应用包括 YouTube=`0x1001`、Netflix=`0x1002`、爱奇艺=`0x1003`、
+Telegram=`0x2001`、微信=`0x2002`、QQ=`0x2003`、钉钉=`0x2004`、
+淘宝=`0x4001`、TikTok=`0x5001`。后六项 hostname 和直接 payload 特征来自本地
+nDPI 源码；宽泛 `wx.`/`weixin.` substring 不采用，共享 CDN 只允许完整 hostname
+exact，不把父域名整体归类。YouTube 的 `youtu.be` 也只做 exact。Netflix Open
+Connect 与 Telegram 官方 FAQ 是原首批域名选择的官方依据：
 
 - <https://openconnect.netflix.com/Open-Connect-Overview.pdf>
 - <https://telegram.org/faq>
@@ -450,6 +455,19 @@ build；`KCFLAGS=-Wno-unused-function` 只用于兼容该内核头中的静态 h
 
 退出条件：源码除兼容事件 reason 名称外不再包含 detector 实现符号，93 项 corpus
 静态检查和七组合构建矩阵通过。
+
+### M8：nDPI 来源的首批手机 App
+
+- catalog revision 升为 2，固定 catalog 增至 27 项，域名表增至 48 项。
+- TEXT discovery class 下增加单包 App step；HTTP view 最多看 512 字节和 32 个
+  header，产出 request/response line、Host、User-Agent、Content-Type 和可见 body。
+- 第一批 HTTP 终态仍只使用严格 Host；没有真实来源的 header/body 单关键字不分类。
+- 钉钉 TCP、QQ/OICQ UDP、爱奇艺 `PPStream` UDP 使用 nDPI 的直接 payload 结构。
+- 8 字节 conntrack context 不变；未来只有跨分段/跨方向 HTTP 事实确有收益时才
+  评审扩大 `natflow_t`。
+
+M8 退出条件：123 项 corpus 静态检查、用户态工具编译和七组合构建矩阵通过；
+运行态 IPv4/IPv6 corpus 仍在目标机执行。
 
 ## 11. 提交拆分建议
 

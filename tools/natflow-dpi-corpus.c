@@ -333,7 +333,7 @@ int main(int argc, char **argv)
 	    source_family == AF_INET ? sizeof(struct in_addr) :
 	    sizeof(struct in6_addr);
 	if (expectation.source < NATFLOW_DPI_EVENT_SOURCE_HTTP ||
-	        expectation.source > NATFLOW_DPI_EVENT_SOURCE_SMB ||
+	        expectation.source > NATFLOW_DPI_EVENT_SOURCE_IQIYI ||
 	        expectation.app_id == 0 || expectation.category_id == 0)
 		fail_message("invalid classification expectation");
 

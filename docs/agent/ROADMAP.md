@@ -147,7 +147,7 @@ M3 已增加 YouTube=`0x1001`、Netflix=`0x1002`、Telegram=`0x2001` 和 14 项�
 DNS。M4 已删除 domain/proto ruleset、pending/active RCU 对象、规则 parser/count 和
 全部规则 ctl 命令；ctl 只保留 enable、catalog、counters 和 `events_clear`。
 
-实现进度：M0-M1e 的 shared L7、控制/事件 ABI、A 级协议识别、双向 bounded context 和测试工具已完成。M2 已加入 FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB 共 12 个 audit-only 原生协议机器；它们按文本、数据库、二进制三组复用剩余 discovery machine-class bit，不扩大 8 字节 conntrack 瞬态 context，并有协议专属正反 corpus。M3 增加 11 项 HTTP Host 静态应用正反 corpus。M5 已把 context 最后两个字节迁移为 16 位 `dpi_automaton`，并以 RDP 实现首台 claimed machine：original X.224 request 与 reply confirm 通过 CAS 单调汇合后才终态，claimed 后不再运行其他原生机器。TCP sequence corpus 已覆盖顺序、反序、同时发送、重传、预算和 transport end，当前自动 corpus 共 93 项。M6 已使用 OpenWrt Linux 5.4.281 arm64/GCC 8.4 工具链完成七组合 clean build、静态 fixture/tool/script 检查以及 M4 基线栈和体积对比；DPI packet consumer 栈帧保持 240 字节，完整模块 text 增加 992 字节。审查收口已补齐 conntrack 锁串行、app/context/done 原子终态、packet-only 有界 pull、bridge/inet 去重、`events_clear` quiesce 和 SMB NBSS 长度校验。M7 已删除 detector struct、metadata 数组、查找/遍历 helper 和通用 dispatcher，改由固定顺序的原生 machine step 直接编码 L4、方向和 parser 分支；18 个 app ID、证据边界、预算、8 字节 context 和 ABI 保持不变。按维护者“编译验证即可”的验收边界，本轮未加载 arm64 模块，并发双向 packet、bridge、non-linear skb、并发 reset 及新增 corpus 的运行态回归保留为后续目标机验证项。
+实现进度：M0-M1e 的 shared L7、控制/事件 ABI、A 级协议识别、双向 bounded context 和测试工具已完成。M2 已加入 FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB 共 12 个 audit-only 原生协议机器；它们按文本、数据库、二进制三组复用剩余 discovery machine-class bit，不扩大 8 字节 conntrack 瞬态 context，并有协议专属正反 corpus。M3 增加 11 项 HTTP Host 静态应用正反 corpus。M5 已把 context 最后两个字节迁移为 16 位 `dpi_automaton`，并以 RDP 实现首台 claimed machine：original X.224 request 与 reply confirm 通过 CAS 单调汇合后才终态，claimed 后不再运行其他原生机器。M6 已完成七组合构建和栈/体积基线，M7 已删除 detector 抽象。M8 基于 nDPI 新增微信、QQ、钉钉、爱奇艺、淘宝、TikTok，catalog revision=2/27 项、静态域名 48 项，并加入钉钉 TCP、QQ/OICQ UDP、爱奇艺 `PPStream` UDP App step；HTTP 单包 view 可解析双向 start line、最多 32 个 header 和可见 body，但第一批只让严格 Host 终态。当前自动 corpus 共 123 项，8 字节 context 未扩大。新增样本的目标机 IPv4/IPv6 运行态回归仍是后续部署验证项。
 
 边界：
 
@@ -172,6 +172,8 @@ DNS。M4 已删除 domain/proto ruleset、pending/active RCU 对象、规则 par
    corpus/queue 按本轮验收边界保留为部署验证项。
 8. M7：删除 detector metadata/数组和通用遍历 dispatcher，使用固定原生协议
    machine step；保持识别证据、预算、context 布局和外部 ABI 不变。
+9. M8：从 nDPI 提取首批手机 App 域名和直接 payload 特征，增加有界 HTTP App
+   view、固定 ID/category/source、正反 corpus，并保持现有 compact context。
 
 历史实现阶段：
 

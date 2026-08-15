@@ -256,6 +256,11 @@ queue pressure 和 queue stream 也已验证。继续扩展 IPv6 extension heade
   机器。
 - 保持 `app_id` 是唯一常驻分类结果；多包状态优先复用现有 8 字节瞬态 context，
   不保存域名、payload、指针或动态 candidate 数组。
+- 首批手机 App 特征从可审计的 nDPI hostname 和直接 payload parser 提取；宽泛
+  substring、共享 CDN 父域和没有抓包/源码依据的 HTTP 单关键字不得直接终态。
+- `natflow_t` 可以在确有跨分段或跨方向应用事实需要时扩大，但必须先证明现有
+  context 无法表达、评估每 conntrack 常驻内存和布局兼容，并同步构建/栈验证；
+  单包或 Host/SNI 事实不以预留未来状态为理由扩容。
 - 保留 DPI enable、统计和事件观测；移除 domain/proto 规则事务。事件 ABI 迁移
   首期保留 v3 结构，`generation` 表示静态 catalog revision，`rule_id=0`。
 - 迁移按 catalog、protocol detector、domain classifier、ruleset removal、compact

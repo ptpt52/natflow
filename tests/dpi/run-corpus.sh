@@ -264,6 +264,15 @@ proto_values()
 	youtube) printf '%s\n' '1 4097 11 0' ;;
 	netflix) printf '%s\n' '1 4098 11 0' ;;
 	telegram) printf '%s\n' '1 8193 12 0' ;;
+	wechat) printf '%s\n' '1 8194 12 0' ;;
+	qq-host) printf '%s\n' '1 8195 12 0' ;;
+	dingtalk-host) printf '%s\n' '1 8196 12 0' ;;
+	iqiyi-host) printf '%s\n' '1 4099 11 0' ;;
+	taobao) printf '%s\n' '1 16385 14 0' ;;
+	tiktok) printf '%s\n' '1 20481 13 0' ;;
+	dingtalk) printf '%s\n' '22 8196 12 0' ;;
+	qq) printf '%s\n' '23 8195 12 0' ;;
+	iqiyi) printf '%s\n' '24 4099 11 0' ;;
 	*) return 1 ;;
 	esac
 }
@@ -341,6 +350,8 @@ validate_case()
 	case $proto:$l4 in
 	ssh:udp|wireguard:tcp|ftp:udp|smtp:udp|pop3:udp|imap:udp|rtsp:udp|mqtt:udp|resp:udp|mysql:udp|postgresql:udp|rdp:udp|smb:udp)
 		fail "$case_file: invalid protocol/L4 pair in $name" ;;
+	dingtalk:udp|qq:tcp|iqiyi:tcp)
+		fail "$case_file: invalid application/L4 pair in $name" ;;
 	esac
 	case $direction in original|reply|either) ;; *) fail "$case_file: invalid direction in $name" ;; esac
 	case $port in ""|*[!0-9]*) fail "$case_file: invalid port in $name" ;; esac

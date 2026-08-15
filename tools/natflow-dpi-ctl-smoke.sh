@@ -71,8 +71,8 @@ esac
 original_enable=$(field enable) || fail "missing control field: enable"
 [ "$original_enable" = 0 ] || [ "$original_enable" = 1 ] ||
 	fail "invalid enable state: $original_enable"
-expect_field catalog_revision 1
-expect_field catalog_apps 21
+expect_field catalog_revision 2
+expect_field catalog_apps 27
 
 trap cleanup EXIT
 trap 'exit 129' HUP

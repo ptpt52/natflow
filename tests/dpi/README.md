@@ -83,15 +83,21 @@ segmentation, non-linear skb, and long-duration soak are deferred. Failure
 injection remains separate integration work. Queue pressure and stream modes
 currently use the IPv4 topology.
 
-The checked-in corpus has 93 cases: 51 for the A-tier DNS, SSH, WireGuard,
+The checked-in corpus has 123 cases: 51 for the A-tier DNS, SSH, WireGuard,
 STUN/TURN, and BitTorrent subsets, 31 positive/negative cases for the 12
-B-tier text, database, IoT, RDP, and SMB native machines, and 11 HTTP Host cases for
-the static YouTube, Netflix, and Telegram application classifier.
+B-tier text, database, IoT, RDP, and SMB native machines, 28 HTTP Host/App
+parser cases for the nine fixed applications, and 13 nDPI-derived DingTalk,
+QQ/OICQ, and iQIYI native application cases.
 
 Current fixtures:
 
 - `cases/domain-apps.cases`: static application exact/suffix matching, hostname
-  normalization, root/subdomain acceptance, and label-boundary negatives.
+  normalization, root/subdomain acceptance, label-boundary negatives, and
+  bounded HTTP App parser request/reply boundaries.
+
+- `cases/mobile-apps.cases`: DingTalk TCP structure, QQ fixed UDP/OICQ forms,
+  iQIYI UDP `PPStream`, both evidence directions, and length/constant/keyword
+  negatives.
 
 - `cases/dns-ssh.cases`: DNS UDP/TCP original/reply, compressed question,
   malformed pointer/header/length and wrong-port negatives; SSH original/reply

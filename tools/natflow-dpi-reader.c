@@ -97,6 +97,12 @@ static const char *source_name(uint32_t flags)
 		return "rdp";
 	case NATFLOW_DPI_EVENT_SOURCE_SMB:
 		return "smb";
+	case NATFLOW_DPI_EVENT_SOURCE_DINGTALK:
+		return "dingtalk";
+	case NATFLOW_DPI_EVENT_SOURCE_QQ:
+		return "qq";
+	case NATFLOW_DPI_EVENT_SOURCE_IQIYI:
+		return "iqiyi";
 	default:
 		return "unknown";
 	}
