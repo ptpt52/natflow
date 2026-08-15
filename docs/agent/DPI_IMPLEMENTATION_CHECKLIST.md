@@ -46,6 +46,9 @@ M0/M1 期间必须保持：
 - detector 必须声明 `ORIGINAL_ONLY`、`REPLY_ONLY`、`EITHER` 或 `BOTH`。一个方向未命中不能让 `EITHER`/`BOTH` detector 或整个 DPI packet consumer 提前终态。
 - 只有等待方向或后续 packet 的 detector 才启用 bounded context；等待时设置 `NF_FF_DPI_USE`，match、已有 app、FIN/RST 或双向 packet/byte budget 耗尽时清除。不使用时间 deadline，所需方向始终无 payload 时允许 context 保留到 conntrack 结束。
 - context 存续期间可同时设置 `NF_FF_L7_USE | NF_FF_DPI_USE`，但 arm/terminal 顺序不能出现 context 活跃而两个 busy bit 都未设置的窗口；已有非 0 `app_id` 时 packet consumer 应以 `APP_EXISTS` 终态。
+- 同一 conntrack 的 detector、compact automaton、双向 packet/byte budget、`app_id`、context owner 和 DPI packet done 必须由 `ct->lock` 串行；terminal 必须在解锁前完成 app 提交、owner clear 和 done 写入，不能留下终态后重新 arm context 的窗口。事件分配和入队应放在解锁后，避免扩大 conntrack 临界区。
+- IPv4/IPv6 TCP 只有 DPI packet consumer 激活时，只能 pull detector 需要的有界 payload 前缀；只有 URL 或 DPI domain host consumer 激活时才允许按现有 HTTP/TLS producer 需求线性化完整 TCP payload。
+- IPv4、IPv6 和 bridge FORWARD hook 必须沿用 `IPS_NATFLOW_SKIP_BRIDGE` 去重，避免 `br_netfilter` 让同一包重复消费预算、推进 automaton 或累计统计；修改 hook 兼容包装时要覆盖旧内核 hook 签名。
 - reply 首期只进入 DPI packet consumer；URL logger、Host ACL、HTTP/TLS/QUIC host producer 和 DNS QNAME domain 保持 original-only，除非后续单独修改并审核其外部行为。
 
 ## DPI ABI 基线
@@ -55,7 +58,7 @@ M0/M1 期间必须保持：
 - `/dev/natflow_dpi_ctl` 的命令、错误返回和状态输出。
 - `/dev/natflow_dpi_queue` 的固定事件头、长度、版本、短 buffer 行为、poll/read 语义。
 - DPI event 的 original tuple 必须保持稳定连接身份，`evidence_dir` 独立记录实际命中 packet 的 original/reply 方向，不能复用或改写 `tuple_dir`。
-- `matches*` 必须在 queue reader/cache 判断前统计，`events*` 只统计成功入队，reader/cache 未启用进入 `events_suppressed`，分配失败或队列满进入 `events_lost`；`events_clear` 必须重置全部 shadow counters。
+- `matches*` 必须在 queue reader/cache 判断前统计，`events*` 只统计成功入队，reader/cache 未启用进入 `events_suppressed`，分配失败或队列满进入 `events_lost`；`events_clear` 必须先暂停 producer 并等待在途 Netfilter hook 退出，再清队列和全部 shadow counters，最后恢复原 enable 状态。
 - context counters 只记录累计 arm/clear/abort 转换；没有 conntrack destroy 回调时不得发布不准确的 active-context gauge，也不得把 arm/clear 差值描述为当前 occupancy。
 - `app_id=0` 永远表示 unknown、未命中、未分类或尚无结果。
 - DPI 默认关闭、fail-open、audit-only；drop/reset/QoS 不进入 M1。

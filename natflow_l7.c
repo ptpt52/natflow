@@ -939,8 +939,8 @@ unsigned char *natflow_l7_quic_cache_detach6(const struct in6_addr *src_ip,
 #define NATFLOW_L7_HOOK_ARGS \
 	unsigned int hooknum, const struct nf_hook_state *state, struct sk_buff *skb
 #define NATFLOW_L7_HOOK_CALL_ARGS hooknum, state, skb
-#define NATFLOW_L7_HOOK_CALL(hooknum, skb, state, in, out) \
-	natflow_l7_hook_common(hooknum, state, skb)
+#define NATFLOW_L7_HOOK_CALL(hooknum, skb, state, in, out, pf) \
+	natflow_l7_hook_common(hooknum, state, skb, pf)
 #define NATFLOW_L7_DISPATCH_PACKET_VIEW(view, consumer_mask) \
 	natflow_l7_dispatch_packet_view(hooknum, state, view, consumer_mask)
 #define NATFLOW_L7_DISPATCH_HOST_VIEW(view, host_view, reply_dev, bridge) \
@@ -950,8 +950,8 @@ unsigned char *natflow_l7_quic_cache_detach6(const struct in6_addr *src_ip,
 	unsigned int hooknum, const struct net_device *in, \
 	const struct net_device *out, struct sk_buff *skb
 #define NATFLOW_L7_HOOK_CALL_ARGS hooknum, in, out, skb
-#define NATFLOW_L7_HOOK_CALL(hooknum, skb, state, in, out) \
-	natflow_l7_hook_common(hooknum, in, out, skb)
+#define NATFLOW_L7_HOOK_CALL(hooknum, skb, state, in, out, pf) \
+	natflow_l7_hook_common(hooknum, in, out, skb, pf)
 #define NATFLOW_L7_DISPATCH_PACKET_VIEW(view, consumer_mask) \
 	natflow_l7_dispatch_packet_view(hooknum, in, out, view, consumer_mask)
 #define NATFLOW_L7_DISPATCH_HOST_VIEW(view, host_view, reply_dev, bridge) \
@@ -1791,7 +1791,10 @@ static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_HOOK_ARGS,
 	flow.l3num = AF_INET;
 	flow.data_len = data_len;
 	if (data_len > 0 &&
-	        !skb_try_make_writable(skb, ihl + tcp_hlen + data_len)) {
+	        natflow_l7_host_consumer_mask(view->consumer_mask) == 0) {
+		flow.data = view->payload;
+	} else if (data_len > 0 &&
+	           !skb_try_make_writable(skb, ihl + tcp_hlen + data_len)) {
 		iph = ip_hdr(skb);
 		ihl = iph->ihl * 4;
 		l4 = (void *)iph + ihl;
@@ -1887,8 +1890,11 @@ static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_HOOK_ARGS,
 	flow.l3num = AF_INET6;
 	flow.data_len = data_len;
 	if (data_len > 0 &&
-	        !skb_try_make_writable(skb, sizeof(struct ipv6hdr) +
-	                               tcp_hlen + data_len)) {
+	        natflow_l7_host_consumer_mask(view->consumer_mask) == 0) {
+		flow.data = view->payload;
+	} else if (data_len > 0 &&
+	           !skb_try_make_writable(skb, sizeof(struct ipv6hdr) +
+	                                  tcp_hlen + data_len)) {
 		ip6h = ipv6_hdr(skb);
 		l4 = (void *)ip6h + sizeof(struct ipv6hdr);
 		tcp_hlen = TCPH(l4)->doff * 4;
@@ -2046,7 +2052,7 @@ static unsigned int natflow_l7_dispatch_packet_view(unsigned int hooknum,
 }
 
 static unsigned int natflow_l7_consume_common(NATFLOW_L7_HOOK_ARGS,
-        unsigned int consumer_mask)
+        unsigned int consumer_mask, unsigned int pf)
 {
 	struct natflow_l7_packet_view view;
 	enum ip_conntrack_info ctinfo;
@@ -2089,6 +2095,12 @@ static unsigned int natflow_l7_consume_common(NATFLOW_L7_HOOK_ARGS,
 		ret = NF_DROP;
 		goto out;
 	}
+	if (pf != NFPROTO_BRIDGE && !(ct->status & IPS_NATFLOW_SKIP_BRIDGE)) {
+		set_bit(IPS_NATFLOW_SKIP_BRIDGE_BIT, &ct->status);
+	} else if (pf == NFPROTO_BRIDGE &&
+	           (ct->status & IPS_NATFLOW_SKIP_BRIDGE)) {
+		goto out;
+	}
 	view.direction = CTINFO2DIR(ctinfo) == IP_CT_DIR_REPLY ?
 	                 NATFLOW_L7_DIR_REPLY : NATFLOW_L7_DIR_ORIGINAL;
 	if (view.direction == NATFLOW_L7_DIR_REPLY) {
@@ -2129,10 +2141,11 @@ out:
 	return ret;
 }
 
-static unsigned int natflow_l7_hook_common(NATFLOW_L7_HOOK_ARGS)
+static unsigned int natflow_l7_hook_common(NATFLOW_L7_HOOK_ARGS,
+        unsigned int pf)
 {
 	return natflow_l7_consume_common(NATFLOW_L7_HOOK_CALL_ARGS,
-	                                 natflow_l7_active_consumer_mask());
+	                                 natflow_l7_active_consumer_mask(), pf);
 }
 
 #if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
@@ -2142,7 +2155,17 @@ static unsigned int natflow_l7_hook(unsigned int hooknum,
                                     const struct net_device *out,
                                     int (*okfn)(struct sk_buff *))
 {
-	return NATFLOW_L7_HOOK_CALL(hooknum, skb, NULL, in, out);
+	return NATFLOW_L7_HOOK_CALL(hooknum, skb, NULL, in, out, PF_INET);
+}
+
+static unsigned int natflow_l7_bridge_hook(unsigned int hooknum,
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
+{
+	return NATFLOW_L7_HOOK_CALL(hooknum, skb, NULL, in, out,
+	                            NFPROTO_BRIDGE);
 }
 #elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 static unsigned int natflow_l7_hook(const struct nf_hook_ops *ops,
@@ -2151,7 +2174,7 @@ static unsigned int natflow_l7_hook(const struct nf_hook_ops *ops,
                                     const struct net_device *out,
                                     int (*okfn)(struct sk_buff *))
 {
-	return NATFLOW_L7_HOOK_CALL(ops->hooknum, skb, NULL, in, out);
+	return NATFLOW_L7_HOOK_CALL(ops->hooknum, skb, NULL, in, out, ops->pf);
 }
 #elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 static unsigned int natflow_l7_hook(const struct nf_hook_ops *ops,
@@ -2159,7 +2182,7 @@ static unsigned int natflow_l7_hook(const struct nf_hook_ops *ops,
                                     const struct nf_hook_state *state)
 {
 	return NATFLOW_L7_HOOK_CALL(state->hook, skb, state, state->in,
-	                            state->out);
+	                            state->out, state->pf);
 }
 #else
 static unsigned int natflow_l7_hook(void *priv,
@@ -2168,9 +2191,10 @@ static unsigned int natflow_l7_hook(void *priv,
 {
 #if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
 	return NATFLOW_L7_HOOK_CALL(state->hook, skb, state, state->in,
-	                            state->out);
+	                            state->out, state->pf);
 #else
-	return NATFLOW_L7_HOOK_CALL(state->hook, skb, state, state->in, NULL);
+	return NATFLOW_L7_HOOK_CALL(state->hook, skb, state, state->in, NULL,
+	                            state->pf);
 #endif
 }
 #endif
@@ -2198,7 +2222,12 @@ static struct nf_hook_ops natflow_l7_hooks[] = {
 #if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
 		.owner = THIS_MODULE,
 #endif
-		.hook = natflow_l7_hook,
+		.hook =
+#if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
+		natflow_l7_bridge_hook,
+#else
+		natflow_l7_hook,
+#endif
 		.pf = NFPROTO_BRIDGE,
 		.hooknum = NF_INET_FORWARD,
 		.priority = NF_IP_PRI_FILTER + 5,

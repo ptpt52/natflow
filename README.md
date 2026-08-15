@@ -991,9 +991,11 @@ int main(void)
 
 运行时 `enable=0` 只改变后续数据包看到的 DPI consumer，不扫描或清理已经标记为 L7 处理中的连接，也不会重新武装已经设置 L7_SKIP 的连接。已标记连接可以由后续数据包自然完成，也可以保留原 L7 状态直到 conntrack 生命周期结束；配置切换不保证立即释放这些既有连接的 fast path gate。
 
-protocol detector 未命中时会在 `natflow_t` 尾部保存 8 字节瞬态双向预算 context，并设置 `NF_FF_DPI_USE`；`app_id` 仍是唯一分类结果。context 内的 16 位 `dpi_automaton` 在 discovery 阶段保存 detector class mask，机器认领后原子保存 machine/state。当前每方向最多观察 4 个 payload 包，不设置时间 deadline。所需方向始终没有 payload 时，该 context 可以保留到 conntrack 生命周期结束。
+protocol detector 未命中时会在 `natflow_t` 尾部保存 8 字节瞬态双向预算 context，并设置 `NF_FF_DPI_USE`；`app_id` 仍是唯一分类结果。context 内的 16 位 `dpi_automaton` 在 discovery 阶段保存 detector class mask，机器认领后原子保存 machine/state。同一 conntrack 的 packet detector、automaton、双向预算和 app/context 终态由 conntrack lock 串行；任何固定 app 终态都会在同一临界区清除 context 并写 DPI packet done，避免终态后重新武装 owner bit。当前每方向硬限制最多观察 4 个 payload 包，不设置时间 deadline。所需方向始终没有 payload 时，该 context 可以保留到 conntrack 生命周期结束。
 
 reply 方向只进入 DPI packet consumer；URL logger、Host ACL、HTTP/TLS/QUIC host 和 DNS QNAME domain 仍只处理 original。DNS reply 必须通过 response header 和第一问结构校验，其他 protocol detector 也必须匹配 payload 证据，端口不会直接产生分类。
+
+TCP 只有 DPI packet consumer 时只 pull detector 实际需要的有界 payload 前缀，当前普通 payload detector 最多 96 字节，不会为了 packet-only 分类线性化完整 TCP payload；URL 或 DPI domain host consumer 激活时仍按 HTTP/TLS producer 的既有需求准备完整 payload。
 
 当前 DPI 仍是 audit-only：不执行 drop/reset/QoS，不覆盖 Host ACL、认证或 conntrack drop 结果；未命中、禁用、无对应 parser 或无法创建 natflow session 时 fail-open。L7 shared hook 在解析前会统一调用 `natflow_session_in()` 确保 URL/DPI 共享同一个 `natflow_t.status` 终态存储；若 confirmed、内存或布局限制导致 session 不存在，则跳过本次 L7 解析，不输出无状态 DPI match event，也不写入 `app_id`。protocol-only 命中要求 `app_id=0`，用于避免每包重复事件。
 
@@ -1008,7 +1010,7 @@ echo events_clear >/dev/natflow_dpi_ctl
 
 规则说明：
 
-- `events_clear` 清空 `/dev/natflow_dpi_queue` 中已排队事件，并把全部 match、event、domain、packet、context 和 `proto_*` shadow counters 归零；不改变 enable 状态或固定 catalog revision。持续流量下可能立刻产生新计数和事件，单项测试前建议先暂停流量或临时 `enable=0`。
+- `events_clear` 会临时暂停 DPI producer、等待在途 Netfilter hook 退出，再清空 `/dev/natflow_dpi_queue` 中已排队事件并把全部 match、event、domain、packet、context 和 `proto_*` shadow counters 归零，最后恢复原 enable 状态；固定 catalog revision 不变。复位窗口内经过的包不做 DPI，命令返回后旧 producer 不会再写入新统计，但持续流量可能立即产生新的计数和事件。
 - `rules_begin`、`domain ...`、`proto ...`、`rules_commit`、`rules_abort` 和 `rules_clear` 已全部删除，写入返回 `-EINVAL`。
 - Host/SNI 会转小写、去掉末尾点，并校验 DNS label；HTTP Host 中的端口由 URL logger normalize 时剥离。静态 matcher 固定使用 exact 优先、suffix 长度降序和 label-boundary 语义。
 - `kind=suffix` 同时匹配完全相同的 host 和带点边界的子域名，例如规则 `example.net` 可匹配 `example.net` 与 `www.example.net`。
@@ -1017,8 +1019,8 @@ echo events_clear >/dev/natflow_dpi_ctl
 - DNS QNAME detector：original direction TCP/UDP 53 标准 query 的第一问 QNAME 会经过同一静态 matcher，但只增加 `dns_app_intents`，不会把查询目标应用写入 DNS 连接的 `app_id`；该连接仍由 DNS protocol detector 终态为 DNS。parser 支持 compression pointer，最多跳转 16 次并拒绝指针环、越界和展开后超长名称。reply 只用于 DNS protocol 证据。
 - 端口只用于选择有界解析候选和 payload pull budget，不直接写入 `app_id`；当前只有 TCP/UDP 53 会触发 DNS 候选解析，TCP 22 和 UDP 51820 不再作为 SSH/WireGuard 的独立分类证据。
 - 有界 payload detector：TCP 任一方向的 SSH banner 识别 `SSH-<version>-` identification string；WireGuard、STUN/TURN 和 BitTorrent detector 也按 metadata 在任一方向匹配直接 payload 证据。uTP 会校验 version/type、最多 4 段的有界 extension chain；为避免与 WireGuard type 1 重叠，DATA packet 的 connection ID 为 0 时不分类。DPI 启用后执行全部内置 detector，但每包仍只运行当前 L4、方向和候选 mask 允许且预算未耗尽的 parser。
-- B 级 detector 仍为 audit-only：MQTT 识别 original CONNECT，RESP/PostgreSQL 识别 original request/startup，MySQL 只识别 reply protocol-v10 greeting，SMB 识别二进制首包；RDP 由首台 compact automaton 认领，只有 original X.224 Connection Request 与 reply Connection Confirm 都通过 TPKT/X.224 结构校验后才终态，两个事实允许反序或并发到达，重复事实幂等。FTP/SMTP/POP3/IMAP/SIP/RTSP 只接受协议专属命令或 request/status line。`USER` 等跨协议歧义命令、单独端口和普通服务 banner 不产生分类。12 个协议按文本、数据库和二进制三组复用静态 detector metadata，使 8 字节 conntrack 瞬态 context 不扩容。
-- `cat /dev/natflow_dpi_ctl` 中，`matches`/`matches_*` 统计全部规则命中，不依赖 queue reader；`events`/`events_*` 只统计成功入队，`events_suppressed` 表示没有 reader 或 `cache=0`，`events_lost` 表示分配失败或队列已满。稳定采样区间内应满足 `matches = events + events_suppressed + events_lost`；并发读取或执行 `events_clear` 时允许短暂不一致。
+- B 级 detector 仍为 audit-only：MQTT 识别 original CONNECT，RESP/PostgreSQL 识别 original request/startup，MySQL 只识别 reply protocol-v10 greeting，SMB 识别二进制首包；带 NBSS 头的 SMB1/2 必须声明至少覆盖对应 32/64 字节 SMB header 的长度。RDP 由首台 compact automaton 认领，只有 original X.224 Connection Request 与 reply Connection Confirm 都通过 TPKT/X.224 结构校验后才终态，两个事实允许反序或并发到达，重复事实幂等。FTP/SMTP/POP3/IMAP/SIP/RTSP 只接受协议专属命令或 request/status line。`USER` 等跨协议歧义命令、单独端口和普通服务 banner 不产生分类。12 个协议按文本、数据库和二进制三组复用静态 detector metadata，使 8 字节 conntrack 瞬态 context 不扩容。
+- `cat /dev/natflow_dpi_ctl` 中，`matches`/`matches_*` 统计全部分类终态，不依赖 queue reader；`events`/`events_*` 只统计成功入队，`events_suppressed` 表示没有 reader 或 `cache=0`，`events_lost` 表示分配失败或队列已满。稳定采样区间内应满足 `matches = events + events_suppressed + events_lost`；新的并发 producer 在 match 计数和最终入队结果之间仍允许短暂不一致，`events_clear` 返回后不会混入复位前 producer 的延迟结果。
 - `domain_lookups`/`domain_matches` 统计 hostname 静态/迁移期规则查找和产生应用终态的命中；`dns_app_intents` 统计 QNAME 命中静态应用域名但未写 resident app 的次数；`packet_inspect_original/reply` 按实际进入有界 protocol parser 的 packet 计数，每包最多增加一次，不按 detector 个数累加；`packet_match_original/reply` 统计直接协议证据方向。
 - `context_armed` 和各 `context_cleared_*` 记录 bounded context 的累计状态转换；`context_aborted` 表示 L7 强制终态清理。conntrack 自然销毁不会回调 DPI，因此这些累计值不能相减推导当前活跃 context 数。`proto_no_session` 和 `proto_app_exists` 解释 protocol detector 未产生新分类结果的原因；固定映射不存在 `proto_no_rule`。
 

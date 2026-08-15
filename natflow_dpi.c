@@ -1,5 +1,5 @@
 /*
- * Natflow DPI control, domain rules, and event queue.
+ * Natflow DPI control, fixed classifiers, and event queue.
  */
 #include <linux/atomic.h>
 #include <linux/cdev.h>
@@ -428,6 +428,10 @@ static atomic64_t natflow_dpi_proto_app_exists;
 static bool natflow_dpi_commit_app(struct nf_conn *ct,
                                    const struct natflow_dpi_app_meta *app,
                                    unsigned int source, unsigned char direction);
+static bool natflow_dpi_context_clear_locked(natflow_t *nf);
+static bool natflow_dpi_commit_app_locked(natflow_t *nf,
+        const struct natflow_dpi_app_meta *app, bool *app_exists,
+        bool *context_cleared);
 
 static const char *natflow_dpi_state_name(unsigned int state)
 {
@@ -666,8 +670,14 @@ static void natflow_dpi_counters_clear(void)
 
 static void natflow_dpi_events_clear(void)
 {
+	unsigned int state = READ_ONCE(natflow_dpi_state);
+
+	/* Producers run from Netfilter hooks; drain them before resetting counters. */
+	WRITE_ONCE(natflow_dpi_state, NATFLOW_DPI_STATE_DISABLED);
+	synchronize_net();
 	natflow_dpi_event_purge();
 	natflow_dpi_counters_clear();
+	WRITE_ONCE(natflow_dpi_state, state);
 	wake_up_interruptible(&natflow_dpi_wait);
 }
 
@@ -826,6 +836,9 @@ static bool natflow_dpi_commit_app(struct nf_conn *ct,
                                    unsigned char direction)
 {
 	natflow_t *nf;
+	bool committed;
+	bool app_exists;
+	bool context_cleared;
 
 	if (!ct || !app || app->app_id == NATFLOW_DPI_APP_UNKNOWN || source == 0)
 		return false;
@@ -835,36 +848,25 @@ static bool natflow_dpi_commit_app(struct nf_conn *ct,
 		atomic64_inc(&natflow_dpi_proto_no_session);
 		return false;
 	}
-	if (READ_ONCE(nf->app_id) != 0) {
+
+	spin_lock_bh(&ct->lock);
+	committed = natflow_dpi_commit_app_locked(nf, app, &app_exists,
+	            &context_cleared);
+	spin_unlock_bh(&ct->lock);
+
+	if (context_cleared)
+		atomic64_inc(&natflow_dpi_context_cleared_app);
+	if (app_exists) {
 		atomic64_inc(&natflow_dpi_proto_app_exists);
 		return false;
 	}
-	if (cmpxchg(&nf->app_id, NATFLOW_DPI_APP_UNKNOWN, app->app_id) !=
-	        NATFLOW_DPI_APP_UNKNOWN) {
-		atomic64_inc(&natflow_dpi_proto_app_exists);
+	if (!committed)
 		return false;
-	}
 
 	natflow_dpi_event_queue(ct, NATFLOW_DPI_REASON_MATCHED,
 	                        NATFLOW_DPI_CATALOG_REVISION, app->app_id,
 	                        app->category_id, 0, source, direction);
 	return true;
-}
-
-static void natflow_dpi_classify_proto(struct nf_conn *ct, unsigned int proto,
-                                       unsigned char direction)
-{
-	const struct natflow_dpi_app_meta *app;
-	unsigned int source;
-
-	if (!ct || proto == 0)
-		return;
-	if (READ_ONCE(natflow_dpi_state) != NATFLOW_DPI_STATE_ENABLED)
-		return;
-
-	source = natflow_dpi_proto_event_source(proto);
-	app = natflow_dpi_app_by_proto(proto);
-	natflow_dpi_commit_app(ct, app, source, direction);
 }
 
 static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
@@ -1817,20 +1819,25 @@ static unsigned int natflow_dpi_detect_smb(const unsigned char *data,
         unsigned int payload_len, unsigned int inspect_len)
 {
 	unsigned int offset = 0;
-	unsigned int nbss_len;
+	unsigned int nbss_len = 0;
+	bool has_nbss = false;
 
 	if (inspect_len >= 8 && data[0] == 0) {
 		nbss_len = ((unsigned int)data[1] << 16) |
 		           ((unsigned int)data[2] << 8) | data[3];
-		if (nbss_len <= payload_len - 4)
-			offset = 4;
+		if (nbss_len > payload_len - 4)
+			return 0;
+		offset = 4;
+		has_nbss = true;
 	}
 	if (inspect_len - offset >= 64 && data[offset] == 0xfe &&
 	        memcmp(data + offset + 1, "SMB", 3) == 0 &&
-	        data[offset + 4] == 64 && data[offset + 5] == 0)
+	        data[offset + 4] == 64 && data[offset + 5] == 0 &&
+	        (!has_nbss || nbss_len >= 64))
 		return NATFLOW_DPI_PROTO_SMB;
 	if (inspect_len - offset >= 32 && data[offset] == 0xff &&
-	        memcmp(data + offset + 1, "SMB", 3) == 0)
+	        memcmp(data + offset + 1, "SMB", 3) == 0 &&
+	        (!has_nbss || nbss_len >= 32))
 		return NATFLOW_DPI_PROTO_SMB;
 	return 0;
 }
@@ -2088,7 +2095,7 @@ static int natflow_dpi_direction_index(unsigned char direction)
 	return -EINVAL;
 }
 
-static bool natflow_dpi_context_clear(natflow_t *nf)
+static bool natflow_dpi_context_clear_locked(natflow_t *nf)
 {
 	bool active;
 
@@ -2106,14 +2113,47 @@ static bool natflow_dpi_context_clear(natflow_t *nf)
 	return active;
 }
 
+static bool natflow_dpi_commit_app_locked(natflow_t *nf,
+        const struct natflow_dpi_app_meta *app, bool *app_exists,
+        bool *context_cleared)
+{
+	bool committed = false;
+
+	*app_exists = false;
+	*context_cleared = false;
+	if (!nf || !app || app->app_id == NATFLOW_DPI_APP_UNKNOWN)
+		return false;
+
+	if (READ_ONCE(nf->app_id) != NATFLOW_DPI_APP_UNKNOWN) {
+		*app_exists = true;
+	} else if (cmpxchg(&nf->app_id, NATFLOW_DPI_APP_UNKNOWN, app->app_id) ==
+	           NATFLOW_DPI_APP_UNKNOWN) {
+		committed = true;
+	} else {
+		*app_exists = true;
+	}
+	if (committed || *app_exists) {
+		*context_cleared = natflow_dpi_context_clear_locked(nf);
+		simple_set_bit(NF_FF_L7_DPI_PACKET_DONE_BIT, &nf->status);
+	}
+	return committed;
+}
+
 void natflow_dpi_packet_context_abort(struct nf_conn *ct)
 {
 	natflow_t *nf;
+	bool active;
 
 	if (!ct)
 		return;
 	nf = natflow_session_get(ct);
-	if (nf && natflow_dpi_context_clear(nf))
+	if (!nf)
+		return;
+
+	spin_lock_bh(&ct->lock);
+	active = natflow_dpi_context_clear_locked(nf);
+	spin_unlock_bh(&ct->lock);
+	if (active)
 		atomic64_inc(&natflow_dpi_context_aborted);
 }
 
@@ -2280,6 +2320,9 @@ static enum natflow_dpi_context_result natflow_dpi_context_observe(
 	int dir;
 
 	if (!nf || detector_mask == 0)
+		return NATFLOW_DPI_CONTEXT_EMPTY;
+	if (READ_ONCE(nf->app_id) != 0 ||
+	        (READ_ONCE(nf->status) & NF_FF_L7_DPI_PACKET_DONE))
 		return NATFLOW_DPI_CONTEXT_EMPTY;
 	dir = natflow_dpi_direction_index(direction);
 	if (dir < 0)
@@ -2554,6 +2597,7 @@ unsigned int natflow_dpi_consume_packet_view(
     const struct natflow_l7_packet_view *view, unsigned int consumer_mask)
 {
 	const unsigned char *payload;
+	const struct natflow_dpi_app_meta *matched_app = NULL;
 	natflow_t *nf;
 	unsigned short automaton;
 	unsigned int payload_linear_len;
@@ -2565,12 +2609,16 @@ unsigned int natflow_dpi_consume_packet_view(
 	unsigned int done_mask = 0;
 	unsigned int proto_mask;
 	unsigned int proto = 0;
+	unsigned int matched_source = 0;
 	unsigned int rdp_evidence = 0;
 	enum natflow_dpi_automaton_result automaton_result =
 	    NATFLOW_DPI_AUTOMATON_UNCLAIMED;
 	enum natflow_dpi_context_result context_result;
 	bool inspected = false;
 	bool dns_match = false;
+	bool app_committed = false;
+	bool app_exists = false;
+	bool context_cleared = false;
 	int dir;
 	__be16 server_port;
 
@@ -2635,35 +2683,37 @@ unsigned int natflow_dpi_consume_packet_view(
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
 		return done_mask;
 	}
+
+	spin_lock_bh(&view->ct->lock);
 	if (READ_ONCE(nf->app_id) != 0) {
-		if (natflow_dpi_context_clear(nf))
+		if (natflow_dpi_context_clear_locked(nf))
 			atomic64_inc(&natflow_dpi_context_cleared_app);
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
-		return done_mask;
+		goto out_unlock;
 	}
 	if (natflow_dpi_packet_is_terminal(view)) {
-		if (natflow_dpi_context_clear(nf))
+		if (natflow_dpi_context_clear_locked(nf))
 			atomic64_inc(&natflow_dpi_context_cleared_transport);
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
-		return done_mask;
+		goto out_unlock;
 	}
 
 	detector_mask = natflow_dpi_detector_candidate_mask(view->l4proto,
 	                server_port, proto_mask);
 	if (detector_mask == 0) {
-		if (natflow_dpi_context_clear(nf))
+		if (natflow_dpi_context_clear_locked(nf))
 			atomic64_inc(&natflow_dpi_context_cleared_no_candidate);
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
-		return done_mask;
+		goto out_unlock;
 	}
 	automaton = READ_ONCE(nf->dpi_automaton);
 	if (natflow_dpi_automaton_claimed(automaton)) {
 		if (natflow_dpi_automaton_machine(automaton) !=
 		        NATFLOW_DPI_AUTOMATON_MACHINE_RDP) {
-			if (natflow_dpi_context_clear(nf))
+			if (natflow_dpi_context_clear_locked(nf))
 				atomic64_inc(&natflow_dpi_context_cleared_no_candidate);
 			done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
-			return done_mask;
+			goto out_unlock;
 		}
 		inspect_detector_mask = natflow_dpi_context_direction_detector_mask(
 		                            nf,
@@ -2719,30 +2769,33 @@ unsigned int natflow_dpi_consume_packet_view(
 
 	if (proto) {
 		atomic64_inc(&natflow_dpi_packet_matches[dir]);
-		natflow_dpi_classify_proto(view->ct, proto, view->direction);
-		if (natflow_dpi_context_clear(nf))
+		matched_app = natflow_dpi_app_by_proto(proto);
+		matched_source = natflow_dpi_proto_event_source(proto);
+		app_committed = natflow_dpi_commit_app_locked(nf, matched_app,
+		                &app_exists, &context_cleared);
+		if (context_cleared)
 			atomic64_inc(&natflow_dpi_context_cleared_match);
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
-		return done_mask;
+		goto out_unlock;
 	}
 	if (automaton_result == NATFLOW_DPI_AUTOMATON_EXCLUDED) {
-		if (natflow_dpi_context_clear(nf))
+		if (natflow_dpi_context_clear_locked(nf))
 			atomic64_inc(&natflow_dpi_context_cleared_no_candidate);
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
-		return done_mask;
+		goto out_unlock;
 	}
 	if (READ_ONCE(nf->app_id) != 0) {
-		if (natflow_dpi_context_clear(nf))
+		if (natflow_dpi_context_clear_locked(nf))
 			atomic64_inc(&natflow_dpi_context_cleared_app);
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
-		return done_mask;
+		goto out_unlock;
 	}
 
 	context_result = natflow_dpi_context_observe(nf, view->direction,
 	                 detector_mask, inspect_detector_mask,
 	                 view->payload_len, payload_linear_len);
 	if (context_result != NATFLOW_DPI_CONTEXT_WAIT) {
-		if (natflow_dpi_context_clear(nf)) {
+		if (natflow_dpi_context_clear_locked(nf)) {
 			if (context_result == NATFLOW_DPI_CONTEXT_EXHAUSTED)
 				atomic64_inc(&natflow_dpi_context_cleared_budget);
 			else
@@ -2750,6 +2803,18 @@ unsigned int natflow_dpi_consume_packet_view(
 		}
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
 	}
+
+out_unlock:
+	if (done_mask & NATFLOW_L7_CONSUMER_DPI_PACKET)
+		simple_set_bit(NF_FF_L7_DPI_PACKET_DONE_BIT, &nf->status);
+	spin_unlock_bh(&view->ct->lock);
+	if (app_exists)
+		atomic64_inc(&natflow_dpi_proto_app_exists);
+	if (app_committed)
+		natflow_dpi_event_queue(view->ct, NATFLOW_DPI_REASON_MATCHED,
+		                        NATFLOW_DPI_CATALOG_REVISION,
+		                        matched_app->app_id, matched_app->category_id,
+		                        0, matched_source, view->direction);
 	return done_mask;
 }
 

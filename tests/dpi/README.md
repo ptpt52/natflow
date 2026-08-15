@@ -83,8 +83,8 @@ segmentation, non-linear skb, and long-duration soak are deferred. Failure
 injection remains separate integration work. Queue pressure and stream modes
 currently use the IPv4 topology.
 
-The checked-in corpus has 92 cases: 51 for the A-tier DNS, SSH, WireGuard,
-STUN/TURN, and BitTorrent subsets, 30 positive/negative cases for the 12
+The checked-in corpus has 93 cases: 51 for the A-tier DNS, SSH, WireGuard,
+STUN/TURN, and BitTorrent subsets, 31 positive/negative cases for the 12
 B-tier text, database, IoT, RDP, and SMB detectors, and 11 HTTP Host cases for
 the static YouTube, Netflix, and Telegram application classifier.
 
@@ -101,4 +101,5 @@ Current fixtures:
   BitTorrent TCP handshake, UDP uTP and DHT positive/negative cases.
 - `cases/b-tier.cases`: single-packet B-tier signatures plus RDP compact
   automaton sequences covering ordered, reversed, concurrent, retransmitted,
-  budget-exhausted, transport-end, and malformed-confirm flows.
+  budget-exhausted, transport-end, and malformed-confirm flows; SMB negatives
+  include an NBSS header whose declared payload is too short for SMB2.
