@@ -128,7 +128,7 @@ GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链降到 17
 
 ### P2-4：设计并开发 DPI 能力
 
-状态：Hardcoded Classifier Redesign Accepted，M1 Done
+状态：Hardcoded Classifier Redesign Accepted，M2 Done
 
 目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，先统一 L7 parser/context/consumer 生命周期，再实现轻量 DPI 能力，用于协议/应用分类、审计记录和后续策略匹配。
 
@@ -138,11 +138,12 @@ GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链降到 17
 `app_id`；保留 enable、统计和事件观测。迁移必须分阶段进行，不能在 detector、
 控制 ABI、测试和文档未同步时删除现有 ruleset。
 
-当前迁移进度：M0 设计、ADR 和路线图已冻结；M1 已在 `natflow_dpi.h` 固定首批
-18 个协议应用 ID 和 category ID，在 `natflow_dpi.c` 增加静态 metadata catalog
-及模块初始化一致性校验。M1 不改变当前 ruleset 驱动的数据面行为；M2 将把
-protocol detector、active mask、queue 断言和 corpus 一起切换，避免形成一半固定
-ID、一半用户映射的混合语义。
+当前迁移进度：M0 设计、ADR 和路线图已冻结；M1 已固定首批 18 个协议应用 ID、
+category ID 和 metadata catalog；M2 已让 DPI enabled 直接激活全部内置 protocol
+detector，按 proto O(1) 查固定 catalog，并通过 `cmpxchg` 终态提交固定 app/category。
+proto rule、动态 proto mask、命中后 RCU rule lookup 和 `proto_no_rule` 已删除；
+protocol event 使用 catalog revision 和 `rule_id=0`，corpus/queue 工具已同步。domain
+用户 ruleset 暂留到 M3 静态域名应用分类和 M4 控制面清理。
 
 实现进度：M0-M1e 的 shared L7、控制/事件 ABI、A 级 detector、双向 bounded context 和测试工具已完成。M2 已加入 FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB 共 12 个 audit-only detector；它们按文本、数据库、二进制三组复用剩余 detector mask bit，不扩大 8 字节 conntrack 瞬态 context，并有协议专属正反 corpus。当前自动 corpus 共 75 项；生产 shadow 数据和新增 B 级 detector 的真机 IPv4/IPv6 回归尚未完成。
 

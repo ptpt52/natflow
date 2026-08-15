@@ -26,6 +26,7 @@ struct corpus_expectation {
 	unsigned char destination_address[16];
 	const char *queue;
 	unsigned int app_id;
+	unsigned int category_id;
 	unsigned int rule_id;
 	unsigned int source;
 	unsigned int evidence_dir;
@@ -41,7 +42,7 @@ static void usage(FILE *stream, const char *program)
 {
 	fprintf(stream,
 	        "Usage: %s -S src -T dst -P tcp|udp -p port -s source "
-	        "-D original|reply -a app -r rule [-N] [-t ms] "
+	        "-D original|reply -a app -c category -r rule [-N] [-t ms] "
 	        "[-d queue] -- command [args...]\n",
 	        program);
 }
@@ -166,7 +167,9 @@ static void validate_matching_event(
 		fail_message("event direction does not match expectation");
 	if (event->reason != NATFLOW_DPI_REASON_MATCHED ||
 	        event->flags != expectation->source ||
+	        event->generation != NATFLOW_DPI_CATALOG_REVISION ||
 	        event->app_id != expectation->app_id ||
+	        event->category_id != expectation->category_id ||
 	        event->rule_id != expectation->rule_id)
 		fail_message("event classification does not match expectation");
 }
@@ -238,12 +241,13 @@ int main(int argc, char **argv)
 	int have_source = 0;
 	int have_direction = 0;
 	int have_app = 0;
+	int have_category = 0;
 	int have_rule = 0;
 	int option;
 	int fd;
 	int matched;
 
-	while ((option = getopt(argc, argv, "d:S:T:P:p:s:D:a:r:t:Nh")) != -1) {
+	while ((option = getopt(argc, argv, "d:S:T:P:p:s:D:a:c:r:t:Nh")) != -1) {
 		switch (option) {
 		case 'd':
 			expectation.queue = optarg;
@@ -288,6 +292,10 @@ int main(int argc, char **argv)
 		case 'a':
 			have_app = parse_uint(optarg, &expectation.app_id) == 0;
 			break;
+		case 'c':
+			have_category =
+			    parse_uint(optarg, &expectation.category_id) == 0;
+			break;
 		case 'r':
 			have_rule = parse_uint(optarg, &expectation.rule_id) == 0;
 			break;
@@ -311,7 +319,7 @@ int main(int argc, char **argv)
 
 	if (!have_source_address || !have_destination_address ||
 	        !have_protocol || !have_port || !have_source || !have_direction ||
-	        !have_app || !have_rule || optind >= argc) {
+	        !have_app || !have_category || !have_rule || optind >= argc) {
 		usage(stderr, argv[0]);
 		return EXIT_FAILURE;
 	}
@@ -323,7 +331,7 @@ int main(int argc, char **argv)
 	    sizeof(struct in6_addr);
 	if (expectation.source < NATFLOW_DPI_EVENT_SOURCE_HTTP ||
 	        expectation.source > NATFLOW_DPI_EVENT_SOURCE_SMB ||
-	        expectation.app_id == 0 || expectation.rule_id == 0)
+	        expectation.app_id == 0 || expectation.category_id == 0)
 		fail_message("invalid classification expectation");
 
 	fd = open(expectation.queue, O_RDWR | O_CLOEXEC);

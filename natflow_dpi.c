@@ -27,7 +27,6 @@ enum natflow_dpi_state {
 };
 
 #define NATFLOW_DPI_DOMAIN_RULE_MAX 128
-#define NATFLOW_DPI_PROTO_RULE_MAX 32
 #define NATFLOW_DPI_EVENT_TIMESTAMP_NOW ((u64)((jiffies - INITIAL_JIFFIES) / HZ))
 
 enum natflow_dpi_domain_kind {
@@ -57,6 +56,8 @@ enum natflow_dpi_proto {
 };
 
 #define NATFLOW_DPI_PROTO_BIT(proto) (1U << ((proto) - 1))
+#define NATFLOW_DPI_PROTO_ALL_MASK \
+	((1U << NATFLOW_DPI_PROTO_SMB) - 1)
 
 enum natflow_dpi_direction_mode {
 	NATFLOW_DPI_DIR_ORIGINAL_ONLY,
@@ -176,7 +177,7 @@ static int natflow_dpi_app_catalog_validate(void)
 
 		if (app->app_id == NATFLOW_DPI_APP_UNKNOWN ||
 		        app->category_id == NATFLOW_DPI_CATEGORY_UNKNOWN ||
-		        app->proto == 0 || app->proto > NATFLOW_DPI_PROTO_SMB ||
+		        app->proto != i + 1 ||
 		        !app->name || app->name[0] == 0)
 			return -EINVAL;
 
@@ -190,6 +191,17 @@ static int natflow_dpi_app_catalog_validate(void)
 	return 0;
 }
 
+static const struct natflow_dpi_app_meta *
+natflow_dpi_app_by_proto(unsigned int proto)
+{
+	const struct natflow_dpi_app_meta *app;
+
+	if (proto == 0 || proto > ARRAY_SIZE(natflow_dpi_app_catalog))
+		return NULL;
+	app = &natflow_dpi_app_catalog[proto - 1];
+	return app->proto == proto ? app : NULL;
+}
+
 struct natflow_dpi_domain_rule {
 	unsigned int rule_id;
 	unsigned int app_id;
@@ -198,20 +210,11 @@ struct natflow_dpi_domain_rule {
 	unsigned char host[NATFLOW_DPI_HOST_MAX_LEN + 1];
 };
 
-struct natflow_dpi_proto_rule {
-	unsigned int rule_id;
-	unsigned int app_id;
-	unsigned char proto;
-};
-
 struct natflow_dpi_ruleset {
 	struct rcu_head rcu;
 	unsigned int generation;
 	unsigned int domain_count;
-	unsigned int proto_count;
-	unsigned int proto_mask;
 	struct natflow_dpi_domain_rule domain[NATFLOW_DPI_DOMAIN_RULE_MAX];
-	struct natflow_dpi_proto_rule proto[NATFLOW_DPI_PROTO_RULE_MAX];
 };
 
 struct natflow_dpi_event_node {
@@ -248,7 +251,6 @@ static unsigned int natflow_dpi_state = NATFLOW_DPI_STATE_DISABLED;
 static unsigned int natflow_dpi_txn_active;
 static unsigned int natflow_dpi_rules;
 static unsigned int natflow_dpi_domain_rules;
-static unsigned int natflow_dpi_proto_mask;
 static unsigned int natflow_dpi_generation = 1;
 static atomic64_t natflow_dpi_matches;
 static atomic64_t natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_MAX + 1];
@@ -269,7 +271,6 @@ static atomic64_t natflow_dpi_context_cleared_no_candidate;
 static atomic64_t natflow_dpi_context_aborted;
 static atomic64_t natflow_dpi_proto_no_session;
 static atomic64_t natflow_dpi_proto_app_exists;
-static atomic64_t natflow_dpi_proto_no_rule;
 
 static const char *natflow_dpi_state_name(unsigned int state)
 {
@@ -377,7 +378,7 @@ static unsigned int natflow_dpi_ruleset_count(const struct natflow_dpi_ruleset *
 {
 	if (!ruleset)
 		return 0;
-	return ruleset->domain_count + ruleset->proto_count;
+	return ruleset->domain_count;
 }
 
 static bool natflow_dpi_pending_rule_id_exists(unsigned int rule_id)
@@ -391,66 +392,7 @@ static bool natflow_dpi_pending_rule_id_exists(unsigned int rule_id)
 		if (natflow_dpi_pending_ruleset->domain[i].rule_id == rule_id)
 			return true;
 	}
-	for (i = 0; i < natflow_dpi_pending_ruleset->proto_count; i++) {
-		if (natflow_dpi_pending_ruleset->proto[i].rule_id == rule_id)
-			return true;
-	}
 	return false;
-}
-
-static int natflow_dpi_proto_parse(const char *name, unsigned char *proto)
-{
-	if (strcmp(name, "dns") == 0) {
-		*proto = NATFLOW_DPI_PROTO_DNS;
-		return 0;
-	}
-	if (strcmp(name, "ssh") == 0) {
-		*proto = NATFLOW_DPI_PROTO_SSH;
-		return 0;
-	}
-	if (strcmp(name, "wireguard") == 0 || strcmp(name, "wg") == 0) {
-		*proto = NATFLOW_DPI_PROTO_WIREGUARD;
-		return 0;
-	}
-	if (strcmp(name, "stun") == 0) {
-		*proto = NATFLOW_DPI_PROTO_STUN;
-		return 0;
-	}
-	if (strcmp(name, "turn") == 0) {
-		*proto = NATFLOW_DPI_PROTO_TURN;
-		return 0;
-	}
-	if (strcmp(name, "bittorrent") == 0 || strcmp(name, "bt") == 0) {
-		*proto = NATFLOW_DPI_PROTO_BITTORRENT;
-		return 0;
-	}
-	if (strcmp(name, "ftp") == 0)
-		*proto = NATFLOW_DPI_PROTO_FTP;
-	else if (strcmp(name, "smtp") == 0)
-		*proto = NATFLOW_DPI_PROTO_SMTP;
-	else if (strcmp(name, "pop3") == 0)
-		*proto = NATFLOW_DPI_PROTO_POP3;
-	else if (strcmp(name, "imap") == 0)
-		*proto = NATFLOW_DPI_PROTO_IMAP;
-	else if (strcmp(name, "sip") == 0)
-		*proto = NATFLOW_DPI_PROTO_SIP;
-	else if (strcmp(name, "rtsp") == 0)
-		*proto = NATFLOW_DPI_PROTO_RTSP;
-	else if (strcmp(name, "mqtt") == 0)
-		*proto = NATFLOW_DPI_PROTO_MQTT;
-	else if (strcmp(name, "resp") == 0 || strcmp(name, "redis") == 0)
-		*proto = NATFLOW_DPI_PROTO_RESP;
-	else if (strcmp(name, "mysql") == 0)
-		*proto = NATFLOW_DPI_PROTO_MYSQL;
-	else if (strcmp(name, "postgresql") == 0 || strcmp(name, "postgres") == 0)
-		*proto = NATFLOW_DPI_PROTO_POSTGRESQL;
-	else if (strcmp(name, "rdp") == 0)
-		*proto = NATFLOW_DPI_PROTO_RDP;
-	else if (strcmp(name, "smb") == 0)
-		*proto = NATFLOW_DPI_PROTO_SMB;
-	else
-		return -EINVAL;
-	return 0;
 }
 
 static int natflow_dpi_ruleset_domain_add(char *data)
@@ -537,69 +479,6 @@ static int natflow_dpi_ruleset_domain_add(char *data)
 	return 0;
 }
 
-static int natflow_dpi_ruleset_proto_add(char *data)
-{
-	struct natflow_dpi_proto_rule *rule;
-	unsigned int rule_id = 0;
-	unsigned int app_id = 0;
-	unsigned char proto = 0;
-	bool have_id = false;
-	bool have_app = false;
-	bool have_proto = false;
-	char *p = data + strlen("proto");
-
-	if (!natflow_dpi_txn_active || !natflow_dpi_pending_ruleset)
-		return -EINVAL;
-	if (natflow_dpi_pending_ruleset->proto_count >= NATFLOW_DPI_PROTO_RULE_MAX)
-		return -ENOSPC;
-
-	while (*p != 0) {
-		char *token;
-		char *next;
-
-		while (*p == ' ' || *p == '\t')
-			p++;
-		if (*p == 0)
-			break;
-		token = p;
-		while (*p != 0 && *p != ' ' && *p != '\t')
-			p++;
-		next = p;
-		if (*next != 0)
-			*next++ = 0;
-
-		if (strncmp(token, "id=", 3) == 0) {
-			if (have_id || kstrtouint(token + 3, 0, &rule_id) != 0 || rule_id == 0)
-				return -EINVAL;
-			have_id = true;
-		} else if (strncmp(token, "app=", 4) == 0) {
-			if (have_app || kstrtouint(token + 4, 0, &app_id) != 0 || app_id == 0)
-				return -EINVAL;
-			have_app = true;
-		} else if (strncmp(token, "proto=", 6) == 0) {
-			if (have_proto || natflow_dpi_proto_parse(token + 6, &proto) != 0)
-				return -EINVAL;
-			have_proto = true;
-		} else {
-			return -EINVAL;
-		}
-
-		p = next;
-	}
-
-	if (!have_id || !have_app || !have_proto)
-		return -EINVAL;
-	if (natflow_dpi_pending_rule_id_exists(rule_id))
-		return -EEXIST;
-
-	rule = &natflow_dpi_pending_ruleset->proto[natflow_dpi_pending_ruleset->proto_count++];
-	rule->rule_id = rule_id;
-	rule->app_id = app_id;
-	rule->proto = proto;
-	natflow_dpi_pending_ruleset->proto_mask |= NATFLOW_DPI_PROTO_BIT(proto);
-	return 0;
-}
-
 static bool natflow_dpi_domain_rule_match(const struct natflow_dpi_domain_rule *rule,
         const unsigned char *host, unsigned int host_len)
 {
@@ -657,7 +536,8 @@ static void natflow_dpi_event_fill_tuple(struct natflow_dpi_event_hdr *hdr,
 
 static void natflow_dpi_event_queue(const struct nf_conn *ct,
                                     unsigned int reason, unsigned int generation,
-                                    unsigned int app_id, unsigned int rule_id,
+                                    unsigned int app_id, unsigned int category_id,
+                                    unsigned int rule_id,
                                     unsigned int flags, unsigned char direction)
 {
 	struct natflow_dpi_event_node *node;
@@ -684,7 +564,7 @@ static void natflow_dpi_event_queue(const struct nf_conn *ct,
 	node->hdr.reason = reason;
 	node->hdr.generation = generation;
 	node->hdr.app_id = app_id;
-	node->hdr.category_id = 0;
+	node->hdr.category_id = category_id;
 	node->hdr.rule_id = rule_id;
 	node->hdr.flags = flags;
 	node->hdr.evidence_dir = direction == NATFLOW_L7_DIR_REPLY ?
@@ -767,7 +647,6 @@ static void natflow_dpi_counters_clear(void)
 	atomic64_set(&natflow_dpi_context_aborted, 0);
 	atomic64_set(&natflow_dpi_proto_no_session, 0);
 	atomic64_set(&natflow_dpi_proto_app_exists, 0);
-	atomic64_set(&natflow_dpi_proto_no_rule, 0);
 	for (i = 0; i <= NATFLOW_DPI_EVENT_SOURCE_MAX; i++) {
 		atomic64_set(&natflow_dpi_source_matches[i], 0);
 		atomic64_set(&natflow_dpi_source_events[i], 0);
@@ -839,7 +718,6 @@ static int natflow_dpi_rules_commit(void)
 	natflow_dpi_generation = new_ruleset->generation;
 	natflow_dpi_rules = natflow_dpi_ruleset_count(new_ruleset);
 	WRITE_ONCE(natflow_dpi_domain_rules, new_ruleset->domain_count);
-	WRITE_ONCE(natflow_dpi_proto_mask, new_ruleset->proto_mask);
 	if (old_ruleset)
 		call_rcu(&old_ruleset->rcu, natflow_dpi_ruleset_free_rcu);
 	return 0;
@@ -861,7 +739,6 @@ static int natflow_dpi_rules_clear(void)
 	natflow_dpi_generation = new_ruleset->generation;
 	natflow_dpi_rules = 0;
 	WRITE_ONCE(natflow_dpi_domain_rules, 0);
-	WRITE_ONCE(natflow_dpi_proto_mask, 0);
 	if (old_ruleset)
 		call_rcu(&old_ruleset->rcu, natflow_dpi_ruleset_free_rcu);
 	return 0;
@@ -869,8 +746,7 @@ static int natflow_dpi_rules_clear(void)
 
 int natflow_dpi_consumer_enabled(void)
 {
-	return READ_ONCE(natflow_dpi_state) == NATFLOW_DPI_STATE_ENABLED &&
-	       READ_ONCE(natflow_dpi_rules) != 0;
+	return READ_ONCE(natflow_dpi_state) == NATFLOW_DPI_STATE_ENABLED;
 }
 
 int natflow_dpi_host_consumer_enabled(void)
@@ -881,8 +757,7 @@ int natflow_dpi_host_consumer_enabled(void)
 
 int natflow_dpi_packet_consumer_enabled(void)
 {
-	return READ_ONCE(natflow_dpi_state) == NATFLOW_DPI_STATE_ENABLED &&
-	       READ_ONCE(natflow_dpi_proto_mask) != 0;
+	return READ_ONCE(natflow_dpi_state) == NATFLOW_DPI_STATE_ENABLED;
 }
 
 static void natflow_dpi_classify_normalized_host_match(struct nf_conn *ct,
@@ -907,14 +782,16 @@ static void natflow_dpi_classify_normalized_host_match(struct nf_conn *ct,
 		if (!natflow_dpi_domain_rule_match(rule, normalized, normalized_len))
 			continue;
 
-		nf = natflow_session_get(ct);
-		if (nf)
-			WRITE_ONCE(nf->app_id, rule->app_id);
 		atomic64_inc(&natflow_dpi_domain_matches);
-		natflow_dpi_event_queue(ct, NATFLOW_DPI_REASON_MATCHED,
-		                        ruleset->generation, rule->app_id,
-		                        rule->rule_id, source,
-		                        NATFLOW_L7_DIR_ORIGINAL);
+		nf = natflow_session_get(ct);
+		if (nf && cmpxchg(&nf->app_id, NATFLOW_DPI_APP_UNKNOWN,
+		                  rule->app_id) == NATFLOW_DPI_APP_UNKNOWN) {
+			natflow_dpi_event_queue(ct, NATFLOW_DPI_REASON_MATCHED,
+			                        ruleset->generation, rule->app_id,
+			                        NATFLOW_DPI_CATEGORY_UNKNOWN,
+			                        rule->rule_id, source,
+			                        NATFLOW_L7_DIR_ORIGINAL);
+		}
 		break;
 	}
 	rcu_read_unlock();
@@ -1008,13 +885,41 @@ static unsigned int natflow_dpi_proto_event_source(unsigned int proto)
 	}
 }
 
+static bool natflow_dpi_commit_app(struct nf_conn *ct,
+                                   const struct natflow_dpi_app_meta *app,
+                                   unsigned int source,
+                                   unsigned char direction)
+{
+	natflow_t *nf;
+
+	if (!ct || !app || app->app_id == NATFLOW_DPI_APP_UNKNOWN || source == 0)
+		return false;
+
+	nf = natflow_session_get(ct);
+	if (!nf) {
+		atomic64_inc(&natflow_dpi_proto_no_session);
+		return false;
+	}
+	if (READ_ONCE(nf->app_id) != 0) {
+		atomic64_inc(&natflow_dpi_proto_app_exists);
+		return false;
+	}
+	if (cmpxchg(&nf->app_id, NATFLOW_DPI_APP_UNKNOWN, app->app_id) !=
+	        NATFLOW_DPI_APP_UNKNOWN) {
+		atomic64_inc(&natflow_dpi_proto_app_exists);
+		return false;
+	}
+
+	natflow_dpi_event_queue(ct, NATFLOW_DPI_REASON_MATCHED,
+	                        NATFLOW_DPI_CATALOG_REVISION, app->app_id,
+	                        app->category_id, 0, source, direction);
+	return true;
+}
+
 static void natflow_dpi_classify_proto(struct nf_conn *ct, unsigned int proto,
                                        unsigned char direction)
 {
-	const struct natflow_dpi_proto_rule *rule;
-	struct natflow_dpi_ruleset *ruleset;
-	natflow_t *nf;
-	unsigned int i;
+	const struct natflow_dpi_app_meta *app;
 	unsigned int source;
 
 	if (!ct || proto == 0)
@@ -1022,41 +927,9 @@ static void natflow_dpi_classify_proto(struct nf_conn *ct, unsigned int proto,
 	if (READ_ONCE(natflow_dpi_state) != NATFLOW_DPI_STATE_ENABLED)
 		return;
 
-	nf = natflow_session_get(ct);
-	if (!nf) {
-		atomic64_inc(&natflow_dpi_proto_no_session);
-		return;
-	}
-	if (READ_ONCE(nf->app_id) != 0) {
-		atomic64_inc(&natflow_dpi_proto_app_exists);
-		return;
-	}
-
 	source = natflow_dpi_proto_event_source(proto);
-	if (source == 0)
-		return;
-
-	rcu_read_lock();
-	ruleset = rcu_dereference(natflow_dpi_active_ruleset);
-	if (!ruleset) {
-		rcu_read_unlock();
-		return;
-	}
-
-	for (i = 0; i < ruleset->proto_count; i++) {
-		rule = &ruleset->proto[i];
-		if (rule->proto != proto)
-			continue;
-
-		WRITE_ONCE(nf->app_id, rule->app_id);
-		natflow_dpi_event_queue(ct, NATFLOW_DPI_REASON_MATCHED,
-		                        ruleset->generation, rule->app_id,
-		                        rule->rule_id, source, direction);
-		rcu_read_unlock();
-		return;
-	}
-	rcu_read_unlock();
-	atomic64_inc(&natflow_dpi_proto_no_rule);
+	app = natflow_dpi_app_by_proto(proto);
+	natflow_dpi_commit_app(ct, app, source, direction);
 }
 
 static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
@@ -1064,7 +937,6 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	char *buffer = m->private;
 	struct natflow_dpi_ruleset *ruleset;
 	unsigned int domain_rules = 0;
-	unsigned int proto_rules = 0;
 	int n;
 
 	if (*pos != 0)
@@ -1072,17 +944,14 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 
 	mutex_lock(&natflow_dpi_lock);
 	ruleset = rcu_dereference_protected(natflow_dpi_active_ruleset, 1);
-	if (ruleset) {
+	if (ruleset)
 		domain_rules = ruleset->domain_count;
-		proto_rules = ruleset->proto_count;
-	}
 	n = snprintf(buffer, PAGE_SIZE - 1,
 	             "# Version: %s\n"
 	             "# Usage:\n"
 	             "#    enable=0|1\n"
 	             "#    rules_begin\n"
 	             "#    domain id=<rule_id> app=<app_id> kind=exact|suffix host=<host>\n"
-	             "#    proto id=<rule_id> app=<app_id> proto=dns|ssh|wireguard|stun|turn|bittorrent|ftp|smtp|pop3|imap|sip|rtsp|mqtt|resp|mysql|postgresql|rdp|smb\n"
 	             "#    rules_commit\n"
 	             "#    rules_abort\n"
 	             "#    rules_clear\n"
@@ -1093,9 +962,10 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             "state=%s\n"
 	             "enable=%u\n"
 	             "generation=%u\n"
+	             "catalog_revision=%u\n"
+	             "catalog_apps=%u\n"
 	             "rules=%u\n"
 	             "domain_rules=%u\n"
-	             "proto_rules=%u\n"
 	             "txn_active=%u\n"
 	             "matches=%llu\n"
 	             "matches_http=%llu\n"
@@ -1157,17 +1027,17 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             "context_cleared_no_candidate=%llu\n"
 	             "context_aborted=%llu\n"
 	             "proto_no_session=%llu\n"
-	             "proto_app_exists=%llu\n"
-	             "proto_no_rule=%llu\n",
+	             "proto_app_exists=%llu\n",
 	             NATFLOW_VERSION,
 	             NATFLOW_DPI_EVENT_VERSION,
 	             (unsigned int)sizeof(struct natflow_dpi_event_hdr),
 	             natflow_dpi_state_name(natflow_dpi_state),
 	             natflow_dpi_state == NATFLOW_DPI_STATE_ENABLED,
 	             natflow_dpi_generation,
+	             NATFLOW_DPI_CATALOG_REVISION,
+	             (unsigned int)ARRAY_SIZE(natflow_dpi_app_catalog),
 	             natflow_dpi_rules,
 	             domain_rules,
-	             proto_rules,
 	             natflow_dpi_txn_active,
 	             (unsigned long long)atomic64_read(&natflow_dpi_matches),
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_HTTP]),
@@ -1229,8 +1099,7 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             (unsigned long long)atomic64_read(&natflow_dpi_context_cleared_no_candidate),
 	             (unsigned long long)atomic64_read(&natflow_dpi_context_aborted),
 	             (unsigned long long)atomic64_read(&natflow_dpi_proto_no_session),
-	             (unsigned long long)atomic64_read(&natflow_dpi_proto_app_exists),
-	             (unsigned long long)atomic64_read(&natflow_dpi_proto_no_rule));
+	             (unsigned long long)atomic64_read(&natflow_dpi_proto_app_exists));
 	mutex_unlock(&natflow_dpi_lock);
 
 	if (n < 0)
@@ -1290,10 +1159,6 @@ static int natflow_dpi_ctl_apply_line(char *data)
 			goto out;
 	} else if (strncmp(data, "domain ", strlen("domain ")) == 0) {
 		err = natflow_dpi_ruleset_domain_add(data);
-		if (err != 0)
-			goto out;
-	} else if (strncmp(data, "proto ", strlen("proto ")) == 0) {
-		err = natflow_dpi_ruleset_proto_add(data);
 		if (err != 0)
 			goto out;
 	} else if (strcmp(data, "rules_commit") == 0) {
@@ -2576,7 +2441,7 @@ unsigned int natflow_dpi_packet_view_pull_len(unsigned int consumer_mask,
 
 	if (payload_len == 0)
 		return 0;
-	proto_mask = READ_ONCE(natflow_dpi_proto_mask);
+	proto_mask = NATFLOW_DPI_PROTO_ALL_MASK;
 
 	if (natflow_dpi_l4_mask(l4proto) == 0)
 		return 0;
@@ -2638,7 +2503,7 @@ unsigned int natflow_dpi_consume_packet_view(
 	if (natflow_dpi_l4_mask(view->l4proto) == 0)
 		return 0;
 	server_port = natflow_l7_packet_server_port(view);
-	proto_mask = READ_ONCE(natflow_dpi_proto_mask);
+	proto_mask = NATFLOW_DPI_PROTO_ALL_MASK;
 	nf = natflow_session_get(view->ct);
 
 	payload = view->payload;
@@ -2885,6 +2750,8 @@ int natflow_dpi_init(void)
 	             NATFLOW_DPI_EVENT_HEADER_LEN);
 	BUILD_BUG_ON(NATFLOW_DPI_DETECTOR_MAX > 8);
 	BUILD_BUG_ON(NATFLOW_DPI_PROTO_SMB > 32);
+	BUILD_BUG_ON(NATFLOW_DPI_PROTO_ALL_MASK !=
+	             (NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_SMB + 1) - 1));
 	BUILD_BUG_ON(ARRAY_SIZE(natflow_dpi_app_catalog) != 18);
 
 	ret = natflow_dpi_app_catalog_validate();
@@ -2898,7 +2765,6 @@ int natflow_dpi_init(void)
 	natflow_dpi_generation = 1;
 	natflow_dpi_rules = 0;
 	WRITE_ONCE(natflow_dpi_domain_rules, 0);
-	WRITE_ONCE(natflow_dpi_proto_mask, 0);
 	natflow_dpi_txn_active = 0;
 	WRITE_ONCE(natflow_dpi_state, NATFLOW_DPI_STATE_DISABLED);
 
@@ -2941,7 +2807,6 @@ void natflow_dpi_exit(void)
 	natflow_dpi_generation = 1;
 	natflow_dpi_rules = 0;
 	WRITE_ONCE(natflow_dpi_domain_rules, 0);
-	WRITE_ONCE(natflow_dpi_proto_mask, 0);
 	mutex_unlock(&natflow_dpi_lock);
 
 	wake_up_interruptible(&natflow_dpi_wait);

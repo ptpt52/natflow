@@ -35,7 +35,6 @@ STREAM_PARALLEL_DEFAULT=16
 STREAM_TIMEOUT_MS=15000
 original_enable=
 original_forward=
-rules_installed=0
 topology_installed=0
 firewall_installed=0
 cleanup_done=0
@@ -61,7 +60,7 @@ Case format, one pipe-separated record per line:
   name|proto|transport|direction|port|payload_hex|expectation
 
 Blank lines and lines beginning with # are ignored. This destructive test
-requires an empty DPI ruleset and root privileges. Queue pressure defaults to
+requires an empty DPI domain ruleset and root privileges. Queue pressure defaults to
 cache=$PRESSURE_CACHE_DEFAULT and generated=$PRESSURE_EVENTS_DEFAULT.
 Queue stream defaults to cache=$STREAM_CACHE_DEFAULT,
 generated=$STREAM_EVENTS_DEFAULT and parallel=$STREAM_PARALLEL_DEFAULT.
@@ -120,22 +119,12 @@ cleanup_resources()
 	cleanup_failed=0
 	set +e
 
-	txn_active=$(field txn_active 2>/dev/null)
-	if [ "$txn_active" = 1 ] &&
-		! write_ctl rules_abort 2>/dev/null; then
-		cleanup_error "could not abort the active DPI transaction"
-	fi
-	if [ "$rules_installed" = 1 ]; then
-		if ! write_ctl rules_clear 2>/dev/null; then
-			cleanup_error "could not clear the temporary DPI ruleset"
-		fi
-	fi
 	if [ -n "$original_enable" ]; then
 		if ! write_ctl "enable=$original_enable" 2>/dev/null; then
 			cleanup_error "could not restore DPI enable=$original_enable"
 		fi
 	fi
-	for expected_field in rules domain_rules proto_rules txn_active; do
+	for expected_field in rules domain_rules txn_active; do
 		actual_value=$(field "$expected_field" 2>/dev/null)
 		if [ "$actual_value" != 0 ]; then
 			cleanup_error "$expected_field is ${actual_value:-unreadable}, expected 0"
@@ -260,24 +249,24 @@ dump_failure_state()
 proto_values()
 {
 	case $1 in
-	dns) printf '%s\n' '4 7101 6101' ;;
-	ssh) printf '%s\n' '5 7102 6102' ;;
-	wireguard) printf '%s\n' '6 7103 6103' ;;
-	stun) printf '%s\n' '7 7104 6104' ;;
-	turn) printf '%s\n' '8 7105 6105' ;;
-	bittorrent) printf '%s\n' '9 7106 6106' ;;
-	ftp) printf '%s\n' '10 7107 6107' ;;
-	smtp) printf '%s\n' '11 7108 6108' ;;
-	pop3) printf '%s\n' '12 7109 6109' ;;
-	imap) printf '%s\n' '13 7110 6110' ;;
-	sip) printf '%s\n' '14 7111 6111' ;;
-	rtsp) printf '%s\n' '15 7112 6112' ;;
-	mqtt) printf '%s\n' '16 7113 6113' ;;
-	resp) printf '%s\n' '17 7114 6114' ;;
-	mysql) printf '%s\n' '18 7115 6115' ;;
-	postgresql) printf '%s\n' '19 7116 6116' ;;
-	rdp) printf '%s\n' '20 7117 6117' ;;
-	smb) printf '%s\n' '21 7118 6118' ;;
+	dns) printf '%s\n' '4 1 1 0' ;;
+	ssh) printf '%s\n' '5 2 2 0' ;;
+	wireguard) printf '%s\n' '6 3 3 0' ;;
+	stun) printf '%s\n' '7 4 4 0' ;;
+	turn) printf '%s\n' '8 5 4 0' ;;
+	bittorrent) printf '%s\n' '9 6 5 0' ;;
+	ftp) printf '%s\n' '10 7 6 0' ;;
+	smtp) printf '%s\n' '11 8 7 0' ;;
+	pop3) printf '%s\n' '12 9 7 0' ;;
+	imap) printf '%s\n' '13 10 7 0' ;;
+	sip) printf '%s\n' '14 11 8 0' ;;
+	rtsp) printf '%s\n' '15 12 4 0' ;;
+	mqtt) printf '%s\n' '16 13 9 0' ;;
+	resp) printf '%s\n' '17 14 10 0' ;;
+	mysql) printf '%s\n' '18 15 10 0' ;;
+	postgresql) printf '%s\n' '19 16 10 0' ;;
+	rdp) printf '%s\n' '20 17 2 0' ;;
+	smb) printf '%s\n' '21 18 5 0' ;;
 	*) return 1 ;;
 	esac
 }
@@ -301,7 +290,8 @@ validate_case()
 	set -- $values
 	source_id=$1
 	app_id=$2
-	rule_id=$3
+	category_id=$3
+	rule_id=$4
 	case $l4 in tcp|udp) ;; *) fail "$case_file: invalid L4 in $name" ;; esac
 	case $proto:$l4 in
 	ssh:udp|wireguard:tcp|ftp:udp|smtp:udp|pop3:udp|imap:udp|rtsp:udp|mqtt:udp|resp:udp|mysql:udp|postgresql:udp|rdp:udp|smb:udp)
@@ -633,37 +623,12 @@ firewall_installed=1
 
 write_ctl enable=0
 write_ctl events_clear
-write_ctl rules_begin
-rules_installed=1
-if [ "$pressure_mode" = 1 ] || [ "$stream_mode" = 1 ]; then
-	write_ctl "proto id=6104 app=7104 proto=stun"
-else
-	write_ctl "proto id=6101 app=7101 proto=dns"
-	write_ctl "proto id=6102 app=7102 proto=ssh"
-	write_ctl "proto id=6103 app=7103 proto=wireguard"
-	write_ctl "proto id=6104 app=7104 proto=stun"
-	write_ctl "proto id=6105 app=7105 proto=turn"
-	write_ctl "proto id=6106 app=7106 proto=bittorrent"
-	write_ctl "proto id=6107 app=7107 proto=ftp"
-	write_ctl "proto id=6108 app=7108 proto=smtp"
-	write_ctl "proto id=6109 app=7109 proto=pop3"
-	write_ctl "proto id=6110 app=7110 proto=imap"
-	write_ctl "proto id=6111 app=7111 proto=sip"
-	write_ctl "proto id=6112 app=7112 proto=rtsp"
-	write_ctl "proto id=6113 app=7113 proto=mqtt"
-	write_ctl "proto id=6114 app=7114 proto=resp"
-	write_ctl "proto id=6115 app=7115 proto=mysql"
-	write_ctl "proto id=6116 app=7116 proto=postgresql"
-	write_ctl "proto id=6117 app=7117 proto=rdp"
-	write_ctl "proto id=6118 app=7118 proto=smb"
-fi
-write_ctl rules_commit
 write_ctl enable=1
 
 if [ "$pressure_mode" = 1 ]; then
 	"$PRESSURE_BIN" -d "$QUEUE" -c "$pressure_cache" \
 		-n "$pressure_events" -S "$CLIENT_IP" -T "$SERVER_IP" \
-		-p "$PRESSURE_PORT_BASE" -a 7104 -r 6104 -- \
+		-p "$PRESSURE_PORT_BASE" -a 4 -C 4 -r 0 -- \
 		"$0" __pressure_inject "$CLIENT_NS" "$SERVER_NS" \
 		"$TRAFFIC_BIN" "$TMP_DIR" "$pressure_events" \
 		"$PRESSURE_PORT_BASE" "$PRESSURE_PAYLOAD"
@@ -700,7 +665,7 @@ fi
 if [ "$stream_mode" = 1 ]; then
 	"$PRESSURE_BIN" -d "$QUEUE" -c "$stream_cache" \
 		-n "$stream_events" -S "$CLIENT_IP" -T "$SERVER_IP" \
-		-p "$PRESSURE_PORT_BASE" -a 7104 -r 6104 \
+		-p "$PRESSURE_PORT_BASE" -a 4 -C 4 -r 0 \
 		-w "$STREAM_TIMEOUT_MS" -- \
 		"$0" __stream_inject "$CLIENT_NS" "$SERVER_NS" \
 		"$TRAFFIC_BIN" "$TMP_DIR" "$stream_events" \
@@ -747,7 +712,7 @@ for case_file in "$@"; do
 		printf 'CASE: %s\n' "$name"
 		if ! "$ASSERT_BIN" -d "$QUEUE" -S "$CLIENT_IP" -T "$SERVER_IP" \
 			-P "$l4" -p "$port" -s "$source_id" -D "$direction" \
-			-a "$app_id" -r "$rule_id" $negative -- \
+			-a "$app_id" -c "$category_id" -r "$rule_id" $negative -- \
 			"$0" __inject "$CLIENT_NS" "$SERVER_NS" "$TRAFFIC_BIN" \
 			"$TMP_DIR" "$SERVER_IP" "$l4" "$direction" "$port" "$payload"; then
 			dump_failure_state

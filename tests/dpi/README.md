@@ -2,15 +2,15 @@
 
 `run-corpus.sh` creates two network namespaces and routes IPv4 or IPv6 traffic
 through the root namespace so the loaded natflow `FORWARD` hook sees each
-fixture. It installs one audit-only rule for every current protocol detector,
-opens the DPI queue before injection, and checks the v3 event against the
-original tuple and expected evidence direction.
+fixture. It enables the compiled-in protocol catalog, opens the DPI queue
+before injection, and checks the v3 event against the fixed catalog revision,
+`app_id`, category, `rule_id=0`, original tuple and expected evidence direction.
 
-The runner is destructive to the DPI test state: it requires an empty ruleset,
-clears event counters, increments generation, and temporarily changes DPI
-enable. It also inserts two interface-specific firewall rules and temporarily
+The runner is destructive to the DPI test state: it requires an empty domain
+ruleset, clears event counters, and temporarily changes DPI enable. It also
+inserts two interface-specific firewall rules and temporarily
 enables forwarding for the selected address family. Before reporting the final
-PASS, cleanup restores and verifies the DPI enable value, empty ruleset and
+PASS, cleanup restores and verifies the DPI enable value, empty domain ruleset and
 inactive transaction, forwarding value, firewall-rule removal, namespace and
 veth removal, and temporary-directory removal. Signal and failure exits
 attempt the same cleanup and report any failed postcondition as `CLEANUP FAIL`.
@@ -52,7 +52,7 @@ runner opens one reader, does not read while the flows run concurrently, then
 requires exactly `cache` valid STUN events and verifies the ctl counters:
 `matches=generated`, `events=cache`, `events_lost=generated-cache`,
 `events_suppressed=0`, and the corresponding STUN source counters. This mode
-has the same empty-ruleset, isolated-host, state-restoration, and final cleanup
+has the same empty-domain-ruleset, isolated-host, state-restoration, and final cleanup
 requirements as the detector corpus.
 
 Concurrent reader/producer operation can be tested with:
@@ -76,7 +76,7 @@ name|proto|tcp-or-udp|original-or-reply|server-port|payload-hex|positive-or-nega
 ```
 
 Every case uses a new connection. Positive cases require the expected source,
-`app_id`, `rule_id`, original tuple, and evidence direction. Negative cases
+fixed `app_id`, category, `rule_id=0`, catalog revision, original tuple, and evidence direction. Negative cases
 fail on any DPI event for that tuple. IPv4 and base IPv6 TCP/UDP are supported;
 IPv6 extension headers are outside the supported DPI scope. Exact TCP
 segmentation, non-linear skb, and long-duration soak are deferred. Failure

@@ -3,6 +3,9 @@
 状态：Accepted，待分阶段实现
 日期：2026-08-15
 
+实施进度：M0-M2 已完成。首批 18 个固定 protocol app 已进入数据面；domain
+用户 ruleset 暂留到 M3/M4，compact automaton 尚未实施。
+
 ## 1. 决策摘要
 
 Natflow DPI 采用编译进内核模块的固定应用目录和手写 C 状态机，不再提供

@@ -11,7 +11,7 @@ usage()
 	cat <<EOF
 Usage: NATFLOW_DPI_CTL=/dev/natflow_dpi_ctl $0
 
-Runs a destructive DPI control transaction smoke test. The current ruleset
+Runs a destructive DPI domain-rule transaction smoke test. The current ruleset
 must be empty. The script restores the original enable state before exit.
 EOF
 }
@@ -100,22 +100,22 @@ generation_before=$(field generation) || fail "missing generation"
 write_cmd rules_begin
 temporary_rules=1
 write_cmd "domain id=900001 app=900001 kind=exact host=natflow-smoke.invalid"
-write_cmd "proto id=900002 app=900002 proto=ssh"
+if write_cmd "proto id=900002 app=900002 proto=ssh" 2>/dev/null; then
+	fail "removed proto rule command unexpectedly succeeded"
+fi
 write_cmd rules_commit
 
 generation_after=$(field generation) || fail "missing generation after commit"
 [ "$generation_after" -gt "$generation_before" ] ||
 	fail "generation did not increase after commit"
-expect_field rules 2
+expect_field rules 1
 expect_field domain_rules 1
-expect_field proto_rules 1
 expect_field txn_active 0
 
 write_cmd rules_clear
 temporary_rules=0
 expect_field rules 0
 expect_field domain_rules 0
-expect_field proto_rules 0
 expect_field txn_active 0
 
 write_cmd "enable=$original_enable"

@@ -186,8 +186,10 @@ static void validate_event(const struct natflow_dpi_event_hdr *event)
 		fail_message("event has invalid direction");
 	if (event->reason != NATFLOW_DPI_REASON_MATCHED)
 		fail_message("event reason is not MATCHED");
-	if (event->app_id == 0 || event->rule_id == 0)
-		fail_message("event has an empty app or rule id");
+	if (event->app_id == 0)
+		fail_message("event has an empty app id");
+	if (event->rule_id == 0 && event->category_id == 0)
+		fail_message("static event has an empty category id");
 	if (event->flags < NATFLOW_DPI_EVENT_SOURCE_HTTP ||
 	        event->flags > NATFLOW_DPI_EVENT_SOURCE_SMB)
 		fail_message("event has an unknown source");

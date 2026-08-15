@@ -29,6 +29,7 @@ struct pressure_expectation {
 	unsigned int cache;
 	unsigned int generated;
 	unsigned int app_id;
+	unsigned int category_id;
 	unsigned int rule_id;
 	unsigned int first_port;
 	unsigned int stream_timeout_ms;
@@ -38,7 +39,7 @@ static void usage(FILE *stream, const char *program)
 {
 	fprintf(stream,
 	        "Usage: %s -c cache -n generated -S src -T dst -p first-port "
-	        "-a app -r rule [-d queue] [-w timeout-ms] "
+	        "-a app -C category -r rule [-d queue] [-w timeout-ms] "
 	        "-- command [args...]\n"
 	        "  Without -w, pause reading and require generated > cache.\n"
 	        "  With -w, poll/read concurrently and require every event.\n",
@@ -152,7 +153,9 @@ static unsigned int validate_event(
 	        event->dport >= expectation->first_port + expectation->generated)
 		fail_message("queue returned an event outside the test port range");
 	if (event->flags != NATFLOW_DPI_EVENT_SOURCE_STUN ||
+	        event->generation != NATFLOW_DPI_CATALOG_REVISION ||
 	        event->app_id != expectation->app_id ||
+	        event->category_id != expectation->category_id ||
 	        event->rule_id != expectation->rule_id)
 		fail_message("queue returned an unexpected classification");
 	if (memcmp(event->sip, &expectation->source_address,
@@ -323,13 +326,14 @@ int main(int argc, char **argv)
 	int have_cache = 0;
 	int have_generated = 0;
 	int have_app = 0;
+	int have_category = 0;
 	int have_rule = 0;
 	int have_first_port = 0;
 	unsigned int retained;
 	int option;
 	int fd;
 
-	while ((option = getopt(argc, argv, "d:c:n:S:T:p:a:r:w:h")) != -1) {
+	while ((option = getopt(argc, argv, "d:c:n:S:T:p:a:C:r:w:h")) != -1) {
 		switch (option) {
 		case 'd':
 			expectation.queue = optarg;
@@ -358,6 +362,10 @@ int main(int argc, char **argv)
 		case 'a':
 			have_app = parse_uint(optarg, &expectation.app_id) == 0;
 			break;
+		case 'C':
+			have_category =
+			    parse_uint(optarg, &expectation.category_id) == 0;
+			break;
 		case 'r':
 			have_rule = parse_uint(optarg, &expectation.rule_id) == 0;
 			break;
@@ -377,13 +385,14 @@ int main(int argc, char **argv)
 	}
 
 	if (!have_source_address || !have_destination_address ||
-	        !have_cache || !have_generated || !have_app || !have_rule ||
+	        !have_cache || !have_generated || !have_app || !have_category ||
+	        !have_rule ||
 	        !have_first_port ||
 	        expectation.cache == 0 ||
 	        expectation.generated == 0 ||
 	        (expectation.stream_timeout_ms == 0 &&
 	         expectation.generated <= expectation.cache) ||
-	        expectation.app_id == 0 || expectation.rule_id == 0 ||
+	        expectation.app_id == 0 || expectation.category_id == 0 ||
 	        expectation.first_port == 0 ||
 	        expectation.generated > 65536U - expectation.first_port ||
 	        optind >= argc) {
