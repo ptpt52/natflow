@@ -3,8 +3,9 @@
 状态：Accepted，待分阶段实现
 日期：2026-08-15
 
-实施进度：M0-M2 已完成。首批 18 个固定 protocol app 已进入数据面；domain
-用户 ruleset 暂留到 M3/M4，compact automaton 尚未实施。
+实施进度：M0-M3 已完成。首批 18 个固定 protocol app 和 YouTube、Netflix、
+Telegram 静态域名应用已进入数据面；domain 用户 ruleset 暂留到 M4，compact
+automaton 尚未实施。
 
 ## 1. 决策摘要
 
@@ -204,6 +205,14 @@ generic TLS 作为兜底终态。
 当前协议 detector 的直接终态包括：DNS、SSH、WireGuard、STUN、TURN、
 BitTorrent、FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、
 PostgreSQL、RDP 和 SMB。
+
+首批静态域名应用固定为 YouTube=`0x1001`、Netflix=`0x1002`、
+Telegram=`0x2001`。域名表只收录品牌专属后缀，避免把 `google.com`、通用 AWS/CDN
+等共享基础设施误判为应用；YouTube 的 `youtu.be` 只做 exact。Netflix Open
+Connect 与 Telegram 官方 FAQ 是首批域名选择的官方依据：
+
+- <https://openconnect.netflix.com/Open-Connect-Overview.pdf>
+- <https://telegram.org/faq>
 
 ### 5.2 域名 matcher
 

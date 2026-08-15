@@ -267,6 +267,9 @@ proto_values()
 	postgresql) printf '%s\n' '19 16 10 0' ;;
 	rdp) printf '%s\n' '20 17 2 0' ;;
 	smb) printf '%s\n' '21 18 5 0' ;;
+	youtube) printf '%s\n' '1 4097 11 0' ;;
+	netflix) printf '%s\n' '1 4098 11 0' ;;
+	telegram) printf '%s\n' '1 8193 12 0' ;;
 	*) return 1 ;;
 	esac
 }

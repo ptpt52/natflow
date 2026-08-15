@@ -128,7 +128,7 @@ GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链降到 17
 
 ### P2-4：设计并开发 DPI 能力
 
-状态：Hardcoded Classifier Redesign Accepted，M2 Done
+状态：Hardcoded Classifier Redesign Accepted，M3 Done
 
 目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，先统一 L7 parser/context/consumer 生命周期，再实现轻量 DPI 能力，用于协议/应用分类、审计记录和后续策略匹配。
 
@@ -141,11 +141,13 @@ GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链降到 17
 当前迁移进度：M0 设计、ADR 和路线图已冻结；M1 已固定首批 18 个协议应用 ID、
 category ID 和 metadata catalog；M2 已让 DPI enabled 直接激活全部内置 protocol
 detector，按 proto O(1) 查固定 catalog，并通过 `cmpxchg` 终态提交固定 app/category。
-proto rule、动态 proto mask、命中后 RCU rule lookup 和 `proto_no_rule` 已删除；
-protocol event 使用 catalog revision 和 `rule_id=0`，corpus/queue 工具已同步。domain
-用户 ruleset 暂留到 M3 静态域名应用分类和 M4 控制面清理。
+M3 已增加 YouTube=`0x1001`、Netflix=`0x1002`、Telegram=`0x2001` 和 14 项静态域名
+表，由 HTTP Host、TLS/QUIC SNI 进入单步硬编码应用机器；exact 优先，suffix 按长度
+降序且要求 label boundary。DNS QNAME 只增加 `dns_app_intents`，DNS flow 仍终态为
+DNS。proto rule、动态 proto mask、命中后 RCU proto lookup 和 `proto_no_rule` 已删除；
+domain 用户 ruleset 暂留到 M4 控制面清理。
 
-实现进度：M0-M1e 的 shared L7、控制/事件 ABI、A 级 detector、双向 bounded context 和测试工具已完成。M2 已加入 FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB 共 12 个 audit-only detector；它们按文本、数据库、二进制三组复用剩余 detector mask bit，不扩大 8 字节 conntrack 瞬态 context，并有协议专属正反 corpus。当前自动 corpus 共 75 项；生产 shadow 数据和新增 B 级 detector 的真机 IPv4/IPv6 回归尚未完成。
+实现进度：M0-M1e 的 shared L7、控制/事件 ABI、A 级 detector、双向 bounded context 和测试工具已完成。M2 已加入 FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB 共 12 个 audit-only detector；它们按文本、数据库、二进制三组复用剩余 detector mask bit，不扩大 8 字节 conntrack 瞬态 context，并有协议专属正反 corpus。M3 增加 11 项 HTTP Host 静态应用正反 corpus，当前自动 corpus 共 86 项；新增静态应用和 B 级 detector 的真机 IPv4/IPv6 回归尚未完成。
 
 边界：
 

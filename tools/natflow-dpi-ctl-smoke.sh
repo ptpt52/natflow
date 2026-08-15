@@ -78,6 +78,8 @@ original_enable=$(field enable) || fail "missing control field: enable"
 	fail "invalid enable state: $original_enable"
 expect_field rules 0
 expect_field txn_active 0
+expect_field catalog_revision 1
+expect_field catalog_apps 21
 
 trap cleanup EXIT
 trap 'exit 129' HUP

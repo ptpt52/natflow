@@ -34,6 +34,12 @@ enum natflow_dpi_domain_kind {
 	NATFLOW_DPI_DOMAIN_SUFFIX = 1,
 };
 
+enum natflow_dpi_app_machine_status {
+	NATFLOW_DPI_APP_MACHINE_EXCLUDED,
+	NATFLOW_DPI_APP_MACHINE_TERMINAL,
+	NATFLOW_DPI_APP_MACHINE_INTENT,
+};
+
 enum natflow_dpi_proto {
 	NATFLOW_DPI_PROTO_DNS = 1,
 	NATFLOW_DPI_PROTO_SSH = 2,
@@ -109,6 +115,24 @@ struct natflow_dpi_app_meta {
 	const char *name;
 };
 
+struct natflow_dpi_app_machine_result {
+	const struct natflow_dpi_app_meta *app;
+	unsigned char status;
+};
+
+struct natflow_dpi_static_domain {
+	const char *host;
+	unsigned short host_len;
+	unsigned char kind;
+	unsigned int app_id;
+};
+
+#define NATFLOW_DPI_STATIC_DOMAIN(_host, _kind, _app_id) \
+	{ (_host), sizeof(_host) - 1, (_kind), (_app_id) }
+
+static int natflow_dpi_host_normalize(unsigned char *dst,
+                                      const unsigned char *src, unsigned int len);
+
 static const struct natflow_dpi_app_meta natflow_dpi_app_catalog[] = {
 	{	NATFLOW_DPI_APP_DNS, NATFLOW_DPI_CATEGORY_INFRASTRUCTURE,
 		NATFLOW_DPI_PROTO_DNS, "dns"
@@ -164,7 +188,63 @@ static const struct natflow_dpi_app_meta natflow_dpi_app_catalog[] = {
 	{	NATFLOW_DPI_APP_SMB, NATFLOW_DPI_CATEGORY_FILE_SHARING,
 		NATFLOW_DPI_PROTO_SMB, "smb"
 	},
+	{	NATFLOW_DPI_APP_YOUTUBE, NATFLOW_DPI_CATEGORY_STREAMING,
+		0, "youtube"
+	},
+	{	NATFLOW_DPI_APP_NETFLIX, NATFLOW_DPI_CATEGORY_STREAMING,
+		0, "netflix"
+	},
+	{	NATFLOW_DPI_APP_TELEGRAM, NATFLOW_DPI_CATEGORY_COMMUNICATION,
+		0, "telegram"
+	},
 };
+
+/* Exact entries precede suffix entries; suffix entries are longest first. */
+static const struct natflow_dpi_static_domain natflow_dpi_static_domains[] = {
+	NATFLOW_DPI_STATIC_DOMAIN("youtu.be", NATFLOW_DPI_DOMAIN_EXACT,
+	                          NATFLOW_DPI_APP_YOUTUBE),
+	NATFLOW_DPI_STATIC_DOMAIN("youtube-nocookie.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_YOUTUBE),
+	NATFLOW_DPI_STATIC_DOMAIN("googlevideo.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_YOUTUBE),
+	NATFLOW_DPI_STATIC_DOMAIN("nflxvideo.net", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_NETFLIX),
+	NATFLOW_DPI_STATIC_DOMAIN("telegram.org", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_TELEGRAM),
+	NATFLOW_DPI_STATIC_DOMAIN("youtube.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_YOUTUBE),
+	NATFLOW_DPI_STATIC_DOMAIN("telegram.me", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_TELEGRAM),
+	NATFLOW_DPI_STATIC_DOMAIN("nflximg.net", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_NETFLIX),
+	NATFLOW_DPI_STATIC_DOMAIN("nflximg.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_NETFLIX),
+	NATFLOW_DPI_STATIC_DOMAIN("nflxext.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_NETFLIX),
+	NATFLOW_DPI_STATIC_DOMAIN("netflix.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_NETFLIX),
+	NATFLOW_DPI_STATIC_DOMAIN("nflxso.net", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_NETFLIX),
+	NATFLOW_DPI_STATIC_DOMAIN("ytimg.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_YOUTUBE),
+	NATFLOW_DPI_STATIC_DOMAIN("t.me", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_TELEGRAM),
+};
+
+static const struct natflow_dpi_app_meta *
+natflow_dpi_app_by_id(unsigned int app_id)
+{
+	switch (app_id) {
+	case NATFLOW_DPI_APP_YOUTUBE:
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_SMB];
+	case NATFLOW_DPI_APP_NETFLIX:
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_SMB + 1];
+	case NATFLOW_DPI_APP_TELEGRAM:
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_SMB + 2];
+	default:
+		return NULL;
+	}
+}
 
 static int natflow_dpi_app_catalog_validate(void)
 {
@@ -177,13 +257,15 @@ static int natflow_dpi_app_catalog_validate(void)
 
 		if (app->app_id == NATFLOW_DPI_APP_UNKNOWN ||
 		        app->category_id == NATFLOW_DPI_CATEGORY_UNKNOWN ||
-		        app->proto != i + 1 ||
+		        (i < NATFLOW_DPI_PROTO_SMB && app->proto != i + 1) ||
+		        (i >= NATFLOW_DPI_PROTO_SMB && app->proto != 0) ||
 		        !app->name || app->name[0] == 0)
 			return -EINVAL;
 
 		for (j = i + 1; j < ARRAY_SIZE(natflow_dpi_app_catalog); j++) {
 			if (app->app_id == natflow_dpi_app_catalog[j].app_id ||
-			        app->proto == natflow_dpi_app_catalog[j].proto)
+			        (app->proto != 0 &&
+			         app->proto == natflow_dpi_app_catalog[j].proto))
 				return -EINVAL;
 		}
 	}
@@ -191,12 +273,105 @@ static int natflow_dpi_app_catalog_validate(void)
 	return 0;
 }
 
+static bool natflow_dpi_static_domain_matches(
+    const struct natflow_dpi_static_domain *domain,
+    const unsigned char *host, unsigned int host_len)
+{
+	unsigned int offset;
+
+	if (host_len < domain->host_len)
+		return false;
+	offset = host_len - domain->host_len;
+	if (memcmp(host + offset, domain->host, domain->host_len) != 0)
+		return false;
+	if (domain->kind == NATFLOW_DPI_DOMAIN_EXACT)
+		return offset == 0;
+	return offset == 0 || host[offset - 1] == '.';
+}
+
+static int natflow_dpi_static_domain_catalog_validate(void)
+{
+	unsigned int i;
+	unsigned int j;
+	bool suffix_seen = false;
+	unsigned int previous_suffix_len = ~0U;
+
+	for (i = 0; i < ARRAY_SIZE(natflow_dpi_static_domains); i++) {
+		const struct natflow_dpi_static_domain *domain =
+			    &natflow_dpi_static_domains[i];
+
+		if (!domain->host || domain->host_len == 0 ||
+		        domain->host_len > NATFLOW_DPI_HOST_MAX_LEN ||
+		        natflow_dpi_host_normalize(NULL,
+		                                   (const unsigned char *)domain->host,
+		                                   domain->host_len) != domain->host_len ||
+		        !natflow_dpi_app_by_id(domain->app_id))
+			return -EINVAL;
+		if (domain->kind == NATFLOW_DPI_DOMAIN_SUFFIX) {
+			suffix_seen = true;
+			if (domain->host_len > previous_suffix_len)
+				return -EINVAL;
+			previous_suffix_len = domain->host_len;
+		} else if (domain->kind != NATFLOW_DPI_DOMAIN_EXACT || suffix_seen) {
+			return -EINVAL;
+		}
+		for (j = i + 1; j < ARRAY_SIZE(natflow_dpi_static_domains); j++) {
+			if (domain->host_len == natflow_dpi_static_domains[j].host_len &&
+			        memcmp(domain->host, natflow_dpi_static_domains[j].host,
+			               domain->host_len) == 0)
+				return -EINVAL;
+		}
+	}
+	return 0;
+}
+
+static const struct natflow_dpi_app_meta *
+natflow_dpi_static_domain_lookup(const unsigned char *host,
+                                 unsigned int host_len)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(natflow_dpi_static_domains); i++) {
+		if (natflow_dpi_static_domain_matches(&natflow_dpi_static_domains[i],
+		                                      host, host_len))
+			return natflow_dpi_app_by_id(natflow_dpi_static_domains[i].app_id);
+	}
+	return NULL;
+}
+
+static struct natflow_dpi_app_machine_result
+natflow_dpi_domain_app_step(const unsigned char *host, unsigned int host_len,
+                            unsigned int source)
+{
+	struct natflow_dpi_app_machine_result result = {
+		.status = NATFLOW_DPI_APP_MACHINE_EXCLUDED,
+	};
+
+	switch (source) {
+	case NATFLOW_DPI_EVENT_SOURCE_HTTP:
+	case NATFLOW_DPI_EVENT_SOURCE_TLS:
+	case NATFLOW_DPI_EVENT_SOURCE_QUIC:
+		result.app = natflow_dpi_static_domain_lookup(host, host_len);
+		if (result.app)
+			result.status = NATFLOW_DPI_APP_MACHINE_TERMINAL;
+		break;
+	case NATFLOW_DPI_EVENT_SOURCE_DNS:
+		result.app = natflow_dpi_static_domain_lookup(host, host_len);
+		if (result.app)
+			result.status = NATFLOW_DPI_APP_MACHINE_INTENT;
+		break;
+	default:
+		break;
+	}
+	return result;
+}
+
 static const struct natflow_dpi_app_meta *
 natflow_dpi_app_by_proto(unsigned int proto)
 {
 	const struct natflow_dpi_app_meta *app;
 
-	if (proto == 0 || proto > ARRAY_SIZE(natflow_dpi_app_catalog))
+	if (proto == 0 || proto > NATFLOW_DPI_PROTO_SMB)
 		return NULL;
 	app = &natflow_dpi_app_catalog[proto - 1];
 	return app->proto == proto ? app : NULL;
@@ -260,6 +435,7 @@ static atomic64_t natflow_dpi_events_lost;
 static atomic64_t natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_MAX + 1];
 static atomic64_t natflow_dpi_domain_lookups;
 static atomic64_t natflow_dpi_domain_matches;
+static atomic64_t natflow_dpi_dns_app_intents;
 static atomic64_t natflow_dpi_packet_inspections[IP_CT_DIR_MAX];
 static atomic64_t natflow_dpi_packet_matches[IP_CT_DIR_MAX];
 static atomic64_t natflow_dpi_context_armed;
@@ -271,6 +447,10 @@ static atomic64_t natflow_dpi_context_cleared_no_candidate;
 static atomic64_t natflow_dpi_context_aborted;
 static atomic64_t natflow_dpi_proto_no_session;
 static atomic64_t natflow_dpi_proto_app_exists;
+
+static bool natflow_dpi_commit_app(struct nf_conn *ct,
+                                   const struct natflow_dpi_app_meta *app,
+                                   unsigned int source, unsigned char direction);
 
 static const char *natflow_dpi_state_name(unsigned int state)
 {
@@ -634,6 +814,7 @@ static void natflow_dpi_counters_clear(void)
 	atomic64_set(&natflow_dpi_events_lost, 0);
 	atomic64_set(&natflow_dpi_domain_lookups, 0);
 	atomic64_set(&natflow_dpi_domain_matches, 0);
+	atomic64_set(&natflow_dpi_dns_app_intents, 0);
 	atomic64_set(&natflow_dpi_packet_inspections[IP_CT_DIR_ORIGINAL], 0);
 	atomic64_set(&natflow_dpi_packet_inspections[IP_CT_DIR_REPLY], 0);
 	atomic64_set(&natflow_dpi_packet_matches[IP_CT_DIR_ORIGINAL], 0);
@@ -751,8 +932,7 @@ int natflow_dpi_consumer_enabled(void)
 
 int natflow_dpi_host_consumer_enabled(void)
 {
-	return READ_ONCE(natflow_dpi_state) == NATFLOW_DPI_STATE_ENABLED &&
-	       READ_ONCE(natflow_dpi_domain_rules) != 0;
+	return READ_ONCE(natflow_dpi_state) == NATFLOW_DPI_STATE_ENABLED;
 }
 
 int natflow_dpi_packet_consumer_enabled(void)
@@ -764,12 +944,26 @@ static void natflow_dpi_classify_normalized_host_match(struct nf_conn *ct,
         const unsigned char *normalized, unsigned short normalized_len,
         unsigned int source)
 {
+	struct natflow_dpi_app_machine_result result;
 	const struct natflow_dpi_domain_rule *rule;
 	struct natflow_dpi_ruleset *ruleset;
 	natflow_t *nf;
 	unsigned int i;
 
 	atomic64_inc(&natflow_dpi_domain_lookups);
+	result = natflow_dpi_domain_app_step(normalized, normalized_len, source);
+	if (result.status == NATFLOW_DPI_APP_MACHINE_TERMINAL) {
+		atomic64_inc(&natflow_dpi_domain_matches);
+		natflow_dpi_commit_app(ct, result.app, source,
+		                       NATFLOW_L7_DIR_ORIGINAL);
+		return;
+	}
+	if (source == NATFLOW_DPI_EVENT_SOURCE_DNS) {
+		if (result.status == NATFLOW_DPI_APP_MACHINE_INTENT)
+			atomic64_inc(&natflow_dpi_dns_app_intents);
+		return;
+	}
+
 	rcu_read_lock();
 	ruleset = rcu_dereference(natflow_dpi_active_ruleset);
 	if (!ruleset) {
@@ -1015,6 +1209,7 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             "events_smb=%llu\n"
 	             "domain_lookups=%llu\n"
 	             "domain_matches=%llu\n"
+	             "dns_app_intents=%llu\n"
 	             "packet_inspect_original=%llu\n"
 	             "packet_inspect_reply=%llu\n"
 	             "packet_match_original=%llu\n"
@@ -1087,6 +1282,7 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_SMB]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_domain_lookups),
 	             (unsigned long long)atomic64_read(&natflow_dpi_domain_matches),
+	             (unsigned long long)atomic64_read(&natflow_dpi_dns_app_intents),
 	             (unsigned long long)atomic64_read(&natflow_dpi_packet_inspections[IP_CT_DIR_ORIGINAL]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_packet_inspections[IP_CT_DIR_REPLY]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_packet_matches[IP_CT_DIR_ORIGINAL]),
@@ -2752,9 +2948,12 @@ int natflow_dpi_init(void)
 	BUILD_BUG_ON(NATFLOW_DPI_PROTO_SMB > 32);
 	BUILD_BUG_ON(NATFLOW_DPI_PROTO_ALL_MASK !=
 	             (NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_SMB + 1) - 1));
-	BUILD_BUG_ON(ARRAY_SIZE(natflow_dpi_app_catalog) != 18);
+	BUILD_BUG_ON(ARRAY_SIZE(natflow_dpi_app_catalog) != 21);
 
 	ret = natflow_dpi_app_catalog_validate();
+	if (ret != 0)
+		return ret;
+	ret = natflow_dpi_static_domain_catalog_validate();
 	if (ret != 0)
 		return ret;
 
