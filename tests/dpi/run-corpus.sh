@@ -57,7 +57,7 @@ Usage: $0 case-file [case-file ...]
        $0 --queue-stream [cache [generated [parallel]]]
 
 Case format, one pipe-separated record per line:
-  name|proto|transport|direction|port|payload_hex|expectation
+  name|proto|transport|direction|port|payload_hex|expectation[|source_port]
 
 Blank lines and lines beginning with # are ignored. This destructive test
 requires root privileges. Queue pressure defaults to
@@ -261,18 +261,40 @@ proto_values()
 	postgresql) printf '%s\n' '19 16 10 0' ;;
 	rdp) printf '%s\n' '20 17 2 0' ;;
 	smb) printf '%s\n' '21 18 5 0' ;;
+	ntp) printf '%s\n' '25 19 1 0' ;;
+	snmp) printf '%s\n' '26 20 1 0' ;;
+	radius) printf '%s\n' '27 21 1 0' ;;
+	tftp) printf '%s\n' '28 22 6 0' ;;
+	ldap) printf '%s\n' '29 23 1 0' ;;
+	nfs) printf '%s\n' '30 24 5 0' ;;
+	socks) printf '%s\n' '31 25 3 0' ;;
+	coap) printf '%s\n' '32 26 9 0' ;;
 	youtube) printf '%s\n' '1 4097 11 0' ;;
 	netflix) printf '%s\n' '1 4098 11 0' ;;
+	tencent-video) printf '%s\n' '1 4100 11 0' ;;
+	spotify-host) printf '%s\n' '1 4101 11 0' ;;
 	telegram) printf '%s\n' '1 8193 12 0' ;;
 	wechat) printf '%s\n' '1 8194 12 0' ;;
 	qq-host) printf '%s\n' '1 8195 12 0' ;;
 	dingtalk-host) printf '%s\n' '1 8196 12 0' ;;
+	whatsapp-host) printf '%s\n' '1 8197 12 0' ;;
+	messenger) printf '%s\n' '1 8198 12 0' ;;
+	discord-host) printf '%s\n' '1 8199 12 0' ;;
+	zoom-host) printf '%s\n' '1 8200 4 0' ;;
 	iqiyi-host) printf '%s\n' '1 4099 11 0' ;;
 	taobao) printf '%s\n' '1 16385 14 0' ;;
 	tiktok) printf '%s\n' '1 20481 13 0' ;;
+	facebook) printf '%s\n' '1 20482 13 0' ;;
+	instagram) printf '%s\n' '1 20483 13 0' ;;
+	twitter) printf '%s\n' '1 20484 13 0' ;;
+	weibo) printf '%s\n' '1 20485 13 0' ;;
 	dingtalk) printf '%s\n' '22 8196 12 0' ;;
 	qq) printf '%s\n' '23 8195 12 0' ;;
 	iqiyi) printf '%s\n' '24 4099 11 0' ;;
+	whatsapp) printf '%s\n' '33 8197 12 0' ;;
+	discord) printf '%s\n' '34 8199 12 0' ;;
+	spotify) printf '%s\n' '35 4101 11 0' ;;
+	zoom) printf '%s\n' '36 8200 4 0' ;;
 	*) return 1 ;;
 	esac
 }
@@ -335,7 +357,8 @@ validate_case()
 	port=$6
 	payload=$7
 	expectation=$8
-	extra=$9
+	source_port=$9
+	extra=${10}
 
 	[ -n "$name" ] || fail "$case_file: empty case name"
 	[ -z "$extra" ] || fail "$case_file: malformed case: $name"
@@ -348,15 +371,22 @@ validate_case()
 	rule_id=$4
 	case $l4 in tcp|udp) ;; *) fail "$case_file: invalid L4 in $name" ;; esac
 	case $proto:$l4 in
-	ssh:udp|wireguard:tcp|ftp:udp|smtp:udp|pop3:udp|imap:udp|rtsp:udp|mqtt:udp|resp:udp|mysql:udp|postgresql:udp|rdp:udp|smb:udp)
-		fail "$case_file: invalid protocol/L4 pair in $name" ;;
-	dingtalk:udp|qq:tcp|iqiyi:tcp)
+		ssh:udp|wireguard:tcp|ftp:udp|smtp:udp|pop3:udp|imap:udp|rtsp:udp|mqtt:udp|resp:udp|mysql:udp|postgresql:udp|rdp:udp|smb:udp|ntp:tcp|snmp:tcp|radius:tcp|tftp:tcp|socks:udp|coap:tcp)
+			fail "$case_file: invalid protocol/L4 pair in $name" ;;
+		dingtalk:udp|qq:tcp|iqiyi:tcp|whatsapp:udp|discord:tcp|zoom:tcp)
 		fail "$case_file: invalid application/L4 pair in $name" ;;
 	esac
 	case $direction in original|reply|either) ;; *) fail "$case_file: invalid direction in $name" ;; esac
 	case $port in ""|*[!0-9]*) fail "$case_file: invalid port in $name" ;; esac
 	[ "$port" -gt 0 ] && [ "$port" -le 65535 ] ||
 		fail "$case_file: port out of range in $name"
+	if [ -n "$source_port" ]; then
+		case $source_port in
+		*[!0-9]*) fail "$case_file: invalid source port in $name" ;;
+		esac
+		[ "$source_port" -gt 0 ] && [ "$source_port" -le 65535 ] ||
+			fail "$case_file: source port out of range in $name"
+	fi
 	case $payload in
 	seq:*)
 		[ "$l4" = tcp ] || fail "$case_file: sequence requires TCP in $name"
@@ -380,12 +410,13 @@ check_case_files()
 	check_count=0
 	for case_file in "$@"; do
 		[ -r "$case_file" ] || fail "cannot read case file: $case_file"
-		while IFS='|' read -r name proto l4 direction port payload expectation extra; do
+		while IFS='|' read -r name proto l4 direction port payload expectation source_port extra; do
 			case $name in
 			""|'#'*) continue ;;
 			esac
 			validate_case "$case_file" "$name" "$proto" "$l4" \
-				"$direction" "$port" "$payload" "$expectation" "$extra"
+				"$direction" "$port" "$payload" "$expectation" \
+				"$source_port" "$extra"
 			check_count=$((check_count + 1))
 		done <"$case_file"
 	done
@@ -410,6 +441,7 @@ inject_case()
 	direction=$2
 	port=$3
 	payload=$4
+	source_port=${5:-}
 	ready_file=$TMP_DIR/ready.$$.${port}
 
 	rm -f "$ready_file"
@@ -440,8 +472,14 @@ inject_case()
 		fi
 		;;
 	*)
+		if [ -n "$source_port" ]; then
+			client_source_arg=$source_port
+		else
+			client_source_arg=
+		fi
 		if ! ip netns exec "$CLIENT_NS" "$TRAFFIC_BIN" client "$l4" \
-			"$SERVER_IP" "$port" "$direction" "$payload"; then
+			"$SERVER_IP" "$port" "$direction" "$payload" \
+			${client_source_arg:+"$client_source_arg"}; then
 			traffic_failed=1
 		else
 			traffic_failed=0
@@ -506,7 +544,7 @@ inject_stream()
 
 if [ "${1:-}" = __inject ]; then
 	shift
-	[ "$#" -eq 9 ] || fail "invalid internal injector arguments"
+	[ "$#" -eq 10 ] || fail "invalid internal injector arguments"
 	CLIENT_NS=$1
 	SERVER_NS=$2
 	TRAFFIC_BIN=$3
@@ -790,19 +828,21 @@ fi
 case_count=0
 for case_file in "$@"; do
 	[ -r "$case_file" ] || fail "cannot read case file: $case_file"
-	while IFS='|' read -r name proto l4 direction port payload expectation extra; do
+	while IFS='|' read -r name proto l4 direction port payload expectation source_port extra; do
 		case $name in
 		""|'#'*) continue ;;
 		esac
 		validate_case "$case_file" "$name" "$proto" "$l4" \
-			"$direction" "$port" "$payload" "$expectation" "$extra"
+			"$direction" "$port" "$payload" "$expectation" \
+			"$source_port" "$extra"
 
 		printf 'CASE: %s\n' "$name"
 		if ! "$ASSERT_BIN" -d "$QUEUE" -S "$CLIENT_IP" -T "$SERVER_IP" \
 			-P "$l4" -p "$port" -s "$source_id" -D "$direction" \
 			-a "$app_id" -c "$category_id" -r "$rule_id" $negative -- \
 			"$0" __inject "$CLIENT_NS" "$SERVER_NS" "$TRAFFIC_BIN" \
-			"$TMP_DIR" "$SERVER_IP" "$l4" "$direction" "$port" "$payload"; then
+			"$TMP_DIR" "$SERVER_IP" "$l4" "$direction" "$port" "$payload" \
+			"$source_port"; then
 			dump_failure_state
 			fail "corpus case failed: $name"
 		fi

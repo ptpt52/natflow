@@ -41,7 +41,7 @@ static void usage(FILE *stream, const char *program)
 {
 	fprintf(stream,
 	        "Usage: %s server tcp|udp bind-ip port original|reply hex ready-file\n"
-	        "       %s client tcp|udp server-ip port original|reply hex\n"
+	        "       %s client tcp|udp server-ip port original|reply hex [source-port]\n"
 	        "       %s server-sequence tcp bind-ip port script ready-file\n"
 	        "       %s client-sequence tcp server-ip port script\n",
 	        program, program, program, program);
@@ -164,6 +164,34 @@ static void configure_tcp_connection(int fd)
 	if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &enabled,
 	               sizeof(enabled)) != 0)
 		fail("configure TCP connection");
+}
+
+static void bind_source_port(int fd, int family, unsigned int port)
+{
+	struct sockaddr_in address4;
+	struct sockaddr_in6 address6;
+
+	if (port == 0)
+		return;
+	if (family == AF_INET) {
+		memset(&address4, 0, sizeof(address4));
+		address4.sin_family = AF_INET;
+		address4.sin_port = htons((uint16_t)port);
+		if (bind(fd, (const struct sockaddr *)&address4,
+		         sizeof(address4)) != 0)
+			fail("bind client source port");
+		return;
+	}
+	if (family == AF_INET6) {
+		memset(&address6, 0, sizeof(address6));
+		address6.sin6_family = AF_INET6;
+		address6.sin6_port = htons((uint16_t)port);
+		if (bind(fd, (const struct sockaddr *)&address6,
+		         sizeof(address6)) != 0)
+			fail("bind client source port");
+		return;
+	}
+	fail_message("unsupported client address family");
 }
 
 static void mark_ready(const char *path)
@@ -311,13 +339,15 @@ static void run_tcp_server(const struct traffic_endpoint *endpoint,
 
 static void run_tcp_client(const struct traffic_endpoint *endpoint,
                            enum traffic_direction direction,
-                           const unsigned char *payload, size_t payload_length)
+                           const unsigned char *payload, size_t payload_length,
+                           unsigned int source_port)
 {
 	int fd = socket(endpoint->family, SOCK_STREAM, 0);
 
 	if (fd < 0)
 		fail("create TCP client");
 	configure_socket(fd);
+	bind_source_port(fd, endpoint->family, source_port);
 	if (connect(fd, (const struct sockaddr *)&endpoint->address,
 	            endpoint->address_len) != 0)
 		fail("connect TCP client");
@@ -410,7 +440,8 @@ static void run_udp_server(const struct traffic_endpoint *endpoint,
 
 static void run_udp_client(const struct traffic_endpoint *endpoint,
                            enum traffic_direction direction,
-                           const unsigned char *payload, size_t payload_length)
+                           const unsigned char *payload, size_t payload_length,
+                           unsigned int source_port)
 {
 	static const unsigned char probe = 0;
 	unsigned char received[TRAFFIC_PAYLOAD_MAX];
@@ -420,6 +451,7 @@ static void run_udp_client(const struct traffic_endpoint *endpoint,
 	if (fd < 0)
 		fail("create UDP client");
 	configure_socket(fd);
+	bind_source_port(fd, endpoint->family, source_port);
 	if (connect(fd, (const struct sockaddr *)&endpoint->address,
 	            endpoint->address_len) != 0)
 		fail("connect UDP client");
@@ -447,6 +479,7 @@ int main(int argc, char **argv)
 	enum traffic_direction direction;
 	size_t payload_length;
 	unsigned int port;
+	unsigned int source_port = 0;
 	int protocol;
 	int sequence = 0;
 
@@ -456,7 +489,7 @@ int main(int argc, char **argv)
 	}
 	if (strcmp(argv[1], "server") == 0 && argc == 8)
 		role = TRAFFIC_SERVER;
-	else if (strcmp(argv[1], "client") == 0 && argc == 7)
+	else if (strcmp(argv[1], "client") == 0 && (argc == 7 || argc == 8))
 		role = TRAFFIC_CLIENT;
 	else if (strcmp(argv[1], "server-sequence") == 0 && argc == 7) {
 		role = TRAFFIC_SERVER;
@@ -478,6 +511,8 @@ int main(int argc, char **argv)
 	if (sequence && protocol != IPPROTO_TCP)
 		fail_message("sequence mode requires TCP");
 	port = parse_port(argv[4]);
+	if (role == TRAFFIC_CLIENT && !sequence && argc == 8)
+		source_port = parse_port(argv[7]);
 	endpoint = parse_address(argv[3], port);
 	signal(SIGPIPE, SIG_IGN);
 
@@ -500,11 +535,13 @@ int main(int argc, char **argv)
 	if (role == TRAFFIC_SERVER && protocol == IPPROTO_TCP)
 		run_tcp_server(&endpoint, direction, payload, payload_length, argv[7]);
 	else if (role == TRAFFIC_CLIENT && protocol == IPPROTO_TCP)
-		run_tcp_client(&endpoint, direction, payload, payload_length);
+		run_tcp_client(&endpoint, direction, payload, payload_length,
+		               source_port);
 	else if (role == TRAFFIC_SERVER)
 		run_udp_server(&endpoint, direction, payload, payload_length, argv[7]);
 	else
-		run_udp_client(&endpoint, direction, payload, payload_length);
+		run_udp_client(&endpoint, direction, payload, payload_length,
+		               source_port);
 
 	return EXIT_SUCCESS;
 }

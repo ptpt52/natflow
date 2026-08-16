@@ -128,7 +128,7 @@ GCC 9.4 完整配置约 1936 字节的模块内部最坏累计调用链降到 17
 
 ### P2-4：设计并开发 DPI 能力
 
-状态：Hardcoded Classifier Redesign Accepted，M7 Done
+状态：Hardcoded Classifier Redesign Accepted，M9 Done
 
 目标：在现有 URL logger、Host ACL、conntrack、user/auth、QoS、zone 和 fast path 协作基础上，先统一 L7 parser/context/consumer 生命周期，再实现轻量 DPI 能力，用于协议/应用分类、审计记录和后续策略匹配。
 
@@ -148,6 +148,8 @@ DNS。M4 已删除 domain/proto ruleset、pending/active RCU 对象、规则 par
 全部规则 ctl 命令；ctl 只保留 enable、catalog、counters 和 `events_clear`。
 
 实现进度：M0-M1e 的 shared L7、控制/事件 ABI、A 级协议识别、双向 bounded context 和测试工具已完成。M2 已加入 FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、PostgreSQL、RDP、SMB 共 12 个 audit-only 原生协议机器；它们按文本、数据库、二进制三组复用剩余 discovery machine-class bit，不扩大 8 字节 conntrack 瞬态 context，并有协议专属正反 corpus。M3 增加 11 项 HTTP Host 静态应用正反 corpus。M5 已把 context 最后两个字节迁移为 16 位 `dpi_automaton`，并以 RDP 实现首台 claimed machine：original X.224 request 与 reply confirm 通过 CAS 单调汇合后才终态，claimed 后不再运行其他原生机器。M6 已完成七组合构建和栈/体积基线，M7 已删除 detector 抽象。M8 基于 nDPI 新增微信、QQ、钉钉、爱奇艺、淘宝、TikTok，catalog revision=2/27 项、静态域名 48 项，并加入钉钉 TCP、QQ/OICQ UDP、爱奇艺 `PPStream` UDP App step；HTTP 单包 view 可解析双向 start line、最多 32 个 header 和可见 body，但第一批只让严格 Host 终态。当前自动 corpus 共 123 项，8 字节 context 未扩大。新增样本的目标机 IPv4/IPv6 运行态回归仍是后续部署验证项。
+
+M9 基于同一 nDPI 快照新增腾讯视频、WhatsApp、Facebook、Messenger、Instagram、X/Twitter、Discord、Spotify、Zoom 和微博，以及 NTP、SNMP、RADIUS、TFTP、LDAP、NFS、SOCKS 和 CoAP。catalog revision=3/45 项、静态域名 94 项；SOCKS 和 WhatsApp 复用 compact automaton，其他新增 parser 单包终态，8 字节 context 不扩大。独立审核后调整强结构协议优先级、任一端点端口语义和 TFTP 动态 TID OACK，并补签名碰撞及 Spotify UDP fixture。自动 corpus 增至 196 项；目标机 IPv4/IPv6 运行态回归仍是部署验证项。
 
 边界：
 
@@ -174,6 +176,8 @@ DNS。M4 已删除 domain/proto ruleset、pending/active RCU 对象、规则 par
    machine step；保持识别证据、预算、context 布局和外部 ABI 不变。
 9. M8：从 nDPI 提取首批手机 App 域名和直接 payload 特征，增加有界 HTTP App
    view、固定 ID/category/source、正反 corpus，并保持现有 compact context。
+10. M9：增加第二批 10 个常见应用和 8 个基础协议，复用现有 machine class 和
+   8 字节 context；同步 catalog revision、source counters、工具、corpus 和文档。
 
 历史实现阶段：
 

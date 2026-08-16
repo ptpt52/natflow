@@ -103,6 +103,30 @@ static const char *source_name(uint32_t flags)
 		return "qq";
 	case NATFLOW_DPI_EVENT_SOURCE_IQIYI:
 		return "iqiyi";
+	case NATFLOW_DPI_EVENT_SOURCE_NTP:
+		return "ntp";
+	case NATFLOW_DPI_EVENT_SOURCE_SNMP:
+		return "snmp";
+	case NATFLOW_DPI_EVENT_SOURCE_RADIUS:
+		return "radius";
+	case NATFLOW_DPI_EVENT_SOURCE_TFTP:
+		return "tftp";
+	case NATFLOW_DPI_EVENT_SOURCE_LDAP:
+		return "ldap";
+	case NATFLOW_DPI_EVENT_SOURCE_NFS:
+		return "nfs";
+	case NATFLOW_DPI_EVENT_SOURCE_SOCKS:
+		return "socks";
+	case NATFLOW_DPI_EVENT_SOURCE_COAP:
+		return "coap";
+	case NATFLOW_DPI_EVENT_SOURCE_WHATSAPP:
+		return "whatsapp";
+	case NATFLOW_DPI_EVENT_SOURCE_DISCORD:
+		return "discord";
+	case NATFLOW_DPI_EVENT_SOURCE_SPOTIFY:
+		return "spotify";
+	case NATFLOW_DPI_EVENT_SOURCE_ZOOM:
+		return "zoom";
 	default:
 		return "unknown";
 	}

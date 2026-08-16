@@ -83,11 +83,13 @@ segmentation, non-linear skb, and long-duration soak are deferred. Failure
 injection remains separate integration work. Queue pressure and stream modes
 currently use the IPv4 topology.
 
-The checked-in corpus has 123 cases: 51 for the A-tier DNS, SSH, WireGuard,
+The checked-in corpus has 196 cases: 51 for the A-tier DNS, SSH, WireGuard,
 STUN/TURN, and BitTorrent subsets, 31 positive/negative cases for the 12
 B-tier text, database, IoT, RDP, and SMB native machines, 28 HTTP Host/App
 parser cases for the nine fixed applications, and 13 nDPI-derived DingTalk,
-QQ/OICQ, and iQIYI native application cases.
+QQ/OICQ, and iQIYI native application cases. The second batch adds 36 common
+application hostname/payload cases and 37 NTP, SNMP, RADIUS, TFTP, LDAP, NFS,
+SOCKS, and CoAP cases.
 
 Current fixtures:
 
@@ -98,6 +100,17 @@ Current fixtures:
 - `cases/mobile-apps.cases`: DingTalk TCP structure, QQ fixed UDP/OICQ forms,
   iQIYI UDP `PPStream`, both evidence directions, and length/constant/keyword
   negatives.
+
+- `cases/common-apps-v2.cases`: ten common applications, Meta/Tencent child
+  domain precedence, label-boundary negatives, WhatsApp segmented prefix, and
+  Discord/Spotify/Zoom direct payload evidence. An optional eighth fixture
+  field binds the injector source port for endpoint-sensitive signatures such
+  as Spotify UDP.
+
+- `cases/network-protocols-v2.cases`: eight added protocols, including strict
+  BER/declared-length negatives, TCP/UDP NFS RPC, bidirectional evidence,
+  dynamic-TID TFTP OACK, STUN/uTP/WireGuard collision precedence, SOCKS handshake
+  ordering, and CoAP token/port boundaries.
 
 - `cases/dns-ssh.cases`: DNS UDP/TCP original/reply, compressed question,
   malformed pointer/header/length and wrong-port negatives; SSH original/reply

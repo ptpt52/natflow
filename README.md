@@ -124,7 +124,7 @@ make
 | --- | --- |
 | `CONFIG_NATFLOW_PATH` | 启用 fast path、vline/relay、硬件 offload 相关控制。 |
 | `CONFIG_NATFLOW_URLLOGGER` | 启用 URL logger、Host ACL 和 `/proc/sys/urllogger_store`。 |
-| `CONFIG_NATFLOW_DPI` | 启用 DPI 控制/事件接口、9 个固定应用、DNS QNAME 查询意图、18 个固定原生协议状态机和 `/dev/natflow_dpi_queue`；默认关闭。DPI enabled 即激活 host/packet consumer，不依赖规则或 `/proc/sys/urllogger_store/enable`。 |
+| `CONFIG_NATFLOW_DPI` | 启用 DPI 控制/事件接口、19 个固定应用、DNS QNAME 查询意图、26 个固定原生协议状态机和 `/dev/natflow_dpi_queue`；默认关闭。DPI enabled 即激活 host/packet consumer，不依赖规则或 `/proc/sys/urllogger_store/enable`。 |
 | `CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH` | MTK 外部设备硬件 offload 使用 VLAN hash 模式；会影响 bridge VLAN filter。 |
 | `CONFIG_HWNAT_EXTDEV_DISABLED` | 禁用部分外部设备硬件 offload 分支。 |
 | `NO_DEBUG=1` | 追加 `-DNO_DEBUG -Os`，编译期关闭日志宏。 |
@@ -987,11 +987,11 @@ int main(void)
 
 ## DPI static application classifier and native protocol machines
 
-需要编译 `CONFIG_NATFLOW_DPI`。当前 DPI 默认关闭，支持 YouTube、Netflix、Telegram、微信、QQ、钉钉、爱奇艺、淘宝和 TikTok 9 个固定应用、DNS QNAME 查询意图统计和 18 个编译期固定原生协议状态机。`enable=1` 会直接激活 DPI host/packet consumer 并运行全部内置分类器，不需要任何运行时规则。HTTP Host、TLS SNI 或 QUIC v1 Initial SNI 命中静态域名时直接写固定 `app_id` 和 category；钉钉、QQ/OICQ 和爱奇艺还可由 nDPI 来源的直接 payload 签名终态。`/proc/sys/urllogger_store/enable=0` 仍只表示 URL logger 事件和 Host ACL 不执行。URL、DPI domain 和 DPI packet 的 L7 终态分别记录在 `natflow_t.status` 中：URL 失败不会关闭 DPI，DPI packet 结束不会关闭仍在等待 Host/SNI 的 DPI domain，DPI domain 完成也不会影响 URL；当前 active consumer 全部完成后才释放 fast path，并设置 `IPS_NATFLOW_L7_HANDLED` 作为后续包的 L7_SKIP 快速短路 hint。
+需要编译 `CONFIG_NATFLOW_DPI`。当前 DPI 默认关闭，支持 19 个固定应用、DNS QNAME 查询意图统计和 26 个编译期固定原生协议状态机。`enable=1` 会直接激活 DPI host/packet consumer 并运行全部内置分类器，不需要任何运行时规则。HTTP Host、TLS SNI 或 QUIC v1 Initial SNI 命中静态域名时直接写固定 `app_id` 和 category；钉钉、QQ/OICQ、爱奇艺、WhatsApp、Discord、Spotify 和 Zoom 还可由 nDPI 来源的直接 payload 签名终态。`/proc/sys/urllogger_store/enable=0` 仍只表示 URL logger 事件和 Host ACL 不执行。URL、DPI domain 和 DPI packet 的 L7 终态分别记录在 `natflow_t.status` 中：URL 失败不会关闭 DPI，DPI packet 结束不会关闭仍在等待 Host/SNI 的 DPI domain，DPI domain 完成也不会影响 URL；当前 active consumer 全部完成后才释放 fast path，并设置 `IPS_NATFLOW_L7_HANDLED` 作为后续包的 L7_SKIP 快速短路 hint。
 
 运行时 `enable=0` 只改变后续数据包看到的 DPI consumer，不扫描或清理已经标记为 L7 处理中的连接，也不会重新武装已经设置 L7_SKIP 的连接。已标记连接可以由后续数据包自然完成，也可以保留原 L7 状态直到 conntrack 生命周期结束；配置切换不保证立即释放这些既有连接的 fast path gate。
 
-原生协议机器未命中时会在 `natflow_t` 尾部保存 8 字节瞬态双向预算 context，并设置 `NF_FF_DPI_USE`；`app_id` 仍是唯一分类结果。context 内的 16 位 `dpi_automaton` 在 discovery 阶段以低 8 位保存 machine-class mask，机器认领后原子保存 machine/state。源码没有 detector metadata 或 detector 数组：固定 dispatcher 按编译期顺序直接调用对应 parser/机器分支。同一 conntrack 的 packet machine、automaton、双向预算和 app/context 终态由 conntrack lock 串行；任何固定 app 终态都会在同一临界区清除 context 并写 DPI packet done，避免终态后重新武装 owner bit。当前每方向硬限制最多观察 4 个 payload 包，不设置时间 deadline。所需方向始终没有 payload 时，该 context 可以保留到 conntrack 生命周期结束。
+原生协议机器未命中时会在 `natflow_t` 尾部保存 8 字节瞬态双向预算 context，并设置 `NF_FF_DPI_USE`；`app_id` 仍是唯一分类结果。context 内的 16 位 `dpi_automaton` 在 discovery 阶段以低 8 位保存 machine-class mask，RDP、SOCKS 或 WhatsApp 认领后原子保存 machine/state。源码没有 detector metadata 或 detector 数组：固定 dispatcher 按编译期顺序直接调用对应 parser/机器分支。同一 conntrack 的 packet machine、automaton、双向预算和 app/context 终态由 conntrack lock 串行；任何固定 app 终态都会在同一临界区清除 context 并写 DPI packet done，避免终态后重新武装 owner bit。当前每方向硬限制最多观察 4 个 payload 包，不设置时间 deadline。所需方向始终没有 payload 时，该 context 可以保留到 conntrack 生命周期结束。
 
 reply 方向只进入 DPI packet consumer；URL logger、Host ACL、HTTP/TLS/QUIC host 和 DNS QNAME domain 仍只处理 original。DNS reply 必须通过 response header 和第一问结构校验，其他原生协议机器也必须匹配 payload 证据，端口不会直接产生分类。
 
@@ -1014,15 +1014,15 @@ echo events_clear >/dev/natflow_dpi_ctl
 - `rules_begin`、`domain ...`、`proto ...`、`rules_commit`、`rules_abort` 和 `rules_clear` 已全部删除，写入返回 `-EINVAL`。
 - Host/SNI 会转小写、去掉末尾点，并校验 DNS label；HTTP Host 中的端口由 URL logger normalize 时剥离。静态 matcher 固定使用 exact 优先、suffix 长度降序和 label-boundary 语义。
 - `kind=suffix` 同时匹配完全相同的 host 和带点边界的子域名，例如规则 `example.net` 可匹配 `example.net` 与 `www.example.net`。
-- 固定 protocol app ID 为：DNS=1、SSH=2、WireGuard=3、STUN=4、TURN=5、BitTorrent=6、FTP=7、SMTP=8、POP3=9、IMAP=10、SIP=11、RTSP=12、MQTT=13、RESP=14、MySQL=15、PostgreSQL=16、RDP=17、SMB=18。已发布 ID 不改号或复用。
-- 固定应用 ID 为 YouTube=`0x1001`、Netflix=`0x1002`、爱奇艺=`0x1003`、Telegram=`0x2001`、微信=`0x2002`、QQ=`0x2003`、钉钉=`0x2004`、淘宝=`0x4001`、TikTok=`0x5001`。category 新增 social_network=13 和 shopping=14；通信应用使用 communication=12，视频应用使用 streaming=11。catalog revision 为 2，共 27 个 protocol/app 项。
-- 静态域名表共有 48 项。新增项直接提取自本地 nDPI `ndpi_content_match.c.inc`，仍使用 exact 或严格 label-boundary suffix；nDPI 的宽泛 `wx.`/`weixin.` substring 没有采用。TikTok 的三个共享 CDN 完整 hostname 只做 exact，不能把整个 `akamaized.net` 或 `myqcloud.com` 当作 TikTok。
+- 固定 protocol app ID 为：DNS=1、SSH=2、WireGuard=3、STUN=4、TURN=5、BitTorrent=6、FTP=7、SMTP=8、POP3=9、IMAP=10、SIP=11、RTSP=12、MQTT=13、RESP=14、MySQL=15、PostgreSQL=16、RDP=17、SMB=18、NTP=19、SNMP=20、RADIUS=21、TFTP=22、LDAP=23、NFS=24、SOCKS=25、CoAP=26。已发布 ID 不改号或复用。
+- 固定应用 ID 在原有 9 项上追加腾讯视频=`0x1004`、Spotify=`0x1005`、WhatsApp=`0x2005`、Messenger=`0x2006`、Discord=`0x2007`、Zoom=`0x2008`、Facebook=`0x5002`、Instagram=`0x5003`、X/Twitter=`0x5004`、微博=`0x5005`。catalog revision 为 3，共 45 个 protocol/app 项；现有 category 编号不变。
+- 静态域名表共有 94 项。新增项直接提取自本地 nDPI `ndpi_content_match.c.inc`，仍使用 exact 或严格 label-boundary suffix；`v.qq.com` 和 Meta 具体子域先于 `qq.com`、`facebook.com` 父域。nDPI 的宽泛 `wx.`、`weixin.`、`instagram.`、`twitter.`、`whatsapp.`、`fbcdn-` 等 substring 没有采用；共享 CDN 只登记完整 hostname exact。
 - App HTTP step 可在 original request 或 reply response 的当前有界 payload 中解析 request/status line、最多 32 个完整 header、大小写不敏感的 `Host`/`User-Agent`/`Content-Type` 和 header 后可见 body。第一批 nDPI 规则只使用 request Host；没有可追溯来源的 header/body 关键字不会单独终态。当前不做 TCP stream reassembly、chunked 解码、gzip/br 解压或跨包 body 拼接。
 - DNS QNAME 路径：original direction TCP/UDP 53 标准 query 的第一问 QNAME 会经过同一静态 matcher，但只增加 `dns_app_intents`，不会把查询目标应用写入 DNS 连接的 `app_id`；该连接仍由 DNS 原生协议机器终态为 DNS。parser 支持 compression pointer，最多跳转 16 次并拒绝指针环、越界和展开后超长名称。reply 只用于 DNS protocol 证据。
 - 端口只用于选择有界解析候选和 payload pull budget，不直接写入 `app_id`；当前只有 TCP/UDP 53 会触发 DNS 候选解析，TCP 22 和 UDP 51820 不再作为 SSH/WireGuard 的独立分类证据。
 - 有界 payload 机器：TCP 任一方向的 SSH banner 识别 `SSH-<version>-` identification string；WireGuard、STUN/TURN 和 BitTorrent 机器也在任一方向匹配直接 payload 证据。uTP 会校验 version/type、最多 4 段的有界 extension chain；为避免与 WireGuard type 1 重叠，DATA packet 的 connection ID 为 0 时不分类。DPI 启用后执行全部内置机器，但每包仍只运行当前 L4、方向和 discovery machine-class mask 允许且预算未耗尽的 parser。
-- B 级原生协议机器仍为 audit-only：MQTT 识别 original CONNECT，RESP/PostgreSQL 识别 original request/startup，MySQL 只识别 reply protocol-v10 greeting，SMB 识别二进制首包；带 NBSS 头的 SMB1/2 必须声明至少覆盖对应 32/64 字节 SMB header 的长度。RDP 由首台 compact automaton 认领，只有 original X.224 Connection Request 与 reply Connection Confirm 都通过 TPKT/X.224 结构校验后才终态，两个事实允许反序或并发到达，重复事实幂等。FTP/SMTP/POP3/IMAP/SIP/RTSP 只接受协议专属命令或 request/status line。`USER` 等跨协议歧义命令、单独端口和普通服务 banner 不产生分类。12 个协议按文本、数据库和二进制三个 discovery machine class 复用 8 字节 conntrack 瞬态 context，不使用 detector metadata。
-- nDPI payload App 机器在任一方向识别：钉钉 TCP 的 16 字节结构前缀且总长大于 90；QQ UDP 的固定长度/前缀以及 OICQ version/command；爱奇艺 UDP 121..299 字节 payload 内的 `PPStream`。它们复用 TEXT discovery class，不新增 detector 表，也不扩大 `natflow_t` 的 8 字节 context。
+- B 级原生协议机器仍为 audit-only：除原有文本、数据库和 Microsoft 协议外，NTP、SNMP、RADIUS、LDAP 和 CoAP 使用任一端点端口加结构/长度证据；TFTP RRQ/WRQ 需要端点 69，严格 OACK 支持动态 TID；NFS 使用 RPC record/program/version，不限制端口。强结构 network/NFS parser 先于 WireGuard/uTP，避免合法 RPC 或基础协议被较弱的 uTP 头抢先分类。BER length 拒绝 indefinite、超过 4 字节、非最短编码和越界。SOCKS4/5 必须先看到 original negotiation，再由 reply 的固定应答终态，claimed 后只运行 SOCKS machine。RDP 仍要求 original request 与 reply confirm 两个事实汇合。新增协议复用现有 TEXT/BINARY machine class，不扩大 context。
+- nDPI payload App 机器在任一方向识别：钉钉 TCP 固定前缀、QQ/OICQ UDP、爱奇艺 UDP `PPStream`、Discord UDP magic、Spotify TCP/双端 57621 UDP、Zoom 任一端点 8801..8810 的 UDP SFU 前缀；WhatsApp TCP 的新前缀可在同一方向的既有 4 包预算内连续匹配，首段至少需要 2 个匹配字节才认领 machine，旧前缀单包终态。它们不新增 detector 表，也不扩大 `natflow_t` 的 8 字节 context。
 - `cat /dev/natflow_dpi_ctl` 中，`matches`/`matches_*` 统计全部分类终态，不依赖 queue reader；`events`/`events_*` 只统计成功入队，`events_suppressed` 表示没有 reader 或 `cache=0`，`events_lost` 表示分配失败或队列已满。稳定采样区间内应满足 `matches = events + events_suppressed + events_lost`；新的并发 producer 在 match 计数和最终入队结果之间仍允许短暂不一致，`events_clear` 返回后不会混入复位前 producer 的延迟结果。
 - `domain_lookups`/`domain_matches` 统计 hostname 静态/迁移期规则查找和产生应用终态的命中；`dns_app_intents` 统计 QNAME 命中静态应用域名但未写 resident app 的次数；`packet_inspect_original/reply` 按实际进入有界 App/协议 parser 的 packet 计数，每包最多增加一次，不按机器数量累加；`packet_match_original/reply` 统计直接 App/协议证据方向。
 - `context_armed` 和各 `context_cleared_*` 记录 bounded context 的累计状态转换；`context_aborted` 表示 L7 强制终态清理。conntrack 自然销毁不会回调 DPI，因此这些累计值不能相减推导当前活跃 context 数。`proto_no_session` 和 `proto_app_exists` 解释原生协议机器未产生新分类结果的原因；固定映射不存在 `proto_no_rule`。
@@ -1068,10 +1068,10 @@ struct natflow_dpi_event_hdr {
 
 - `version=3`，`header_len=record_len=sizeof(struct natflow_dpi_event_hdr)=78`。
 - `reason=6` 表示 rule matched。
-- `generation` 固定为 catalog revision；当前为 2。
+- `generation` 固定为 catalog revision；当前为 3。
 - 所有事件的 `app_id` 和 `category_id` 来自静态 metadata，`rule_id=0`。
 - `category_id=0` 预留。
-- `flags` 当前记录事件来源：1=`HTTP`，2=`TLS`，3=`QUIC`，4=`DNS`，5=`SSH`，6=`WireGuard`，7=`STUN`，8=`TURN`，9=`BitTorrent`，10=`FTP`，11=`SMTP`，12=`POP3`，13=`IMAP`，14=`SIP`，15=`RTSP`，16=`MQTT`，17=`RESP`，18=`MySQL`，19=`PostgreSQL`，20=`RDP`，21=`SMB`，22=`DingTalk`，23=`QQ`，24=`iQIYI`。
+- `flags` 当前记录事件来源：1..24 保持原有 HTTP、TLS、QUIC、DNS 至 iQIYI 编号；25=`NTP`，26=`SNMP`，27=`RADIUS`，28=`TFTP`，29=`LDAP`，30=`NFS`，31=`SOCKS`，32=`CoAP`，33=`WhatsApp`，34=`Discord`，35=`Spotify`，36=`Zoom`。
 - `timestamp` 是基于系统 uptime 的秒数，不是 Unix epoch，与 URL logger 事件语义一致。
 - `family` 是 original tuple 的 L3 family，当前为 `AF_INET` 或 `AF_INET6`；`l4proto` 是 original tuple 的 L4 protocol；`tuple_dir=0` 表示 tuple 固定取 `IP_CT_DIR_ORIGINAL`。
 - `evidence_dir=0/1` 分别表示命中证据来自 `IP_CT_DIR_ORIGINAL/IP_CT_DIR_REPLY`；domain host event 固定为 original，protocol-only event 记录实际命中 packet 的方向。`reserved` 当前必须忽略。

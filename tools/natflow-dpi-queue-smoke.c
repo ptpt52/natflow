@@ -191,7 +191,7 @@ static void validate_event(const struct natflow_dpi_event_hdr *event)
 	if (event->rule_id == 0 && event->category_id == 0)
 		fail_message("static event has an empty category id");
 	if (event->flags < NATFLOW_DPI_EVENT_SOURCE_HTTP ||
-	        event->flags > NATFLOW_DPI_EVENT_SOURCE_IQIYI)
+	        event->flags > NATFLOW_DPI_EVENT_SOURCE_ZOOM)
 		fail_message("event has an unknown source");
 }
 

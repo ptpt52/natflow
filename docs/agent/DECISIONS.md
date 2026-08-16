@@ -258,6 +258,9 @@ queue pressure 和 queue stream 也已验证。继续扩展 IPv6 extension heade
   不保存域名、payload、指针或动态 candidate 数组。
 - 首批手机 App 特征从可审计的 nDPI hostname 和直接 payload parser 提取；宽泛
   substring、共享 CDN 父域和没有抓包/源码依据的 HTTP 单关键字不得直接终态。
+- 后续批次继续复用 8 个 discovery machine class；单包协议不占持久状态，只有
+  需要跨包/跨方向证据的 RDP、SOCKS、WhatsApp 认领 compact automaton。SNMP/LDAP
+  共用严格有界 BER length helper，拒绝 indefinite、超过 4 字节和非最短编码。
 - `natflow_t` 可以在确有跨分段或跨方向应用事实需要时扩大，但必须先证明现有
   context 无法表达、评估每 conntrack 常驻内存和布局兼容，并同步构建/栈验证；
   单包或 Host/SNI 事实不以预留未来状态为理由扩容。
@@ -268,7 +271,7 @@ queue pressure 和 queue stream 也已验证。继续扩展 IPv6 extension heade
 
 ### 后果
 
-- 新增应用、域名或 detector 必须修改源码、补 corpus 并重新编译模块。
+- 新增应用、域名或原生协议/App machine 必须修改源码、补 corpus 并重新编译模块。
 - 固定 `app_id` 成为稳定接口，发布后不得改号或复用。
 - 模块不再支持用户自定义分类规则，控制面只负责启停、状态和事件观测。
 - generic TLS/QUIC 等基础协议不能过早写入 `app_id`，否则会阻止后续应用细分。

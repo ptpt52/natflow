@@ -57,11 +57,19 @@ enum natflow_dpi_proto {
 	NATFLOW_DPI_PROTO_POSTGRESQL = 16,
 	NATFLOW_DPI_PROTO_RDP = 17,
 	NATFLOW_DPI_PROTO_SMB = 18,
+	NATFLOW_DPI_PROTO_NTP = 19,
+	NATFLOW_DPI_PROTO_SNMP = 20,
+	NATFLOW_DPI_PROTO_RADIUS = 21,
+	NATFLOW_DPI_PROTO_TFTP = 22,
+	NATFLOW_DPI_PROTO_LDAP = 23,
+	NATFLOW_DPI_PROTO_NFS = 24,
+	NATFLOW_DPI_PROTO_SOCKS = 25,
+	NATFLOW_DPI_PROTO_COAP = 26,
 };
 
 #define NATFLOW_DPI_PROTO_BIT(proto) (1U << ((proto) - 1))
 #define NATFLOW_DPI_PROTO_ALL_MASK \
-	((1U << NATFLOW_DPI_PROTO_SMB) - 1)
+	((1U << NATFLOW_DPI_PROTO_COAP) - 1)
 
 enum natflow_dpi_context_result {
 	NATFLOW_DPI_CONTEXT_WAIT,
@@ -88,7 +96,39 @@ enum natflow_dpi_machine_class_id {
 #define NATFLOW_DPI_IQIYI_PAYLOAD_MIN 121
 #define NATFLOW_DPI_IQIYI_PAYLOAD_MAX 299
 
-#define NATFLOW_DPI_EVENT_SOURCE_MAX NATFLOW_DPI_EVENT_SOURCE_IQIYI
+#define NATFLOW_DPI_EVENT_SOURCE_MAX NATFLOW_DPI_EVENT_SOURCE_ZOOM
+#define NATFLOW_DPI_AUTOMATON_DISCOVERY_MASK 0x00ffu
+#define NATFLOW_DPI_AUTOMATON_CLAIMED 0x8000u
+#define NATFLOW_DPI_AUTOMATON_MACHINE_MASK 0x7f00u
+#define NATFLOW_DPI_AUTOMATON_MACHINE_SHIFT 8
+#define NATFLOW_DPI_AUTOMATON_STATE_MASK 0x00ffu
+
+enum natflow_dpi_automaton_machine {
+	NATFLOW_DPI_AUTOMATON_MACHINE_NONE,
+	NATFLOW_DPI_AUTOMATON_MACHINE_RDP,
+	NATFLOW_DPI_AUTOMATON_MACHINE_SOCKS,
+	NATFLOW_DPI_AUTOMATON_MACHINE_WHATSAPP,
+};
+
+enum natflow_dpi_rdp_state {
+	NATFLOW_DPI_RDP_HAVE_REQUEST = 0x01,
+	NATFLOW_DPI_RDP_HAVE_CONFIRM = 0x02,
+	NATFLOW_DPI_RDP_COMPLETE = NATFLOW_DPI_RDP_HAVE_REQUEST |
+	                           NATFLOW_DPI_RDP_HAVE_CONFIRM,
+};
+
+enum natflow_dpi_socks_state {
+	NATFLOW_DPI_SOCKS_VERSION_4 = 0x04,
+	NATFLOW_DPI_SOCKS_VERSION_5 = 0x05,
+};
+
+#define NATFLOW_DPI_WHATSAPP_MATCHED_MASK 0x0fu
+#define NATFLOW_DPI_WHATSAPP_REPLY_STATE 0x10u
+
+static bool natflow_dpi_automaton_claimed(unsigned short automaton);
+static unsigned int natflow_dpi_automaton_machine(unsigned short automaton);
+static unsigned short natflow_dpi_automaton_word(unsigned int machine,
+        unsigned int state);
 
 struct natflow_dpi_app_meta {
 	unsigned int app_id;
@@ -105,6 +145,7 @@ struct natflow_dpi_app_machine_result {
 struct natflow_dpi_payload_app_result {
 	const struct natflow_dpi_app_meta *app;
 	unsigned int source;
+	bool excluded;
 };
 
 struct natflow_dpi_http_message_view {
@@ -197,6 +238,30 @@ static const struct natflow_dpi_app_meta natflow_dpi_app_catalog[] = {
 	{	NATFLOW_DPI_APP_SMB, NATFLOW_DPI_CATEGORY_FILE_SHARING,
 		NATFLOW_DPI_PROTO_SMB, "smb"
 	},
+	{	NATFLOW_DPI_APP_NTP, NATFLOW_DPI_CATEGORY_INFRASTRUCTURE,
+		NATFLOW_DPI_PROTO_NTP, "ntp"
+	},
+	{	NATFLOW_DPI_APP_SNMP, NATFLOW_DPI_CATEGORY_INFRASTRUCTURE,
+		NATFLOW_DPI_PROTO_SNMP, "snmp"
+	},
+	{	NATFLOW_DPI_APP_RADIUS, NATFLOW_DPI_CATEGORY_INFRASTRUCTURE,
+		NATFLOW_DPI_PROTO_RADIUS, "radius"
+	},
+	{	NATFLOW_DPI_APP_TFTP, NATFLOW_DPI_CATEGORY_FILE_TRANSFER,
+		NATFLOW_DPI_PROTO_TFTP, "tftp"
+	},
+	{	NATFLOW_DPI_APP_LDAP, NATFLOW_DPI_CATEGORY_INFRASTRUCTURE,
+		NATFLOW_DPI_PROTO_LDAP, "ldap"
+	},
+	{	NATFLOW_DPI_APP_NFS, NATFLOW_DPI_CATEGORY_FILE_SHARING,
+		NATFLOW_DPI_PROTO_NFS, "nfs"
+	},
+	{	NATFLOW_DPI_APP_SOCKS, NATFLOW_DPI_CATEGORY_VPN_TUNNEL,
+		NATFLOW_DPI_PROTO_SOCKS, "socks"
+	},
+	{	NATFLOW_DPI_APP_COAP, NATFLOW_DPI_CATEGORY_IOT,
+		NATFLOW_DPI_PROTO_COAP, "coap"
+	},
 	{	NATFLOW_DPI_APP_YOUTUBE, NATFLOW_DPI_CATEGORY_STREAMING,
 		0, "youtube"
 	},
@@ -205,6 +270,12 @@ static const struct natflow_dpi_app_meta natflow_dpi_app_catalog[] = {
 	},
 	{	NATFLOW_DPI_APP_IQIYI, NATFLOW_DPI_CATEGORY_STREAMING,
 		0, "iqiyi"
+	},
+	{	NATFLOW_DPI_APP_TENCENT_VIDEO, NATFLOW_DPI_CATEGORY_STREAMING,
+		0, "tencent-video"
+	},
+	{	NATFLOW_DPI_APP_SPOTIFY, NATFLOW_DPI_CATEGORY_STREAMING,
+		0, "spotify"
 	},
 	{	NATFLOW_DPI_APP_TELEGRAM, NATFLOW_DPI_CATEGORY_COMMUNICATION,
 		0, "telegram"
@@ -218,11 +289,35 @@ static const struct natflow_dpi_app_meta natflow_dpi_app_catalog[] = {
 	{	NATFLOW_DPI_APP_DINGTALK, NATFLOW_DPI_CATEGORY_COMMUNICATION,
 		0, "dingtalk"
 	},
+	{	NATFLOW_DPI_APP_WHATSAPP, NATFLOW_DPI_CATEGORY_COMMUNICATION,
+		0, "whatsapp"
+	},
+	{	NATFLOW_DPI_APP_MESSENGER, NATFLOW_DPI_CATEGORY_COMMUNICATION,
+		0, "messenger"
+	},
+	{	NATFLOW_DPI_APP_DISCORD, NATFLOW_DPI_CATEGORY_COMMUNICATION,
+		0, "discord"
+	},
+	{	NATFLOW_DPI_APP_ZOOM, NATFLOW_DPI_CATEGORY_REALTIME,
+		0, "zoom"
+	},
 	{	NATFLOW_DPI_APP_TAOBAO, NATFLOW_DPI_CATEGORY_SHOPPING,
 		0, "taobao"
 	},
 	{	NATFLOW_DPI_APP_TIKTOK, NATFLOW_DPI_CATEGORY_SOCIAL_NETWORK,
 		0, "tiktok"
+	},
+	{	NATFLOW_DPI_APP_FACEBOOK, NATFLOW_DPI_CATEGORY_SOCIAL_NETWORK,
+		0, "facebook"
+	},
+	{	NATFLOW_DPI_APP_INSTAGRAM, NATFLOW_DPI_CATEGORY_SOCIAL_NETWORK,
+		0, "instagram"
+	},
+	{	NATFLOW_DPI_APP_TWITTER, NATFLOW_DPI_CATEGORY_SOCIAL_NETWORK,
+		0, "twitter"
+	},
+	{	NATFLOW_DPI_APP_WEIBO, NATFLOW_DPI_CATEGORY_SOCIAL_NETWORK,
+		0, "weibo"
 	},
 };
 
@@ -239,8 +334,49 @@ static const struct natflow_dpi_static_domain natflow_dpi_static_domains[] = {
 	NATFLOW_DPI_STATIC_DOMAIN("tiktokcdn.liveplay.myqcloud.com",
 	                          NATFLOW_DPI_DOMAIN_EXACT,
 	                          NATFLOW_DPI_APP_TIKTOK),
+	NATFLOW_DPI_STATIC_DOMAIN("instagram.c10r.facebook.com",
+	                          NATFLOW_DPI_DOMAIN_EXACT,
+	                          NATFLOW_DPI_APP_INSTAGRAM),
+	NATFLOW_DPI_STATIC_DOMAIN("fbstatic-a.akamaihd.net",
+	                          NATFLOW_DPI_DOMAIN_EXACT,
+	                          NATFLOW_DPI_APP_FACEBOOK),
+	NATFLOW_DPI_STATIC_DOMAIN("audio4-ak-spotify-com.akamaized.net",
+	                          NATFLOW_DPI_DOMAIN_EXACT,
+	                          NATFLOW_DPI_APP_SPOTIFY),
+	NATFLOW_DPI_STATIC_DOMAIN("audio-ak-spotify-com.akamaized.net",
+	                          NATFLOW_DPI_DOMAIN_EXACT,
+	                          NATFLOW_DPI_APP_SPOTIFY),
+	NATFLOW_DPI_STATIC_DOMAIN("heads-ak-spotify-com.akamaized.net",
+	                          NATFLOW_DPI_DOMAIN_EXACT,
+	                          NATFLOW_DPI_APP_SPOTIFY),
+	NATFLOW_DPI_STATIC_DOMAIN("spotify-com.akamaized.net",
+	                          NATFLOW_DPI_DOMAIN_EXACT,
+	                          NATFLOW_DPI_APP_SPOTIFY),
+	NATFLOW_DPI_STATIC_DOMAIN("spotify.com.edgesuite.net",
+	                          NATFLOW_DPI_DOMAIN_EXACT,
+	                          NATFLOW_DPI_APP_SPOTIFY),
+	NATFLOW_DPI_STATIC_DOMAIN("spotify.map.fastly.net",
+	                          NATFLOW_DPI_DOMAIN_EXACT,
+	                          NATFLOW_DPI_APP_SPOTIFY),
+	NATFLOW_DPI_STATIC_DOMAIN("spotify.edgekey.net",
+	                          NATFLOW_DPI_DOMAIN_EXACT,
+	                          NATFLOW_DPI_APP_SPOTIFY),
+	NATFLOW_DPI_STATIC_DOMAIN("spotify.demdex.net",
+	                          NATFLOW_DPI_DOMAIN_EXACT,
+	                          NATFLOW_DPI_APP_SPOTIFY),
+	NATFLOW_DPI_STATIC_DOMAIN("chat-e2ee-mini.facebook.com",
+	                          NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_WHATSAPP),
+	NATFLOW_DPI_STATIC_DOMAIN("edge-mqtt.facebook.com",
+	                          NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_MESSENGER),
+	NATFLOW_DPI_STATIC_DOMAIN("mqtt-mini.facebook.com",
+	                          NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_MESSENGER),
 	NATFLOW_DPI_STATIC_DOMAIN("youtube-nocookie.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_YOUTUBE),
+	NATFLOW_DPI_STATIC_DOMAIN("cdninstagram.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_INSTAGRAM),
 	NATFLOW_DPI_STATIC_DOMAIN("tiktokcdn-eu.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_TIKTOK),
 	NATFLOW_DPI_STATIC_DOMAIN("tiktokcdn-us.com", NATFLOW_DPI_DOMAIN_SUFFIX,
@@ -249,8 +385,24 @@ static const struct natflow_dpi_static_domain natflow_dpi_static_domains[] = {
 	                          NATFLOW_DPI_APP_TIKTOK),
 	NATFLOW_DPI_STATIC_DOMAIN("googlevideo.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_YOUTUBE),
+	NATFLOW_DPI_STATIC_DOMAIN("discordapp.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_DISCORD),
+	NATFLOW_DPI_STATIC_DOMAIN("discordapp.net", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_DISCORD),
+	NATFLOW_DPI_STATIC_DOMAIN("spotifycdn.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_SPOTIFY),
+	NATFLOW_DPI_STATIC_DOMAIN("spotifycdn.net", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_SPOTIFY),
+	NATFLOW_DPI_STATIC_DOMAIN("spotilocal.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_SPOTIFY),
 	NATFLOW_DPI_STATIC_DOMAIN("tik-tokcdn.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_TIKTOK),
+	NATFLOW_DPI_STATIC_DOMAIN("discord.media", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_DISCORD),
+	NATFLOW_DPI_STATIC_DOMAIN("instagram.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_INSTAGRAM),
+	NATFLOW_DPI_STATIC_DOMAIN("messenger.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_MESSENGER),
 	NATFLOW_DPI_STATIC_DOMAIN("mmsns.qpic.cn", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_WECHAT),
 	NATFLOW_DPI_STATIC_DOMAIN("nflxvideo.net", NATFLOW_DPI_DOMAIN_SUFFIX,
@@ -263,12 +415,22 @@ static const struct natflow_dpi_static_domain natflow_dpi_static_domains[] = {
 	                          NATFLOW_DPI_APP_TIKTOK),
 	NATFLOW_DPI_STATIC_DOMAIN("dingtalk.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_DINGTALK),
+	NATFLOW_DPI_STATIC_DOMAIN("facebook.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_FACEBOOK),
+	NATFLOW_DPI_STATIC_DOMAIN("facebook.net", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_FACEBOOK),
 	NATFLOW_DPI_STATIC_DOMAIN("ibyteimg.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_TIKTOK),
 	NATFLOW_DPI_STATIC_DOMAIN("iqiyipic.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_IQIYI),
 	NATFLOW_DPI_STATIC_DOMAIN("telegram.org", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_TELEGRAM),
+	NATFLOW_DPI_STATIC_DOMAIN("whatsapp.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_WHATSAPP),
+	NATFLOW_DPI_STATIC_DOMAIN("whatsapp.net", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_WHATSAPP),
+	NATFLOW_DPI_STATIC_DOMAIN("discord.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_DISCORD),
 	NATFLOW_DPI_STATIC_DOMAIN("musemuse.cn", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_TIKTOK),
 	NATFLOW_DPI_STATIC_DOMAIN("netflix.com", NATFLOW_DPI_DOMAIN_SUFFIX,
@@ -279,14 +441,20 @@ static const struct natflow_dpi_static_domain natflow_dpi_static_domains[] = {
 	                          NATFLOW_DPI_APP_NETFLIX),
 	NATFLOW_DPI_STATIC_DOMAIN("nflximg.net", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_NETFLIX),
+	NATFLOW_DPI_STATIC_DOMAIN("spotify.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_SPOTIFY),
 	NATFLOW_DPI_STATIC_DOMAIN("telegram.me", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_TELEGRAM),
 	NATFLOW_DPI_STATIC_DOMAIN("tiktokv.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_TIKTOK),
+	NATFLOW_DPI_STATIC_DOMAIN("twitter.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_TWITTER),
 	NATFLOW_DPI_STATIC_DOMAIN("youtube.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_YOUTUBE),
 	NATFLOW_DPI_STATIC_DOMAIN("bytecdn.cn", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_TIKTOK),
+	NATFLOW_DPI_STATIC_DOMAIN("discord.gg", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_DISCORD),
 	NATFLOW_DPI_STATIC_DOMAIN("muscdn.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_TIKTOK),
 	NATFLOW_DPI_STATIC_DOMAIN("musical.ly", NATFLOW_DPI_DOMAIN_SUFFIX,
@@ -307,16 +475,40 @@ static const struct natflow_dpi_static_domain natflow_dpi_static_domains[] = {
 	                          NATFLOW_DPI_APP_WECHAT),
 	NATFLOW_DPI_STATIC_DOMAIN("byted.org", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_TIKTOK),
+	NATFLOW_DPI_STATIC_DOMAIN("fbcdn.net", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_FACEBOOK),
+	NATFLOW_DPI_STATIC_DOMAIN("fbsbx.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_FACEBOOK),
 	NATFLOW_DPI_STATIC_DOMAIN("gtimg.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_QQ),
 	NATFLOW_DPI_STATIC_DOMAIN("iqiyi.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_IQIYI),
 	NATFLOW_DPI_STATIC_DOMAIN("tmall.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_TAOBAO),
+	NATFLOW_DPI_STATIC_DOMAIN("twimg.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_TWITTER),
+	NATFLOW_DPI_STATIC_DOMAIN("twttr.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_TWITTER),
+	NATFLOW_DPI_STATIC_DOMAIN("weibo.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_WEIBO),
 	NATFLOW_DPI_STATIC_DOMAIN("ytimg.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_YOUTUBE),
+	NATFLOW_DPI_STATIC_DOMAIN("fbwat.ch", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_FACEBOOK),
+	NATFLOW_DPI_STATIC_DOMAIN("pscdn.co", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_SPOTIFY),
+	NATFLOW_DPI_STATIC_DOMAIN("v.qq.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_TENCENT_VIDEO),
+	NATFLOW_DPI_STATIC_DOMAIN("weibo.cn", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_WEIBO),
+	NATFLOW_DPI_STATIC_DOMAIN("scdn.co", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_SPOTIFY),
 	NATFLOW_DPI_STATIC_DOMAIN("we.chat", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_WECHAT),
+	NATFLOW_DPI_STATIC_DOMAIN("zoom.us", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_ZOOM),
+	NATFLOW_DPI_STATIC_DOMAIN("fb.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_FACEBOOK),
 	NATFLOW_DPI_STATIC_DOMAIN("iq.com", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_IQIYI),
 	NATFLOW_DPI_STATIC_DOMAIN("pps.tv", NATFLOW_DPI_DOMAIN_SUFFIX,
@@ -325,6 +517,14 @@ static const struct natflow_dpi_static_domain natflow_dpi_static_domains[] = {
 	                          NATFLOW_DPI_APP_QQ),
 	NATFLOW_DPI_STATIC_DOMAIN("qy.net", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_IQIYI),
+	NATFLOW_DPI_STATIC_DOMAIN("fb.gg", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_FACEBOOK),
+	NATFLOW_DPI_STATIC_DOMAIN("x.com", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_TWITTER),
+	NATFLOW_DPI_STATIC_DOMAIN("m.me", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_MESSENGER),
+	NATFLOW_DPI_STATIC_DOMAIN("t.co", NATFLOW_DPI_DOMAIN_SUFFIX,
+	                          NATFLOW_DPI_APP_TWITTER),
 	NATFLOW_DPI_STATIC_DOMAIN("t.me", NATFLOW_DPI_DOMAIN_SUFFIX,
 	                          NATFLOW_DPI_APP_TELEGRAM),
 };
@@ -334,23 +534,43 @@ natflow_dpi_app_by_id(unsigned int app_id)
 {
 	switch (app_id) {
 	case NATFLOW_DPI_APP_YOUTUBE:
-		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_SMB];
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP];
 	case NATFLOW_DPI_APP_NETFLIX:
-		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_SMB + 1];
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 1];
 	case NATFLOW_DPI_APP_IQIYI:
-		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_SMB + 2];
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 2];
+	case NATFLOW_DPI_APP_TENCENT_VIDEO:
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 3];
+	case NATFLOW_DPI_APP_SPOTIFY:
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 4];
 	case NATFLOW_DPI_APP_TELEGRAM:
-		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_SMB + 3];
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 5];
 	case NATFLOW_DPI_APP_WECHAT:
-		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_SMB + 4];
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 6];
 	case NATFLOW_DPI_APP_QQ:
-		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_SMB + 5];
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 7];
 	case NATFLOW_DPI_APP_DINGTALK:
-		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_SMB + 6];
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 8];
+	case NATFLOW_DPI_APP_WHATSAPP:
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 9];
+	case NATFLOW_DPI_APP_MESSENGER:
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 10];
+	case NATFLOW_DPI_APP_DISCORD:
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 11];
+	case NATFLOW_DPI_APP_ZOOM:
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 12];
 	case NATFLOW_DPI_APP_TAOBAO:
-		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_SMB + 7];
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 13];
 	case NATFLOW_DPI_APP_TIKTOK:
-		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_SMB + 8];
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 14];
+	case NATFLOW_DPI_APP_FACEBOOK:
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 15];
+	case NATFLOW_DPI_APP_INSTAGRAM:
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 16];
+	case NATFLOW_DPI_APP_TWITTER:
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 17];
+	case NATFLOW_DPI_APP_WEIBO:
+		return &natflow_dpi_app_catalog[NATFLOW_DPI_PROTO_COAP + 18];
 	default:
 		return NULL;
 	}
@@ -367,8 +587,8 @@ static int natflow_dpi_app_catalog_validate(void)
 
 		if (app->app_id == NATFLOW_DPI_APP_UNKNOWN ||
 		        app->category_id == NATFLOW_DPI_CATEGORY_UNKNOWN ||
-		        (i < NATFLOW_DPI_PROTO_SMB && app->proto != i + 1) ||
-		        (i >= NATFLOW_DPI_PROTO_SMB && app->proto != 0) ||
+		        (i < NATFLOW_DPI_PROTO_COAP && app->proto != i + 1) ||
+		        (i >= NATFLOW_DPI_PROTO_COAP && app->proto != 0) ||
 		        !app->name || app->name[0] == 0)
 			return -EINVAL;
 
@@ -494,6 +714,16 @@ natflow_dpi_payload_app_terminal(unsigned int app_id, unsigned int source)
 
 	if (!result.app)
 		result.source = 0;
+	return result;
+}
+
+static struct natflow_dpi_payload_app_result
+natflow_dpi_payload_app_excluded(void)
+{
+	struct natflow_dpi_payload_app_result result = {
+		.excluded = true,
+	};
+
 	return result;
 }
 
@@ -685,6 +915,124 @@ static unsigned int natflow_dpi_read_be32(const unsigned char *data)
 	       ((unsigned int)data[2] << 8) | data[3];
 }
 
+static bool natflow_dpi_whatsapp_byte_matches(unsigned int offset,
+        unsigned char value)
+{
+	static const unsigned char prefix[] = { 0x45, 0x44, 0x00, 0x01, 0x00, 0x00 };
+
+	if (offset < ARRAY_SIZE(prefix))
+		return value == prefix[offset];
+	if (offset == 6)
+		return value == 0x02 || value == 0x04;
+	return offset == 7 && value == 0x08;
+}
+
+static struct natflow_dpi_payload_app_result
+natflow_dpi_whatsapp_app_machine_step(natflow_t *nf,
+                                      const unsigned char *data, unsigned int payload_len,
+                                      unsigned int inspect_len, unsigned char direction)
+{
+	unsigned short automaton;
+	unsigned int matched = 0;
+	unsigned int state;
+	unsigned int limit;
+	unsigned int i;
+	bool reply;
+
+	if (!nf || !data || inspect_len == 0)
+		return natflow_dpi_payload_app_pending();
+	automaton = READ_ONCE(nf->dpi_automaton);
+	if (natflow_dpi_automaton_claimed(automaton)) {
+		if (natflow_dpi_automaton_machine(automaton) !=
+		        NATFLOW_DPI_AUTOMATON_MACHINE_WHATSAPP)
+			return natflow_dpi_payload_app_pending();
+		state = automaton & NATFLOW_DPI_AUTOMATON_STATE_MASK;
+		matched = state & NATFLOW_DPI_WHATSAPP_MATCHED_MASK;
+		reply = (state & NATFLOW_DPI_WHATSAPP_REPLY_STATE) != 0;
+		if (matched < 2 || matched >= 8)
+			return natflow_dpi_payload_app_excluded();
+		if (reply != (direction == NATFLOW_L7_DIR_REPLY))
+			return natflow_dpi_payload_app_pending();
+	} else {
+		if (payload_len > 4 && inspect_len >= 4 &&
+		        memcmp(data, "\x57\x41\x01\x05", 4) == 0)
+			return natflow_dpi_payload_app_terminal(
+			           NATFLOW_DPI_APP_WHATSAPP,
+			           NATFLOW_DPI_EVENT_SOURCE_WHATSAPP);
+	}
+
+	limit = payload_len;
+	if (limit > 8 - matched)
+		limit = 8 - matched;
+	if (inspect_len < limit)
+		return natflow_dpi_payload_app_pending();
+	for (i = 0; i < limit; i++) {
+		if (!natflow_dpi_whatsapp_byte_matches(matched + i, data[i]))
+			return matched ? natflow_dpi_payload_app_excluded() :
+			       natflow_dpi_payload_app_pending();
+	}
+	matched += limit;
+	if (matched == 8)
+		return natflow_dpi_payload_app_terminal(
+		           NATFLOW_DPI_APP_WHATSAPP,
+		           NATFLOW_DPI_EVENT_SOURCE_WHATSAPP);
+	if (matched < 2 || payload_len != limit)
+		return natflow_dpi_payload_app_pending();
+
+	state = matched;
+	if (direction == NATFLOW_L7_DIR_REPLY)
+		state |= NATFLOW_DPI_WHATSAPP_REPLY_STATE;
+	if (natflow_dpi_automaton_claimed(automaton)) {
+		if (cmpxchg(&nf->dpi_automaton, automaton,
+		            natflow_dpi_automaton_word(
+		                NATFLOW_DPI_AUTOMATON_MACHINE_WHATSAPP,
+		                state)) != automaton)
+			return natflow_dpi_payload_app_excluded();
+	} else if (cmpxchg(&nf->dpi_automaton, automaton,
+	                   natflow_dpi_automaton_word(
+	                       NATFLOW_DPI_AUTOMATON_MACHINE_WHATSAPP,
+	                       state)) != automaton) {
+		return natflow_dpi_payload_app_pending();
+	}
+	return natflow_dpi_payload_app_pending();
+}
+
+static bool natflow_dpi_discord_payload(const unsigned char *data,
+                                        unsigned int payload_len, unsigned int inspect_len)
+{
+	return payload_len == 8 && inspect_len >= 4 &&
+	       natflow_dpi_read_be32(data) == 0x1337cafe;
+}
+
+static bool natflow_dpi_spotify_payload(const unsigned char *data,
+                                        unsigned int payload_len, unsigned int inspect_len,
+                                        unsigned char l4proto, __be16 sport, __be16 dport)
+{
+	if (l4proto == IPPROTO_UDP)
+		return sport == __constant_htons(57621) &&
+		       dport == __constant_htons(57621) && payload_len >= 7 &&
+		       inspect_len >= 7 && memcmp(data, "SpotUdp", 7) == 0;
+	return l4proto == IPPROTO_TCP && payload_len >= 9 && inspect_len >= 9 &&
+	       data[0] == 0x00 && data[1] == 0x04 && data[2] == 0x00 &&
+	       data[3] == 0x00 && data[6] == 0x52 &&
+	       (data[7] == 0x0e || data[7] == 0x0f) && data[8] == 0x50;
+}
+
+static bool natflow_dpi_zoom_payload(const unsigned char *data,
+                                     unsigned int payload_len, unsigned int inspect_len,
+                                     unsigned char l4proto, __be16 sport, __be16 dport)
+{
+	unsigned int source_port = ntohs(sport);
+	unsigned int destination_port = ntohs(dport);
+
+	if (l4proto != IPPROTO_UDP || payload_len <= 8 || inspect_len < 3 ||
+	        ((source_port < 8801 || source_port > 8810) &&
+	         (destination_port < 8801 || destination_port > 8810)))
+		return false;
+	return (data[0] == 0x01 || data[0] == 0x02) && data[1] == 0x00 &&
+	       (data[2] == 0x02 || data[2] == 0x03);
+}
+
 static bool natflow_dpi_payload_contains(const unsigned char *data,
         unsigned int data_len, const char *literal, unsigned int literal_len)
 {
@@ -747,14 +1095,25 @@ static bool natflow_dpi_iqiyi_payload(const unsigned char *data,
 }
 
 static struct natflow_dpi_payload_app_result
-natflow_dpi_payload_app_machine_step(const unsigned char *data,
+natflow_dpi_payload_app_machine_step(natflow_t *nf,
+                                     const unsigned char *data,
                                      unsigned int payload_len, unsigned int inspect_len,
-                                     unsigned char l4proto, unsigned char direction)
+                                     unsigned char l4proto, unsigned char direction,
+                                     __be16 sport, __be16 dport)
 {
 	struct natflow_dpi_payload_app_result result;
+	unsigned short automaton;
 
 	if (!data || inspect_len == 0)
 		return natflow_dpi_payload_app_pending();
+	automaton = nf ? READ_ONCE(nf->dpi_automaton) : 0;
+	if (natflow_dpi_automaton_claimed(automaton)) {
+		if (natflow_dpi_automaton_machine(automaton) ==
+		        NATFLOW_DPI_AUTOMATON_MACHINE_WHATSAPP)
+			return natflow_dpi_whatsapp_app_machine_step(nf, data,
+			        payload_len, inspect_len, direction);
+		return natflow_dpi_payload_app_pending();
+	}
 	if (l4proto == IPPROTO_TCP) {
 		result = natflow_dpi_http_app_machine_step(data, inspect_len,
 		         direction);
@@ -764,7 +1123,31 @@ natflow_dpi_payload_app_machine_step(const unsigned char *data,
 			return natflow_dpi_payload_app_terminal(
 			           NATFLOW_DPI_APP_DINGTALK,
 			           NATFLOW_DPI_EVENT_SOURCE_DINGTALK);
+		if (natflow_dpi_spotify_payload(data, payload_len, inspect_len,
+		                                l4proto, sport, dport))
+			return natflow_dpi_payload_app_terminal(
+			           NATFLOW_DPI_APP_SPOTIFY,
+			           NATFLOW_DPI_EVENT_SOURCE_SPOTIFY);
+		result = natflow_dpi_whatsapp_app_machine_step(nf, data,
+		         payload_len, inspect_len, direction);
+		if (result.app || result.excluded ||
+		        natflow_dpi_automaton_claimed(READ_ONCE(nf->dpi_automaton)))
+			return result;
 	} else if (l4proto == IPPROTO_UDP) {
+		if (natflow_dpi_discord_payload(data, payload_len, inspect_len))
+			return natflow_dpi_payload_app_terminal(
+			           NATFLOW_DPI_APP_DISCORD,
+			           NATFLOW_DPI_EVENT_SOURCE_DISCORD);
+		if (natflow_dpi_spotify_payload(data, payload_len, inspect_len,
+		                                l4proto, sport, dport))
+			return natflow_dpi_payload_app_terminal(
+			           NATFLOW_DPI_APP_SPOTIFY,
+			           NATFLOW_DPI_EVENT_SOURCE_SPOTIFY);
+		if (natflow_dpi_zoom_payload(data, payload_len, inspect_len,
+		                             l4proto, sport, dport))
+			return natflow_dpi_payload_app_terminal(
+			           NATFLOW_DPI_APP_ZOOM,
+			           NATFLOW_DPI_EVENT_SOURCE_ZOOM);
 		if (natflow_dpi_qq_payload(data, payload_len, inspect_len))
 			return natflow_dpi_payload_app_terminal(
 			           NATFLOW_DPI_APP_QQ, NATFLOW_DPI_EVENT_SOURCE_QQ);
@@ -781,7 +1164,7 @@ natflow_dpi_app_by_proto(unsigned int proto)
 {
 	const struct natflow_dpi_app_meta *app;
 
-	if (proto == 0 || proto > NATFLOW_DPI_PROTO_SMB)
+	if (proto == 0 || proto > NATFLOW_DPI_PROTO_COAP)
 		return NULL;
 	app = &natflow_dpi_app_catalog[proto - 1];
 	return app->proto == proto ? app : NULL;
@@ -822,6 +1205,44 @@ static atomic64_t natflow_dpi_events;
 static atomic64_t natflow_dpi_events_suppressed;
 static atomic64_t natflow_dpi_events_lost;
 static atomic64_t natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_MAX + 1];
+static const char * const natflow_dpi_source_names[] = {
+	[NATFLOW_DPI_EVENT_SOURCE_HTTP] = "http",
+	[NATFLOW_DPI_EVENT_SOURCE_TLS] = "tls",
+	[NATFLOW_DPI_EVENT_SOURCE_QUIC] = "quic",
+	[NATFLOW_DPI_EVENT_SOURCE_DNS] = "dns",
+	[NATFLOW_DPI_EVENT_SOURCE_SSH] = "ssh",
+	[NATFLOW_DPI_EVENT_SOURCE_WIREGUARD] = "wireguard",
+	[NATFLOW_DPI_EVENT_SOURCE_STUN] = "stun",
+	[NATFLOW_DPI_EVENT_SOURCE_TURN] = "turn",
+	[NATFLOW_DPI_EVENT_SOURCE_BITTORRENT] = "bittorrent",
+	[NATFLOW_DPI_EVENT_SOURCE_FTP] = "ftp",
+	[NATFLOW_DPI_EVENT_SOURCE_SMTP] = "smtp",
+	[NATFLOW_DPI_EVENT_SOURCE_POP3] = "pop3",
+	[NATFLOW_DPI_EVENT_SOURCE_IMAP] = "imap",
+	[NATFLOW_DPI_EVENT_SOURCE_SIP] = "sip",
+	[NATFLOW_DPI_EVENT_SOURCE_RTSP] = "rtsp",
+	[NATFLOW_DPI_EVENT_SOURCE_MQTT] = "mqtt",
+	[NATFLOW_DPI_EVENT_SOURCE_RESP] = "resp",
+	[NATFLOW_DPI_EVENT_SOURCE_MYSQL] = "mysql",
+	[NATFLOW_DPI_EVENT_SOURCE_POSTGRESQL] = "postgresql",
+	[NATFLOW_DPI_EVENT_SOURCE_RDP] = "rdp",
+	[NATFLOW_DPI_EVENT_SOURCE_SMB] = "smb",
+	[NATFLOW_DPI_EVENT_SOURCE_DINGTALK] = "dingtalk",
+	[NATFLOW_DPI_EVENT_SOURCE_QQ] = "qq",
+	[NATFLOW_DPI_EVENT_SOURCE_IQIYI] = "iqiyi",
+	[NATFLOW_DPI_EVENT_SOURCE_NTP] = "ntp",
+	[NATFLOW_DPI_EVENT_SOURCE_SNMP] = "snmp",
+	[NATFLOW_DPI_EVENT_SOURCE_RADIUS] = "radius",
+	[NATFLOW_DPI_EVENT_SOURCE_TFTP] = "tftp",
+	[NATFLOW_DPI_EVENT_SOURCE_LDAP] = "ldap",
+	[NATFLOW_DPI_EVENT_SOURCE_NFS] = "nfs",
+	[NATFLOW_DPI_EVENT_SOURCE_SOCKS] = "socks",
+	[NATFLOW_DPI_EVENT_SOURCE_COAP] = "coap",
+	[NATFLOW_DPI_EVENT_SOURCE_WHATSAPP] = "whatsapp",
+	[NATFLOW_DPI_EVENT_SOURCE_DISCORD] = "discord",
+	[NATFLOW_DPI_EVENT_SOURCE_SPOTIFY] = "spotify",
+	[NATFLOW_DPI_EVENT_SOURCE_ZOOM] = "zoom",
+};
 static atomic64_t natflow_dpi_domain_lookups;
 static atomic64_t natflow_dpi_domain_matches;
 static atomic64_t natflow_dpi_dns_app_intents;
@@ -1237,6 +1658,22 @@ static unsigned int natflow_dpi_proto_event_source(unsigned int proto)
 		return NATFLOW_DPI_EVENT_SOURCE_RDP;
 	case NATFLOW_DPI_PROTO_SMB:
 		return NATFLOW_DPI_EVENT_SOURCE_SMB;
+	case NATFLOW_DPI_PROTO_NTP:
+		return NATFLOW_DPI_EVENT_SOURCE_NTP;
+	case NATFLOW_DPI_PROTO_SNMP:
+		return NATFLOW_DPI_EVENT_SOURCE_SNMP;
+	case NATFLOW_DPI_PROTO_RADIUS:
+		return NATFLOW_DPI_EVENT_SOURCE_RADIUS;
+	case NATFLOW_DPI_PROTO_TFTP:
+		return NATFLOW_DPI_EVENT_SOURCE_TFTP;
+	case NATFLOW_DPI_PROTO_LDAP:
+		return NATFLOW_DPI_EVENT_SOURCE_LDAP;
+	case NATFLOW_DPI_PROTO_NFS:
+		return NATFLOW_DPI_EVENT_SOURCE_NFS;
+	case NATFLOW_DPI_PROTO_SOCKS:
+		return NATFLOW_DPI_EVENT_SOURCE_SOCKS;
+	case NATFLOW_DPI_PROTO_COAP:
+		return NATFLOW_DPI_EVENT_SOURCE_COAP;
 	default:
 		return 0;
 	}
@@ -1284,6 +1721,7 @@ static bool natflow_dpi_commit_app(struct nf_conn *ct,
 static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 {
 	char *buffer = m->private;
+	unsigned int i;
 	int n;
 
 	if (*pos != 0)
@@ -1303,57 +1741,9 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             "catalog_revision=%u\n"
 	             "catalog_apps=%u\n"
 	             "matches=%llu\n"
-	             "matches_http=%llu\n"
-	             "matches_tls=%llu\n"
-	             "matches_quic=%llu\n"
-	             "matches_dns=%llu\n"
-	             "matches_ssh=%llu\n"
-	             "matches_wireguard=%llu\n"
-	             "matches_stun=%llu\n"
-	             "matches_turn=%llu\n"
-	             "matches_bittorrent=%llu\n"
-	             "matches_ftp=%llu\n"
-	             "matches_smtp=%llu\n"
-	             "matches_pop3=%llu\n"
-	             "matches_imap=%llu\n"
-	             "matches_sip=%llu\n"
-	             "matches_rtsp=%llu\n"
-	             "matches_mqtt=%llu\n"
-	             "matches_resp=%llu\n"
-	             "matches_mysql=%llu\n"
-	             "matches_postgresql=%llu\n"
-	             "matches_rdp=%llu\n"
-	             "matches_smb=%llu\n"
-	             "matches_dingtalk=%llu\n"
-	             "matches_qq=%llu\n"
-	             "matches_iqiyi=%llu\n"
 	             "events=%llu\n"
 	             "events_suppressed=%llu\n"
 	             "events_lost=%llu\n"
-	             "events_http=%llu\n"
-	             "events_tls=%llu\n"
-	             "events_quic=%llu\n"
-	             "events_dns=%llu\n"
-	             "events_ssh=%llu\n"
-	             "events_wireguard=%llu\n"
-	             "events_stun=%llu\n"
-	             "events_turn=%llu\n"
-	             "events_bittorrent=%llu\n"
-	             "events_ftp=%llu\n"
-	             "events_smtp=%llu\n"
-	             "events_pop3=%llu\n"
-	             "events_imap=%llu\n"
-	             "events_sip=%llu\n"
-	             "events_rtsp=%llu\n"
-	             "events_mqtt=%llu\n"
-	             "events_resp=%llu\n"
-	             "events_mysql=%llu\n"
-	             "events_postgresql=%llu\n"
-	             "events_rdp=%llu\n"
-	             "events_smb=%llu\n"
-	             "events_dingtalk=%llu\n"
-	             "events_qq=%llu\n"
-	             "events_iqiyi=%llu\n"
 	             "domain_lookups=%llu\n"
 	             "domain_matches=%llu\n"
 	             "dns_app_intents=%llu\n"
@@ -1378,57 +1768,9 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             NATFLOW_DPI_CATALOG_REVISION,
 	             (unsigned int)ARRAY_SIZE(natflow_dpi_app_catalog),
 	             (unsigned long long)atomic64_read(&natflow_dpi_matches),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_HTTP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_TLS]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_QUIC]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_DNS]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_SSH]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_WIREGUARD]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_STUN]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_TURN]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_BITTORRENT]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_FTP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_SMTP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_POP3]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_IMAP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_SIP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_RTSP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_MQTT]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_RESP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_MYSQL]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_POSTGRESQL]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_RDP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_SMB]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_DINGTALK]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_QQ]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_matches[NATFLOW_DPI_EVENT_SOURCE_IQIYI]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_events),
 	             (unsigned long long)atomic64_read(&natflow_dpi_events_suppressed),
 	             (unsigned long long)atomic64_read(&natflow_dpi_events_lost),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_HTTP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_TLS]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_QUIC]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_DNS]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_SSH]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_WIREGUARD]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_STUN]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_TURN]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_BITTORRENT]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_FTP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_SMTP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_POP3]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_IMAP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_SIP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_RTSP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_MQTT]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_RESP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_MYSQL]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_POSTGRESQL]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_RDP]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_SMB]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_DINGTALK]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_QQ]),
-	             (unsigned long long)atomic64_read(&natflow_dpi_source_events[NATFLOW_DPI_EVENT_SOURCE_IQIYI]),
 	             (unsigned long long)atomic64_read(&natflow_dpi_domain_lookups),
 	             (unsigned long long)atomic64_read(&natflow_dpi_domain_matches),
 	             (unsigned long long)atomic64_read(&natflow_dpi_dns_app_intents),
@@ -1445,6 +1787,19 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             (unsigned long long)atomic64_read(&natflow_dpi_context_aborted),
 	             (unsigned long long)atomic64_read(&natflow_dpi_proto_no_session),
 	             (unsigned long long)atomic64_read(&natflow_dpi_proto_app_exists));
+	if (n >= 0 && n < PAGE_SIZE) {
+		for (i = NATFLOW_DPI_EVENT_SOURCE_HTTP;
+		        i <= NATFLOW_DPI_EVENT_SOURCE_MAX && n < PAGE_SIZE - 1; i++) {
+			n += scnprintf(buffer + n, PAGE_SIZE - n,
+			               "matches_%s=%llu\nevents_%s=%llu\n",
+			               natflow_dpi_source_names[i],
+			               (unsigned long long)atomic64_read(
+			                   &natflow_dpi_source_matches[i]),
+			               natflow_dpi_source_names[i],
+			               (unsigned long long)atomic64_read(
+			                   &natflow_dpi_source_events[i]));
+		}
+	}
 	mutex_unlock(&natflow_dpi_lock);
 
 	if (n < 0)
@@ -1686,24 +2041,6 @@ static const struct file_operations natflow_dpi_queue_fops = {
 	(NATFLOW_DPI_DIRECTION_PACKET_BUDGET * NATFLOW_DPI_PAYLOAD_INSPECT_MAX)
 #define NATFLOW_DPI_DNS_BYTE_BUDGET \
 	(NATFLOW_DPI_DIRECTION_PACKET_BUDGET * NATFLOW_DPI_DNS_INSPECT_MAX)
-#define NATFLOW_DPI_AUTOMATON_DISCOVERY_MASK 0x00ffu
-#define NATFLOW_DPI_AUTOMATON_CLAIMED 0x8000u
-#define NATFLOW_DPI_AUTOMATON_MACHINE_MASK 0x7f00u
-#define NATFLOW_DPI_AUTOMATON_MACHINE_SHIFT 8
-#define NATFLOW_DPI_AUTOMATON_STATE_MASK 0x00ffu
-
-enum natflow_dpi_automaton_machine {
-	NATFLOW_DPI_AUTOMATON_MACHINE_NONE,
-	NATFLOW_DPI_AUTOMATON_MACHINE_RDP,
-};
-
-enum natflow_dpi_rdp_state {
-	NATFLOW_DPI_RDP_HAVE_REQUEST = 0x01,
-	NATFLOW_DPI_RDP_HAVE_CONFIRM = 0x02,
-	NATFLOW_DPI_RDP_COMPLETE = NATFLOW_DPI_RDP_HAVE_REQUEST |
-	                           NATFLOW_DPI_RDP_HAVE_CONFIRM,
-};
-
 static bool natflow_dpi_automaton_claimed(unsigned short automaton)
 {
 	return (automaton & NATFLOW_DPI_AUTOMATON_CLAIMED) != 0;
@@ -1776,6 +2113,293 @@ static bool natflow_dpi_payload_has_token(const unsigned char *data,
 			return true;
 	}
 	return false;
+}
+
+static bool natflow_dpi_ber_length(const unsigned char *data,
+                                   unsigned int data_len, unsigned int *value,
+                                   unsigned int *field_len)
+{
+	unsigned int bytes;
+	unsigned int length = 0;
+	unsigned int i;
+
+	if (!data || data_len == 0 || !value || !field_len)
+		return false;
+	if (data[0] < 0x80) {
+		*value = data[0];
+		*field_len = 1;
+		return true;
+	}
+	bytes = data[0] & 0x7f;
+	if (bytes == 0 || bytes > 4 || data_len < bytes + 1 || data[1] == 0)
+		return false;
+	for (i = 0; i < bytes; i++)
+		length = (length << 8) | data[i + 1];
+	if (length < 0x80)
+		return false;
+	*value = length;
+	*field_len = bytes + 1;
+	return true;
+}
+
+static bool natflow_dpi_parse_ntp(const unsigned char *data,
+                                  unsigned int payload_len, unsigned int inspect_len,
+                                  __be16 sport, __be16 dport)
+{
+	unsigned int mode;
+	unsigned int version;
+
+	if ((sport != __constant_htons(123) &&
+	        dport != __constant_htons(123)) || payload_len < 48 ||
+	        inspect_len < 2)
+		return false;
+	version = (data[0] >> 3) & 0x07;
+	mode = data[0] & 0x07;
+	return version >= 1 && version <= 4 && mode >= 1 && mode <= 7 &&
+	       data[1] <= 16;
+}
+
+static bool natflow_dpi_parse_snmp(const unsigned char *data,
+                                   unsigned int payload_len, unsigned int inspect_len,
+                                   __be16 sport, __be16 dport)
+{
+	unsigned int sequence_len;
+	unsigned int sequence_len_len;
+	unsigned int version_len;
+	unsigned int version_len_len;
+	unsigned int offset;
+
+	if ((sport != __constant_htons(161) &&
+	        sport != __constant_htons(162) &&
+	        dport != __constant_htons(161) &&
+	        dport != __constant_htons(162)) || payload_len <= 16 ||
+	        inspect_len < 6 || data[0] != 0x30 ||
+	        !natflow_dpi_ber_length(data + 1, inspect_len - 1,
+	                                &sequence_len, &sequence_len_len) ||
+	        sequence_len != payload_len - 1 - sequence_len_len)
+		return false;
+	offset = 1 + sequence_len_len;
+	if (offset + 2 > inspect_len || data[offset] != 0x02 ||
+	        !natflow_dpi_ber_length(data + offset + 1,
+	                                inspect_len - offset - 1,
+	                                &version_len, &version_len_len))
+		return false;
+	offset += 1 + version_len_len;
+	return version_len == 1 && offset < inspect_len &&
+	       (data[offset] == 0 || data[offset] == 1 || data[offset] == 3);
+}
+
+static bool natflow_dpi_parse_radius(const unsigned char *data,
+                                     unsigned int payload_len, unsigned int inspect_len,
+                                     __be16 sport, __be16 dport)
+{
+	if (sport != __constant_htons(1812) &&
+	        sport != __constant_htons(1813) &&
+	        sport != __constant_htons(18013) &&
+	        dport != __constant_htons(1812) &&
+	        dport != __constant_htons(1813) &&
+	        dport != __constant_htons(18013))
+		return false;
+	return payload_len >= 20 && payload_len <= 4096 && inspect_len >= 4 &&
+	       data[0] >= 1 && data[0] <= 13 &&
+	       natflow_dpi_read_be16(data + 2) == payload_len;
+}
+
+static bool natflow_dpi_tftp_string(const unsigned char *data,
+                                    unsigned int payload_len, unsigned int *offset,
+                                    const unsigned char **string, unsigned int *string_len)
+{
+	unsigned int start;
+	unsigned int i;
+
+	if (!data || !offset || *offset >= payload_len)
+		return false;
+	start = *offset;
+	for (i = start; i < payload_len && data[i] != 0; i++) {
+		if (data[i] < 0x20 || data[i] > 0x7e)
+			return false;
+	}
+	if (i == start || i == payload_len)
+		return false;
+	if (string)
+		*string = data + start;
+	if (string_len)
+		*string_len = i - start;
+	*offset = i + 1;
+	return true;
+}
+
+static bool natflow_dpi_tftp_options(const unsigned char *data,
+                                     unsigned int payload_len, unsigned int offset)
+{
+	const unsigned char *name;
+	unsigned int name_len;
+	unsigned int used = 0;
+	unsigned int option;
+	bool found = false;
+
+	while (offset < payload_len) {
+		if (!natflow_dpi_tftp_string(data, payload_len, &offset,
+		                             &name, &name_len))
+			return false;
+		if (natflow_dpi_ascii_equal_nocase(name, name_len,
+		                                   "blksize", 7))
+			option = 1;
+		else if (natflow_dpi_ascii_equal_nocase(name, name_len,
+		                                        "tsize", 5))
+			option = 2;
+		else
+			return false;
+		if (used & option)
+			return false;
+		used |= option;
+		if (!natflow_dpi_tftp_string(data, payload_len, &offset, NULL, NULL))
+			return false;
+		found = true;
+	}
+	return found;
+}
+
+static bool natflow_dpi_parse_tftp(const unsigned char *data,
+                                   unsigned int payload_len, unsigned int inspect_len,
+                                   unsigned char direction, __be16 sport, __be16 dport)
+{
+	const unsigned char *mode;
+	unsigned int mode_len;
+	unsigned int offset = 2;
+	unsigned int opcode;
+
+	if (payload_len < 4 || inspect_len < payload_len || data[0] != 0)
+		return false;
+	opcode = data[1];
+	if ((opcode == 1 || opcode == 2) &&
+	        direction == NATFLOW_L7_DIR_ORIGINAL &&
+	        (sport == __constant_htons(69) ||
+	         dport == __constant_htons(69))) {
+		if (!natflow_dpi_tftp_string(data, payload_len, &offset, NULL, NULL) ||
+		        !natflow_dpi_tftp_string(data, payload_len, &offset,
+		                                 &mode, &mode_len))
+			return false;
+		if (!natflow_dpi_ascii_equal_nocase(mode, mode_len, "netascii", 8) &&
+		        !natflow_dpi_ascii_equal_nocase(mode, mode_len, "octet", 5) &&
+		        !natflow_dpi_ascii_equal_nocase(mode, mode_len, "mail", 4))
+			return false;
+		return offset == payload_len ||
+		       natflow_dpi_tftp_options(data, payload_len, offset);
+	}
+	/* OACK commonly starts a related flow from the server's dynamic TID. */
+	return opcode == 6 &&
+	       natflow_dpi_tftp_options(data, payload_len, offset);
+}
+
+static bool natflow_dpi_parse_ldap(const unsigned char *data,
+                                   unsigned int payload_len, unsigned int inspect_len,
+                                   __be16 sport, __be16 dport)
+{
+	unsigned int sequence_len;
+	unsigned int sequence_len_len;
+	unsigned int message_len;
+	unsigned int message_len_len;
+	unsigned int offset;
+	unsigned int op;
+
+	if ((sport != __constant_htons(389) &&
+	        dport != __constant_htons(389)) || payload_len < 7 ||
+	        inspect_len < 7 || data[0] != 0x30 ||
+	        !natflow_dpi_ber_length(data + 1, inspect_len - 1,
+	                                &sequence_len, &sequence_len_len) ||
+	        sequence_len != payload_len - 1 - sequence_len_len)
+		return false;
+	offset = 1 + sequence_len_len;
+	if (offset + 2 > inspect_len || data[offset] != 0x02 ||
+	        !natflow_dpi_ber_length(data + offset + 1,
+	                                inspect_len - offset - 1,
+	                                &message_len, &message_len_len))
+		return false;
+	if (message_len == 0 || message_len > 4)
+		return false;
+	offset += 1 + message_len_len + message_len;
+	if (offset >= inspect_len)
+		return false;
+	op = data[offset];
+	return (op & 0xe0) == 0x60 && (op & 0x1f) <= 25;
+}
+
+static bool natflow_dpi_parse_coap(const unsigned char *data,
+                                   unsigned int payload_len, unsigned int inspect_len,
+                                   __be16 sport, __be16 dport)
+{
+	unsigned int source_port = ntohs(sport);
+	unsigned int destination_port = ntohs(dport);
+	unsigned int token_len;
+	unsigned int code;
+
+	if ((source_port != 5683 &&
+	        (source_port < 61616 || source_port > 61631) &&
+	        destination_port != 5683 &&
+	        (destination_port < 61616 || destination_port > 61631)) ||
+	        payload_len < 4 || inspect_len < 4 || (data[0] >> 6) != 1)
+		return false;
+	token_len = data[0] & 0x0f;
+	if (token_len > 8 || payload_len < 4 + token_len)
+		return false;
+	code = data[1];
+	if (code == 0)
+		return token_len == 0 && payload_len == 4;
+	return code <= 5 || (code >= 65 && code <= 69) ||
+	       (code >= 128 && code <= 134) ||
+	       (code >= 140 && code <= 143) ||
+	       (code >= 160 && code <= 165);
+}
+
+static unsigned int natflow_dpi_parse_network_protocol(
+    const unsigned char *data, unsigned int payload_len,
+    unsigned int inspect_len, unsigned char l4proto,
+    unsigned char direction, __be16 sport, __be16 dport)
+{
+	if (l4proto == IPPROTO_UDP &&
+	        natflow_dpi_parse_ntp(data, payload_len, inspect_len, sport, dport))
+		return NATFLOW_DPI_PROTO_NTP;
+	if (l4proto == IPPROTO_UDP &&
+	        natflow_dpi_parse_snmp(data, payload_len, inspect_len, sport, dport))
+		return NATFLOW_DPI_PROTO_SNMP;
+	if (l4proto == IPPROTO_UDP &&
+	        natflow_dpi_parse_radius(data, payload_len, inspect_len, sport, dport))
+		return NATFLOW_DPI_PROTO_RADIUS;
+	if (l4proto == IPPROTO_UDP &&
+	        natflow_dpi_parse_tftp(data, payload_len, inspect_len, direction,
+	                               sport, dport))
+		return NATFLOW_DPI_PROTO_TFTP;
+	if (natflow_dpi_parse_ldap(data, payload_len, inspect_len, sport, dport))
+		return NATFLOW_DPI_PROTO_LDAP;
+	if (l4proto == IPPROTO_UDP &&
+	        natflow_dpi_parse_coap(data, payload_len, inspect_len, sport, dport))
+		return NATFLOW_DPI_PROTO_COAP;
+	return 0;
+}
+
+static bool natflow_dpi_parse_nfs(const unsigned char *data,
+                                  unsigned int payload_len, unsigned int inspect_len,
+                                  unsigned char l4proto)
+{
+	unsigned int offset = l4proto == IPPROTO_TCP ? 4 : 0;
+	unsigned int program;
+
+	if (payload_len < 40 + offset || inspect_len < 20 + offset)
+		return false;
+	if (offset && (natflow_dpi_read_be32(data) & 0x80000000u) == 0)
+		return false;
+	if (offset && (natflow_dpi_read_be32(data) & 0x7fffffffu) !=
+	        payload_len - offset)
+		return false;
+	if (natflow_dpi_read_be32(data + 4 + offset) != 0 ||
+	        natflow_dpi_read_be32(data + 8 + offset) != 2)
+		return false;
+	program = natflow_dpi_read_be32(data + 12 + offset);
+	if (program != 0x000186a5 && program != 0x000186a3 &&
+	        program != 0x000186a0)
+		return false;
+	return natflow_dpi_read_be32(data + 16 + offset) <= 4;
 }
 
 static unsigned int natflow_dpi_parse_stun_turn(const unsigned char *data,
@@ -2357,6 +2981,67 @@ natflow_dpi_rdp_machine_step(natflow_t *nf, unsigned int evidence)
 	}
 }
 
+static unsigned int natflow_dpi_parse_socks_request(
+    const unsigned char *data, unsigned int payload_len,
+    unsigned int inspect_len)
+{
+	if (payload_len >= 9 && inspect_len >= payload_len && data[0] == 0x04 &&
+	        (data[1] == 0x01 || data[1] == 0x02) &&
+	        data[payload_len - 1] == 0x00)
+		return NATFLOW_DPI_SOCKS_VERSION_4;
+	if (payload_len == 3 && inspect_len >= 3 && data[0] == 0x05 &&
+	        data[1] == 0x01 && data[2] == 0x00)
+		return NATFLOW_DPI_SOCKS_VERSION_5;
+	if (payload_len == 4 && inspect_len >= 4 && data[0] == 0x05 &&
+	        data[1] == 0x02 && data[2] == 0x00 && data[3] == 0x01)
+		return NATFLOW_DPI_SOCKS_VERSION_5;
+	return 0;
+}
+
+static struct natflow_dpi_native_machine_result
+natflow_dpi_socks_machine_step(natflow_t *nf, const unsigned char *data,
+                               unsigned int payload_len, unsigned int inspect_len,
+                               unsigned char direction)
+{
+	unsigned short automaton;
+	unsigned int state;
+
+	if (!nf || !data || inspect_len == 0)
+		return natflow_dpi_native_machine_pending();
+	automaton = READ_ONCE(nf->dpi_automaton);
+	if (!natflow_dpi_automaton_claimed(automaton)) {
+		if (direction != NATFLOW_L7_DIR_ORIGINAL)
+			return natflow_dpi_native_machine_pending();
+		state = natflow_dpi_parse_socks_request(data, payload_len,
+		                                        inspect_len);
+		if (state == 0)
+			return natflow_dpi_native_machine_pending();
+		if (cmpxchg(&nf->dpi_automaton, automaton,
+		            natflow_dpi_automaton_word(
+		                NATFLOW_DPI_AUTOMATON_MACHINE_SOCKS,
+		                state)) != automaton)
+			return natflow_dpi_native_machine_pending();
+		return natflow_dpi_native_machine_pending();
+	}
+	if (natflow_dpi_automaton_machine(automaton) !=
+	        NATFLOW_DPI_AUTOMATON_MACHINE_SOCKS)
+		return natflow_dpi_native_machine_excluded();
+	state = automaton & NATFLOW_DPI_AUTOMATON_STATE_MASK;
+	if (state != NATFLOW_DPI_SOCKS_VERSION_4 &&
+	        state != NATFLOW_DPI_SOCKS_VERSION_5)
+		return natflow_dpi_native_machine_excluded();
+	if (direction == NATFLOW_L7_DIR_ORIGINAL)
+		return natflow_dpi_native_machine_pending();
+	if (state == NATFLOW_DPI_SOCKS_VERSION_4 && payload_len == 8 &&
+	        inspect_len >= 8 && data[0] == 0x00 &&
+	        data[1] >= 0x5a && data[1] <= 0x5d)
+		return natflow_dpi_native_machine_terminal(NATFLOW_DPI_PROTO_SOCKS);
+	if (state == NATFLOW_DPI_SOCKS_VERSION_5 && payload_len == 2 &&
+	        inspect_len >= 2 && data[0] == 0x05 && data[1] == 0x00)
+		return natflow_dpi_native_machine_terminal(NATFLOW_DPI_PROTO_SOCKS);
+	return natflow_dpi_native_machine_excluded();
+}
+
 static unsigned int natflow_dpi_parse_binary_protocol(
     const unsigned char *data,
     unsigned int payload_len, unsigned int inspect_len,
@@ -2382,6 +3067,12 @@ static unsigned int natflow_dpi_automaton_machine_class_mask(
 	case NATFLOW_DPI_AUTOMATON_MACHINE_RDP:
 		return NATFLOW_DPI_MACHINE_CLASS_BIT(
 		           NATFLOW_DPI_MACHINE_CLASS_BINARY);
+	case NATFLOW_DPI_AUTOMATON_MACHINE_SOCKS:
+		return NATFLOW_DPI_MACHINE_CLASS_BIT(
+		           NATFLOW_DPI_MACHINE_CLASS_BINARY);
+	case NATFLOW_DPI_AUTOMATON_MACHINE_WHATSAPP:
+		return NATFLOW_DPI_MACHINE_CLASS_BIT(
+		           NATFLOW_DPI_MACHINE_CLASS_TEXT);
 	default:
 		return 0;
 	}
@@ -2491,7 +3182,9 @@ static unsigned int natflow_dpi_payload_machine_class_mask(
 		            NATFLOW_DPI_MACHINE_CLASS_BINARY);
 	else
 		mask |= NATFLOW_DPI_MACHINE_CLASS_BIT(
-		            NATFLOW_DPI_MACHINE_CLASS_WIREGUARD);
+		            NATFLOW_DPI_MACHINE_CLASS_WIREGUARD) |
+		        NATFLOW_DPI_MACHINE_CLASS_BIT(
+		            NATFLOW_DPI_MACHINE_CLASS_BINARY);
 	return mask;
 }
 
@@ -2666,7 +3359,8 @@ natflow_dpi_native_machine_step(natflow_t *nf,
                                 unsigned int payload_len,
                                 unsigned int inspect_len,
                                 unsigned char l4proto,
-                                unsigned char direction)
+                                unsigned char direction,
+                                __be16 sport, __be16 dport)
 {
 	struct natflow_dpi_native_machine_result result;
 	unsigned short automaton;
@@ -2681,12 +3375,19 @@ natflow_dpi_native_machine_step(natflow_t *nf,
 
 	automaton = READ_ONCE(nf->dpi_automaton);
 	if (natflow_dpi_automaton_claimed(automaton)) {
-		if (natflow_dpi_automaton_machine(automaton) !=
-		        NATFLOW_DPI_AUTOMATON_MACHINE_RDP)
+		switch (natflow_dpi_automaton_machine(automaton)) {
+		case NATFLOW_DPI_AUTOMATON_MACHINE_RDP:
+			evidence = natflow_dpi_rdp_evidence(data, payload_len,
+			                                    inspect_len, direction);
+			return natflow_dpi_rdp_machine_step(nf, evidence);
+		case NATFLOW_DPI_AUTOMATON_MACHINE_SOCKS:
+			return natflow_dpi_socks_machine_step(nf, data, payload_len,
+			                                      inspect_len, direction);
+		case NATFLOW_DPI_AUTOMATON_MACHINE_WHATSAPP:
+			return natflow_dpi_native_machine_pending();
+		default:
 			return natflow_dpi_native_machine_excluded();
-		evidence = natflow_dpi_rdp_evidence(data, payload_len, inspect_len,
-		                                    direction);
-		return natflow_dpi_rdp_machine_step(nf, evidence);
+		}
 	}
 
 	/* Recognition precedence is part of the fixed native-machine contract. */
@@ -2700,19 +3401,41 @@ natflow_dpi_native_machine_step(natflow_t *nf,
 		        natflow_dpi_automaton_claimed(READ_ONCE(nf->dpi_automaton)))
 			return result;
 	}
+	if (l4proto == IPPROTO_TCP &&
+	        (machine_class_mask & NATFLOW_DPI_MACHINE_CLASS_BIT(
+	             NATFLOW_DPI_MACHINE_CLASS_BINARY))) {
+		result = natflow_dpi_socks_machine_step(nf, data, payload_len,
+		                                        inspect_len, direction);
+		if (result.status != NATFLOW_DPI_NATIVE_MACHINE_PENDING ||
+		        natflow_dpi_automaton_claimed(READ_ONCE(nf->dpi_automaton)))
+			return result;
+	}
 
 	if (machine_class_mask & NATFLOW_DPI_MACHINE_CLASS_BIT(
-	            NATFLOW_DPI_MACHINE_CLASS_STUN_TURN))
+	            NATFLOW_DPI_MACHINE_CLASS_TEXT)) {
+		proto = natflow_dpi_parse_network_protocol(data, payload_len,
+		        inspect_len, l4proto, direction, sport, dport);
+	}
+	if (!proto && (machine_class_mask & NATFLOW_DPI_MACHINE_CLASS_BIT(
+	                   NATFLOW_DPI_MACHINE_CLASS_STUN_TURN))) {
 		proto = natflow_dpi_parse_stun_turn(data, payload_len, inspect_len);
+	}
+	if (!proto && (machine_class_mask & NATFLOW_DPI_MACHINE_CLASS_BIT(
+	                   NATFLOW_DPI_MACHINE_CLASS_BINARY)) &&
+	        natflow_dpi_parse_nfs(data, payload_len, inspect_len, l4proto)) {
+		proto = NATFLOW_DPI_PROTO_NFS;
+	}
 	if (!proto && l4proto == IPPROTO_TCP &&
 	        (machine_class_mask & NATFLOW_DPI_MACHINE_CLASS_BIT(
-	             NATFLOW_DPI_MACHINE_CLASS_SSH)))
+	             NATFLOW_DPI_MACHINE_CLASS_SSH))) {
 		proto = natflow_dpi_parse_ssh_tcp(data, inspect_len);
+	}
 	if (!proto && l4proto == IPPROTO_UDP &&
 	        (machine_class_mask & NATFLOW_DPI_MACHINE_CLASS_BIT(
-	             NATFLOW_DPI_MACHINE_CLASS_WIREGUARD)))
+	             NATFLOW_DPI_MACHINE_CLASS_WIREGUARD))) {
 		proto = natflow_dpi_parse_wireguard_udp(data, payload_len,
 		                                        inspect_len);
+	}
 	if (!proto && (machine_class_mask & NATFLOW_DPI_MACHINE_CLASS_BIT(
 	                   NATFLOW_DPI_MACHINE_CLASS_BITTORRENT))) {
 		if (l4proto == IPPROTO_TCP)
@@ -2757,7 +3480,6 @@ natflow_dpi_native_machine_step(natflow_t *nf,
 		proto = natflow_dpi_parse_binary_protocol(data, payload_len,
 		        inspect_len, direction, proto_mask);
 	}
-
 	return proto ? natflow_dpi_native_machine_terminal(proto) :
 	       natflow_dpi_native_machine_pending();
 }
@@ -2945,7 +3667,9 @@ unsigned int natflow_dpi_consume_packet_view(
 		                     NATFLOW_DPI_PROTO_DNS);
 
 	if (machine_result.status == NATFLOW_DPI_NATIVE_MACHINE_PENDING &&
-	        !natflow_dpi_automaton_claimed(automaton) &&
+	        (!natflow_dpi_automaton_claimed(automaton) ||
+	         natflow_dpi_automaton_machine(automaton) ==
+	         NATFLOW_DPI_AUTOMATON_MACHINE_WHATSAPP) &&
 	        (inspect_machine_class_mask & NATFLOW_DPI_MACHINE_CLASS_BIT(
 	             NATFLOW_DPI_MACHINE_CLASS_TEXT))) {
 		app_inspect_len = view->payload_len > NATFLOW_DPI_HTTP_APP_INSPECT_MAX ?
@@ -2955,9 +3679,18 @@ unsigned int natflow_dpi_consume_packet_view(
 		if (app_inspect_len > 0 && payload) {
 			inspected = true;
 			payload_app_result = natflow_dpi_payload_app_machine_step(
-			                         payload, view->payload_len, app_inspect_len,
-			                         view->l4proto, view->direction);
+			                         nf, payload, view->payload_len, app_inspect_len,
+			                         view->l4proto, view->direction, view->sport,
+			                         view->dport);
 		}
+	}
+	if (payload_app_result.excluded) {
+		if (inspected)
+			atomic64_inc(&natflow_dpi_packet_inspections[dir]);
+		if (natflow_dpi_context_clear_locked(nf))
+			atomic64_inc(&natflow_dpi_context_cleared_no_candidate);
+		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
+		goto out_unlock;
 	}
 	if (payload_app_result.app) {
 		if (inspected)
@@ -2985,7 +3718,8 @@ unsigned int natflow_dpi_consume_packet_view(
 			machine_result = natflow_dpi_native_machine_step(
 			                     nf, inspect_machine_class_mask, payload,
 			                     view->payload_len, inspect_len,
-			                     view->l4proto, view->direction);
+			                     view->l4proto, view->direction,
+			                     view->sport, view->dport);
 		}
 	}
 	if (inspected)
@@ -3171,14 +3905,16 @@ int natflow_dpi_init(void)
 
 	BUILD_BUG_ON(sizeof(struct natflow_dpi_event_hdr) !=
 	             NATFLOW_DPI_EVENT_HEADER_LEN);
+	BUILD_BUG_ON(ARRAY_SIZE(natflow_dpi_source_names) !=
+	             NATFLOW_DPI_EVENT_SOURCE_MAX + 1);
 	BUILD_BUG_ON(NATFLOW_DPI_MACHINE_CLASS_MAX > 8);
-	BUILD_BUG_ON(NATFLOW_DPI_PROTO_SMB > 32);
-	BUILD_BUG_ON(NATFLOW_DPI_AUTOMATON_MACHINE_RDP > 0x7f);
+	BUILD_BUG_ON(NATFLOW_DPI_PROTO_COAP > 32);
+	BUILD_BUG_ON(NATFLOW_DPI_AUTOMATON_MACHINE_WHATSAPP > 0x7f);
 	BUILD_BUG_ON(NATFLOW_DPI_RDP_COMPLETE >
 	             NATFLOW_DPI_AUTOMATON_STATE_MASK);
 	BUILD_BUG_ON(NATFLOW_DPI_PROTO_ALL_MASK !=
-	             (NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_SMB + 1) - 1));
-	BUILD_BUG_ON(ARRAY_SIZE(natflow_dpi_app_catalog) != 27);
+	             (NATFLOW_DPI_PROTO_BIT(NATFLOW_DPI_PROTO_COAP + 1) - 1));
+	BUILD_BUG_ON(ARRAY_SIZE(natflow_dpi_app_catalog) != 45);
 
 	ret = natflow_dpi_app_catalog_validate();
 	if (ret != 0)

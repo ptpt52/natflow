@@ -365,7 +365,7 @@ enum natflow_dpi_direction_mode {
 
 ### 9.1 Context key
 
-方向预算和 compact automaton 状态直接使用 `natflow_t` 尾部的 8 字节有界 context，不分配 parser cache，也不引入全局 conntrack registry。纯单包 `ORIGINAL_ONLY` detector 可以不置 `NF_FF_DPI_USE`；需要等待后续方向或 packet 的 detector 才发布 context owner。当前 RDP machine 用原子 16 位 word 汇合 original request 与 reply confirm，不保存 payload。
+方向预算和 compact automaton 状态直接使用 `natflow_t` 尾部的 8 字节有界 context，不分配 parser cache，也不引入全局 conntrack registry。纯单包 `ORIGINAL_ONLY` detector 可以不置 `NF_FF_DPI_USE`；需要等待后续方向或 packet 的 detector 才发布 context owner。当前 RDP、SOCKS 和 WhatsApp machine 使用原子 16 位 word 保存 claimed machine/state，不保存 payload。
 
 若后续确实引入 context，其可保存：
 

@@ -1,16 +1,14 @@
 # Natflow 硬编码 DPI 状态机设计与实施计划
 
-状态：Accepted，M0-M8 已实现
+状态：Accepted，M0-M9 已实现
 日期：2026-08-16
 
-实施进度：M0-M4 已完成。18 个固定 protocol app 和 YouTube、Netflix、爱奇艺、
-Telegram、微信、QQ、钉钉、淘宝、TikTok 固定应用已进入数据面；用户 ruleset、RCU 发布和规则控制 ABI 已
+实施进度：M0-M4 已完成。26 个固定 protocol app 和 19 个固定品牌应用已进入数据面；用户 ruleset、RCU 发布和规则控制 ABI 已
 删除。M5 已完成：最后两个 context 字节已迁移为 16 位 `dpi_automaton`，低 8 位
-保存 discovery machine-class mask；RDP 是首台 claimed machine，以单调 state bit
-汇合 original X.224 Connection Request 和 reply Connection Confirm 后终态。M7 已
-删除 detector struct、metadata 数组和通用遍历 dispatcher，18 个协议由固定顺序的
-原生 parser/机器分支识别。M8 从 nDPI 提取 48 项有界 hostname 特征和钉钉、
-QQ/OICQ、爱奇艺直接 payload 特征，并加入单包有界 HTTP request/response view。
+保存 discovery machine-class mask；RDP、SOCKS 和 WhatsApp 是当前 claimed machine。
+M7 已删除 detector struct、metadata 数组和通用遍历 dispatcher，协议由固定顺序的
+原生 parser/机器分支识别。M8/M9 从 nDPI 提取 94 项有界 hostname 特征和 7 个应用的
+直接 payload 特征，并加入单包有界 HTTP request/response view。
 
 ## 1. 决策摘要
 
@@ -206,17 +204,19 @@ generic TLS 作为兜底终态。
 
 ### 5.1 初始固定目录
 
-第一阶段直接覆盖当前已有高确定性识别证据的 18 个协议，并为后续域名应用
-预留固定 ID。首批域名应用应以维护者单独审核过的静态表为准，不从用户规则加载。
+当前固定目录覆盖 26 个具有高确定性结构证据的协议，并为品牌应用使用分组稳定
+ID。域名应用以维护者审核过的静态表为准，不从用户规则加载。
 
 当前原生协议机器的直接终态包括：DNS、SSH、WireGuard、STUN、TURN、
 BitTorrent、FTP、SMTP、POP3、IMAP、SIP、RTSP、MQTT、RESP、MySQL、
-PostgreSQL、RDP 和 SMB。
+PostgreSQL、RDP、SMB、NTP、SNMP、RADIUS、TFTP、LDAP、NFS、SOCKS 和 CoAP。
 
 固定域名应用包括 YouTube=`0x1001`、Netflix=`0x1002`、爱奇艺=`0x1003`、
 Telegram=`0x2001`、微信=`0x2002`、QQ=`0x2003`、钉钉=`0x2004`、
-淘宝=`0x4001`、TikTok=`0x5001`。后六项 hostname 和直接 payload 特征来自本地
-nDPI 源码；宽泛 `wx.`/`weixin.` substring 不采用，共享 CDN 只允许完整 hostname
+淘宝=`0x4001`、TikTok=`0x5001`，以及腾讯视频=`0x1004`、Spotify=`0x1005`、
+WhatsApp=`0x2005`、Messenger=`0x2006`、Discord=`0x2007`、Zoom=`0x2008`、
+Facebook=`0x5002`、Instagram=`0x5003`、X/Twitter=`0x5004`、微博=`0x5005`。
+新增 hostname 和直接 payload 特征来自本地 nDPI 源码；宽泛 substring 不采用，共享 CDN 只允许完整 hostname
 exact，不把父域名整体归类。YouTube 的 `youtu.be` 也只做 exact。Netflix Open
 Connect 与 Telegram 官方 FAQ 是原首批域名选择的官方依据：
 
@@ -467,6 +467,19 @@ build；`KCFLAGS=-Wno-unused-function` 只用于兼容该内核头中的静态 h
   评审扩大 `natflow_t`。
 
 M8 退出条件：123 项 corpus 静态检查、用户态工具编译和七组合构建矩阵通过；
+运行态 IPv4/IPv6 corpus 仍在目标机执行。
+
+### M9：第二批常见应用和基础协议
+
+- catalog revision 升为 3，固定 catalog 增至 45 项，域名表增至 94 项。
+- 新增腾讯视频、WhatsApp、Facebook、Messenger、Instagram、X/Twitter、Discord、
+  Spotify、Zoom 和微博；Meta 具体子域和 `v.qq.com` 优先于父域分类。
+- 新增 NTP、SNMP、RADIUS、TFTP、LDAP、NFS、SOCKS 和 CoAP；SNMP/LDAP 复用
+  有界 BER length parser，SOCKS 使用 original negotiation + reply 的 claimed machine。
+- WhatsApp 新前缀在首段至少匹配 2 字节后使用 compact automaton 跨同方向 payload 补全；Discord、Spotify
+  和 Zoom 使用 nDPI 直接 payload 证据。8 字节 conntrack context 保持不变。
+
+M9 退出条件：196 项 corpus 静态检查、用户态工具编译、七组合构建矩阵和独立审核通过；
 运行态 IPv4/IPv6 corpus 仍在目标机执行。
 
 ## 11. 提交拆分建议
