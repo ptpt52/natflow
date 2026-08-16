@@ -16,6 +16,7 @@
 #include <linux/uaccess.h>
 #include <linux/wait.h>
 #include <net/netfilter/nf_conntrack.h>
+#include <net/netfilter/nf_conntrack_acct.h>
 #include "natflow_common.h"
 #include "natflow_dpi.h"
 #include "natflow_l7.h"
@@ -92,6 +93,7 @@ enum natflow_dpi_machine_class_id {
 
 #define NATFLOW_DPI_MACHINE_CLASS_BIT(id) (1U << (id))
 #define NATFLOW_DPI_DIRECTION_PACKET_BUDGET 4
+#define NATFLOW_DPI_CONNTRACK_PACKET_LIMIT 256U
 #define NATFLOW_DPI_HTTP_APP_INSPECT_MAX 512
 #define NATFLOW_DPI_IQIYI_PAYLOAD_MIN 121
 #define NATFLOW_DPI_IQIYI_PAYLOAD_MAX 299
@@ -1254,6 +1256,7 @@ static atomic64_t natflow_dpi_context_cleared_budget;
 static atomic64_t natflow_dpi_context_cleared_transport;
 static atomic64_t natflow_dpi_context_cleared_app;
 static atomic64_t natflow_dpi_context_cleared_no_candidate;
+static atomic64_t natflow_dpi_context_cleared_acct_limit;
 static atomic64_t natflow_dpi_context_aborted;
 static atomic64_t natflow_dpi_proto_no_session;
 static atomic64_t natflow_dpi_proto_app_exists;
@@ -1492,6 +1495,7 @@ static void natflow_dpi_counters_clear(void)
 	atomic64_set(&natflow_dpi_context_cleared_transport, 0);
 	atomic64_set(&natflow_dpi_context_cleared_app, 0);
 	atomic64_set(&natflow_dpi_context_cleared_no_candidate, 0);
+	atomic64_set(&natflow_dpi_context_cleared_acct_limit, 0);
 	atomic64_set(&natflow_dpi_context_aborted, 0);
 	atomic64_set(&natflow_dpi_proto_no_session, 0);
 	atomic64_set(&natflow_dpi_proto_app_exists, 0);
@@ -1757,6 +1761,7 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             "context_cleared_transport=%llu\n"
 	             "context_cleared_app=%llu\n"
 	             "context_cleared_no_candidate=%llu\n"
+	             "context_cleared_acct_limit=%llu\n"
 	             "context_aborted=%llu\n"
 	             "proto_no_session=%llu\n"
 	             "proto_app_exists=%llu\n",
@@ -1784,6 +1789,7 @@ static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 	             (unsigned long long)atomic64_read(&natflow_dpi_context_cleared_transport),
 	             (unsigned long long)atomic64_read(&natflow_dpi_context_cleared_app),
 	             (unsigned long long)atomic64_read(&natflow_dpi_context_cleared_no_candidate),
+	             (unsigned long long)atomic64_read(&natflow_dpi_context_cleared_acct_limit),
 	             (unsigned long long)atomic64_read(&natflow_dpi_context_aborted),
 	             (unsigned long long)atomic64_read(&natflow_dpi_proto_no_session),
 	             (unsigned long long)atomic64_read(&natflow_dpi_proto_app_exists));
@@ -3352,6 +3358,30 @@ static bool natflow_dpi_packet_is_terminal(
 	return TCPH(view->l4)->fin || TCPH(view->l4)->rst;
 }
 
+static bool natflow_dpi_conntrack_packet_limit_exceeded(const struct nf_conn *ct)
+{
+	struct nf_conn_acct *acct;
+	struct nf_conn_counter *counter;
+	u64 original_packets;
+	u64 reply_packets;
+
+	if (!ct)
+		return false;
+	acct = nf_conn_acct_find(ct);
+	if (!acct)
+		return false;
+
+	counter = acct->counter;
+	original_packets = atomic64_read(
+	                       &counter[IP_CT_DIR_ORIGINAL].packets);
+	reply_packets = atomic64_read(&counter[IP_CT_DIR_REPLY].packets);
+	if (original_packets > NATFLOW_DPI_CONNTRACK_PACKET_LIMIT ||
+	        reply_packets > NATFLOW_DPI_CONNTRACK_PACKET_LIMIT)
+		return true;
+	return original_packets + reply_packets >
+	       NATFLOW_DPI_CONNTRACK_PACKET_LIMIT;
+}
+
 static struct natflow_dpi_native_machine_result
 natflow_dpi_native_machine_step(natflow_t *nf,
                                 unsigned int machine_class_mask,
@@ -3637,6 +3667,13 @@ unsigned int natflow_dpi_consume_packet_view(
 	if (natflow_dpi_packet_is_terminal(view)) {
 		if (natflow_dpi_context_clear_locked(nf))
 			atomic64_inc(&natflow_dpi_context_cleared_transport);
+		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
+		goto out_unlock;
+	}
+
+	if (natflow_dpi_conntrack_packet_limit_exceeded(view->ct)) {
+		if (natflow_dpi_context_clear_locked(nf))
+			atomic64_inc(&natflow_dpi_context_cleared_acct_limit);
 		done_mask |= NATFLOW_L7_CONSUMER_DPI_PACKET;
 		goto out_unlock;
 	}

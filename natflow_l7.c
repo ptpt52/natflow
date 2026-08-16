@@ -1036,22 +1036,24 @@ static void natflow_l7_mark_terminal(const struct natflow_l7_packet_view *view,
 }
 
 #if defined(CONFIG_NATFLOW_DPI)
-static unsigned int natflow_l7_dpi_consume_packet_view(
-    const struct natflow_l7_packet_view *view)
+static unsigned int natflow_l7_dpi_consume_packet_view_mask(
+    const struct natflow_l7_packet_view *view, unsigned int consumer_mask)
 {
 	unsigned int done_mask;
 	unsigned int pending_mask;
 	natflow_t *nf;
 
-	if (!view || !(view->consumer_mask & NATFLOW_L7_CONSUMER_DPI))
+	if (!view)
+		return 0;
+	consumer_mask &= view->consumer_mask & NATFLOW_L7_CONSUMER_DPI;
+	if (!consumer_mask)
 		return 0;
 
 	nf = natflow_session_get(view->ct);
 	if (!nf)
 		return 0;
 
-	pending_mask = natflow_l7_pending_consumer_mask(nf,
-	               view->consumer_mask & NATFLOW_L7_CONSUMER_DPI);
+	pending_mask = natflow_l7_pending_consumer_mask(nf, consumer_mask);
 	if (!pending_mask)
 		return 0;
 
@@ -1059,6 +1061,13 @@ static unsigned int natflow_l7_dpi_consume_packet_view(
 	if (done_mask)
 		natflow_l7_mark_terminal(view, done_mask);
 	return done_mask;
+}
+
+static unsigned int natflow_l7_dpi_consume_packet_view(
+    const struct natflow_l7_packet_view *view)
+{
+	return natflow_l7_dpi_consume_packet_view_mask(
+	           view, NATFLOW_L7_CONSUMER_DPI);
 }
 
 static void natflow_l7_dpi_force_terminal(
@@ -1542,9 +1551,9 @@ static noinline unsigned int natflow_l7_tcp_process(NATFLOW_L7_HOOK_ARGS,
 
 	if (flow->data_len <= 0) {
 #if defined(CONFIG_NATFLOW_DPI)
-		if ((view->consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET) &&
-		        (TCPH(view->l4)->fin || TCPH(view->l4)->rst))
-			natflow_l7_dpi_consume_packet_view(view);
+		if (view->consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET)
+			natflow_l7_dpi_consume_packet_view_mask(
+			    view, NATFLOW_L7_CONSUMER_DPI_PACKET);
 #endif
 		if (TCPH(view->l4)->fin || TCPH(view->l4)->rst)
 			natflow_l7_mark_terminal(view,

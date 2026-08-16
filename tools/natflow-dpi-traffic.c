@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <signal.h>
 #include <stdint.h>
@@ -18,6 +19,11 @@
 #define TRAFFIC_PAYLOAD_MAX 2048U
 #define TRAFFIC_SEQUENCE_STEPS_MAX 16U
 #define TRAFFIC_TIMEOUT_SECONDS 3
+#define TRAFFIC_ACK_TIMEOUT_SECONDS 15
+#define TRAFFIC_WAIT_STEPS 250U
+
+#define TRAFFIC_TCP_RECV_QUEUE 1
+#define TRAFFIC_TCP_SEND_QUEUE 2
 
 static const unsigned char traffic_ack = 0xa5;
 
@@ -43,8 +49,13 @@ static void usage(FILE *stream, const char *program)
 	        "Usage: %s server tcp|udp bind-ip port original|reply hex ready-file\n"
 	        "       %s client tcp|udp server-ip port original|reply hex [source-port]\n"
 	        "       %s server-sequence tcp bind-ip port script ready-file\n"
-	        "       %s client-sequence tcp server-ip port script\n",
-	        program, program, program, program);
+	        "       %s client-sequence tcp server-ip port script\n"
+	        "       %s udp-count-server bind-ip port count ready-file\n"
+	        "       %s udp-count-client server-ip port count source-port\n"
+	        "       %s tcp-ack-server bind-ip port ready-file\n"
+	        "       %s tcp-ack-client server-ip port count source-port done-file continue-file\n",
+	        program, program, program, program, program, program, program,
+	        program);
 }
 
 static void fail(const char *operation)
@@ -69,6 +80,19 @@ static unsigned int parse_port(const char *value)
 	if (errno || *value == '\0' || *end != '\0' || port == 0 || port > 65535)
 		fail_message("invalid port");
 	return (unsigned int)port;
+}
+
+static unsigned int parse_count(const char *value)
+{
+	char *end;
+	unsigned long count;
+
+	errno = 0;
+	count = strtoul(value, &end, 10);
+	if (errno || *value == '\0' || *end != '\0' || count == 0 ||
+	        count > 100000)
+		fail_message("invalid packet count");
+	return (unsigned int)count;
 }
 
 static int hex_digit(char value)
@@ -157,6 +181,19 @@ static void configure_socket(int fd)
 		fail("configure socket");
 }
 
+static void configure_tcp_ack_socket(int fd)
+{
+	struct timeval timeout = {
+		.tv_sec = TRAFFIC_ACK_TIMEOUT_SECONDS,
+	};
+
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+	               sizeof(timeout)) != 0 ||
+	        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
+	                   sizeof(timeout)) != 0)
+		fail("configure TCP ACK socket timeout");
+}
+
 static void configure_tcp_connection(int fd)
 {
 	int enabled = 1;
@@ -202,6 +239,53 @@ static void mark_ready(const char *path)
 		fail("create ready file");
 	if (close(fd) != 0)
 		fail("close ready file");
+}
+
+static void wait_for_file(const char *path)
+{
+	unsigned int step;
+
+	for (step = 0; step < TRAFFIC_WAIT_STEPS; step++) {
+		if (access(path, F_OK) == 0)
+			return;
+		if (errno != ENOENT)
+			fail("inspect synchronization file");
+		usleep(20000);
+	}
+	errno = ETIMEDOUT;
+	fail("wait for synchronization file");
+}
+
+static uint16_t internet_checksum(const void *data, size_t length)
+{
+	const unsigned char *bytes = data;
+	uint32_t sum = 0;
+
+	while (length >= 2) {
+		sum += ((uint32_t)bytes[0] << 8) | bytes[1];
+		bytes += 2;
+		length -= 2;
+	}
+	if (length != 0)
+		sum += (uint32_t)bytes[0] << 8;
+	while (sum >> 16)
+		sum = (sum & 0xffffU) + (sum >> 16);
+	return htons((uint16_t)~sum);
+}
+
+static uint16_t tcp_ipv4_checksum(const struct iphdr *iph,
+                                  const struct tcphdr *tcph)
+{
+	unsigned char input[12 + sizeof(*tcph)];
+	uint16_t tcp_length = htons(sizeof(*tcph));
+
+	memcpy(input, &iph->saddr, sizeof(iph->saddr));
+	memcpy(input + 4, &iph->daddr, sizeof(iph->daddr));
+	input[8] = 0;
+	input[9] = IPPROTO_TCP;
+	memcpy(input + 10, &tcp_length, sizeof(tcp_length));
+	memcpy(input + 12, tcph, sizeof(*tcph));
+	return internet_checksum(input, sizeof(input));
 }
 
 static void send_all(int fd, const unsigned char *payload, size_t length)
@@ -471,6 +555,201 @@ static void run_udp_client(const struct traffic_endpoint *endpoint,
 	close(fd);
 }
 
+static void run_udp_count_server(const struct traffic_endpoint *endpoint,
+                                 unsigned int count, const char *ready_file)
+{
+	unsigned char byte;
+	unsigned int received = 0;
+	int fd = socket(endpoint->family, SOCK_DGRAM, 0);
+
+	if (fd < 0)
+		fail("create UDP count server");
+	configure_socket(fd);
+	if (bind(fd, (const struct sockaddr *)&endpoint->address,
+	         endpoint->address_len) != 0)
+		fail("bind UDP count server");
+	mark_ready(ready_file);
+
+	while (received < count) {
+		ssize_t length = recv(fd, &byte, sizeof(byte), 0);
+
+		if (length < 0) {
+			if (errno == EINTR)
+				continue;
+			fail("receive empty UDP datagram");
+		}
+		if (length != 0)
+			fail_message("UDP count packet is not empty");
+		received++;
+	}
+	close(fd);
+}
+
+static void run_udp_count_client(const struct traffic_endpoint *endpoint,
+                                 unsigned int count, unsigned int source_port)
+{
+	unsigned int sent = 0;
+	int fd = socket(endpoint->family, SOCK_DGRAM, 0);
+
+	if (fd < 0)
+		fail("create UDP count client");
+	configure_socket(fd);
+	bind_source_port(fd, endpoint->family, source_port);
+	if (connect(fd, (const struct sockaddr *)&endpoint->address,
+	            endpoint->address_len) != 0)
+		fail("connect UDP count client");
+
+	while (sent < count) {
+		ssize_t length = send(fd, &traffic_ack, 0, 0);
+
+		if (length < 0) {
+			if (errno == EINTR)
+				continue;
+			fail("send empty UDP datagram");
+		}
+		if (length != 0)
+			fail_message("empty UDP send returned a payload length");
+		sent++;
+	}
+	close(fd);
+}
+
+static uint32_t tcp_repair_sequence(int fd, int queue)
+{
+	uint32_t sequence;
+	socklen_t length = sizeof(sequence);
+
+	if (setsockopt(fd, IPPROTO_TCP, TCP_REPAIR_QUEUE, &queue,
+	               sizeof(queue)) != 0)
+		fail("select TCP repair queue");
+	if (getsockopt(fd, IPPROTO_TCP, TCP_QUEUE_SEQ, &sequence, &length) != 0)
+		fail("read TCP repair sequence");
+	if (length != sizeof(sequence))
+		fail_message("unexpected TCP repair sequence length");
+	return sequence;
+}
+
+static void send_tcp_ack_packets(int fd,
+                                 const struct traffic_endpoint *endpoint, unsigned int count)
+{
+	struct {
+		struct iphdr ip;
+		struct tcphdr tcp;
+	} packet;
+	struct sockaddr_in local;
+	const struct sockaddr_in *remote;
+	socklen_t local_length = sizeof(local);
+	uint32_t send_sequence;
+	uint32_t receive_sequence;
+	unsigned int index;
+	int raw_fd;
+
+	if (endpoint->family != AF_INET)
+		fail_message("TCP ACK packet mode only supports IPv4");
+	remote = (const struct sockaddr_in *)&endpoint->address;
+	memset(&local, 0, sizeof(local));
+	if (getsockname(fd, (struct sockaddr *)&local, &local_length) != 0)
+		fail("read TCP client address");
+	if (local_length != sizeof(local) || local.sin_family != AF_INET)
+		fail_message("unexpected TCP client address");
+
+	send_sequence = tcp_repair_sequence(fd, TRAFFIC_TCP_SEND_QUEUE);
+	receive_sequence = tcp_repair_sequence(fd, TRAFFIC_TCP_RECV_QUEUE);
+	raw_fd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+	if (raw_fd < 0)
+		fail("create raw TCP ACK socket");
+
+	memset(&packet, 0, sizeof(packet));
+	packet.ip.version = 4;
+	packet.ip.ihl = sizeof(packet.ip) / 4;
+	packet.ip.tot_len = htons(sizeof(packet));
+	packet.ip.ttl = 64;
+	packet.ip.protocol = IPPROTO_TCP;
+	packet.ip.saddr = local.sin_addr.s_addr;
+	packet.ip.daddr = remote->sin_addr.s_addr;
+	packet.tcp.source = local.sin_port;
+	packet.tcp.dest = remote->sin_port;
+	packet.tcp.seq = htonl(send_sequence);
+	packet.tcp.ack_seq = htonl(receive_sequence);
+	packet.tcp.doff = sizeof(packet.tcp) / 4;
+	packet.tcp.ack = 1;
+	packet.tcp.window = htons(65535);
+	packet.tcp.check = tcp_ipv4_checksum(&packet.ip, &packet.tcp);
+
+	for (index = 0; index < count; index++) {
+		packet.ip.id = htons((uint16_t)(index + 1));
+		packet.ip.check = 0;
+		packet.ip.check = internet_checksum(&packet.ip, sizeof(packet.ip));
+		if (sendto(raw_fd, &packet, sizeof(packet), 0,
+		           (const struct sockaddr *)remote, sizeof(*remote)) !=
+		        (ssize_t)sizeof(packet))
+			fail("send raw TCP ACK packet");
+	}
+	close(raw_fd);
+}
+
+static void run_tcp_ack_server(const struct traffic_endpoint *endpoint,
+                               const char *ready_file)
+{
+	unsigned char byte;
+	int listener = socket(endpoint->family, SOCK_STREAM, 0);
+	int connection;
+	ssize_t length;
+
+	if (listener < 0)
+		fail("create TCP ACK listener");
+	configure_socket(listener);
+	configure_tcp_ack_socket(listener);
+	if (bind(listener, (const struct sockaddr *)&endpoint->address,
+	         endpoint->address_len) != 0)
+		fail("bind TCP ACK listener");
+	if (listen(listener, 1) != 0)
+		fail("listen for TCP ACK client");
+	mark_ready(ready_file);
+	connection = accept(listener, NULL, NULL);
+	if (connection < 0)
+		fail("accept TCP ACK client");
+	configure_socket(connection);
+	configure_tcp_ack_socket(connection);
+	do {
+		length = recv(connection, &byte, sizeof(byte), 0);
+	} while (length < 0 && errno == EINTR);
+	if (length < 0)
+		fail("wait for TCP ACK client close");
+	if (length != 0)
+		fail_message("TCP ACK client sent payload");
+	close(connection);
+	close(listener);
+}
+
+static void run_tcp_ack_client(const struct traffic_endpoint *endpoint,
+                               unsigned int count, unsigned int source_port,
+                               const char *done_file, const char *continue_file)
+{
+	int repair = TCP_REPAIR_ON;
+	int fd = socket(endpoint->family, SOCK_STREAM, 0);
+
+	if (fd < 0)
+		fail("create TCP ACK client");
+	configure_socket(fd);
+	configure_tcp_ack_socket(fd);
+	bind_source_port(fd, endpoint->family, source_port);
+	if (connect(fd, (const struct sockaddr *)&endpoint->address,
+	            endpoint->address_len) != 0)
+		fail("connect TCP ACK client");
+	if (setsockopt(fd, IPPROTO_TCP, TCP_REPAIR, &repair,
+	               sizeof(repair)) != 0)
+		fail("enable TCP repair mode");
+	send_tcp_ack_packets(fd, endpoint, count);
+	mark_ready(done_file);
+	wait_for_file(continue_file);
+	repair = TCP_REPAIR_OFF;
+	if (setsockopt(fd, IPPROTO_TCP, TCP_REPAIR, &repair,
+	               sizeof(repair)) != 0)
+		fail("disable TCP repair mode");
+	close(fd);
+}
+
 int main(int argc, char **argv)
 {
 	unsigned char payload[TRAFFIC_PAYLOAD_MAX];
@@ -486,6 +765,28 @@ int main(int argc, char **argv)
 	if (argc < 2) {
 		usage(stderr, argv[0]);
 		return EXIT_FAILURE;
+	}
+	if (strcmp(argv[1], "udp-count-server") == 0 && argc == 6) {
+		endpoint = parse_address(argv[2], parse_port(argv[3]));
+		run_udp_count_server(&endpoint, parse_count(argv[4]), argv[5]);
+		return EXIT_SUCCESS;
+	}
+	if (strcmp(argv[1], "udp-count-client") == 0 && argc == 6) {
+		endpoint = parse_address(argv[2], parse_port(argv[3]));
+		run_udp_count_client(&endpoint, parse_count(argv[4]),
+		                     parse_port(argv[5]));
+		return EXIT_SUCCESS;
+	}
+	if (strcmp(argv[1], "tcp-ack-server") == 0 && argc == 5) {
+		endpoint = parse_address(argv[2], parse_port(argv[3]));
+		run_tcp_ack_server(&endpoint, argv[4]);
+		return EXIT_SUCCESS;
+	}
+	if (strcmp(argv[1], "tcp-ack-client") == 0 && argc == 8) {
+		endpoint = parse_address(argv[2], parse_port(argv[3]));
+		run_tcp_ack_client(&endpoint, parse_count(argv[4]),
+		                   parse_port(argv[5]), argv[6], argv[7]);
+		return EXIT_SUCCESS;
 	}
 	if (strcmp(argv[1], "server") == 0 && argc == 8)
 		role = TRAFFIC_SERVER;

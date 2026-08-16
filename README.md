@@ -991,11 +991,11 @@ int main(void)
 
 运行时 `enable=0` 只改变后续数据包看到的 DPI consumer，不扫描或清理已经标记为 L7 处理中的连接，也不会重新武装已经设置 L7_SKIP 的连接。已标记连接可以由后续数据包自然完成，也可以保留原 L7 状态直到 conntrack 生命周期结束；配置切换不保证立即释放这些既有连接的 fast path gate。
 
-原生协议机器未命中时会在 `natflow_t` 尾部保存 8 字节瞬态双向预算 context，并设置 `NF_FF_DPI_USE`；`app_id` 仍是唯一分类结果。context 内的 16 位 `dpi_automaton` 在 discovery 阶段以低 8 位保存 machine-class mask，RDP、SOCKS 或 WhatsApp 认领后原子保存 machine/state。源码没有 detector metadata 或 detector 数组：固定 dispatcher 按编译期顺序直接调用对应 parser/机器分支。同一 conntrack 的 packet machine、automaton、双向预算和 app/context 终态由 conntrack lock 串行；任何固定 app 终态都会在同一临界区清除 context 并写 DPI packet done，避免终态后重新武装 owner bit。当前每方向硬限制最多观察 4 个 payload 包，不设置时间 deadline。所需方向始终没有 payload 时，该 context 可以保留到 conntrack 生命周期结束。
+原生协议机器未命中时会在 `natflow_t` 尾部保存 8 字节瞬态双向预算 context，并设置 `NF_FF_DPI_USE`；`app_id` 仍是唯一分类结果。context 内的 16 位 `dpi_automaton` 在 discovery 阶段以低 8 位保存 machine-class mask，RDP、SOCKS 或 WhatsApp 认领后原子保存 machine/state。源码没有 detector metadata 或 detector 数组：固定 dispatcher 按编译期顺序直接调用对应 parser/机器分支。同一 conntrack 的 packet machine、automaton、双向预算和 app/context 终态由 conntrack lock 串行；任何固定 app 终态都会在同一临界区清除 context 并写 DPI packet done，避免终态后重新武装 owner bit。当前每方向硬限制最多观察 4 个 payload 包，不设置时间 deadline。若 conntrack acct 扩展存在，双向累计包数超过 256 时会清除仍活跃的 DPI context 并写 packet done；第 256 包仍允许等待，第 257 包触发兜底。conntrack accounting 实现随 `CONFIG_NF_CONNTRACK` 内建，不存在 `CONFIG_NF_CONNTRACK_ACCT` 编译开关，但是否给新连接挂 acct 扩展由运行时 `net.netfilter.nf_conntrack_acct` 控制；OpenWrt 默认设为 `1`。管理员关闭 accounting 或连接创建时未获得 acct 扩展时，所需方向始终没有 payload 的 context 仍可保留到 conntrack 生命周期结束。
 
 reply 方向只进入 DPI packet consumer；URL logger、Host ACL、HTTP/TLS/QUIC host 和 DNS QNAME domain 仍只处理 original。DNS reply 必须通过 response header 和第一问结构校验，其他原生协议机器也必须匹配 payload 证据，端口不会直接产生分类。
 
-TCP 只有 DPI packet consumer 时，为 App HTTP 输入最多 pull 512 字节；通用原生协议 parser 仍只检查其中前 96 字节。UDP 通常最多 pull 96 字节，payload 总长为 121..299 字节的爱奇艺候选会 pull 完整 datagram 以执行 `PPStream` 有界搜索。URL 或 DPI domain host consumer 激活时仍按 HTTP/TLS producer 的既有需求准备完整 payload。
+TCP 只有 DPI packet consumer 时，为 App HTTP 输入最多 pull 512 字节；通用原生协议 parser 仍只检查其中前 96 字节。TCP SYN/ACK/keepalive 等零负载包只进入 app/transport/conntrack 包数的轻量生命周期检查，不运行 payload parser，也不增加 `packet_inspect_*`。UDP 通常最多 pull 96 字节，payload 总长为 121..299 字节的爱奇艺候选会 pull 完整 datagram 以执行 `PPStream` 有界搜索。URL 或 DPI domain host consumer 激活时仍按 HTTP/TLS producer 的既有需求准备完整 payload。
 
 当前 DPI 仍是 audit-only：不执行 drop/reset/QoS，不覆盖 Host ACL、认证或 conntrack drop 结果；未命中、禁用、无对应 parser 或无法创建 natflow session 时 fail-open。L7 shared hook 在解析前会统一调用 `natflow_session_in()` 确保 URL/DPI 共享同一个 `natflow_t.status` 终态存储；若 confirmed、内存或布局限制导致 session 不存在，则跳过本次 L7 解析，不输出无状态 DPI match event，也不写入 `app_id`。protocol-only 命中要求 `app_id=0`，用于避免每包重复事件。
 
@@ -1025,7 +1025,7 @@ echo events_clear >/dev/natflow_dpi_ctl
 - nDPI payload App 机器在任一方向识别：钉钉 TCP 固定前缀、QQ/OICQ UDP、爱奇艺 UDP `PPStream`、Discord UDP magic、Spotify TCP/双端 57621 UDP、Zoom 任一端点 8801..8810 的 UDP SFU 前缀；WhatsApp TCP 的新前缀可在同一方向的既有 4 包预算内连续匹配，首段至少需要 2 个匹配字节才认领 machine，旧前缀单包终态。它们不新增 detector 表，也不扩大 `natflow_t` 的 8 字节 context。
 - `cat /dev/natflow_dpi_ctl` 中，`matches`/`matches_*` 统计全部分类终态，不依赖 queue reader；`events`/`events_*` 只统计成功入队，`events_suppressed` 表示没有 reader 或 `cache=0`，`events_lost` 表示分配失败或队列已满。稳定采样区间内应满足 `matches = events + events_suppressed + events_lost`；新的并发 producer 在 match 计数和最终入队结果之间仍允许短暂不一致，`events_clear` 返回后不会混入复位前 producer 的延迟结果。
 - `domain_lookups`/`domain_matches` 统计 hostname 静态/迁移期规则查找和产生应用终态的命中；`dns_app_intents` 统计 QNAME 命中静态应用域名但未写 resident app 的次数；`packet_inspect_original/reply` 按实际进入有界 App/协议 parser 的 packet 计数，每包最多增加一次，不按机器数量累加；`packet_match_original/reply` 统计直接 App/协议证据方向。
-- `context_armed` 和各 `context_cleared_*` 记录 bounded context 的累计状态转换；`context_aborted` 表示 L7 强制终态清理。conntrack 自然销毁不会回调 DPI，因此这些累计值不能相减推导当前活跃 context 数。`proto_no_session` 和 `proto_app_exists` 解释原生协议机器未产生新分类结果的原因；固定映射不存在 `proto_no_rule`。
+- `context_armed` 和各 `context_cleared_*` 记录 bounded context 的累计状态转换；`context_cleared_acct_limit` 表示 acct 双向包数首次超过 256 时清除了活跃 context，`events_clear` 会把它复位。`context_aborted` 表示 L7 强制终态清理。conntrack 自然销毁不会回调 DPI，因此这些累计值不能相减推导当前活跃 context 数。`proto_no_session` 和 `proto_app_exists` 解释原生协议机器未产生新分类结果的原因；固定映射不存在 `proto_no_rule`。
 
 可运行 `tools/natflow-dpi-ctl-smoke.sh` 验证 enable、catalog、`events_clear`、未知命令以及全部已删除规则命令。脚本会清空事件统计并临时切换 enable，退出时恢复原 enable 状态。
 
@@ -1105,6 +1105,12 @@ queue smoke 打开设备时会按 ABI 清空残留事件并独占 reader；不�
 
 ```sh
 sudo tests/dpi/run-corpus.sh --ipv6 tests/dpi/cases/*.cases
+```
+
+`--packet-limit` 模式验证包数兜底及零负载路径。它临时把 `net.netfilter.nf_conntrack_acct` 设为 `1`，使用两个独立 UDP flow 分别断言同一 flow 的第 256 包不会清理、第 257 包触发清理，再通过 TCP repair/raw ACK 构造保持连接打开的纯 ACK 流，确认零负载 TCP 包能触发兜底但不会进入 payload parser；退出时恢复原 sysctl、DPI 和网络状态。该模式当前只支持 IPv4，并要求 root 具有 network namespace、`CAP_NET_ADMIN` 和 `CAP_NET_RAW` 能力：
+
+```sh
+sudo tests/dpi/run-corpus.sh --packet-limit
 ```
 
 同一 runner 的 `--queue-pressure [cache [generated]]` 模式用于 queue 满载和并发 producer 回归，默认以 cache=8 并发生成 32 条独立 STUN 流。测试期间单一 reader 不读取事件，注入完成后断言只保留 8 条合法 v3 event，并核对 `matches=32`、`events=8`、`events_lost=24`、`events_suppressed=0` 及 STUN 分项。该模式同样要求隔离测试环境：

@@ -6,6 +6,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 CTL=${NATFLOW_DPI_CTL:-/dev/natflow_dpi_ctl}
 QUEUE=${NATFLOW_DPI_QUEUE:-/dev/natflow_dpi_queue}
+ACCT_CTL=${NATFLOW_CONNTRACK_ACCT_CTL:-/proc/sys/net/netfilter/nf_conntrack_acct}
 CC=${CC:-cc}
 CLIENT_IP=198.18.0.2
 SERVER_IP=198.19.0.2
@@ -33,8 +34,14 @@ STREAM_CACHE_DEFAULT=64
 STREAM_EVENTS_DEFAULT=128
 STREAM_PARALLEL_DEFAULT=16
 STREAM_TIMEOUT_MS=15000
+PACKET_LIMIT=256
+PACKET_LIMIT_UDP_PORT=46000
+PACKET_LIMIT_UDP_SOURCE_PORT=46001
+PACKET_LIMIT_TCP_PORT=46002
+PACKET_LIMIT_TCP_SOURCE_PORT=46003
 original_enable=
 original_forward=
+original_acct=
 topology_installed=0
 firewall_installed=0
 cleanup_done=0
@@ -46,6 +53,10 @@ stream_cache=$STREAM_CACHE_DEFAULT
 stream_events=$STREAM_EVENTS_DEFAULT
 stream_parallel=$STREAM_PARALLEL_DEFAULT
 ipv6_mode=0
+packet_limit_mode=0
+tcp_ack_server_pid=
+tcp_ack_client_pid=
+tcp_ack_continue_file=
 
 usage()
 {
@@ -55,6 +66,7 @@ Usage: $0 case-file [case-file ...]
        $0 --ipv6 case-file [case-file ...]
        $0 --queue-pressure [cache [generated]]
        $0 --queue-stream [cache [generated [parallel]]]
+       $0 --packet-limit
 
 Case format, one pipe-separated record per line:
   name|proto|transport|direction|port|payload_hex|expectation[|source_port]
@@ -64,6 +76,8 @@ requires root privileges. Queue pressure defaults to
 cache=$PRESSURE_CACHE_DEFAULT and generated=$PRESSURE_EVENTS_DEFAULT.
 Queue stream defaults to cache=$STREAM_CACHE_DEFAULT,
 generated=$STREAM_EVENTS_DEFAULT and parallel=$STREAM_PARALLEL_DEFAULT.
+Packet-limit mode temporarily enables conntrack accounting and verifies the
+256/257 packet boundary plus zero-payload TCP ACK handling.
 EOF
 }
 
@@ -96,6 +110,21 @@ field()
 		END { if (!found) exit 1 }' "$CTL"
 }
 
+wait_field_value()
+{
+	key=$1
+	expected=$2
+	step=0
+
+	while [ "$step" -lt 100 ]; do
+		actual_value=$(field "$key") || return 1
+		[ "$actual_value" = "$expected" ] && return 0
+		step=$((step + 1))
+		sleep 0.02
+	done
+	return 1
+}
+
 write_ctl()
 {
 	printf '%s\n' "$1" >"$CTL"
@@ -118,10 +147,33 @@ cleanup_resources()
 {
 	cleanup_failed=0
 	set +e
+	if [ -n "$tcp_ack_continue_file" ]; then
+		printf '\n' >"$tcp_ack_continue_file" 2>/dev/null
+	fi
+	if [ -n "$tcp_ack_client_pid" ]; then
+		kill "$tcp_ack_client_pid" 2>/dev/null
+		wait "$tcp_ack_client_pid" 2>/dev/null
+		tcp_ack_client_pid=
+	fi
+	if [ -n "$tcp_ack_server_pid" ]; then
+		kill "$tcp_ack_server_pid" 2>/dev/null
+		wait "$tcp_ack_server_pid" 2>/dev/null
+		tcp_ack_server_pid=
+	fi
 
 	if [ -n "$original_enable" ]; then
 		if ! write_ctl "enable=$original_enable" 2>/dev/null; then
 			cleanup_error "could not restore DPI enable=$original_enable"
+		fi
+	fi
+	if [ -n "$original_acct" ]; then
+		if ! printf '%s\n' "$original_acct" >"$ACCT_CTL" 2>/dev/null; then
+			cleanup_error "could not restore nf_conntrack_acct=$original_acct"
+		else
+			actual_value=$(cat "$ACCT_CTL" 2>/dev/null)
+			if [ "$actual_value" != "$original_acct" ]; then
+				cleanup_error "nf_conntrack_acct is ${actual_value:-unreadable}, expected $original_acct"
+			fi
 		fi
 	fi
 	if [ -n "$original_enable" ]; then
@@ -542,6 +594,63 @@ inject_stream()
 	done
 }
 
+inject_udp_count()
+{
+	count=$1
+	port=$2
+	source_port=$3
+	ready_file=$TMP_DIR/udp-count-ready.$port
+
+	rm -f "$ready_file"
+	ip netns exec "$SERVER_NS" "$TRAFFIC_BIN" udp-count-server \
+		"$SERVER_IP" "$port" "$count" "$ready_file" &
+	server_pid=$!
+	if ! wait_ready "$ready_file"; then
+		kill "$server_pid" 2>/dev/null || true
+		wait "$server_pid" 2>/dev/null || true
+		fail "UDP count server did not become ready"
+	fi
+	if ! ip netns exec "$CLIENT_NS" "$TRAFFIC_BIN" udp-count-client \
+		"$SERVER_IP" "$port" "$count" "$source_port"; then
+		kill "$server_pid" 2>/dev/null || true
+		wait "$server_pid" 2>/dev/null || true
+		fail "UDP count client failed"
+	fi
+	wait "$server_pid" || fail "UDP count server failed"
+}
+
+start_tcp_ack_injection()
+{
+	count=$1
+	ready_file=$TMP_DIR/tcp-ack-ready
+	tcp_ack_done_file=$TMP_DIR/tcp-ack-done
+	tcp_ack_continue_file=$TMP_DIR/tcp-ack-continue
+
+	rm -f "$ready_file" "$tcp_ack_done_file" "$tcp_ack_continue_file"
+	ip netns exec "$SERVER_NS" "$TRAFFIC_BIN" tcp-ack-server \
+		"$SERVER_IP" "$PACKET_LIMIT_TCP_PORT" "$ready_file" &
+	tcp_ack_server_pid=$!
+	if ! wait_ready "$ready_file"; then
+		kill "$tcp_ack_server_pid" 2>/dev/null || true
+		wait "$tcp_ack_server_pid" 2>/dev/null || true
+		tcp_ack_server_pid=
+		fail "TCP ACK server did not become ready"
+	fi
+	ip netns exec "$CLIENT_NS" "$TRAFFIC_BIN" tcp-ack-client \
+		"$SERVER_IP" "$PACKET_LIMIT_TCP_PORT" "$count" \
+		"$PACKET_LIMIT_TCP_SOURCE_PORT" "$tcp_ack_done_file" \
+		"$tcp_ack_continue_file" &
+	tcp_ack_client_pid=$!
+	if ! wait_ready "$tcp_ack_done_file"; then
+		kill "$tcp_ack_client_pid" "$tcp_ack_server_pid" 2>/dev/null || true
+		wait "$tcp_ack_client_pid" 2>/dev/null || true
+		wait "$tcp_ack_server_pid" 2>/dev/null || true
+		tcp_ack_client_pid=
+		tcp_ack_server_pid=
+		fail "TCP ACK client did not finish injection"
+	fi
+}
+
 if [ "${1:-}" = __inject ]; then
 	shift
 	[ "$#" -eq 10 ] || fail "invalid internal injector arguments"
@@ -615,13 +724,19 @@ if [ "$1" = --ipv6 ]; then
 	FIREWALL=ip6tables
 	FORWARD_CTL=/proc/sys/net/ipv6/conf/all/forwarding
 	case ${1:-} in
-	--queue-pressure|--queue-stream)
-		fail "IPv6 cannot be combined with queue pressure or stream mode"
+	--queue-pressure|--queue-stream|--packet-limit)
+		fail "IPv6 cannot be combined with queue pressure, stream, or packet-limit mode"
 		;;
 	esac
 fi
 
-if [ "$1" = --queue-pressure ]; then
+if [ "${1:-}" = --packet-limit ]; then
+	packet_limit_mode=1
+	shift
+	[ "$#" -eq 0 ] || fail "packet-limit mode accepts no arguments"
+fi
+
+if [ "${1:-}" = --queue-pressure ]; then
 	pressure_mode=1
 	shift
 	[ "$#" -le 2 ] || fail "queue pressure accepts at most cache and generated"
@@ -643,7 +758,7 @@ if [ "$1" = --queue-pressure ]; then
 		fail "queue pressure port range exceeds 65535"
 fi
 
-if [ "$1" = --queue-stream ]; then
+if [ "${1:-}" = --queue-stream ]; then
 	stream_mode=1
 	shift
 	[ "$#" -le 3 ] ||
@@ -682,6 +797,10 @@ fi
 [ "$(id -u)" = 0 ] || fail "root privileges are required"
 [ -r "$CTL" ] && [ -w "$CTL" ] || fail "$CTL is not readable and writable"
 [ -r "$QUEUE" ] && [ -w "$QUEUE" ] || fail "$QUEUE is not readable and writable"
+if [ "$packet_limit_mode" = 1 ]; then
+	[ -r "$ACCT_CTL" ] && [ -w "$ACCT_CTL" ] ||
+		fail "$ACCT_CTL is not readable and writable"
+fi
 need_command awk
 need_command ip
 need_command "$FIREWALL"
@@ -691,12 +810,21 @@ original_enable=$(field enable) || fail "missing DPI enable field"
 [ "$original_enable" = 0 ] || [ "$original_enable" = 1 ] ||
 	fail "invalid DPI enable field: $original_enable"
 original_forward=$(cat "$FORWARD_CTL")
+if [ "$packet_limit_mode" = 1 ]; then
+	original_acct=$(cat "$ACCT_CTL")
+	[ "$original_acct" = 0 ] || [ "$original_acct" = 1 ] ||
+		fail "invalid nf_conntrack_acct value: $original_acct"
+fi
 
 mkdir "$TMP_DIR" || fail "temporary directory already exists: $TMP_DIR"
 trap exit_cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+if [ "$packet_limit_mode" = 1 ]; then
+	printf '1\n' >"$ACCT_CTL"
+fi
 
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror \
 	-o "$ASSERT_BIN" "$REPO_DIR/tools/natflow-dpi-corpus.c"
@@ -750,6 +878,73 @@ firewall_installed=1
 write_ctl enable=0
 write_ctl events_clear
 write_ctl enable=1
+
+if [ "$packet_limit_mode" = 1 ]; then
+	inject_udp_count "$PACKET_LIMIT" "$PACKET_LIMIT_UDP_PORT" \
+		"$PACKET_LIMIT_UDP_SOURCE_PORT"
+	actual_limit=$(field context_cleared_acct_limit)
+	[ "$actual_limit" -eq 0 ] ||
+		fail "packet 256 cleared context, context_cleared_acct_limit=$actual_limit"
+
+	inject_udp_count "$((PACKET_LIMIT + 1))" \
+		"$((PACKET_LIMIT_UDP_PORT + 1))" \
+		"$((PACKET_LIMIT_UDP_SOURCE_PORT + 1))"
+	actual_limit=$(field context_cleared_acct_limit)
+	actual_matches=$(field matches)
+	actual_events=$(field events)
+	actual_original_inspect=$(field packet_inspect_original)
+	actual_reply_inspect=$(field packet_inspect_reply)
+	[ "$actual_limit" -eq 1 ] ||
+		fail "packet 257 did not clear context, context_cleared_acct_limit=$actual_limit"
+	[ "$actual_matches" -eq 0 ] && [ "$actual_events" -eq 0 ] ||
+		fail "empty UDP packet-limit traffic produced a DPI match or event"
+	[ "$actual_original_inspect" -eq 0 ] &&
+		[ "$actual_reply_inspect" -eq 0 ] ||
+		fail "empty UDP packet-limit traffic entered a payload parser"
+
+	write_ctl events_clear
+	actual_limit=$(field context_cleared_acct_limit)
+	[ "$actual_limit" -eq 0 ] ||
+		fail "events_clear did not reset context_cleared_acct_limit"
+
+	start_tcp_ack_injection "$((PACKET_LIMIT + 4))"
+	if ! wait_field_value context_cleared_acct_limit 1; then
+		actual_limit=$(field context_cleared_acct_limit)
+		printf '\n' >"$tcp_ack_continue_file"
+		wait "$tcp_ack_client_pid" 2>/dev/null || true
+		wait "$tcp_ack_server_pid" 2>/dev/null || true
+		tcp_ack_client_pid=
+		tcp_ack_server_pid=
+		fail "zero-payload TCP ACKs did not clear context, context_cleared_acct_limit=$actual_limit"
+	fi
+	actual_limit=$(field context_cleared_acct_limit)
+	actual_matches=$(field matches)
+	actual_events=$(field events)
+	actual_original_inspect=$(field packet_inspect_original)
+	actual_reply_inspect=$(field packet_inspect_reply)
+	printf '\n' >"$tcp_ack_continue_file"
+	if ! wait "$tcp_ack_client_pid"; then
+		tcp_ack_client_pid=
+		fail "TCP ACK client failed"
+	fi
+	tcp_ack_client_pid=
+	if ! wait "$tcp_ack_server_pid"; then
+		tcp_ack_server_pid=
+		fail "TCP ACK server failed"
+	fi
+	tcp_ack_server_pid=
+	tcp_ack_continue_file=
+	[ "$actual_matches" -eq 0 ] && [ "$actual_events" -eq 0 ] ||
+		fail "zero-payload TCP ACKs produced a DPI match or event"
+	[ "$actual_original_inspect" -eq 0 ] &&
+		[ "$actual_reply_inspect" -eq 0 ] ||
+		fail "zero-payload TCP ACKs entered a payload parser"
+
+	finish_cleanup
+	printf 'PASS: DPI packet limit boundary=%u and TCP ACK lifecycle\n' \
+		"$PACKET_LIMIT"
+	exit 0
+fi
 
 if [ "$pressure_mode" = 1 ]; then
 	"$PRESSURE_BIN" -d "$QUEUE" -c "$pressure_cache" \

@@ -34,6 +34,21 @@ sudo tests/dpi/run-corpus.sh --ipv6 tests/dpi/cases/*.cases
 IPv6 mode uses documentation-prefix addresses, `ip6tables`, and the IPv6
 forwarding sysctl. It verifies the full 16-byte original tuple in each event.
 
+The conntrack packet-limit lifecycle can be tested with:
+
+```sh
+sudo tests/dpi/run-corpus.sh --packet-limit
+```
+
+This IPv4-only mode temporarily enables `net.netfilter.nf_conntrack_acct` and
+restores its original value during cleanup. It sends 256 and 257 empty UDP
+datagrams on separate single flows to verify the exact boundary, checks that
+`events_clear` resets `context_cleared_acct_limit`, and injects valid
+zero-payload TCP ACKs while the socket remains open. Empty packets must not
+produce an event or increment either payload-inspection counter. TCP ACK
+injection requires `CAP_NET_ADMIN` for TCP repair and `CAP_NET_RAW` for its raw
+IPv4 socket.
+
 Fixture files can be checked without root, a loaded module, or network setup:
 
 ```sh
@@ -80,8 +95,8 @@ fixed `app_id`, category, `rule_id=0`, catalog revision, original tuple, and evi
 fail on any DPI event for that tuple. IPv4 and base IPv6 TCP/UDP are supported;
 IPv6 extension headers are outside the supported DPI scope. Exact TCP
 segmentation, non-linear skb, and long-duration soak are deferred. Failure
-injection remains separate integration work. Queue pressure and stream modes
-currently use the IPv4 topology.
+injection remains separate integration work. Queue pressure, stream, and
+packet-limit modes currently use the IPv4 topology.
 
 The checked-in corpus has 196 cases: 51 for the A-tier DNS, SSH, WireGuard,
 STUN/TURN, and BitTorrent subsets, 31 positive/negative cases for the 12

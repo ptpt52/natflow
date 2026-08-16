@@ -130,7 +130,7 @@ L7 reply 入口只准入 DPI packet consumer，`NF_FF_L7_DPI_PACKET_DONE` 是连
 - 只有等待方向或后续 packet 的 detector 才使用 `natflow_t` 尾部 8 字节 bounded context。常驻 conntrack 分类结果仍只有 `app_id`；context 仅保存双向预算和 detector mask。
 - context 等待期间使用 `NF_FF_DPI_USE` 阻止 fast path；任一 detector 命中，或所有 active detector 因 FIN/RST、packet/byte budget 终态后，连接级 DPI packet consumer 才终态。
 - context 存续期间允许 `NF_FF_L7_USE | NF_FF_DPI_USE` 同时存在，分别表示 shared hook 继续提供 packet view 和 DPI context owner；不能在 owner bit 交接中产生无 busy-bit 窗口。其他 consumer 已写入 `app_id` 时，packet consumer 以 `APP_EXISTS` 终态。
-- 初始预算为 original/reply 各 4 个 payload 包，不设置时间 deadline。所需方向始终无 payload时，context 可保留到 conntrack 生命周期结束；配置变更不枚举、drain 或清理 context。
+- 初始 payload 预算为 original/reply 各 4 个包，不设置时间 deadline。acct 扩展存在时，双向连接总包数超过 256 作为独立生命周期兜底；conntrack accounting 运行时关闭或 acct 缺失时，所需方向始终无 payload 的 context 仍可保留到 conntrack 生命周期结束。配置变更不枚举、drain 或清理 context。
 
 ### 后果
 

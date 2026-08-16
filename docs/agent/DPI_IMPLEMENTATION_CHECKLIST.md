@@ -44,7 +44,7 @@ M0/M1 期间必须保持：
 - 已设置 `IPS_NATFLOW_L7_HANDLED` 的连接不因 enable 变化重新武装。
 - reply 准入前必须让 packet view 携带 conntrack direction，并提供方向感知的 client/server port 语义；不能在 reply 包上继续把 `dport` 当服务端口。
 - 原生协议机器的方向约束必须由固定 dispatcher 分支明确编码。允许任一方向提供证据的机器不能因单个方向未命中而让整个 DPI packet consumer 提前终态；要求双向事实的机器必须使用有界、单调、幂等状态转换。
-- 只有等待方向或后续 packet 的原生机器才启用 bounded context；等待时设置 `NF_FF_DPI_USE`，match、已有 app、FIN/RST 或双向 packet/byte budget 耗尽时清除。不使用时间 deadline，所需方向始终无 payload 时允许 context 保留到 conntrack 结束。
+- 只有等待方向或后续 packet 的原生机器才启用 bounded context；等待时设置 `NF_FF_DPI_USE`，match、已有 app、FIN/RST、双向 packet/byte budget 耗尽或 acct 双向总包数超过 256 时清除。不使用时间 deadline；acct 扩展缺失且所需方向始终无 payload 时，context 允许保留到 conntrack 结束。
 - context 存续期间可同时设置 `NF_FF_L7_USE | NF_FF_DPI_USE`，但 arm/terminal 顺序不能出现 context 活跃而两个 busy bit 都未设置的窗口；已有非 0 `app_id` 时 packet consumer 应以 `APP_EXISTS` 终态。
 - 同一 conntrack 的原生协议机器、compact automaton、双向 packet/byte budget、`app_id`、context owner 和 DPI packet done 必须由 `ct->lock` 串行；terminal 必须在解锁前完成 app 提交、owner clear 和 done 写入，不能留下终态后重新 arm context 的窗口。事件分配和入队应放在解锁后，避免扩大 conntrack 临界区。
 - IPv4/IPv6 TCP 只有 DPI packet consumer 激活时，只能 pull 原生协议 parser 需要的有界 payload 前缀；只有 URL 或 DPI domain host consumer 激活时才允许按现有 HTTP/TLS producer 需求线性化完整 TCP payload。

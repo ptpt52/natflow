@@ -97,6 +97,7 @@ expect_field enable 0
 write_cmd enable=1
 expect_field enable 1
 write_cmd events_clear
+expect_field context_cleared_acct_limit 0
 
 write_cmd "enable=$original_enable"
 printf 'PASS: DPI static control smoke test\n'
