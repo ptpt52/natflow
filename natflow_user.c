@@ -834,6 +834,7 @@ static inline int natflow_fakeuser_ext_init(natflow_fakeuser_t *user,
 	                              newoff + sizeof(struct fakeuser_data_t),
 	                              GFP_ATOMIC);
 	if (!new) {
+		clear_bit(IPS_NATFLOW_USER_BIT, &user->status);
 		return -ENOMEM;
 	}
 
