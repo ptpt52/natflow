@@ -162,16 +162,17 @@ Natflow 分为控制面、策略面、数据面和观测面。
 
 `natflow_init()` 顺序：
 
-1. 注册 `/dev/natflow_ctl` 的主设备号。
-2. 前置执行 `natflow_probe_ct_ext()`，探测并验证 shared conntrack extension 布局。
-3. 初始化 `/dev/natflow_ctl` 的 cdev/class/device。
-4. 初始化 zone：`natflow_zone_init()`。
-5. 初始化 user/auth/QoS/userinfo：`natflow_user_init()`。
-6. 初始化 conntrackinfo：`conntrackinfo_init()`。
-7. 若 `CONFIG_NATFLOW_PATH`，初始化 path：`natflow_path_init()`。
-8. 若 `CONFIG_NATFLOW_URLLOGGER`，初始化 urllogger 设备、Host ACL 和 sysctl：`natflow_urllogger_init()`。
-9. 若 `CONFIG_NATFLOW_DPI`，初始化 DPI 控制/事件和规则接口：`natflow_dpi_init()`。
-10. 若 `CONFIG_NATFLOW_URLLOGGER || CONFIG_NATFLOW_DPI`，初始化 L7 hook 生命周期：`natflow_l7_init()`。
+1. 无条件向内核日志打印 `version=<NATFLOW_VERSION>`；该日志不受 `NO_DEBUG` 或运行时 `debug` 掩码影响。
+2. 注册 `/dev/natflow_ctl` 的主设备号。
+3. 前置执行 `natflow_probe_ct_ext()`，探测并验证 shared conntrack extension 布局。
+4. 初始化 `/dev/natflow_ctl` 的 cdev/class/device。
+5. 初始化 zone：`natflow_zone_init()`。
+6. 初始化 user/auth/QoS/userinfo：`natflow_user_init()`。
+7. 初始化 conntrackinfo：`conntrackinfo_init()`。
+8. 若 `CONFIG_NATFLOW_PATH`，初始化 path：`natflow_path_init()`。
+9. 若 `CONFIG_NATFLOW_URLLOGGER`，初始化 urllogger 设备、Host ACL 和 sysctl：`natflow_urllogger_init()`。
+10. 若 `CONFIG_NATFLOW_DPI`，初始化 DPI 控制/事件和规则接口：`natflow_dpi_init()`。
+11. 若 `CONFIG_NATFLOW_URLLOGGER || CONFIG_NATFLOW_DPI`，初始化 L7 hook 生命周期：`natflow_l7_init()`。
 
 退出顺序反向执行：
 

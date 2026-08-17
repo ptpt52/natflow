@@ -153,7 +153,7 @@ make -f Makefile.dkms install
 make -f Makefile.dkms uninstall
 ```
 
-加载模块后，设备节点通常由内核 device/class 机制创建；如果系统没有自动创建设备节点，请根据 `dmesg` 中打印的 major/minor 手动处理。
+加载模块时内核日志会打印 `version=<NATFLOW_VERSION>` 和 major/minor。设备节点通常由内核 device/class 机制创建；如果系统没有自动创建设备节点，请根据 `dmesg` 中打印的 major/minor 手动处理。
 
 ## Warning
 

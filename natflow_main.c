@@ -391,6 +391,8 @@ static int __init natflow_init(void)
 	int retval = 0;
 	dev_t devno;
 
+	NATFLOW_println("version=%s", NATFLOW_VERSION);
+
 	if (natflow_major > 0) {
 		devno = MKDEV(natflow_major, natflow_minor);
 		retval = register_chrdev_region(devno, number_of_devices, natflow_dev_name);
