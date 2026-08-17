@@ -1,6 +1,6 @@
 # Natflow 智能体记忆
 
-更新时间：2026-08-16
+更新时间：2026-08-17
 
 本文是给智能体快速恢复上下文的压缩记忆，不替代源码。遇到冲突时以源码为准，并修正文档。
 
@@ -27,7 +27,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 | `natflow_main.c` | 模块入口、`/dev/natflow_ctl`、子模块初始化和退出顺序。 |
 | `natflow_common.c/.h` | 日志、兼容封装、conntrack 扩展探测、NAT/ipset 包装。 |
 | `natflow.h` | 核心数据结构、fastnat 节点、状态位、哈希与超时常量。 |
-| `natflow_l7.c/.h` | L7 hook 生命周期和共享 feature core；packet view 携带 direction、当前 `sport/dport` 和方向感知端口。reply 在公共入口被收窄为 DPI packet consumer，URL、Host ACL 和 domain host producer 保持 original-only。 |
+| `natflow_l7.c/.h` | L7 hook 生命周期和共享 feature core；packet view 携带 direction、当前 `sport/dport` 和 conntrack original client/server ports。reply 在公共 FORWARD 入口被收窄为 DPI packet consumer，URL、Host ACL 和 domain host producer 保持 original-only；DPI 另有 DNS-only LOCAL_IN。 |
 | `natflow_dpi.c/.h` | DPI 控制/事件接口；DPI enabled 后 packet consumer 根据 L4、方向和 discovery machine-class mask 运行 26 个固定原生协议机器，使用 `natflow_t` 的 8 字节瞬态 context。单包机器命中直接提交固定 app/category；RDP、SOCKS、WhatsApp 使用 compact automaton，DNS reply 要求 response header/question 结构证据。 |
 | `natflow_path.c/.h` | fast path、路由学习、vline/relay、设备 notifier、硬件 offload。 |
 | `natflow_user.c/.h` | fakeuser、认证、QoS、用户信息控制设备和 `/dev/natflow_userinfo_queue` 二进制认证事件队列。 |
@@ -49,7 +49,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - 字符设备初始化必须返回并记录 `class_create()`/`device_create()` 的真实 `PTR_ERR()`；zone/path netdevice notifier 注册返回值必须检查，失败时中止初始化并只回滚已经成功注册的资源。
 - `NETDEV_UNREGISTER` 必须在任何动态分配或 work 排队之前无条件推进 path magic；正常 work 和 allocation/queue failure 的同步 fallback 都要经过 `synchronize_net()`，保证旧 generation 的在途 fast-path 读者退出后才释放设备引用。
 - `CONFIG_NATFLOW_URLLOGGER` 控制 URL logger、Host ACL 和相关 sysctl。
-- L7 shared hook 固定注册 IPv4、IPv6 和 bridge `NF_INET_FORWARD`，不提供 URL local-in 变体；URLLogger 和 DPI 共享同一组 FORWARD hook，由 active consumer mask 独立启停。
+- L7 shared hook 固定注册 IPv4、IPv6 和 bridge `NF_INET_FORWARD`；URLLogger 和 DPI 共享该完整 FORWARD pipeline，由 active consumer mask 独立启停。`CONFIG_NATFLOW_DPI` 另注册 IPv4/IPv6 `NF_INET_LOCAL_IN` DNS-only 入口，只处理 conntrack original tuple 为 TCP/UDP 目的端口 53 的 original query，不运行 URL/Host ACL、HTTP/TLS/QUIC、其他 packet machine 或 LOCAL_OUT。
 - `DPI_DESIGN.md` Draft v7 把 P2 统一为 `natflow_l7` core。`app_id` 是唯一常驻分类结果；`natflow_t` 尾部另有 8 字节瞬态 DPI context，仅在 `NF_FF_DPI_USE` 时保存双向预算和 16 位 `dpi_automaton`。`bit15=0` 时低 8 位是 discovery machine-class mask；`bit15=1` 时 `bits14..8` 是 claimed machine、`bits7..0` 是 state。RDP、SOCKS、WhatsApp 是当前 claimed machine；context 不保存证据字符串、规则详情或指针。
 - `natflow_t` 在 8 字节 DPI context 后保留不属于 context 的 4 字节显式 `layout_pad`，保证固定为 8 的 `__ALIGN_64BITS` 在 32/64 位目标上都能通过布局约束。32 位 `sizeof(natflow_t)` 从 92 补齐为 96，但 conntrack ext 原已分配对齐后的 96 字节，不增加实际分配。
 - 当前源码已把 bit 19 收敛为 `NF_FF_L7_USE` shared L7 fast-path pause 位，`NF_FF_DPI_USE_BIT=21` 标记 `natflow_t` 内瞬态 DPI context 并纳入 `NF_FF_BUSY_USE`，三个 URL/DPI consumer done bit 独立记录终态。L7 core 持有共享 FORWARD hook、packet/host view、HTTP Host、TLS/QUIC SNI 和 DNS parser；URL consumer、DPI domain 和 DPI packet consumer 消费共享结果。DPI enable 直接发布静态 host 和固定原生协议/App consumer，不再有 domain/proto ruleset。DPI packet consumer 直接消费 L7 producer 提供的 L4/payload 指针和有界 `payload_linear_len`，按固定 machine step 识别 26 个协议和 App payload；源码没有 detector struct、metadata 数组或通用 detector dispatcher。HTTP/TLS/QUIC host 分类、DNS QNAME 意图和原生机器均不依赖 `/proc/sys/urllogger_store/enable`。维护者接受 `nf->status` 非原子 writer 风险，不做 path 侧 repair。
@@ -75,6 +75,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - 2026-08-15 DPI 审查收口：同一 conntrack 的原生协议机器、automaton、双向预算、app/context 和 packet done 由 `ct->lock` 串行，app 或 packet terminal 在解锁前完成提交、清 owner 和写 done，事件分配/入队留在锁外；packet-only TCP 只 pull 最多 96 字节 parser 前缀，bridge/inet FORWARD 使用 `IPS_NATFLOW_SKIP_BRIDGE` 去重；`events_clear` 临时暂停 producer 并经 `synchronize_net()` 排空在途 hook 后复位；SMB1/2 的 NBSS 声明长度必须分别至少覆盖 32/64 字节 header，新增 zero-length 反例后 corpus 为 93 项。OpenWrt Linux 5.4.281 arm64/GCC 8.4 七组合构建已通过；并发双向 packet、bridge、non-linear skb 和并发 reset 仍需目标机压力验证。
 - 2026-08-15 DPI M7 删除 `struct natflow_dpi_detector`、DNS/payload detector metadata 数组、metadata lookup/方向/预算遍历和通用 dispatcher。低 8 位继续作为 discovery machine-class mask，固定 native machine step 直接编码 parser 顺序、L4 和方向约束；M9 后 RDP、SOCKS 和 WhatsApp 是持久 claimed machine。每方向 4 包/384 字节预算、8 字节 context 和 v3 event/control ABI 不变。事件 reason 2 的 `NO_DETECTOR` 枚举名仅为未使用的历史 ABI 常量，不代表当前实现仍有 detector。
 - 2026-08-16 DPI M9：NTP/SNMP/RADIUS/LDAP/CoAP 以任一端点端口加结构/长度证据单包终态，TFTP RRQ/WRQ 需要端点 69 且严格 OACK 支持动态 TID，NFS 按 RPC 结构且不限制端口；network parser 先于 STUN，NFS parser 先于 WireGuard/uTP，避免签名碰撞。SNMP/LDAP 复用拒绝 indefinite、超过 4 字节和非最短编码的 BER length helper；SOCKS 只接受 original negotiation + reply。WhatsApp 新前缀在首段至少匹配 2 字节后可跨同方向 payload 补全，Discord/Spotify/Zoom 使用直接 payload 特征；不扩大 `natflow_t`。corpus 共 196 项。
+- 2026-08-17 DPI 本机 DNS 与端口语义：DPI 编译配置增加 IPv4/IPv6 `LOCAL_IN` DNS-only hook；original tuple TCP/UDP dport 53 是唯一入口候选，因此 direct、DNAT/REDIRECT 到本机非 53 监听端口都可解析。FORWARD DNS、QUIC 443 candidate 和所有依赖逻辑服务/应用端口的状态机统一改用 original client/server ports，当前 packet ports 只保留为 header evidence。本机入口只解析 original query、QNAME intent 和 DNS commit，不运行 URL/ACL、HTTP/TLS/QUIC、其他机器或 LOCAL_OUT；UDP 单报文与 TCP FIN/RST 有界收口，TCP 零 payload 不提前完成。`tests/dpi/run-local-dns.sh` 覆盖 IPv4 direct/REDIRECT original tuple 和 counters。
 - `/dev/natflow_userinfo_queue`、`/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 只允许一个 reader，默认 cache 为 0；三者都使用 reader count + cache limit 控制入队，reader 打开时清空残留队列并要求同一个 O_RDWR fd 写入正数 `cache=N` 才缓存新事件，最多缓存 N 条，队列满时丢弃新事件；写入 `cache=0` 或关闭 fd 会关闭缓存并清空未读事件；未知 queue 写命令返回 `-EINVAL`。三个队列 `read()` 空队列都返回 0，不挂起，不返回 partial record；用户 buffer 足够时单次 `read()` 可返回多条完整记录，`poll()` 在有可读事件时返回 readable。URL logger 的 `memsize_limit/memsize/count_limit` sysctl 已废弃，`count` 只观测当前待读 URL 记录数；DPI 不再有固定 1024 事件上限。DPI 事件 `timestamp` 是 uptime 秒数，与 URL logger 一致；事件 ABI 为 v3 固定头，original tuple 的 `family/l4proto/tuple_dir/sport/dport/sip/dip` 保持稳定连接身份，新增 `evidence_dir` 记录实际命中 packet 的 original/reply 方向。URL 输出 v2 `natflow_urllogger_event_hdr` 加不带结尾 NUL 的 `host + uri` payload；userinfo 输出 v3 固定头 `natflow_userinfo_event_hdr`，尾部 `ifname[IFNAMSIZ]` 记录 path 学习到的用户侧三层入口设备，字段语义与 `/dev/natflow_userinfo_ctl` 文本快照一致。
 - 2026-08-17 DPI 增加流包数兜底：conntrack accounting 实现随 `NF_CONNTRACK` 内建，没有 `CONFIG_NF_CONNTRACK_ACCT` 符号；运行时 sysctl 决定新连接是否有 acct 扩展。acct 存在时双向总包数不超过 256 继续等待，第 257 包清除活跃 `NF_FF_DPI_USE` context、标记 DPI packet done 并增加 `context_cleared_acct_limit`；TCP 零 payload 包只运行该生命周期检查，不进入 payload parser。acct 缺失时仍可能等到 conntrack 销毁。`--packet-limit` 回归覆盖 UDP 256/257 边界、counter reset 和纯 TCP ACK。
 - 慢路径依赖 Linux 原生 Netfilter、conntrack、NAT、路由和 bridge 行为，fast path 不能破坏慢路径回退。

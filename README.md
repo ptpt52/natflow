@@ -989,6 +989,15 @@ int main(void)
 
 需要编译 `CONFIG_NATFLOW_DPI`。当前 DPI 默认关闭，支持 19 个固定应用、DNS QNAME 查询意图统计和 26 个编译期固定原生协议状态机。`enable=1` 会直接激活 DPI host/packet consumer 并运行全部内置分类器，不需要任何运行时规则。HTTP Host、TLS SNI 或 QUIC v1 Initial SNI 命中静态域名时直接写固定 `app_id` 和 category；钉钉、QQ/OICQ、爱奇艺、WhatsApp、Discord、Spotify 和 Zoom 还可由 nDPI 来源的直接 payload 签名终态。`/proc/sys/urllogger_store/enable=0` 仍只表示 URL logger 事件和 Host ACL 不执行。URL、DPI domain 和 DPI packet 的 L7 终态分别记录在 `natflow_t.status` 中：URL 失败不会关闭 DPI，DPI packet 结束不会关闭仍在等待 Host/SNI 的 DPI domain，DPI domain 完成也不会影响 URL；当前 active consumer 全部完成后才释放 fast path，并设置 `IPS_NATFLOW_L7_HANDLED` 作为后续包的 L7_SKIP 快速短路 hint。
 
+完整 L7 pipeline 继续只运行在 IPv4/IPv6/bridge `FORWARD`。DPI 另有
+IPv4/IPv6 `LOCAL_IN` DNS-only 入口，用于发往本机 dnsmasq/unbound 的
+original-direction TCP/UDP DNS query；它不运行 URL logger、Host ACL、HTTP、
+TLS、QUIC 或其他协议机器。QUIC 443 candidate 和所有依赖逻辑端口的 DPI 状态机统一使用
+conntrack original tuple 的 client/server port，因此 DNAT/REDIRECT 把当前
+报文目的端口从 53 改到本机其他端口后仍可识别，事件也继续输出 original
+tuple。TCP SYN、ACK 等零 payload 包不会提前终态，LOCAL_OUT 应答当前不
+进入该入口。
+
 运行时 `enable=0` 只改变后续数据包看到的 DPI consumer，不扫描或清理已经标记为 L7 处理中的连接，也不会重新武装已经设置 L7_SKIP 的连接。已标记连接可以由后续数据包自然完成，也可以保留原 L7 状态直到 conntrack 生命周期结束；配置切换不保证立即释放这些既有连接的 fast path gate。
 
 原生协议机器未命中时会在 `natflow_t` 尾部保存 8 字节瞬态双向预算 context，并设置 `NF_FF_DPI_USE`；`app_id` 仍是唯一分类结果。context 内的 16 位 `dpi_automaton` 在 discovery 阶段以低 8 位保存 machine-class mask，RDP、SOCKS 或 WhatsApp 认领后原子保存 machine/state。源码没有 detector metadata 或 detector 数组：固定 dispatcher 按编译期顺序直接调用对应 parser/机器分支。同一 conntrack 的 packet machine、automaton、双向预算和 app/context 终态由 conntrack lock 串行；任何固定 app 终态都会在同一临界区清除 context 并写 DPI packet done，避免终态后重新武装 owner bit。当前每方向硬限制最多观察 4 个 payload 包，不设置时间 deadline。若 conntrack acct 扩展存在，双向累计包数超过 256 时会清除仍活跃的 DPI context 并写 packet done；第 256 包仍允许等待，第 257 包触发兜底。conntrack accounting 实现随 `CONFIG_NF_CONNTRACK` 内建，不存在 `CONFIG_NF_CONNTRACK_ACCT` 编译开关，但是否给新连接挂 acct 扩展由运行时 `net.netfilter.nf_conntrack_acct` 控制；OpenWrt 默认设为 `1`。管理员关闭 accounting 或连接创建时未获得 acct 扩展时，所需方向始终没有 payload 的 context 仍可保留到 conntrack 生命周期结束。
@@ -1018,7 +1027,7 @@ echo events_clear >/dev/natflow_dpi_ctl
 - 固定应用 ID 在原有 9 项上追加腾讯视频=`0x1004`、Spotify=`0x1005`、WhatsApp=`0x2005`、Messenger=`0x2006`、Discord=`0x2007`、Zoom=`0x2008`、Facebook=`0x5002`、Instagram=`0x5003`、X/Twitter=`0x5004`、微博=`0x5005`。catalog revision 为 3，共 45 个 protocol/app 项；现有 category 编号不变。
 - 静态域名表共有 94 项。新增项直接提取自本地 nDPI `ndpi_content_match.c.inc`，仍使用 exact 或严格 label-boundary suffix；`v.qq.com` 和 Meta 具体子域先于 `qq.com`、`facebook.com` 父域。nDPI 的宽泛 `wx.`、`weixin.`、`instagram.`、`twitter.`、`whatsapp.`、`fbcdn-` 等 substring 没有采用；共享 CDN 只登记完整 hostname exact。
 - App HTTP step 可在 original request 或 reply response 的当前有界 payload 中解析 request/status line、最多 32 个完整 header、大小写不敏感的 `Host`/`User-Agent`/`Content-Type` 和 header 后可见 body。第一批 nDPI 规则只使用 request Host；没有可追溯来源的 header/body 关键字不会单独终态。当前不做 TCP stream reassembly、chunked 解码、gzip/br 解压或跨包 body 拼接。
-- DNS QNAME 路径：original direction TCP/UDP 53 标准 query 的第一问 QNAME 会经过同一静态 matcher，但只增加 `dns_app_intents`，不会把查询目标应用写入 DNS 连接的 `app_id`；该连接仍由 DNS 原生协议机器终态为 DNS。parser 支持 compression pointer，最多跳转 16 次并拒绝指针环、越界和展开后超长名称。reply 只用于 DNS protocol 证据。
+- DNS QNAME 路径：original direction TCP/UDP 53 标准 query 的第一问 QNAME 会经过同一静态 matcher，但只增加 `dns_app_intents`，不会把查询目标应用写入 DNS 连接的 `app_id`；该连接仍终态为 DNS。FORWARD 和 DNS-only LOCAL_IN 都按 conntrack original tuple 的目的端口选择 DNS 候选，支持目的端口已被 DNAT/REDIRECT 改写的流量。parser 支持 compression pointer，最多跳转 16 次并拒绝指针环、越界和展开后超长名称。FORWARD reply 只用于 DNS protocol 证据；本机 DNS 应答不挂 LOCAL_OUT。
 - 端口只用于选择有界解析候选和 payload pull budget，不直接写入 `app_id`；当前只有 TCP/UDP 53 会触发 DNS 候选解析，TCP 22 和 UDP 51820 不再作为 SSH/WireGuard 的独立分类证据。
 - 有界 payload 机器：TCP 任一方向的 SSH banner 识别 `SSH-<version>-` identification string；WireGuard、STUN/TURN 和 BitTorrent 机器也在任一方向匹配直接 payload 证据。uTP 会校验 version/type、最多 4 段的有界 extension chain；为避免与 WireGuard type 1 重叠，DATA packet 的 connection ID 为 0 时不分类。DPI 启用后执行全部内置机器，但每包仍只运行当前 L4、方向和 discovery machine-class mask 允许且预算未耗尽的 parser。
 - B 级原生协议机器仍为 audit-only：除原有文本、数据库和 Microsoft 协议外，NTP、SNMP、RADIUS、LDAP 和 CoAP 使用任一端点端口加结构/长度证据；TFTP RRQ/WRQ 需要端点 69，严格 OACK 支持动态 TID；NFS 使用 RPC record/program/version，不限制端口。强结构 network/NFS parser 先于 WireGuard/uTP，避免合法 RPC 或基础协议被较弱的 uTP 头抢先分类。BER length 拒绝 indefinite、超过 4 字节、非最短编码和越界。SOCKS4/5 必须先看到 original negotiation，再由 reply 的固定应答终态，claimed 后只运行 SOCKS machine。RDP 仍要求 original request 与 reply confirm 两个事实汇合。新增协议复用现有 TEXT/BINARY machine class，不扩大 context。
@@ -1100,6 +1109,12 @@ cc -std=c11 -O2 -Wall -Wextra -Werror \
 queue smoke 打开设备时会按 ABI 清空残留事件并独占 reader；不要与生产 reader 同时运行。`-w` 模式运行前应启用 DPI，并在等待窗口内生成内置分类器可识别的流量。
 
 原生协议机器黑盒 corpus 入口为 `tests/dpi/run-corpus.sh`。它在 root namespace 中建立两个 network namespace，让 TCP/UDP fixture 经过真实 FORWARD hook，并对 queue event 的 original tuple、source、`app_id`、`rule_id` 和 `evidence_dir` 做断言。runner 要求 root 权限、`ip`、对应 family 的 `iptables`/`ip6tables`、C 编译器和已加载的 DPI 模块；临时 FORWARD 规则带 conntrack state match，确保所选地址族不依赖系统已有 NAT/firewall 或 natflow path 开关获得 conntrack。它会临时修改对应 forwarding、FORWARD 规则、DPI enable 和事件统计，只能用于隔离测试环境。最终 PASS 仅在 DPI 状态、FORWARD 规则、namespace/veth 和 forwarding 清理结果均核验通过后输出。样本格式和清理边界见 `tests/dpi/README.md`。
+
+本机 DNS-only hook 的 IPv4 直连与 REDIRECT 真机回归入口为：
+
+```sh
+sudo tests/dpi/run-local-dns.sh
+```
 
 `--ipv6` 使用两个 IPv6 `/64`、`ip6tables` 和 IPv6 forwarding 运行同一批 fixture，并验证 event 中完整 16 字节 original tuple；它覆盖基础 IPv6 TCP/UDP，DPI 不解析 IPv6 extension header：
 

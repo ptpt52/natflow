@@ -932,8 +932,19 @@ classid 模式：
 - IPv4 `NF_INET_FORWARD`，priority `NF_IP_PRI_FILTER + 5`。
 - IPv6 `NF_INET_FORWARD`，priority `NF_IP_PRI_FILTER + 5`。
 - bridge `NF_INET_FORWARD`，priority `NF_IP_PRI_FILTER + 5`。
+- `CONFIG_NATFLOW_DPI` 额外注册 IPv4/IPv6 `NF_INET_LOCAL_IN`，priority
+  `NF_IP_PRI_FILTER + 5`；该入口只处理 conntrack original tuple 为
+  TCP/UDP 目的端口 53 的 original query。
 
 bridge 与 IPv4/IPv6 hook 共用 conntrack 的 `IPS_NATFLOW_SKIP_BRIDGE` 去重语义：非 bridge hook 首次观察连接时设置该位，随后同一包到达 bridge hook 时跳过 L7，避免 `br_netfilter` 下重复消费预算、重复推进 automaton 或重复统计。
+
+`LOCAL_IN` 是 DNS-only producer，不是完整 shared L7 pipeline：它不运行 URL
+logger、Host ACL、HTTP、TLS、QUIC 或非 DNS packet machine，也不注册 bridge
+或 `LOCAL_OUT` 变体。入口以 conntrack original tuple 的目的端口选择 DNS，
+所以 PREROUTING DNAT/REDIRECT 已把当前报文目的端口改为本机高端口时仍能
+识别；事件继续携带 original tuple。URL consumer 对这类连接直接标记 done。
+UDP 报文解析一次后终态；TCP 零 payload 包保持 pending，合法 query 终态为
+DNS，FIN/RST 结束仍未完成的本机 query。TCP DNS 不做 stream reassembly。
 
 ### 15.2 解析流程
 
@@ -1014,7 +1025,8 @@ bridge 与 IPv4/IPv6 hook 共用 conntrack 的 `IPS_NATFLOW_SKIP_BRIDGE` 去重�
 - 静态域名状态机由 HTTP Host、TLS SNI 和 QUIC v1 Initial SNI 驱动，先 exact，再按长度从长到短做 label-boundary suffix 匹配。当前 94 项表从 nDPI hostname 特征提取；表项和 45 项固定 app metadata 在模块初始化时校验顺序、重复项和引用关系。Meta/腾讯父子域按具体子域优先；宽泛 substring 和共享 CDN 父域不采用。
 - TEXT discovery class 下的 App step 对当前单包最多 512 字节解析 HTTP request/response start line、最多 32 个完整 header、大小写不敏感的 `Host`/`User-Agent`/`Content-Type` 和可见 body。第一批规则只让 request Host 进入静态域名终态；没有 nDPI/抓包依据的 header/body 单关键字不分类。parser 不执行 TCP 重组、chunked 解码、压缩解压或跨包 body 拼接。
 - nDPI payload App step 在任一方向接受钉钉 TCP、QQ/OICQ UDP、爱奇艺 UDP `PPStream`、Discord UDP、Spotify TCP/UDP 和 Zoom UDP；WhatsApp TCP 可以由同方向连续 payload 补全 8 字节前缀。App step 先于通用协议 parser 提交固定 App，所有循环和搜索有固定上限，不保存 payload/字符串/指针，不扩大 8 字节 conntrack context。
-- DNS QNAME 路径在 original direction 的 TCP/UDP 53 标准 query 中解析第一问 QNAME，支持有界 compression pointer 展开；最多跳转 16 次并记录已访问 offset，拒绝环、越界、非法 label 和展开后超长名称。QNAME 经过同一静态 matcher，但只记录 `dns_app_intents` 查询意图，不把目标应用写入 DNS flow；该 flow 仍由 DNS 原生协议机器终态为 DNS。
+- DNS QNAME 路径在 original direction 的 TCP/UDP 53 标准 query 中解析第一问 QNAME，支持有界 compression pointer 展开；最多跳转 16 次并记录已访问 offset，拒绝环、越界、非法 label 和展开后超长名称。QNAME 经过同一静态 matcher，但只记录 `dns_app_intents` 查询意图，不把目标应用写入 DNS flow；该 flow 仍终态为 DNS。FORWARD 和 DNS-only LOCAL_IN 都以 conntrack original tuple 目的端口作为 DNS candidate server port，当前报文端口只保留为 packet evidence。
+- QUIC Initial producer 的 UDP 443 candidate，以及所有把端口作为逻辑服务/应用端点约束的 DPI 状态机，都消费 conntrack original tuple 的 client/server ports；双向证据使用同一对稳定端口，当前 packet `sport/dport` 不再传给 DNS、NTP、SNMP、RADIUS、TFTP、LDAP、CoAP、Spotify 或 Zoom 的端口判断。事件 ABI 原本就是 original tuple，不发生变化。
 - 端口只选择有界解析候选和 payload pull budget，不直接写入 `app_id`；当前 TCP/UDP 53 用作 DNS 候选，TCP 22 和 UDP 51820 不再单独构成 SSH/WireGuard 分类证据。
 - 有界 payload 原生机器在 original/reply 任一方向识别 SSH banner、WireGuard、STUN/TURN 和 BitTorrent TCP/UDP 子集；uTP 子集校验 version/type 和最多 4 段的有界 extension chain，并拒绝 connection ID 为 0 的 DATA packet，避免与 WireGuard type 1 重叠。DPI enabled 后全部固定机器可用，但每包只运行当前 L4、方向、discovery machine-class mask 和预算允许的 parser。IPv6 只处理固定 IPv6 header 后的 TCP/UDP，不解析 extension header；其他 `nexthdr` fail-open。
 - B 级协议仍为 audit-only，并复用文本、数据库、二进制三个 discovery machine-class bit。新增 NTP、SNMP、RADIUS、LDAP 和 CoAP 以任一端点端口加结构/长度证据单包终态；TFTP RRQ/WRQ 需要端点 69，完整 OACK 可在动态 TID 的 related flow 中终态；NFS 按 RPC record、message type、program 和 version 识别，不限制端口。共享 BER length helper 拒绝 indefinite、超过 4 字节、非最短编码和越界。SOCKS 是第二台协议 claimed machine，只接受 original SOCKS4/5 negotiation 和对应 reply；RDP、SOCKS、WhatsApp claimed 后只运行所属 machine。强结构 network/NFS parser 先于 WireGuard/uTP，避免合法 RPC 和基础协议被弱 uTP 头抢先分类；通用原生 parser 仍受 96 字节、每方向 4 payload packet 的既有预算约束。
@@ -1165,6 +1177,7 @@ shared L7 hooks：
 | hook | family | priority |
 | --- | --- | --- |
 | FORWARD | IPv4/IPv6/bridge | `NF_IP_PRI_FILTER + 5` |
+| LOCAL_IN | IPv4/IPv6，仅 `CONFIG_NATFLOW_DPI` DNS-only | `NF_IP_PRI_FILTER + 5` |
 
 顺序含义：
 
@@ -1172,6 +1185,7 @@ shared L7 hooks：
 - path PRE 在 conntrack 后尝试 fast path 或补建 conntrack。
 - user FORWARD 在 filter 优先级做认证和 QoS 判断。
 - shared L7 hook 在 filter 后 5 个优先级为 active URL/DPI consumer 解析和分发 packet/host view，并在 consumer 未终态时暂停 fast path。
+- DNS-only LOCAL_IN 在相同优先级只解析发往本机的 original TCP/UDP 53 query；服务端口取 conntrack original tuple，支持 DNAT/REDIRECT 后当前目的端口不再是 53 的情况。
 - user POST 做统计/限速，path POST 后置学习最终出口。
 
 ## 19. 设备 notifier 行为

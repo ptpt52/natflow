@@ -1008,11 +1008,12 @@ static bool natflow_dpi_discord_payload(const unsigned char *data,
 
 static bool natflow_dpi_spotify_payload(const unsigned char *data,
                                         unsigned int payload_len, unsigned int inspect_len,
-                                        unsigned char l4proto, __be16 sport, __be16 dport)
+                                        unsigned char l4proto, __be16 client_port,
+                                        __be16 server_port)
 {
 	if (l4proto == IPPROTO_UDP)
-		return sport == __constant_htons(57621) &&
-		       dport == __constant_htons(57621) && payload_len >= 7 &&
+		return client_port == __constant_htons(57621) &&
+		       server_port == __constant_htons(57621) && payload_len >= 7 &&
 		       inspect_len >= 7 && memcmp(data, "SpotUdp", 7) == 0;
 	return l4proto == IPPROTO_TCP && payload_len >= 9 && inspect_len >= 9 &&
 	       data[0] == 0x00 && data[1] == 0x04 && data[2] == 0x00 &&
@@ -1022,14 +1023,15 @@ static bool natflow_dpi_spotify_payload(const unsigned char *data,
 
 static bool natflow_dpi_zoom_payload(const unsigned char *data,
                                      unsigned int payload_len, unsigned int inspect_len,
-                                     unsigned char l4proto, __be16 sport, __be16 dport)
+                                     unsigned char l4proto, __be16 client_port,
+                                     __be16 server_port)
 {
-	unsigned int source_port = ntohs(sport);
-	unsigned int destination_port = ntohs(dport);
+	unsigned int client_port_host = ntohs(client_port);
+	unsigned int server_port_host = ntohs(server_port);
 
 	if (l4proto != IPPROTO_UDP || payload_len <= 8 || inspect_len < 3 ||
-	        ((source_port < 8801 || source_port > 8810) &&
-	         (destination_port < 8801 || destination_port > 8810)))
+	        ((client_port_host < 8801 || client_port_host > 8810) &&
+	         (server_port_host < 8801 || server_port_host > 8810)))
 		return false;
 	return (data[0] == 0x01 || data[0] == 0x02) && data[1] == 0x00 &&
 	       (data[2] == 0x02 || data[2] == 0x03);
@@ -1101,7 +1103,7 @@ natflow_dpi_payload_app_machine_step(natflow_t *nf,
                                      const unsigned char *data,
                                      unsigned int payload_len, unsigned int inspect_len,
                                      unsigned char l4proto, unsigned char direction,
-                                     __be16 sport, __be16 dport)
+                                     __be16 client_port, __be16 server_port)
 {
 	struct natflow_dpi_payload_app_result result;
 	unsigned short automaton;
@@ -1126,7 +1128,7 @@ natflow_dpi_payload_app_machine_step(natflow_t *nf,
 			           NATFLOW_DPI_APP_DINGTALK,
 			           NATFLOW_DPI_EVENT_SOURCE_DINGTALK);
 		if (natflow_dpi_spotify_payload(data, payload_len, inspect_len,
-		                                l4proto, sport, dport))
+		                                l4proto, client_port, server_port))
 			return natflow_dpi_payload_app_terminal(
 			           NATFLOW_DPI_APP_SPOTIFY,
 			           NATFLOW_DPI_EVENT_SOURCE_SPOTIFY);
@@ -1141,12 +1143,12 @@ natflow_dpi_payload_app_machine_step(natflow_t *nf,
 			           NATFLOW_DPI_APP_DISCORD,
 			           NATFLOW_DPI_EVENT_SOURCE_DISCORD);
 		if (natflow_dpi_spotify_payload(data, payload_len, inspect_len,
-		                                l4proto, sport, dport))
+		                                l4proto, client_port, server_port))
 			return natflow_dpi_payload_app_terminal(
 			           NATFLOW_DPI_APP_SPOTIFY,
 			           NATFLOW_DPI_EVENT_SOURCE_SPOTIFY);
 		if (natflow_dpi_zoom_payload(data, payload_len, inspect_len,
-		                             l4proto, sport, dport))
+		                             l4proto, client_port, server_port))
 			return natflow_dpi_payload_app_terminal(
 			           NATFLOW_DPI_APP_ZOOM,
 			           NATFLOW_DPI_EVENT_SOURCE_ZOOM);
@@ -2150,13 +2152,13 @@ static bool natflow_dpi_ber_length(const unsigned char *data,
 
 static bool natflow_dpi_parse_ntp(const unsigned char *data,
                                   unsigned int payload_len, unsigned int inspect_len,
-                                  __be16 sport, __be16 dport)
+                                  __be16 client_port, __be16 server_port)
 {
 	unsigned int mode;
 	unsigned int version;
 
-	if ((sport != __constant_htons(123) &&
-	        dport != __constant_htons(123)) || payload_len < 48 ||
+	if ((client_port != __constant_htons(123) &&
+	        server_port != __constant_htons(123)) || payload_len < 48 ||
 	        inspect_len < 2)
 		return false;
 	version = (data[0] >> 3) & 0x07;
@@ -2167,7 +2169,7 @@ static bool natflow_dpi_parse_ntp(const unsigned char *data,
 
 static bool natflow_dpi_parse_snmp(const unsigned char *data,
                                    unsigned int payload_len, unsigned int inspect_len,
-                                   __be16 sport, __be16 dport)
+                                   __be16 client_port, __be16 server_port)
 {
 	unsigned int sequence_len;
 	unsigned int sequence_len_len;
@@ -2175,10 +2177,10 @@ static bool natflow_dpi_parse_snmp(const unsigned char *data,
 	unsigned int version_len_len;
 	unsigned int offset;
 
-	if ((sport != __constant_htons(161) &&
-	        sport != __constant_htons(162) &&
-	        dport != __constant_htons(161) &&
-	        dport != __constant_htons(162)) || payload_len <= 16 ||
+	if ((client_port != __constant_htons(161) &&
+	        client_port != __constant_htons(162) &&
+	        server_port != __constant_htons(161) &&
+	        server_port != __constant_htons(162)) || payload_len <= 16 ||
 	        inspect_len < 6 || data[0] != 0x30 ||
 	        !natflow_dpi_ber_length(data + 1, inspect_len - 1,
 	                                &sequence_len, &sequence_len_len) ||
@@ -2197,14 +2199,14 @@ static bool natflow_dpi_parse_snmp(const unsigned char *data,
 
 static bool natflow_dpi_parse_radius(const unsigned char *data,
                                      unsigned int payload_len, unsigned int inspect_len,
-                                     __be16 sport, __be16 dport)
+                                     __be16 client_port, __be16 server_port)
 {
-	if (sport != __constant_htons(1812) &&
-	        sport != __constant_htons(1813) &&
-	        sport != __constant_htons(18013) &&
-	        dport != __constant_htons(1812) &&
-	        dport != __constant_htons(1813) &&
-	        dport != __constant_htons(18013))
+	if (client_port != __constant_htons(1812) &&
+	        client_port != __constant_htons(1813) &&
+	        client_port != __constant_htons(18013) &&
+	        server_port != __constant_htons(1812) &&
+	        server_port != __constant_htons(1813) &&
+	        server_port != __constant_htons(18013))
 		return false;
 	return payload_len >= 20 && payload_len <= 4096 && inspect_len >= 4 &&
 	       data[0] >= 1 && data[0] <= 13 &&
@@ -2268,7 +2270,8 @@ static bool natflow_dpi_tftp_options(const unsigned char *data,
 
 static bool natflow_dpi_parse_tftp(const unsigned char *data,
                                    unsigned int payload_len, unsigned int inspect_len,
-                                   unsigned char direction, __be16 sport, __be16 dport)
+                                   unsigned char direction, __be16 client_port,
+                                   __be16 server_port)
 {
 	const unsigned char *mode;
 	unsigned int mode_len;
@@ -2280,8 +2283,8 @@ static bool natflow_dpi_parse_tftp(const unsigned char *data,
 	opcode = data[1];
 	if ((opcode == 1 || opcode == 2) &&
 	        direction == NATFLOW_L7_DIR_ORIGINAL &&
-	        (sport == __constant_htons(69) ||
-	         dport == __constant_htons(69))) {
+	        (client_port == __constant_htons(69) ||
+	         server_port == __constant_htons(69))) {
 		if (!natflow_dpi_tftp_string(data, payload_len, &offset, NULL, NULL) ||
 		        !natflow_dpi_tftp_string(data, payload_len, &offset,
 		                                 &mode, &mode_len))
@@ -2300,7 +2303,7 @@ static bool natflow_dpi_parse_tftp(const unsigned char *data,
 
 static bool natflow_dpi_parse_ldap(const unsigned char *data,
                                    unsigned int payload_len, unsigned int inspect_len,
-                                   __be16 sport, __be16 dport)
+                                   __be16 client_port, __be16 server_port)
 {
 	unsigned int sequence_len;
 	unsigned int sequence_len_len;
@@ -2309,8 +2312,8 @@ static bool natflow_dpi_parse_ldap(const unsigned char *data,
 	unsigned int offset;
 	unsigned int op;
 
-	if ((sport != __constant_htons(389) &&
-	        dport != __constant_htons(389)) || payload_len < 7 ||
+	if ((client_port != __constant_htons(389) &&
+	        server_port != __constant_htons(389)) || payload_len < 7 ||
 	        inspect_len < 7 || data[0] != 0x30 ||
 	        !natflow_dpi_ber_length(data + 1, inspect_len - 1,
 	                                &sequence_len, &sequence_len_len) ||
@@ -2333,17 +2336,17 @@ static bool natflow_dpi_parse_ldap(const unsigned char *data,
 
 static bool natflow_dpi_parse_coap(const unsigned char *data,
                                    unsigned int payload_len, unsigned int inspect_len,
-                                   __be16 sport, __be16 dport)
+                                   __be16 client_port, __be16 server_port)
 {
-	unsigned int source_port = ntohs(sport);
-	unsigned int destination_port = ntohs(dport);
+	unsigned int client_port_host = ntohs(client_port);
+	unsigned int server_port_host = ntohs(server_port);
 	unsigned int token_len;
 	unsigned int code;
 
-	if ((source_port != 5683 &&
-	        (source_port < 61616 || source_port > 61631) &&
-	        destination_port != 5683 &&
-	        (destination_port < 61616 || destination_port > 61631)) ||
+	if ((client_port_host != 5683 &&
+	        (client_port_host < 61616 || client_port_host > 61631) &&
+	        server_port_host != 5683 &&
+	        (server_port_host < 61616 || server_port_host > 61631)) ||
 	        payload_len < 4 || inspect_len < 4 || (data[0] >> 6) != 1)
 		return false;
 	token_len = data[0] & 0x0f;
@@ -2361,25 +2364,30 @@ static bool natflow_dpi_parse_coap(const unsigned char *data,
 static unsigned int natflow_dpi_parse_network_protocol(
     const unsigned char *data, unsigned int payload_len,
     unsigned int inspect_len, unsigned char l4proto,
-    unsigned char direction, __be16 sport, __be16 dport)
+    unsigned char direction, __be16 client_port, __be16 server_port)
 {
 	if (l4proto == IPPROTO_UDP &&
-	        natflow_dpi_parse_ntp(data, payload_len, inspect_len, sport, dport))
+	        natflow_dpi_parse_ntp(data, payload_len, inspect_len,
+	                              client_port, server_port))
 		return NATFLOW_DPI_PROTO_NTP;
 	if (l4proto == IPPROTO_UDP &&
-	        natflow_dpi_parse_snmp(data, payload_len, inspect_len, sport, dport))
+	        natflow_dpi_parse_snmp(data, payload_len, inspect_len,
+	                               client_port, server_port))
 		return NATFLOW_DPI_PROTO_SNMP;
 	if (l4proto == IPPROTO_UDP &&
-	        natflow_dpi_parse_radius(data, payload_len, inspect_len, sport, dport))
+	        natflow_dpi_parse_radius(data, payload_len, inspect_len,
+	                                 client_port, server_port))
 		return NATFLOW_DPI_PROTO_RADIUS;
 	if (l4proto == IPPROTO_UDP &&
 	        natflow_dpi_parse_tftp(data, payload_len, inspect_len, direction,
-	                               sport, dport))
+	                               client_port, server_port))
 		return NATFLOW_DPI_PROTO_TFTP;
-	if (natflow_dpi_parse_ldap(data, payload_len, inspect_len, sport, dport))
+	if (natflow_dpi_parse_ldap(data, payload_len, inspect_len,
+	                           client_port, server_port))
 		return NATFLOW_DPI_PROTO_LDAP;
 	if (l4proto == IPPROTO_UDP &&
-	        natflow_dpi_parse_coap(data, payload_len, inspect_len, sport, dport))
+	        natflow_dpi_parse_coap(data, payload_len, inspect_len,
+	                               client_port, server_port))
 		return NATFLOW_DPI_PROTO_COAP;
 	return 0;
 }
@@ -3390,7 +3398,7 @@ natflow_dpi_native_machine_step(natflow_t *nf,
                                 unsigned int inspect_len,
                                 unsigned char l4proto,
                                 unsigned char direction,
-                                __be16 sport, __be16 dport)
+                                __be16 client_port, __be16 server_port)
 {
 	struct natflow_dpi_native_machine_result result;
 	unsigned short automaton;
@@ -3444,7 +3452,7 @@ natflow_dpi_native_machine_step(natflow_t *nf,
 	if (machine_class_mask & NATFLOW_DPI_MACHINE_CLASS_BIT(
 	            NATFLOW_DPI_MACHINE_CLASS_TEXT)) {
 		proto = natflow_dpi_parse_network_protocol(data, payload_len,
-		        inspect_len, l4proto, direction, sport, dport);
+		        inspect_len, l4proto, direction, client_port, server_port);
 	}
 	if (!proto && (machine_class_mask & NATFLOW_DPI_MACHINE_CLASS_BIT(
 	                   NATFLOW_DPI_MACHINE_CLASS_STUN_TURN))) {
@@ -3514,21 +3522,78 @@ natflow_dpi_native_machine_step(natflow_t *nf,
 	       natflow_dpi_native_machine_pending();
 }
 
-static noinline bool natflow_dpi_classify_dns_query(struct nf_conn *ct,
+static noinline int natflow_dpi_classify_dns_query(struct nf_conn *ct,
         const unsigned char *payload, unsigned int payload_len,
         unsigned char l4proto, bool classify_domain)
 {
 	struct natflow_l7_feature feature;
+	int ret;
 
 	if (payload_len == 0)
-		return false;
-	if (natflow_l7_dns_parse(payload, payload_len, l4proto, &feature) <= 0)
-		return false;
+		return 0;
+	ret = natflow_l7_dns_parse(payload, payload_len, l4proto, &feature);
+	if (ret <= 0)
+		return ret;
 
 	if (classify_domain)
 		natflow_dpi_classify_host_normalized(ct, feature.host,
 		                                     feature.host_len, NATFLOW_DPI_EVENT_SOURCE_DNS);
-	return true;
+	return 1;
+}
+
+unsigned int natflow_dpi_consume_local_dns_query(
+    const struct natflow_l7_packet_view *view)
+{
+	const struct natflow_dpi_app_meta *dns_app;
+	unsigned int consumer_mask;
+	unsigned int inspect_len;
+	int parse_ret;
+
+	if (!view || !view->ct || !view->l4)
+		return 0;
+	if (!natflow_dpi_consumer_enabled() ||
+	        view->direction != NATFLOW_L7_DIR_ORIGINAL ||
+	        natflow_l7_packet_server_port(view) != __constant_htons(53) ||
+	        (view->l4proto != IPPROTO_TCP && view->l4proto != IPPROTO_UDP))
+		return 0;
+	consumer_mask = view->consumer_mask & NATFLOW_L7_CONSUMER_DPI;
+	if (!consumer_mask)
+		return 0;
+
+	if (view->l4proto == IPPROTO_TCP &&
+	        (TCPH(view->l4)->fin || TCPH(view->l4)->rst))
+		return consumer_mask;
+	if (view->payload_len == 0)
+		return view->l4proto == IPPROTO_UDP ?
+		       consumer_mask : 0;
+
+	inspect_len = view->payload_len > NATFLOW_DPI_DNS_INSPECT_MAX ?
+	              NATFLOW_DPI_DNS_INSPECT_MAX : view->payload_len;
+	if (inspect_len > view->payload_linear_len)
+		inspect_len = view->payload_linear_len;
+	if (inspect_len == 0 || !view->payload)
+		return view->l4proto == IPPROTO_UDP ?
+		       consumer_mask : 0;
+
+	parse_ret = natflow_dpi_classify_dns_query(view->ct, view->payload,
+	            inspect_len, view->l4proto,
+	            (consumer_mask & NATFLOW_L7_CONSUMER_DPI_DOMAIN) != 0);
+	if (consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET)
+		atomic64_inc(&natflow_dpi_packet_inspections[IP_CT_DIR_ORIGINAL]);
+	if (parse_ret > 0 &&
+	        (consumer_mask & NATFLOW_L7_CONSUMER_DPI_PACKET)) {
+		dns_app = natflow_dpi_app_by_proto(NATFLOW_DPI_PROTO_DNS);
+		if (natflow_dpi_commit_app(view->ct, dns_app,
+		                           NATFLOW_DPI_EVENT_SOURCE_DNS,
+		                           NATFLOW_L7_DIR_ORIGINAL))
+			atomic64_inc(
+			    &natflow_dpi_packet_matches[IP_CT_DIR_ORIGINAL]);
+	}
+	if (parse_ret > 0)
+		return consumer_mask;
+
+	/* UDP is a complete DNS message; TCP can provide more request bytes. */
+	return view->l4proto == IPPROTO_UDP ? consumer_mask : 0;
 }
 
 static bool natflow_dpi_dns_candidate(unsigned char l4proto,
@@ -3597,6 +3662,7 @@ unsigned int natflow_dpi_consume_packet_view(
 	bool app_exists = false;
 	bool context_cleared = false;
 	int dir;
+	__be16 client_port;
 	__be16 server_port;
 
 	if (!view || !view->ct || !view->l4)
@@ -3617,6 +3683,7 @@ unsigned int natflow_dpi_consume_packet_view(
 
 	if (!natflow_dpi_l4_supported(view->l4proto))
 		return 0;
+	client_port = natflow_l7_packet_client_port(view);
 	server_port = natflow_l7_packet_server_port(view);
 	nf = natflow_session_get(view->ct);
 
@@ -3638,7 +3705,7 @@ unsigned int natflow_dpi_consume_packet_view(
 			if (view->direction == NATFLOW_L7_DIR_ORIGINAL &&
 			        natflow_dpi_classify_dns_query(view->ct, payload,
 			                                       dns_inspect_len, view->l4proto,
-			                                       (consumer_mask & NATFLOW_L7_CONSUMER_DPI_DOMAIN) != 0))
+			                                       (consumer_mask & NATFLOW_L7_CONSUMER_DPI_DOMAIN) != 0) > 0)
 				dns_match = true;
 			else if (view->direction == NATFLOW_L7_DIR_REPLY &&
 			         natflow_l7_dns_response_parse(payload, dns_inspect_len,
@@ -3717,8 +3784,8 @@ unsigned int natflow_dpi_consume_packet_view(
 			inspected = true;
 			payload_app_result = natflow_dpi_payload_app_machine_step(
 			                         nf, payload, view->payload_len, app_inspect_len,
-			                         view->l4proto, view->direction, view->sport,
-			                         view->dport);
+			                         view->l4proto, view->direction, client_port,
+			                         server_port);
 		}
 	}
 	if (payload_app_result.excluded) {
@@ -3756,7 +3823,7 @@ unsigned int natflow_dpi_consume_packet_view(
 			                     nf, inspect_machine_class_mask, payload,
 			                     view->payload_len, inspect_len,
 			                     view->l4proto, view->direction,
-			                     view->sport, view->dport);
+			                     client_port, server_port);
 		}
 	}
 	if (inspected)

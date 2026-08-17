@@ -69,6 +69,8 @@ struct natflow_l7_packet_view {
 	unsigned char direction;
 	__be16 sport;
 	__be16 dport;
+	__be16 original_client_port;
+	__be16 original_server_port;
 	void *l3;
 	void *l4;
 	unsigned char *payload;
@@ -81,11 +83,7 @@ static inline __be16 natflow_l7_packet_client_port(
 {
 	if (!view)
 		return 0;
-	if (view->direction == NATFLOW_L7_DIR_ORIGINAL)
-		return view->sport;
-	if (view->direction == NATFLOW_L7_DIR_REPLY)
-		return view->dport;
-	return 0;
+	return view->original_client_port;
 }
 
 static inline __be16 natflow_l7_packet_server_port(
@@ -93,11 +91,7 @@ static inline __be16 natflow_l7_packet_server_port(
 {
 	if (!view)
 		return 0;
-	if (view->direction == NATFLOW_L7_DIR_ORIGINAL)
-		return view->dport;
-	if (view->direction == NATFLOW_L7_DIR_REPLY)
-		return view->sport;
-	return 0;
+	return view->original_server_port;
 }
 
 struct natflow_l7_feature {

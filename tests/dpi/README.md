@@ -34,6 +34,20 @@ sudo tests/dpi/run-corpus.sh --ipv6 tests/dpi/cases/*.cases
 IPv6 mode uses documentation-prefix addresses, `ip6tables`, and the IPv6
 forwarding sysctl. It verifies the full 16-byte original tuple in each event.
 
+Locally terminated DNS has a separate IPv4 integration test:
+
+```sh
+sudo tests/dpi/run-local-dns.sh
+```
+
+It creates one client namespace and sends one direct UDP/53 query to the root
+namespace, then sends another query through an iptables `REDIRECT` to an
+unbound local high port. Both events must retain the conntrack original
+destination and port 53, classify as DNS, and increment the static-domain DNS
+intent counter. The script temporarily changes DPI enable/event state and
+installs INPUT/nat rules, so it is restricted to an isolated test host and
+verifies cleanup before reporting PASS.
+
 The conntrack packet-limit lifecycle can be tested with:
 
 ```sh
