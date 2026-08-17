@@ -36,7 +36,7 @@ M0/M1 期间必须保持：
 M0/M1 期间必须保持：
 
 - `NF_FF_L7_USE` 和 `NF_FF_DPI_USE` 必须纳入 `NF_FF_BUSY_USE`；shared parser 使用 L7 busy bit，`natflow_t` 内瞬态 DPI context 使用 DPI busy bit，三个 consumer done bit 不纳入 busy mask。
-- `natflow_t` 的常驻 DPI 分类结果只有 `app_id`；允许尾部 8 字节瞬态 context 保存双向 packet/byte counter，以及 discovery machine-class mask 或 claimed machine/state，不保存证据、规则详情或指针。
+- `natflow_t` 的常驻 DPI 分类结果只有 `app_id`；允许尾部有界瞬态 context 保存双向 packet/byte counter，以及 discovery machine-class mask 或 claimed machine/state。16 位 automaton 编码必须使用自然对齐的 32 位存储 word，高 16 位保持为零；不保存证据、规则详情或指针。
 - 追加字段前必须验证 shared conntrack extension 布局，失败时不能注册 DPI/L7 hook。
 - L7 入口必须先调用 `natflow_session_in()` 统一确保 URL/DPI 终态有 `natflow_t.status` 可写；已 confirm 且没有 natflow session 的 flow 仍不能安全追加扩展，必须 fail-open 跳过 L7 解析，不能退回无状态 DPI/URL 事件。
 - writer 顺序保持为：写结果、写对应 consumer terminal done bit、所有 active consumer 均 done 后清 busy bit 并设置 `IPS_NATFLOW_L7_HANDLED` L7_SKIP 派生 hint。

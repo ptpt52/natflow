@@ -258,6 +258,9 @@ queue pressure 和 queue stream 也已验证。继续扩展 IPv6 extension heade
   机器。
 - 保持 `app_id` 是唯一常驻分类结果；多包状态优先复用现有 8 字节瞬态 context，
   不保存域名、payload、指针或动态 candidate 数组。
+- compact automaton 保持 16 位编码，但存放在自然对齐的 32 位 word 低半部并以
+  32 位原子操作更新，避免依赖并非所有目标架构都支持的 16 位 `cmpxchg()`；该调整
+  复用原有尾部 padding，不改变 `natflow_t` 或 conntrack 扩展分配长度。
 - 首批手机 App 特征从可审计的 nDPI hostname 和直接 payload parser 提取；宽泛
   substring、共享 CDN 父域和没有抓包/源码依据的 HTTP 单关键字不得直接终态。
 - 后续批次继续复用 8 个 discovery machine class；单包协议不占持久状态，只有

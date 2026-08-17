@@ -625,7 +625,7 @@ Natflow 不创建 ipset，只按名称查找和测试/添加/删除。用户态�
 - `status`：`NF_FF_*` 状态位。
 - `rroute[2]`：两个方向的 `natflow_route_t`。
 - `app_id`：DPI 的常驻应用分类结果；`0` 表示 unknown、未分类或没有结果。当前 L7 shared hook 在解析前会先确保 natflow session；静态域名应用和固定原生协议/App machine 只有在结构化证据终态时写入非 0 `app_id`，其他 DPI 细节只进入事件。
-- `dpi_byte_count[2]`、`dpi_packet_count[2]`、`dpi_automaton`：仅在 `NF_FF_DPI_USE` 有效的 8 字节瞬态方向上下文；`dpi_automaton.bit15=0` 时低 8 位保存 discovery machine-class mask，`bit15=1` 时 `bits14..8` 保存 claimed machine、`bits7..0` 保存 state。RDP、SOCKS 和 WhatsApp 使用 claimed machine，整个 16 位 word 通过 `cmpxchg()` 更新；这些字段不属于分类结果或事件 ABI。
+- `dpi_byte_count[2]`、`dpi_packet_count[2]`、`dpi_automaton`：仅在 `NF_FF_DPI_USE` 有效，保存 8 字节有效瞬态方向状态；16 位 automaton 编码存放在自然对齐的 32 位 `dpi_automaton` 中，高 16 位保留为零。`bit15=0` 时低 8 位保存 discovery machine-class mask，`bit15=1` 时 `bits14..8` 保存 claimed machine、`bits7..0` 保存 state。RDP、SOCKS 和 WhatsApp 使用 claimed machine，整个 32 位存储 word 通过 `cmpxchg()` 更新；这些字段不属于分类结果或事件 ABI。
 
 重要 `NF_FF_*` 位：
 
@@ -761,7 +761,7 @@ fakeuser 不是普通用户态对象，而是特殊 conntrack：
 - `ct->ext->len` 超过 `NATCAP_MAX_OFF = 512` 不支持。
 - `natflow_session_get()` 会校验 status bit、ext、magic、ext_magic 和 offset；任何不匹配均视为无 natflow 会话。
 - `static_fixed_ext_off` 会在 `natflow_probe_ct_ext()` 中通过构造临时 conntrack 并添加所有扩展来探测；探测失败时使用默认 `256 / NATCAP_FACTOR`。
-- 编译期通过 `BUILD_BUG_ON()` 验证 L7/DPI busy/done bit、`NF_FF_BUSY_USE`，并确认 `app_id` 后紧接字段连续的 8 字节 DPI context。`natflow_t` 尾部使用不属于 DPI context 的 4 字节显式 `layout_pad`，使 32/64 位目标的 `sizeof(natflow_t)` 均满足 8 字节对齐；32 位下大小由 92 变为 96，但 conntrack ext 原本已按 8 字节向上分配 96 字节，实际分配长度不变；`natflow_ct_ext_layout_validate()` 运行期只校验探测得到的 `nat_key_t` 偏移和 `natflow_off`。
+- 编译期通过 `BUILD_BUG_ON()` 验证 L7/DPI busy/done bit、`NF_FF_BUSY_USE`，并确认 `app_id` 后的 DPI 尾部布局为 4 字节 byte counters、2 字节 packet counters、2 字节显式对齐 padding 和 4 字节自然对齐的 `dpi_automaton`。automaton 使用低 16 位编码、高 16 位保留为零；尾部共 12 字节，`sizeof(natflow_t)` 仍为 96，conntrack ext 分配长度不变；`natflow_ct_ext_layout_validate()` 运行期只校验探测得到的 `nat_key_t` 偏移和 `natflow_off`。
 
 AI 重建实现时必须显式处理 conntrack ext 内存布局，不能把 `natflow_t` 放进独立哈希表后声称兼容。
 
@@ -1055,7 +1055,7 @@ DNS，FIN/RST 结束仍未完成的本机 query。TCP DNS 不做 stream reassemb
 - context 存续期间允许 `NF_FF_L7_USE | NF_FF_DPI_USE` 同时设置：L7 bit 保证 shared hook 继续提供 packet view，DPI bit 表示 context owner。arm/terminal 写入顺序不能产生两个 busy bit 都未设置而 context 仍活跃的 fast-path 窗口。
 - 初始 payload hard limit 为 original/reply 各 4 个 payload 包，不设置 wall-clock deadline。任一原生机器命中、全部 active machine class 因 FIN/RST 或 packet/byte budget 终态，或 acct 存在且双向连接包数超过 256 后，设置 packet done；已有非 0 `app_id` 时以 `APP_EXISTS` 终态。
 - runtime enable、rules commit/clear 不枚举、不 drain、不清理已标记连接或 active context；已设置 L7_SKIP 的连接不重新武装。
-- `app_id` 继续是唯一分类结果；packet/byte counter 和 16 位 discovery/claimed automaton word 是 `natflow_t` 内瞬态 context。所需方向始终没有 payload时，accounting 开启且 acct 扩展存在的连接会在第 257 包终态；accounting 关闭或 acct 缺失时，context 仍可保留到 conntrack 生命周期结束。
+- `app_id` 继续是唯一分类结果；packet/byte counter 和存放于对齐 32 位 word 低半部的 16 位 discovery/claimed automaton 编码是 `natflow_t` 内瞬态 context。所需方向始终没有 payload时，accounting 开启且 acct 扩展存在的连接会在第 257 包终态；accounting 关闭或 acct 缺失时，context 仍可保留到 conntrack 生命周期结束。
 
 ## 16. Zone 设计
 

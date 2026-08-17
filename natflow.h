@@ -113,8 +113,8 @@ typedef struct natflow_t {
 	unsigned int app_id;
 	unsigned short dpi_byte_count[NF_FF_DIR_MAX];
 	unsigned char dpi_packet_count[NF_FF_DIR_MAX];
-	unsigned short dpi_automaton;
-	unsigned char layout_pad[4];
+	unsigned char layout_pad[2];
+	unsigned int dpi_automaton;
 } natflow_t;
 
 struct nf_conn;

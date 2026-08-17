@@ -127,9 +127,9 @@ enum natflow_dpi_socks_state {
 #define NATFLOW_DPI_WHATSAPP_MATCHED_MASK 0x0fu
 #define NATFLOW_DPI_WHATSAPP_REPLY_STATE 0x10u
 
-static bool natflow_dpi_automaton_claimed(unsigned short automaton);
-static unsigned int natflow_dpi_automaton_machine(unsigned short automaton);
-static unsigned short natflow_dpi_automaton_word(unsigned int machine,
+static bool natflow_dpi_automaton_claimed(unsigned int automaton);
+static unsigned int natflow_dpi_automaton_machine(unsigned int automaton);
+static unsigned int natflow_dpi_automaton_word(unsigned int machine,
         unsigned int state);
 
 struct natflow_dpi_app_meta {
@@ -934,7 +934,7 @@ natflow_dpi_whatsapp_app_machine_step(natflow_t *nf,
                                       const unsigned char *data, unsigned int payload_len,
                                       unsigned int inspect_len, unsigned char direction)
 {
-	unsigned short automaton;
+	unsigned int automaton;
 	unsigned int matched = 0;
 	unsigned int state;
 	unsigned int limit;
@@ -1106,7 +1106,7 @@ natflow_dpi_payload_app_machine_step(natflow_t *nf,
                                      __be16 client_port, __be16 server_port)
 {
 	struct natflow_dpi_payload_app_result result;
-	unsigned short automaton;
+	unsigned int automaton;
 
 	if (!data || inspect_len == 0)
 		return natflow_dpi_payload_app_pending();
@@ -2049,18 +2049,18 @@ static const struct file_operations natflow_dpi_queue_fops = {
 	(NATFLOW_DPI_DIRECTION_PACKET_BUDGET * NATFLOW_DPI_PAYLOAD_INSPECT_MAX)
 #define NATFLOW_DPI_DNS_BYTE_BUDGET \
 	(NATFLOW_DPI_DIRECTION_PACKET_BUDGET * NATFLOW_DPI_DNS_INSPECT_MAX)
-static bool natflow_dpi_automaton_claimed(unsigned short automaton)
+static bool natflow_dpi_automaton_claimed(unsigned int automaton)
 {
 	return (automaton & NATFLOW_DPI_AUTOMATON_CLAIMED) != 0;
 }
 
-static unsigned int natflow_dpi_automaton_machine(unsigned short automaton)
+static unsigned int natflow_dpi_automaton_machine(unsigned int automaton)
 {
 	return (automaton & NATFLOW_DPI_AUTOMATON_MACHINE_MASK) >>
 	       NATFLOW_DPI_AUTOMATON_MACHINE_SHIFT;
 }
 
-static unsigned short natflow_dpi_automaton_word(unsigned int machine,
+static unsigned int natflow_dpi_automaton_word(unsigned int machine,
         unsigned int state)
 {
 	return NATFLOW_DPI_AUTOMATON_CLAIMED |
@@ -2071,7 +2071,7 @@ static unsigned short natflow_dpi_automaton_word(unsigned int machine,
 
 static unsigned int natflow_dpi_context_machine_class_mask(const natflow_t *nf)
 {
-	unsigned short automaton = READ_ONCE(nf->dpi_automaton);
+	unsigned int automaton = READ_ONCE(nf->dpi_automaton);
 
 	if (natflow_dpi_automaton_claimed(automaton))
 		return 0;
@@ -2081,8 +2081,8 @@ static unsigned int natflow_dpi_context_machine_class_mask(const natflow_t *nf)
 static bool natflow_dpi_context_set_machine_class_mask(natflow_t *nf,
         unsigned int machine_class_mask)
 {
-	unsigned short automaton;
-	unsigned short next;
+	unsigned int automaton;
+	unsigned int next;
 
 	next = machine_class_mask & NATFLOW_DPI_AUTOMATON_DISCOVERY_MASK;
 	do {
@@ -2096,8 +2096,8 @@ static bool natflow_dpi_context_set_machine_class_mask(natflow_t *nf,
 static unsigned int natflow_dpi_context_intersect_machine_class_mask(
     natflow_t *nf, unsigned int machine_class_mask)
 {
-	unsigned short automaton;
-	unsigned short next;
+	unsigned int automaton;
+	unsigned int next;
 
 	do {
 		automaton = READ_ONCE(nf->dpi_automaton);
@@ -2953,8 +2953,8 @@ natflow_dpi_native_machine_excluded(void)
 static struct natflow_dpi_native_machine_result
 natflow_dpi_rdp_machine_step(natflow_t *nf, unsigned int evidence)
 {
-	unsigned short automaton;
-	unsigned short next;
+	unsigned int automaton;
+	unsigned int next;
 	unsigned int state;
 
 	if (!nf)
@@ -3017,7 +3017,7 @@ natflow_dpi_socks_machine_step(natflow_t *nf, const unsigned char *data,
                                unsigned int payload_len, unsigned int inspect_len,
                                unsigned char direction)
 {
-	unsigned short automaton;
+	unsigned int automaton;
 	unsigned int state;
 
 	if (!nf || !data || inspect_len == 0)
@@ -3072,7 +3072,7 @@ static unsigned int natflow_dpi_parse_binary_protocol(
 }
 
 static unsigned int natflow_dpi_automaton_machine_class_mask(
-    unsigned short automaton)
+    unsigned int automaton)
 {
 	if (!natflow_dpi_automaton_claimed(automaton))
 		return automaton & NATFLOW_DPI_AUTOMATON_DISCOVERY_MASK;
@@ -3232,7 +3232,7 @@ static bool natflow_dpi_machine_class_direction_exhausted(
 }
 
 static bool natflow_dpi_context_machine_classes_exhausted(
-    const natflow_t *nf, unsigned short automaton)
+    const natflow_t *nf, unsigned int automaton)
 {
 	unsigned int machine_class_mask;
 
@@ -3270,7 +3270,7 @@ static enum natflow_dpi_context_result natflow_dpi_context_observe(
     unsigned int observed_machine_class_mask, unsigned int payload_len,
     unsigned int payload_linear_len)
 {
-	unsigned short automaton;
+	unsigned int automaton;
 	unsigned int inspect_len;
 	unsigned int byte_count;
 	unsigned int context_machine_class_mask;
@@ -3401,7 +3401,7 @@ natflow_dpi_native_machine_step(natflow_t *nf,
                                 __be16 client_port, __be16 server_port)
 {
 	struct natflow_dpi_native_machine_result result;
-	unsigned short automaton;
+	unsigned int automaton;
 	unsigned int proto = 0;
 	unsigned int proto_mask;
 	unsigned int evidence;
@@ -3645,7 +3645,7 @@ unsigned int natflow_dpi_consume_packet_view(
 	struct natflow_dpi_payload_app_result payload_app_result =
 	    natflow_dpi_payload_app_pending();
 	natflow_t *nf;
-	unsigned short automaton;
+	unsigned int automaton;
 	unsigned int payload_linear_len;
 	unsigned int machine_class_mask;
 	unsigned int inspect_machine_class_mask;

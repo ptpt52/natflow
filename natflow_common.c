@@ -140,17 +140,19 @@ int natflow_ct_ext_layout_validate(void)
 	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_packet_count) !=
 	             offsetof(struct natflow_t, dpi_byte_count) +
 	             sizeof(((struct natflow_t *)0)->dpi_byte_count));
-	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_automaton) !=
+	BUILD_BUG_ON(offsetof(struct natflow_t, layout_pad) !=
 	             offsetof(struct natflow_t, dpi_packet_count) +
 	             sizeof(((struct natflow_t *)0)->dpi_packet_count));
-	BUILD_BUG_ON(sizeof(((struct natflow_t *)0)->dpi_automaton) != 2);
+	BUILD_BUG_ON(sizeof(((struct natflow_t *)0)->layout_pad) != 2);
+	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_automaton) !=
+	             offsetof(struct natflow_t, layout_pad) +
+	             sizeof(((struct natflow_t *)0)->layout_pad));
+	BUILD_BUG_ON(sizeof(((struct natflow_t *)0)->dpi_automaton) != 4);
+	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_automaton) %
+	             sizeof(((struct natflow_t *)0)->dpi_automaton) != 0);
 	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_automaton) +
 	             sizeof(((struct natflow_t *)0)->dpi_automaton) -
-	             offsetof(struct natflow_t, dpi_byte_count) != 8);
-	BUILD_BUG_ON(offsetof(struct natflow_t, layout_pad) !=
-	             offsetof(struct natflow_t, dpi_automaton) +
-	             sizeof(((struct natflow_t *)0)->dpi_automaton));
-	BUILD_BUG_ON(sizeof(((struct natflow_t *)0)->layout_pad) != 4);
+	             offsetof(struct natflow_t, dpi_byte_count) != 12);
 	BUILD_BUG_ON(sizeof(struct natflow_t) % __ALIGN_64BITS != 0);
 
 	natflow_ct_ext_layout_get(&layout);

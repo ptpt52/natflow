@@ -52,7 +52,7 @@ natflow_l7 core
 统一设计必须从当前源码出发，而不是从目标接口假设出发：
 
 - 当前 `NF_FF_BUSY_USE` 已包含 `NF_FF_USER_USE | NF_FF_L7_USE | NF_FF_DPI_USE`。DPI packet context 有效时设置 `NF_FF_DPI_USE`，终态时先清 DPI owner，再由 L7 写 packet done。
-- 当前 `natflow_t` 尾部包含常驻分类结果 `app_id`，以及仅在 `NF_FF_DPI_USE` 有效的 8 字节瞬态 context：双向 packet/byte counter 和 16 位 discovery/claimed automaton word。
+- 当前 `natflow_t` 尾部包含常驻分类结果 `app_id`，以及仅在 `NF_FF_DPI_USE` 有效的 8 字节有效瞬态状态：双向 packet/byte counter 和 16 位 discovery/claimed automaton 编码。automaton 编码存放在自然对齐的 32 位 word 低半部；连同 2 字节对齐 padding，DPI 尾部实际占 12 字节，但 `natflow_t` 总大小不变。
 - 当前 fast path 在建软件 fastnat 或硬件 offload 前检查 `nf->status & NF_FF_BUSY_USE`；DPI 必须沿用这个 mask 阻止首段流量被提前接管。
 - 当前 shared L7 hook 的生命周期由 `natflow_l7_init()/exit()` 触发，URL/DPI hook ops、内核 hook 签名兼容包装、PPPoE normalize/restore、基础 conntrack 过滤、packet view 构造、`NATFLOW_L7_CONSUMER_URL/DPI_DOMAIN/DPI_PACKET` mask 和 packet dispatcher 已由 `natflow_l7.c` 持有：统一注册 IPv4、IPv6 和 bridge `FORWARD` hook，优先级 `NF_IP_PRI_FILTER + 5`。当前 active mask 按 `urllogger_store/enable` 发布 URL consumer，按 DPI enable 直接发布静态 host 和固定 protocol packet consumer；入口先用 `natflow_session_in()` 统一确保 URL/DPI 共享同一个 `natflow_t.status`，再扣除对应 done bit 并分发。底层数据面中，L7 dispatcher 已直接处理 TCP HTTP/TLS producer、UDP/443 QUIC producer 和 DPI packet-view consumer，并通过 `natflow_urllogger_consume_host_view()` 或 DPI-only host classifier fan-out。HTTP/TLS/QUIC host fan-out 已通过 `natflow_l7_host_view` 固化 source、host、URI 和 HTTP method 输入 contract，legacy URL consumer 只在本地映射 URL flags、DPI event source 和 ACL 回复策略。DPI packet-view consumer 的 L4/payload 输入由 L7 producer 统一填充，包含 payload 总长度和已线性化的有界前缀长度。
 - 当前 `urllogger_store_enable=0` 时 URL consumer 不加入 active mask，因此 URL event 和 Host ACL 不会执行；DPI enabled 时 DPI host consumer 独立复用同一 L7 hook 解析 HTTP/TLS/QUIC host，不要求存在 domain rule。
@@ -242,7 +242,7 @@ struct natflow_dpi_flow {
 - `app_id=0` 永久表示 unknown、未命中、未分类或尚无结果。
 - 非 0 表示当前连接由内置分类器识别出固定应用。
 - `app_id` 是唯一常驻分类结果。
-- packet/byte counter 和 16 位 automaton word 作为 8 字节瞬态 context 保存在 `natflow_t`；`rule_id`、generation、proto、evidence、confidence、reason 和 policy action 不进入常驻分类结果。
+- packet/byte counter 和存放于对齐 32 位 word 低半部的 16 位 automaton 编码作为 8 字节有效瞬态状态保存在 `natflow_t`；`rule_id`、generation、proto、evidence、confidence、reason 和 policy action 不进入常驻分类结果。
 - 不在 flow 中保存 host、URI、payload、证书、名称字符串或指针。
 - 不使用 `skb->mark` 或 `ct->mark` 保存 DPI 结果，避免覆盖 QoS、tc 和用户态既有语义。
 - writer 在 matched 结果时先写 `app_id`，DPI packet terminal 先清 `NF_FF_DPI_USE` 和瞬态字段，再由 L7 写 packet done；active consumer 全部 done 后清 `NF_FF_L7_USE` 并设置 L7_SKIP hint。
@@ -365,7 +365,7 @@ enum natflow_dpi_direction_mode {
 
 ### 9.1 Context key
 
-方向预算和 compact automaton 状态直接使用 `natflow_t` 尾部的 8 字节有界 context，不分配 parser cache，也不引入全局 conntrack registry。纯单包 `ORIGINAL_ONLY` detector 可以不置 `NF_FF_DPI_USE`；需要等待后续方向或 packet 的 detector 才发布 context owner。当前 RDP、SOCKS 和 WhatsApp machine 使用原子 16 位 word 保存 claimed machine/state，不保存 payload。
+方向预算和 compact automaton 状态直接使用 `natflow_t` 尾部的有界 context，不分配 parser cache，也不引入全局 conntrack registry。纯单包 `ORIGINAL_ONLY` detector 可以不置 `NF_FF_DPI_USE`；需要等待后续方向或 packet 的 detector 才发布 context owner。当前 RDP、SOCKS 和 WhatsApp machine 使用自然对齐的原子 32 位 word 保存低 16 位 claimed machine/state 编码，不保存 payload。
 
 若后续确实引入 context，其可保存：
 
@@ -713,7 +713,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - 已完成 MVP：增加 `events_clear` 测试辅助命令，用于清空已排队 match event 并重置 `events*` shadow 统计和 `proto_*` reason 统计，不改变 enable 状态或固定 catalog revision。
 - 已完成基础设施：packet view 增加 direction、当前 packet `sport/dport` 和 client/server port helper；reply 只准入 DPI packet consumer。
 - 已完成基础设施：DNS 与 payload detector 使用静态 metadata 声明 L4、方向模式和双向预算；DNS query/response 第一问共享有界 compression pointer walker，最多跳转 16 次并拒绝环和越界。
-- 已完成基础设施：`natflow_t` 内置 8 字节 bounded context，使用 `NF_FF_DPI_USE`、双向 packet/byte counter 和 16 位 discovery/claimed automaton word 保持 packet consumer pending。
+- 已完成基础设施：`natflow_t` 内置 bounded context，使用 `NF_FF_DPI_USE`、双向 packet/byte counter 和存放于对齐 32 位 word 低半部的 16 位 discovery/claimed automaton 编码保持 packet consumer pending。
 - 已完成基础设施：放开 reply packet consumer，保持所有 URL/domain host consumer original-only。
 - 已完成 M2 准备项：DPI event ABI v3 保持 original tuple 作为连接身份，并增加独立 `evidence_dir` 记录实际命中 packet 方向。
 - 已完成 M2 准备项：match 与 event queue 交付统计解耦，补充 domain、双向 packet 和 bounded context 累计 counters；不维护会要求 conntrack 销毁回调或全局 registry 的 active-context gauge。
@@ -810,7 +810,7 @@ M3 若需要缓存 policy generation，必须另立持久状态设计；MVP flow
 - legacy URL logger、Host ACL、sysctl 和二进制事件行为不回退。
 - `NF_FF_L7_USE` 正常阻止 fast path 提前接管 shared L7 selected flow，URL/DPI-domain/DPI-packet done bit 保证任一 consumer 失败或完成不会提前关闭另一个 consumer；DPI 瞬态 context 使用 `NF_FF_DPI_USE`。
 - 正常 terminal/error 路径按状态机写 reason 并清 owner bit；运行时 disable、规则变化和 module exit 不负责清理已标记连接。
-- flow 分类结果只有 `app_id`；`natflow_t` 内另有 8 字节瞬态预算上下文，其他分类细节在 event 中输出。
+- flow 分类结果只有 `app_id`；`natflow_t` 内另有 8 字节有效瞬态预算状态，使用 12 字节对齐尾部存储，其他分类细节在 event 中输出。
 - unknown/error/resource exhaustion 默认 fail-open。
 - 新增 DPI ABI 有版本、长度、generation、IPv6、reason、overflow 和 read/poll 语义。
 - 构建矩阵和 parser/legacy/gate 回归通过，或明确记录当前环境缺失的验证项。
