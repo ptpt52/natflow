@@ -1029,11 +1029,13 @@ natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 
 	ret = nf_conntrack_in_compat(&init_net, PF_INET, NF_INET_PRE_ROUTING, uskb);
 	if (ret != NF_ACCEPT) {
+		skb_nfct_reset(uskb);
 		return NULL;
 	}
 	user = nf_ct_get(uskb, &ctinfo);
 
 	if (!user) {
+		skb_nfct_reset(uskb);
 		return NULL;
 	}
 
@@ -1126,11 +1128,13 @@ natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3,
 
 	ret = nf_conntrack_in_compat(&init_net, AF_INET6, NF_INET_PRE_ROUTING, uskb);
 	if (ret != NF_ACCEPT) {
+		skb_nfct_reset(uskb);
 		return NULL;
 	}
 	user = nf_ct_get(uskb, &ctinfo);
 
 	if (!user) {
+		skb_nfct_reset(uskb);
 		return NULL;
 	}
 
@@ -1235,6 +1239,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 
 			ret = nf_conntrack_in_compat(&init_net, PF_INET, NF_INET_PRE_ROUTING, uskb);
 			if (ret != NF_ACCEPT) {
+				skb_nfct_reset(uskb);
 				return NULL;
 			}
 			user = nf_ct_get(uskb, &ctinfo);
@@ -1245,6 +1250,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
 				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
 				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.ip, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all), (unsigned int)ctinfo);
+				skb_nfct_reset(uskb);
 				return NULL;
 			}
 
@@ -1295,6 +1301,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 
 			ret = nf_conntrack_in_compat(&init_net, AF_INET6, NF_INET_PRE_ROUTING, uskb);
 			if (ret != NF_ACCEPT) {
+				skb_nfct_reset(uskb);
 				return NULL;
 			}
 			user = nf_ct_get(uskb, &ctinfo);
@@ -1305,6 +1312,7 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 				              &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.dst.u.all),
 				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u.all),
 				              &ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u3.in6, ntohs(ct->tuplehash[IP_CT_DIR_REPLY].tuple.src.u.all), (unsigned int)ctinfo);
+				skb_nfct_reset(uskb);
 				return NULL;
 			}
 
