@@ -443,6 +443,25 @@ static inline struct net_device *nf_bridge_get_physindev_compat(const struct sk_
 #define nf_bridge_get_physindev_compat nf_bridge_get_physindev
 #endif
 
+static inline void natflow_conntrack_get_ht(struct hlist_nulls_head **hash,
+        unsigned int *hsize)
+{
+#if NATFLOW_HAVE_NF_CONNTRACK_GLOBAL_HASH
+	unsigned int size1, size2;
+
+	do {
+		size1 = READ_ONCE(nf_conntrack_htable_size);
+		*hash = READ_ONCE(nf_conntrack_hash);
+		size2 = READ_ONCE(nf_conntrack_htable_size);
+	} while (size1 != size2);
+
+	*hsize = size1;
+#else
+	*hash = init_net.ct.hash;
+	*hsize = init_net.ct.htable_size;
+#endif
+}
+
 static inline void *natflow_ct_ext_krealloc(struct nf_ct_ext *ext, size_t size, gfp_t gfp)
 {
 #if NATFLOW_NF_CONNTRACK_EXT_REPLACE_NEEDS_RCU

@@ -3700,13 +3700,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 			user->status = 1;
 			rcu_read_lock();
 
-#if !NATFLOW_HAVE_NF_CONNTRACK_GLOBAL_HASH
-			ct_hash = init_net.ct.hash;
-			hashsz = init_net.ct.htable_size;
-#else
-			ct_hash = nf_conntrack_hash;
-			hashsz = nf_conntrack_htable_size;
-#endif
+			natflow_conntrack_get_ht(&ct_hash, &hashsz);
 			for (i = user->next_bucket; i < hashsz; i++) {
 				hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
 					ct = nf_ct_tuplehash_to_ctrack(h);
@@ -3893,13 +3887,7 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 		user->status = 1;
 		rcu_read_lock();
 
-#if !NATFLOW_HAVE_NF_CONNTRACK_GLOBAL_HASH
-		ct_hash = init_net.ct.hash;
-		hashsz = init_net.ct.htable_size;
-#else
-		ct_hash = nf_conntrack_hash;
-		hashsz = nf_conntrack_htable_size;
-#endif
+		natflow_conntrack_get_ht(&ct_hash, &hashsz);
 		for (i = user->next_bucket; i < hashsz; i++) {
 			hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
 				ct = nf_ct_tuplehash_to_ctrack(h);
