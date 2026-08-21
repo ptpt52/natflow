@@ -895,6 +895,16 @@ int ip_set_del_dst_ip(const struct net_device *in, const struct net_device *out,
 	return ret;
 }
 
+/*
+ * MAC-only ipset lookups may use a synthetic skb with a valid Ethernet
+ * header but no associated net_device.  Newer kernels reject such skbs
+ * before hash:mac accesses eth_hdr(), so provide an Ethernet identity only
+ * for the duration of the lookup.
+ */
+static struct net_device natflow_ip_set_ether_dev = {
+	.type = ARPHRD_ETHER,
+};
+
 #if NATFLOW_HAVE_IP_SET_STATE_API
 int ip_set_test_src_mac(const struct nf_hook_state *state, struct sk_buff *skb, const char *ip_set_name)
 #else
@@ -906,6 +916,7 @@ int ip_set_test_src_mac(const struct net_device *in, const struct net_device *ou
 	struct ip_set *set;
 	struct ip_set_adt_opt opt;
 	struct xt_action_param par;
+	bool synthetic_dev_attached = false;
 #if NATFLOW_HAVE_IP_SET_STATE_API
 	struct net *net = state->net;
 #elif NATFLOW_HAVE_IP_SET_NET_API
@@ -943,7 +954,16 @@ int ip_set_test_src_mac(const struct net_device *in, const struct net_device *ou
 		return -EINVAL;
 	}
 
+	/* Match the hash:mac Ethernet-header contract on hardened kernels. */
+	if (!skb->dev && skb_mac_header_was_set(skb) &&
+	        skb_mac_header_len(skb) >= ETH_HLEN) {
+		skb->dev = &natflow_ip_set_ether_dev;
+		synthetic_dev_attached = true;
+	}
 	ret = natflow_ip_set_test(set, skb, &par, &opt);
+	/* Synthetic skbs may be reused by other packet paths. */
+	if (synthetic_dev_attached)
+		skb->dev = NULL;
 
 #if NATFLOW_HAVE_IP_SET_NET_API
 	ip_set_put_byindex(net, id);

@@ -119,6 +119,7 @@ Kbuild 对 `natflow_l7.o`、`natflow_dpi.o` 和 `natflow_urllogger.o` 追加
 - `nf_conntrack_find_get` zone 参数差异。
 - `nf_nat_setup_info`、NAT66、`nf_nat_range` API 差异。
 - ipset state API、新旧 `ip_set_test/add/del` 调用形式。
+- 新内核的 `hash:mac` 要求 skb 关联 Ethernet 设备；对于已经设置完整 MAC header、但没有 `skb->dev` 的可信合成 skb，MAC-only 查询会临时关联一个仅提供 `ARPHRD_ETHER` 身份的静态设备，查询结束后恢复原值。真实设备和不完整 MAC header 均不会被替换。
 - `skb_try_make_writable`、`skb_make_writable`、`nf_reset_ct`、`get_random_u32`、`class_create`、sysctl 注册 API 差异。
 - 非 seek 字符设备使用 `natflow_no_llseek()` 保持 `-ESPIPE` 语义，避免依赖不同内核是否暴露 `no_llseek` 符号。
 
