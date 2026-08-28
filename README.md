@@ -486,6 +486,120 @@ struct natflow_userinfo_event_hdr {
 - `ifname` 是以 NUL 结尾的用户侧三层入口设备名，更新规则与文本接口一致。
 - 计数字段与 `/dev/natflow_userinfo_ctl` 文本输出一致；速度字段来自 4 个 2 秒窗口，超过 8 秒无更新时为 0。
 
+### OpenWrt userinfo hotplug 分发
+
+`natflow-auth` 安装并启动 `natflow-userinfo-eventd`。它是
+`/dev/natflow_userinfo_queue` 的唯一 reader：先用 `O_RDWR` 打开队列并设置
+`cache=256`，再同步调用 `/sbin/hotplug-call userinfo`。其他功能应安装
+`/etc/hotplug.d/userinfo/` 消费脚本，不得直接打开队列。
+
+事件动作：
+
+| `ACTION` | 触发时机 | consumer 约定 |
+| --- | --- | --- |
+| `start` | eventd 已打开队列并启用缓存 | 对当前在线用户做一次全量状态协调。 |
+| `reload` | `natflow` UCI 变更或兼容 init reload | 重新读取配置并全量协调，不重启队列 reader。 |
+| `update` | 收到一条 v3 内核事件 | 只处理 `IPADDR` 对应用户。 |
+| `stop` | procd 已停止 eventd 并关闭队列 | 清理 consumer 持有的运行时状态。 |
+
+#### consumer 环境变量
+
+以下变量是 natflow 对 `/etc/hotplug.d/userinfo/` consumer 保证的接口。所有值
+均以环境字符串传递。`start`、`reload`、`stop` 是不带用户信息的生命周期事件，
+只设置 `ACTION` 和 `USERINFO_VERSION`；consumer 不得在这些动作中读取或沿用上次
+`update` 的用户字段。
+
+| 变量 | 可用动作 | 格式与语义 |
+| --- | --- | --- |
+| `ACTION` | 全部 | `start`、`reload`、`update` 或 `stop`。 |
+| `USERINFO_VERSION` | 全部 | 当前固定为十进制字符串 `3`；consumer 应先检查其支持的版本。 |
+| `FAMILY` | `update` | `ipv4` 或 `ipv6`。 |
+| `IPADDR` | `update` | 用户 IPv4/IPv6 文本地址。consumer 应按地址解析，不应依赖 IPv6 压缩形式或字母大小写。 |
+| `MACADDR` | `update` | 大写、冒号分隔的 6 字节 MAC，例如 `00:11:22:AA:BB:FF`。 |
+| `IFNAME` | `update` | 用户侧三层入口接口名；尚未学习到接口时可以为空字符串。 |
+| `DEVICE` | `update` | 与 `IFNAME` 完全相同，供沿用 OpenWrt hotplug 命名习惯的 consumer 使用。 |
+| `AUTH_TYPE` | `update` | 十进制认证类型，取值见前文“认证类型值”。 |
+| `AUTH_STATUS` | `update` | 十进制认证状态，取值见前文“认证状态值”。 |
+| `AUTH_RULE_ID` | `update` | 十进制业务认证规则 ID；未关联规则时可以是 `255`（`INVALID_AUTH_RULE_ID`）。 |
+| `IDLE_TIME` | `update` | 十进制非负整数，单位为秒，语义与 `/dev/natflow_userinfo_ctl` 相同。 |
+| `RX_PACKETS` | `update` | 十进制累计用户下载包数。 |
+| `RX_BYTES` | `update` | 十进制累计用户下载字节数。 |
+| `TX_PACKETS` | `update` | 十进制累计用户上传包数。 |
+| `TX_BYTES` | `update` | 十进制累计用户上传字节数。 |
+| `RX_SPEED_PACKETS` | `update` | 十进制当前用户下载包速率，单位为 packets/s。 |
+| `RX_SPEED_BYTES` | `update` | 十进制当前用户下载字节速率，单位为 Bytes/s。 |
+| `TX_SPEED_PACKETS` | `update` | 十进制当前用户上传包速率，单位为 packets/s。 |
+| `TX_SPEED_BYTES` | `update` | 十进制当前用户上传字节速率，单位为 Bytes/s。 |
+
+累计计数来自 64 位内核字段，可能超过 Lua number 的精确整数范围。只需转发、
+记录或比较大整数的 consumer 应保留原始十进制字符串，不要无条件调用
+`tonumber()`。速度字段来自内核的 2 秒采样窗口；超过 8 秒没有更新时为 `0`。
+
+`/sbin/hotplug-call userinfo` 还会按 OpenWrt 热插拔框架设置以下通用环境：
+
+| 变量 | 当前值与约束 |
+| --- | --- |
+| `HOTPLUG_TYPE` | 固定为 `userinfo`。 |
+| `PATH` | 目标系统的标准可执行文件搜索路径。 |
+| `LOGNAME`、`USER` | 固定为 `root`。 |
+| `DEVICENAME` | 由 `DEVPATH` 派生；natflow userinfo 事件不提供 `DEVPATH`，因此不得用它代替 `IFNAME` 或 `DEVICE`。 |
+
+除上述字段外，不应依赖 eventd 父进程的环境；eventd 使用自定义环境执行
+`hotplug-call`。尤其不要假设 `HOME`、`PWD` 或其他服务环境变量存在。
+
+#### consumer 执行约定
+
+- `hotplug-call` 按文件名顺序在独立子 Shell 中 source 目录内的普通文件；脚本
+  不要求 executable bit，但必须是可被 `/bin/sh` source 的内容。
+- eventd 等待一次 `hotplug-call` 及其中全部 consumer 返回后才处理下一条
+  `update`，因此同一 eventd 内的更新保持队列顺序。consumer 应有明确超时，
+  不应在 hotplug 调用内常驻或执行无界阻塞操作。
+- `reload` 由 procd/兼容 init 在 eventd 之外触发，可能与正在处理的 `update`
+  并发。会修改共享运行时状态或写入带全局缓冲的控制设备时，consumer 必须自行
+  使用文件锁等机制串行全量与增量处理。
+- 单个 consumer 非零退出不会阻止 `hotplug-call` 继续执行后续脚本；OpenWrt
+  脚本也不汇总各 consumer 的退出状态，因此中间脚本失败不一定会传回 eventd。
+  只有整个 `hotplug-call` 最终返回非零时 eventd 才记录 warning，随后仍继续读取
+  和分发事件。需要强一致性的 consumer 应自行记录失败，并在下次 `reload` 时做
+  全量协调。
+- consumer 不得直接打开 `/dev/natflow_userinfo_queue`，否则会与 eventd 的唯一
+  reader 契约冲突。
+
+最小 consumer 示例：
+
+```sh
+#!/bin/sh
+
+PROG=/usr/libexec/example-userinfo-consumer
+
+[ -x "$PROG" ] || exit 0
+[ "$USERINFO_VERSION" = "3" ] || exit 0
+
+case "$ACTION" in
+	start|reload)
+		exec "$PROG" apply-all
+		;;
+	update)
+		[ -n "$IPADDR" ] || exit 0
+		exec "$PROG" apply "$FAMILY" "$IPADDR" "$MACADDR" "$IFNAME"
+		;;
+	stop)
+		exec "$PROG" cleanup
+		;;
+esac
+
+exit 0
+```
+
+simple QoS consumer 位于
+`/etc/hotplug.d/userinfo/10-natflow-simple-qos`。它在 `start/reload` 时读取
+一次 UCI 规则并扫描 `/dev/natflow_userinfo_ctl` 全量应用，在 `update` 时只
+重算单个用户，在 `stop` 时清除当前在线用户的 token control。全量和增量
+执行通过 `/var/lock/natflow-simple-qos.lock` 串行；用户未命中任何启用规则时
+显式写入 `set-token-ctrl <ip> 0 0`，避免配置删除后残留旧限速。保留的
+`/etc/init.d/natflow-simple-qos reload` 仅用于兼容现有 LuCI `ucitrack`，实际
+全量协调仍通过 userinfo hotplug 执行。
+
 C 读者样例：
 
 ```c

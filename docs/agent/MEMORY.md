@@ -1,6 +1,6 @@
 # Natflow 智能体记忆
 
-更新时间：2026-08-18
+更新时间：2026-08-27
 
 本文是给智能体快速恢复上下文的压缩记忆，不替代源码。遇到冲突时以源码为准，并修正文档。
 
@@ -77,6 +77,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - 2026-08-16 DPI M9：NTP/SNMP/RADIUS/LDAP/CoAP 以任一端点端口加结构/长度证据单包终态，TFTP RRQ/WRQ 需要端点 69 且严格 OACK 支持动态 TID，NFS 按 RPC 结构且不限制端口；network parser 先于 STUN，NFS parser 先于 WireGuard/uTP，避免签名碰撞。SNMP/LDAP 复用拒绝 indefinite、超过 4 字节和非最短编码的 BER length helper；SOCKS 只接受 original negotiation + reply。WhatsApp 新前缀在首段至少匹配 2 字节后可跨同方向 payload 补全，Discord/Spotify/Zoom 使用直接 payload 特征；不扩大 `natflow_t`。corpus 共 196 项。
 - 2026-08-17 DPI 本机 DNS 与端口语义：DPI 编译配置增加 IPv4/IPv6 `LOCAL_IN` DNS-only hook；original tuple TCP/UDP dport 53 是唯一入口候选，因此 direct、DNAT/REDIRECT 到本机非 53 监听端口都可解析。FORWARD DNS、QUIC 443 candidate 和所有依赖逻辑服务/应用端口的状态机统一改用 original client/server ports，当前 packet ports 只保留为 header evidence。本机入口只解析 original query、QNAME intent 和 DNS commit，不运行 URL/ACL、HTTP/TLS/QUIC、其他机器或 LOCAL_OUT；UDP 单报文与 TCP FIN/RST 有界收口，TCP 零 payload 不提前完成。`tests/dpi/run-local-dns.sh` 覆盖 IPv4 direct/REDIRECT original tuple 和 counters。
 - `/dev/natflow_userinfo_queue`、`/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 只允许一个 reader，默认 cache 为 0；三者都使用 reader count + cache limit 控制入队，reader 打开时清空残留队列并要求同一个 O_RDWR fd 写入正数 `cache=N` 才缓存新事件，最多缓存 N 条，队列满时丢弃新事件；写入 `cache=0` 或关闭 fd 会关闭缓存并清空未读事件；未知 queue 写命令返回 `-EINVAL`。三个队列 `read()` 空队列都返回 0，不挂起，不返回 partial record；用户 buffer 足够时单次 `read()` 可返回多条完整记录，`poll()` 在有可读事件时返回 readable。URL logger 的 `memsize_limit/memsize/count_limit` sysctl 已废弃，`count` 只观测当前待读 URL 记录数；DPI 不再有固定 1024 事件上限。DPI 事件 `timestamp` 是 uptime 秒数，与 URL logger 一致；事件 ABI 为 v3 固定头，original tuple 的 `family/l4proto/tuple_dir/sport/dport/sip/dip` 保持稳定连接身份，新增 `evidence_dir` 记录实际命中 packet 的 original/reply 方向。URL 输出 v2 `natflow_urllogger_event_hdr` 加不带结尾 NUL 的 `host + uri` payload；userinfo 输出 v3 固定头 `natflow_userinfo_event_hdr`，尾部 `ifname[IFNAMSIZ]` 记录 path 学习到的用户侧三层入口设备，字段语义与 `/dev/natflow_userinfo_ctl` 文本快照一致。
+- 2026-08-27 OpenWrt userinfo 分发：`natflow-userinfo-eventd` 独占 `/dev/natflow_userinfo_queue` 并同步投递 `/sbin/hotplug-call userinfo`；`ACTION=start/reload` 要求 consumer 全量协调当前快照，`update` 携带 v3 用户字段并只处理单用户，`stop` 在 reader 关闭后清理状态。simple QoS 是 hotplug consumer：全量与增量通过文件锁串行，未匹配规则也写 `set-token-ctrl <ip> 0 0`；兼容 `natflow-simple-qos` init 不再持有 daemon。
 - 2026-08-17 DPI 增加流包数兜底：conntrack accounting 实现随 `NF_CONNTRACK` 内建，没有 `CONFIG_NF_CONNTRACK_ACCT` 符号；运行时 sysctl 决定新连接是否有 acct 扩展。acct 存在时双向总包数不超过 256 继续等待，第 257 包清除活跃 `NF_FF_DPI_USE` context、标记 DPI packet done 并增加 `context_cleared_acct_limit`；TCP 零 payload 包只运行该生命周期检查，不进入 payload parser。acct 缺失时仍可能等到 conntrack 销毁。`--packet-limit` 回归覆盖 UDP 256/257 边界、counter reset 和纯 TCP ACK。
 - 慢路径依赖 Linux 原生 Netfilter、conntrack、NAT、路由和 bridge 行为，fast path 不能破坏慢路径回退。
 - 旧内核兼容是项目价值的一部分，修改 API 适配时要确认版本分支。

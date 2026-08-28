@@ -433,6 +433,45 @@ struct natflow_userinfo_event_hdr {
 - `idle_time`、认证字段、计数和速度字段语义与 `/dev/natflow_userinfo_ctl` 文本输出一致。
 - `ifname` 是以 NUL 结尾的用户侧三层入口设备名，字段固定占用 `IFNAMSIZ` 字节。
 
+#### 7.6.1 OpenWrt userinfo eventd 与 hotplug consumer
+
+`natflow-auth` 用户态包以 procd 管理 `natflow-userinfo-eventd`，该进程是
+`natflow_userinfo_queue` 的唯一 reader。启动顺序固定为：
+
+1. `O_RDWR` 打开 queue，并在同一 fd 写入 `cache=256\n`。
+2. 同步投递 `ACTION=start`，由 consumer 自行读取当前快照完成全量协调；
+   由于 queue 已先启用，协调期间的新事件会进入缓存。
+3. `poll()` 等待并批量读取 102 字节 v3 记录，解析后按队列顺序同步投递
+   `ACTION=update`。
+
+每次投递通过 fork/exec 调用 `/sbin/hotplug-call userinfo`，子进程在 exec 前
+关闭继承的 queue fd，父进程等待 hotplug 完成后再处理下一条记录。这样既不
+产生第二个 reader，也不让并行 update 改变事件顺序。二进制字段转成十进制
+环境字符串，MAC 规范成大写冒号格式，IPv4/IPv6 地址保持文本形式；
+`IFNAME` 同时映射到 `DEVICE`。事件 ABI 版本通过 `USERINFO_VERSION=3` 暴露。
+
+procd 的 `natflow` 配置 trigger 投递 `ACTION=reload`，不关闭 reader；
+`service_stopped()` 在 procd 已杀死 eventd 后投递 `ACTION=stop`，避免 consumer
+清理完成后又被旧 reader 的在途 update 恢复。consumer 必须把
+`start/reload/stop` 当作无用户字段的生命周期事件，只在 `update` 使用用户
+字段。对外保证的完整环境变量、值格式、单位、OpenWrt 通用 hotplug 环境和
+consumer 脚本约束集中记录在 `README.md` 的“OpenWrt userinfo hotplug 分发”
+章节；新增或修改环境字段时必须同步更新该接口表和解析测试。
+
+simple QoS 是首个 userinfo hotplug consumer：
+
+- `start/reload`：读取一次 `qos_simple` UCI 规则，扫描
+  `/dev/natflow_userinfo_ctl`，对全部在线用户执行一次 `set-token-ctrl`；扫描显式
+  处理内核用于分片续读的 `EAGAIN`，并拼接 partial line，不能把 `EAGAIN` 当 EOF。
+- `update`：重新读取 UCI，只重算事件中的一个 IPv4/IPv6 用户。
+- `stop`：扫描当前在线用户并把 rx/tx token 都清零。
+- 第一条启用且匹配的规则生效；没有规则匹配时也写入 `0 0` 清除旧值。
+- `apply-all`、单用户 `apply` 和 `cleanup` 共用
+  `/var/lock/natflow-simple-qos.lock`，避免 reload 与 update 并发写
+  `natflow_userinfo_ctl` 的全局半行缓冲。
+- `/etc/init.d/natflow-simple-qos` 不再拥有 daemon，保留启用状态仅供 LuCI
+  `ucitrack` 调用 reload；其启动为空操作，实际服务生命周期由 eventd 持有。
+
 ### 7.7 `/dev/natflow_conntrackinfo_ctl`
 
 读接口：
