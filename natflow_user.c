@@ -1071,6 +1071,12 @@ natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 		return NULL;
 	}
 
+	if (!(IPS_NATFLOW_USER & user->status)) {
+		nf_ct_put(user);
+		skb_nfct_reset(uskb);
+		return NULL;
+	}
+
 	natflow_user_timeout_touch(user);
 
 	/* Update MAC address. */
@@ -1166,6 +1172,12 @@ natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3,
 	 */
 	user = nf_ct_get(uskb, &ctinfo);
 	if (!user || nf_ct_is_dying(user) || !REFCOUNT_inc_not_zero(&user->ct_general.use)) {
+		skb_nfct_reset(uskb);
+		return NULL;
+	}
+
+	if (!(IPS_NATFLOW_USER & user->status)) {
+		nf_ct_put(user);
 		skb_nfct_reset(uskb);
 		return NULL;
 	}
