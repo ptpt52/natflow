@@ -154,8 +154,11 @@ static inline const uint8_t *natflow_get_mac_or_fake(struct sk_buff *skb,
 	if (l3num == AF_INET) {
 		memcpy(&fake_mac[2], &saddr->ip, 4);
 	} else if (l3num == AF_INET6) {
-		u32 hash = jhash2((u32 *)saddr->in6.s6_addr, 4, 0x12345678);
-		memcpy(&fake_mac[2], &hash, 4);
+		u32 hash1 = jhash2((u32 *)saddr->in6.s6_addr, 4, 0x12345678);
+		u32 hash2 = jhash2((u32 *)saddr->in6.s6_addr, 4, 0x87654321);
+		fake_mac[0] = (hash2 & 0xFC) | 0x02;
+		fake_mac[1] = (hash2 >> 8) & 0xFF;
+		memcpy(&fake_mac[2], &hash1, 4);
 	} else {
 		memset(&fake_mac[2], 0, 4);
 	}
