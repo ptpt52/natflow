@@ -155,7 +155,7 @@ static inline const uint8_t *natflow_get_mac_or_fake(struct sk_buff *skb,
 		memcpy(&fake_mac[2], &saddr->ip, 4);
 	} else if (l3num == AF_INET6) {
 		u32 hash1 = jhash2((u32 *)saddr->in6.s6_addr, 4, 0x12345678);
-		u32 hash2 = jhash2((u32 *)saddr->in6.s6_addr, 4, 0x87654321);
+		u32 hash2 = saddr->in6.s6_addr32[0] ^ saddr->in6.s6_addr32[1] ^ saddr->in6.s6_addr32[2] ^ saddr->in6.s6_addr32[3];
 		fake_mac[0] = (hash2 & 0xFC) | 0x02;
 		fake_mac[1] = (hash2 >> 8) & 0xFF;
 		memcpy(&fake_mac[2], &hash1, 4);
