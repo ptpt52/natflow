@@ -41,6 +41,7 @@
 #include <linux/if_pppox.h>
 #include <linux/ppp_defs.h>
 #include <linux/inet.h>
+#include <linux/jhash.h>
 #include <net/addrconf.h>
 #include "natflow.h"
 #include "natflow_common.h"
@@ -139,6 +140,27 @@ static inline unsigned int natflow_user_idle_time(const struct fakeuser_data_t *
 		return 0;
 
 	return (uint32_t)((uint32_t)jiffies - timestamp) / HZ;
+}
+
+static inline const uint8_t *natflow_get_mac_or_fake(struct sk_buff *skb,
+        const union nf_inet_addr *saddr, u_int16_t l3num, uint8_t *fake_mac)
+{
+	if (skb && skb->dev && skb->dev->type == ARPHRD_ETHER && skb_mac_header_was_set(skb)) {
+		return eth_hdr(skb)->h_source;
+	}
+
+	fake_mac[0] = 0x02;
+	fake_mac[1] = 0x00;
+	if (l3num == AF_INET) {
+		memcpy(&fake_mac[2], &saddr->ip, 4);
+	} else if (l3num == AF_INET6) {
+		u32 hash = jhash2((u32 *)saddr->in6.s6_addr, 4, 0x12345678);
+		memcpy(&fake_mac[2], &hash, 4);
+	} else {
+		memset(&fake_mac[2], 0, 4);
+	}
+
+	return fake_mac;
 }
 
 static inline void natflow_user_mac_update(struct fakeuser_data_t *fud,
@@ -286,6 +308,8 @@ static inline void natflow_user_source_refresh(natflow_fakeuser_t *user,
 {
 	unsigned int idle_jiffies;
 	int ifname_updated = 0;
+	uint8_t fake_mac[ETH_ALEN];
+	const uint8_t *macaddr;
 
 	if (READ_ONCE(fud->ifname[0]) == '\0')
 		ifname_updated = natflow_user_ifname_update_from_session(fud, ct,
@@ -299,8 +323,10 @@ static inline void natflow_user_source_refresh(natflow_fakeuser_t *user,
 		return;
 	}
 
-	natflow_user_source_update(fud, eth_hdr(skb)->h_source, ct,
-	                           CTINFO2DIR(ctinfo));
+	macaddr = natflow_get_mac_or_fake(skb, &ct->tuplehash[CTINFO2DIR(ctinfo)].tuple.src.u3,
+	                                  ct->tuplehash[CTINFO2DIR(ctinfo)].tuple.src.l3num, fake_mac);
+
+	natflow_user_source_update(fud, macaddr, ct, CTINFO2DIR(ctinfo));
 	fud->timestamp = jiffies;
 	natflow_user_timeout_touch(user);
 	userinfo_event_queue(user);
@@ -347,6 +373,7 @@ void natflow_user_ingress_ifname_learn(struct sk_buff *skb,
 	struct net_device *dev;
 	struct net_device *master;
 	const uint8_t *macaddr;
+	uint8_t fake_mac[ETH_ALEN];
 
 	if (READ_ONCE(disabled) || !skb || !skb->dev || !saddr)
 		return;
@@ -356,9 +383,8 @@ void natflow_user_ingress_ifname_learn(struct sk_buff *skb,
 	if (!natflow_is_lan_zone(dev) &&
 	        (!master || !natflow_is_lan_zone(master)))
 		return;
-	if (dev->type != ARPHRD_ETHER || !skb_mac_header_was_set(skb))
-		return;
-	macaddr = eth_hdr(skb)->h_source;
+
+	macaddr = natflow_get_mac_or_fake(skb, saddr, l3num, fake_mac);
 
 	if (l3num == AF_INET) {
 		if (ipv4_is_zeronet(saddr->ip) || ipv4_is_loopback(saddr->ip) ||
