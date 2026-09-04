@@ -751,6 +751,7 @@ fakeuser 不是普通用户态对象，而是特殊 conntrack：
 - fakeuser 扩展尾部挂 `fakeuser_data_t`，保存 MAC、源流量入口设备名、认证状态、规则 id、vline LAN 侧标志、速度窗口、token ctrl 等。
 - fakeuser 生命周期依赖 conntrack timeout；默认无流超时 1800 秒。
 - `NATFLOW_FAKEUSER_DADDR` 定义为 `htonl(0x7fffffff)`；实现注释把它作为 fakeuser 专用目的地址，不应与真实业务 tuple 混用。
+- synthetic fakeuser 路径必须把 `nf_conntrack_in()` 和 `nf_conntrack_confirm()` 返回的 conntrack 当作不可信 winner：已确认但没有 `IPS_NATFLOW_USER` 的对象必须在修改 extension 元数据前拒绝；confirm 后必须重新取回 winner，并在读取 fakeuser 尾部或关联 `master` 前再次验证该状态位。
 
 认证状态：
 

@@ -1072,6 +1072,10 @@ natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 		skb_nfct_reset(uskb);
 		return NULL;
 	}
+	if (nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status)) {
+		skb_nfct_reset(uskb);
+		return NULL;
+	}
 	if (natflow_fakeuser_ext_init(user, &fud) != 0) {
 		skb_nfct_reset(uskb);
 		return NULL;
@@ -1174,6 +1178,10 @@ natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3,
 	}
 
 	if (!user->ext) {
+		skb_nfct_reset(uskb);
+		return NULL;
+	}
+	if (nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status)) {
 		skb_nfct_reset(uskb);
 		return NULL;
 	}
@@ -1379,6 +1387,10 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 				}
 			}
 		}
+		if (nf_ct_is_confirmed(user) && !(IPS_NATFLOW_USER & user->status)) {
+			skb_nfct_reset(uskb);
+			return NULL;
+		}
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 		do {
 			struct nf_conntrack_ecache *e = nf_ct_ecache_find(user);
@@ -1398,6 +1410,10 @@ natflow_fakeuser_t *natflow_user_in(struct nf_conn *ct, int dir)
 		 */
 		user = nf_ct_get(uskb, &ctinfo);
 		if (!user || nf_ct_is_dying(user)) {
+			skb_nfct_reset(uskb);
+			return NULL;
+		}
+		if (!(IPS_NATFLOW_USER & user->status)) {
 			skb_nfct_reset(uskb);
 			return NULL;
 		}
