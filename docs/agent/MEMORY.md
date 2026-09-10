@@ -48,6 +48,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - 新内核的 `hash:mac` 会拒绝没有 Ethernet `skb->dev` 的包；`ip_set_test_src_mac()` 仅对已经设置且长度至少为 `ETH_HLEN` 的可信合成 MAC header 临时关联静态 Ethernet 身份，并在同步查询后恢复原 `skb->dev`。真实设备或不完整 MAC header 不会被替换。
 - fakeuser 的 `ifname` 归 user 模块维护且规格依赖 path：普通 TCP/UDP 单播由 user pre hook 通过 `rroute[!dir]` accessor 同步，original 覆盖用户主动连接，外网主动连接在已关联用户后的 LAN reply 方向仅当 fakeuser 地址与 reply 源地址一致时刷新来源，避免 LAN-to-LAN/hairpin 污染，且不进入认证；空 ifname 绕过活动节流先尝试补齐。Ethernet 且 MAC header 有效时记录真实源 MAC；L3-only 入口生成确定性的本地管理单播伪 MAC并写入 `fud->macaddr`，IPv4 为 `02:00:<IPv4 四字节>`，IPv6 由地址 xor 和固定 seed jhash 派生。广播、组播和 ICMP/ICMPv6 保持 NETDEV ingress 原有校验及早退顺序，只在对应分支内由局部包装器独立校验 IP 长度及 IPv4 checksum 后调用 user 专用入口；入口接受 LAN zone 设备或其 bridge slave并使用同一真实/伪 MAC 规则校验已有 fakeuser，只查找、不创建，MAC 不匹配时不更新 ifname，验证后记录原始 `skb->dev` 并在变化时发布事件。ARP 不经过该入口；path 未启用或未启用 NETDEV ingress 时字段允许为空。
 - synthetic fakeuser 创建必须在修改 extension 元数据前拒绝已确认的非 `IPS_NATFLOW_USER` conntrack，并在 `nf_conntrack_confirm()` 后重新读取和验证 winner，之后才能访问 fakeuser 尾部或把它关联为 `master`。
+- `natflow_user_uskbs` 的 per-CPU 缓存由 `__alloc_skb()` 分配，退出时在停止相关 hook 后用 `kfree_skb()` 回收，确保数据区和附属资源一并释放。
 - `natflow_user_get(ct)` 返回 master 链上的借用指针，不增加引用，调用方保持所属 ct 存活且不得直接 put；PRE_ROUTING reply 源地址不匹配时只退出。`natflow_user_find_get[6]()` / `natflow_user_in_get[6]()` 才返回需要 `natflow_user_release_put()` 的独立引用，不能混淆两类接口。
 - IPv4/IPv6 relay 的目标 fakeuser 查找引用必须覆盖所有退出路径；同侧回退内核路由也必须 put，避免逐包泄漏引用。
 - IPv6 ND relay 在接管原包或复制 skb 后，拉取/可写化失败须释放当前 skb 并保留原 verdict；`NF_STOLEN` 原包由模块回收，副本路径不影响内核持有的原包。

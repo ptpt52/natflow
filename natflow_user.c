@@ -5097,7 +5097,7 @@ void natflow_user_exit(void)
 	for_each_possible_cpu(cpu) {
 		struct sk_buff **ptr = per_cpu_ptr(&natflow_user_uskbs, cpu);
 		if (*ptr) {
-			kfree(*ptr);
+			kfree_skb(*ptr);
 			*ptr = NULL;
 		}
 	}

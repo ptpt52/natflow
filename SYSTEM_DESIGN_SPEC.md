@@ -751,6 +751,7 @@ fakeuser 不是普通用户态对象，而是特殊 conntrack：
 - IPv6 fakeuser tuple：源地址为用户 IPv6，目标地址以前缀 `ffff::` 形式构造。
 - fakeuser 扩展尾部挂 `fakeuser_data_t`，保存 MAC、源流量入口设备名、认证状态、规则 id、vline LAN 侧标志、速度窗口、token ctrl 等。
 - fakeuser 生命周期依赖 conntrack timeout；默认无流超时 1800 秒。
+- synthetic fakeuser 使用的 per-CPU skb 由 `__alloc_skb()` 分配，user 模块退出且相关 hook 停止后必须用 `kfree_skb()` 完整回收，不能用 `kfree()` 只释放 skb 本体。
 - `natflow_user_get(ct)` 沿 `ct->master` 链返回借用指针，不增加引用计数；调用方必须保持所属 conntrack 存活，且不得直接对返回值调用 `natflow_user_release_put()`。PRE_ROUTING reply 源地址不匹配时只退出，不释放该借用指针。`natflow_user_find_get[6]()` 和 `natflow_user_in_get[6]()` 返回独立引用，调用方使用后必须释放。
 - `NATFLOW_FAKEUSER_DADDR` 定义为 `htonl(0x7fffffff)`；实现注释把它作为 fakeuser 专用目的地址，不应与真实业务 tuple 混用。
 - synthetic fakeuser 路径必须把 `nf_conntrack_in()` 和 `nf_conntrack_confirm()` 返回的 conntrack 当作不可信 winner：已确认但没有 `IPS_NATFLOW_USER` 的对象必须在修改 extension 元数据前拒绝；confirm 后必须重新取回 winner，并在读取 fakeuser 尾部或关联 `master` 前再次验证该状态位。
