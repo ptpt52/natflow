@@ -880,6 +880,7 @@ static inline int natflow_fakeuser_ext_init(natflow_fakeuser_t *user,
 	return 0;
 }
 
+/* Borrowed from ct's master chain; no reference is acquired for the caller. */
 natflow_fakeuser_t *natflow_user_get(struct nf_conn *ct)
 {
 	natflow_fakeuser_t *user = NULL;
@@ -2228,7 +2229,6 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		if (!user)
 			goto out;
 		if (!natflow_user_matches_flow_source(user, ct, dir)) {
-			natflow_user_release_put(user);
 			goto out;
 		}
 		fud = natflow_fakeuser_data(user);
