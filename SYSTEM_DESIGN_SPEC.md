@@ -467,6 +467,7 @@ simple QoS 是首个 userinfo hotplug consumer：
 - `update`：重新读取 UCI，只重算事件中的一个 IPv4/IPv6 用户。
 - `stop`：扫描当前在线用户并把 rx/tx token 都清零。
 - 第一条启用且匹配的规则生效；没有规则匹配时也写入 `0 0` 清除旧值。
+- `qos_simple` 规则可选 `mac` 字段。存在时先要求事件 MAC 与该字段匹配，再按原有 `user` IP/CIDR 条件匹配；仅有 `mac` 时可在 DHCP/IP 变化后继续绑定同一设备，`mac` 与 `user` 同时存在时为 AND 语义。没有 `mac` 的旧规则保持原有按 IP 行为。
 - `apply-all`、单用户 `apply` 和 `cleanup` 共用
   `/var/lock/natflow-simple-qos.lock`，避免 reload 与 update 并发写
   `natflow_userinfo_ctl` 的全局半行缓冲。

@@ -600,6 +600,20 @@ simple QoS consumer 位于
 `/etc/init.d/natflow-simple-qos reload` 仅用于兼容现有 LuCI `ucitrack`，实际
 全量协调仍通过 userinfo hotplug 执行。
 
+`qos_simple` 可选 `mac` 字段用于按设备 MAC 匹配：
+
+```uci
+config qos_simple 'aabbccddeeff'
+        option mac 'aa:bb:cc:dd:ee:ff'
+        option user ''
+        option rx_rate '131072'
+        option tx_rate '65536'
+        option disabled '0'
+```
+
+存在 `mac` 时，userinfo 事件的 MAC 必须匹配；如果同时存在 `user`，MAC 和 IP/CIDR
+条件都必须匹配。没有 `mac` 的旧规则保持按 IP 的兼容行为。
+
 C 读者样例：
 
 ```c
