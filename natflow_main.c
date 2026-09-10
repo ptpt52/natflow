@@ -34,6 +34,7 @@
 #include <net/tcp.h>
 #include <net/udp.h>
 #include "natflow.h"
+#include "natflow_control.h"
 #include "natflow_common.h"
 #if defined(CONFIG_NATFLOW_PATH)
 #include "natflow_path.h"
@@ -62,7 +63,7 @@ static struct device *natflow_dev;
 static void *natflow_start(struct seq_file *m, loff_t *pos)
 {
 	int n = 0;
-	char *natflow_ctl_buffer = m->private;
+	char *natflow_ctl_buffer = natflow_ctl_seq_buffer(m);
 #if defined(CONFIG_NATFLOW_PATH)
 	unsigned long *lpos = (unsigned long *)natflow_ctl_buffer;
 #endif
@@ -194,45 +195,10 @@ static ssize_t natflow_read(struct file *file, char __user *buf, size_t buf_len,
 	return seq_read(file, buf, buf_len, offset);
 }
 
-static ssize_t natflow_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+static int natflow_apply_line(struct file *file, char *data)
 {
 	int err = 0;
-	int n, l;
-	int cnt = MAX_IOCTL_LEN;
-	static char data[MAX_IOCTL_LEN];
-	static int data_left = 0;
-
-	cnt -= data_left;
-	if (buf_len < cnt)
-		cnt = buf_len;
-
-	if (copy_from_user(data + data_left, buf, cnt) != 0)
-		return -EACCES;
-
-	n = 0;
-	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
-	if (n) {
-		*offset += n;
-		data_left = 0;
-		return n;
-	}
-
-	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
-	l = 0;
-	while (l < cnt && data[l + data_left] != '\n') l++;
-	if (l >= cnt) {
-		data_left += l;
-		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("error: line too long");
-			data_left = 0;
-			return -EINVAL;
-		}
-		goto done;
-	} else {
-		data[l + data_left] = '\0';
-		data_left = 0;
-		l++;
-	}
+	int n;
 
 	if (strncmp(data, "debug=", 6) == 0) {
 		int d;
@@ -354,17 +320,21 @@ static ssize_t natflow_write(struct file *file, const char __user *buf, size_t b
 	}
 
 done:
-	*offset += l;
-	return l;
+	return 0;
 }
 
+
+static ssize_t natflow_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+{
+	return natflow_ctl_seq_write(file, buf, buf_len, offset, natflow_apply_line);
+}
 static int natflow_open(struct inode *inode, struct file *file)
 {
 	int ret;
 	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
-	ret = seq_open_private(file, &natflow_seq_ops, PAGE_SIZE);
+	ret = natflow_ctl_seq_open(file, &natflow_seq_ops);
 	if (ret)
 		return ret;
 
@@ -373,7 +343,7 @@ static int natflow_open(struct inode *inode, struct file *file)
 
 static int natflow_release(struct inode *inode, struct file *file)
 {
-	int ret = seq_release_private(inode, file);
+	int ret = natflow_ctl_seq_release(inode, file);
 	return ret;
 }
 

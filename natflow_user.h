@@ -119,6 +119,7 @@ struct auth_rule_t {
 };
 
 struct auth_conf {
+	u16 magic;
 	unsigned int num;
 	char dst_bypasslist_name[IPSET_MAXNAMELEN];
 	char src_bypasslist_name[IPSET_MAXNAMELEN];

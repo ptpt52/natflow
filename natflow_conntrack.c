@@ -37,6 +37,7 @@
 #include <net/netfilter/nf_conntrack_extend.h>
 #include <net/netfilter/nf_conntrack_acct.h>
 #include "natflow.h"
+#include "natflow_control.h"
 #include "natflow_common.h"
 #include "natflow_conntrack.h"
 
@@ -55,6 +56,7 @@ struct conntrackinfo {
 #define CONNTRACKINFO_DATALEN (CONNTRACKINFO_MEMSIZE - sizeof(struct conntrackinfo))
 
 struct conntrackinfo_user {
+	struct natflow_ctl_input input;
 	struct mutex lock;
 	struct list_head head;
 	unsigned int next_bucket;
@@ -88,45 +90,9 @@ static void conntrackinfo_iterate_cleanup_net(struct net *net,
 #endif
 }
 
-static ssize_t conntrackinfo_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+static int conntrackinfo_apply_line(struct file *file, char *data)
 {
 	int err = 0;
-	int n, l;
-	int cnt = MAX_IOCTL_LEN;
-	static char data[MAX_IOCTL_LEN];
-	static int data_left = 0;
-
-	cnt -= data_left;
-	if (buf_len < cnt)
-		cnt = buf_len;
-
-	if (copy_from_user(data + data_left, buf, cnt) != 0)
-		return -EACCES;
-
-	n = 0;
-	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
-	if (n) {
-		*offset += n;
-		data_left = 0;
-		return n;
-	}
-
-	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
-	l = 0;
-	while (l < cnt && data[l + data_left] != '\n') l++;
-	if (l >= cnt) {
-		data_left += l;
-		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("error: line too long");
-			data_left = 0;
-			return -EINVAL;
-		}
-		goto done;
-	} else {
-		data[l + data_left] = '\0';
-		data_left = 0;
-		l++;
-	}
 
 	if (strcmp(data, "kickall") == 0) {
 		if (!ns_capable(init_net.user_ns, CAP_NET_ADMIN))
@@ -142,10 +108,16 @@ static ssize_t conntrackinfo_write(struct file *file, const char __user *buf, si
 	}
 
 done:
-	*offset += l;
-	return l;
+	return 0;
 }
 
+
+static ssize_t conntrackinfo_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+{
+	struct conntrackinfo_user *user = file->private_data;
+
+	return natflow_ctl_write(&user->input, file, buf, buf_len, offset, conntrackinfo_apply_line);
+}
 
 static const char *const sctp_conntrack_names[] = {
 	"NONE",
@@ -601,6 +573,7 @@ static int conntrackinfo_open(struct inode *inode, struct file *file)
 	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
+	natflow_ctl_input_init(&user->input);
 	mutex_init(&user->lock);
 	user->next_bucket = 0;
 	user->count = 0;
@@ -624,6 +597,7 @@ static int conntrackinfo_release(struct inode *inode, struct file *file)
 		kfree(ct_i);
 	}
 
+	mutex_destroy(&user->input.lock);
 	mutex_destroy(&user->lock);
 	kfree(user);
 	return 0;

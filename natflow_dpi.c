@@ -18,6 +18,7 @@
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_acct.h>
 #include "natflow_common.h"
+#include "natflow_control.h"
 #include "natflow_dpi.h"
 #include "natflow_l7.h"
 
@@ -1194,7 +1195,6 @@ static struct class *natflow_dpi_queue_class;
 static struct device *natflow_dpi_queue_dev;
 
 static DEFINE_MUTEX(natflow_dpi_lock);
-static DEFINE_MUTEX(natflow_dpi_write_lock);
 static wait_queue_head_t natflow_dpi_wait;
 static LIST_HEAD(natflow_dpi_event_list);
 static DEFINE_SPINLOCK(natflow_dpi_event_lock);
@@ -1726,7 +1726,7 @@ static bool natflow_dpi_commit_app(struct nf_conn *ct,
 
 static void *natflow_dpi_ctl_start(struct seq_file *m, loff_t *pos)
 {
-	char *buffer = m->private;
+	char *buffer = natflow_ctl_seq_buffer(m);
 	unsigned int i;
 	int n;
 
@@ -1843,15 +1843,25 @@ static const struct seq_operations natflow_dpi_ctl_seq_ops = {
 
 static int natflow_dpi_ctl_open(struct inode *inode, struct file *file)
 {
-	return seq_open_private(file, &natflow_dpi_ctl_seq_ops, PAGE_SIZE);
+	struct seq_file *m;
+	struct natflow_ctl_seq *ctl;
+	int ret = natflow_ctl_seq_open(file, &natflow_dpi_ctl_seq_ops);
+
+	if (ret)
+		return ret;
+	m = file->private_data;
+	ctl = m->private;
+	BUILD_BUG_ON(NATFLOW_DPI_CTL_MAX_LINE > sizeof(ctl->input.data));
+	ctl->input.limit = NATFLOW_DPI_CTL_MAX_LINE;
+	return 0;
 }
 
 static int natflow_dpi_ctl_release(struct inode *inode, struct file *file)
 {
-	return seq_release_private(inode, file);
+	return natflow_ctl_seq_release(inode, file);
 }
 
-static int natflow_dpi_ctl_apply_line(char *data)
+static int natflow_dpi_ctl_apply_line(struct file *file, char *data)
 {
 	int err = 0;
 
@@ -1874,68 +1884,8 @@ static int natflow_dpi_ctl_apply_line(char *data)
 static ssize_t natflow_dpi_ctl_write(struct file *file, const char __user *buf,
                                      size_t buf_len, loff_t *offset)
 {
-	ssize_t ret;
-	int err;
-	int n, l;
-	int cnt = NATFLOW_DPI_CTL_MAX_LINE;
-	static char data[NATFLOW_DPI_CTL_MAX_LINE];
-	static int data_left = 0;
-	int old_data_left;
-
-	mutex_lock(&natflow_dpi_write_lock);
-	old_data_left = data_left;
-	cnt -= data_left;
-	if (buf_len < cnt)
-		cnt = buf_len;
-
-	if (copy_from_user(data + data_left, buf, cnt) != 0) {
-		ret = -EACCES;
-		goto out_unlock;
-	}
-
-	n = 0;
-	if (old_data_left == 0) {
-		while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t'))
-			n++;
-	}
-	if (n) {
-		*offset += n;
-		data_left = 0;
-		ret = n;
-		goto out_unlock;
-	}
-
-	l = 0;
-	while (l < cnt && data[l + data_left] != '\n')
-		l++;
-	if (l >= cnt) {
-		data_left += l;
-		if (data_left >= NATFLOW_DPI_CTL_MAX_LINE) {
-			data_left = 0;
-			ret = -EINVAL;
-			goto out_unlock;
-		}
-		goto done;
-	}
-
-	data[l + data_left] = 0;
-	data_left = 0;
-	l++;
-
-	err = natflow_dpi_ctl_apply_line(data);
-	if (err != 0) {
-		ret = err;
-		goto out_unlock;
-	}
-
-done:
-	*offset += l;
-	ret = l;
-out_unlock:
-	mutex_unlock(&natflow_dpi_write_lock);
-	return ret;
+	return natflow_ctl_seq_write(file, buf, buf_len, offset, natflow_dpi_ctl_apply_line);
 }
-
 static const struct file_operations natflow_dpi_ctl_fops = {
 	.owner = THIS_MODULE,
 	.open = natflow_dpi_ctl_open,

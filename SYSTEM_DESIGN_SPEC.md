@@ -200,16 +200,16 @@ Natflow 分为控制面、策略面、数据面和观测面。
 
 除 `natflow_conntrackinfo_ctl` 的长读逻辑外，大多数字符设备写入均采用同一协议：
 
-- 单条命令最长 `MAX_IOCTL_LEN = 256` 字节。
-- 命令必须以换行 `\n` 结束，否则会暂存在静态 `data[MAX_IOCTL_LEN]` 中等待后续写入。
+- 单条命令最长 `MAX_IOCTL_LEN = 256` 字节，包括换行；DPI control 保留 `NATFLOW_DPI_CTL_MAX_LINE = 512`。
+- 普通 `*_ctl` 命令必须以换行 `\n` 结束，否则暂存在本次 open 的 `natflow_ctl_input` 中；关闭后丢弃，不允许跨 open 拼接。
 - 行过长返回 `-EINVAL` 并丢弃当前缓冲。
-- 开头空格、制表符、换行会被跳过，且会清空未完成行。
+- 仅在没有未完成行时跳过开头空格、制表符、换行；续写的空白保留为命令的一部分。
 - 解析成功时返回本次消费字节数。
 - 未识别命令打印 `ignoring line`，多数情况下仍返回已消费长度；若解析过程中设置了错误码，则返回对应错误。
 - `natflow_userinfo_queue`、`natflow_urllogger_queue` 和 `natflow_dpi_queue` 的写接口共享更窄的缓存数量协议：只接受 `cache=N`，N 为十进制无符号整数。`N > 0` 表示最多缓存 N 条新事件；`cache=0` 关闭缓存并清空未读事件；未知命令返回 `-EINVAL`。
-- 每个设备写缓冲是文件作用域 `static` 变量，不是每个 fd 独立状态；多进程并发写同一设备可能互相污染半行命令。
+- `natflow_control.h` 为 main、zone、auth、userinfo、conntrackinfo、QoS、HostACL、DPI control 提供每次 open 独立的半行缓冲与 mutex；锁覆盖 copy/解析/命令执行和 offset 更新。seq_file 的读缓冲与写缓冲分离；userinfo/conntrackinfo 嵌入各自 private 结构。`dup`/`fork` 共享同一个 open，跨多次 write 拼接仍需调用方串行。三个 queue 保留原有单 reader 与已加锁的缓存数量协议。
 
-AI 重建时必须保留“换行结束、256 字节上限、静态半行缓存”的行为；普通控制设备还应保留“未识别命令只记录日志”的行为，三个 queue 写接口应保留未知命令返回 `-EINVAL` 的严格行为，除非明确作为兼容性破坏项修改。
+AI 重建时必须保留换行结束、上述长度上限、per-open 半行状态和短写返回语义。单次最多执行一行；调用方按返回长度续写。执行错误丢弃当前行，`EAGAIN` 重试完整命令。普通控制设备还应保留“未识别命令只记录日志”的行为，DPI control 和三个 queue 保留未知命令返回 `-EINVAL` 的严格行为。
 
 常见错误返回：
 
@@ -349,7 +349,7 @@ AI 重建时必须保留“换行结束、256 字节上限、静态半行缓存�
 
 | 命令 | 行为 |
 | --- | --- |
-| `clear` | 清空 QoS 规则和 token 组。 |
+| `clear` | 发布规则数为 0 的 QoS 快照；不复位 token bucket 的历史余额/时间。 |
 | `tc_classid_mode=<u>` | 布尔化设置 classid 模式。 |
 | `add user=<addr/set>,user_port=<port/set>,remote=<addr/set>,remote_port=<port/set>,proto=<tcp/udp/>,rxbytes=<u>,txbytes=<u>` | 追加规则。 |
 
@@ -470,7 +470,7 @@ simple QoS 是首个 userinfo hotplug consumer：
 - `qos_simple` 规则可选 `mac` 字段。存在时先要求事件 MAC 与该字段匹配，再按原有 `user` IP/CIDR 条件匹配；仅有 `mac` 时可在 DHCP/IP 变化后继续绑定同一设备，`mac` 与 `user` 同时存在时为 AND 语义。没有 `mac` 的旧规则保持原有按 IP 行为。
 - `apply-all`、单用户 `apply` 和 `cleanup` 共用
   `/var/lock/natflow-simple-qos.lock`，避免 reload 与 update 并发写
-  `natflow_userinfo_ctl` 的全局半行缓冲。
+  `natflow_userinfo_ctl` 时全量与增量策略互相覆盖；控制输入已改为 per-open 缓冲，业务批次仍需串行。
 - `/etc/init.d/natflow-simple-qos` 不再拥有 daemon，保留启用状态仅供 LuCI
   `ucitrack` 调用 reload；其启动为空操作，实际服务生命周期由 eventd 持有。
 
@@ -917,6 +917,8 @@ hash 约束：
 
 ### 13.2 FORWARD
 
+认证规则、数量、bypass 名称和 magic 组成不可变 `auth_conf`。写端在 `auth_conf_lock` 下复制、修改和 `rcu_assign_pointer()` 发布，等待 grace period 后释放旧快照；失败不发布。Netfilter 自身的 RCU 读侧覆盖整个 hook，每次 hook 只取一次快照。seq 的 start/stop 持同一配置 mutex，next 不重复加锁。`clean` 清规则和 bypass 但保留 magic，`update_magic` 仍是显式命令；多条 reload 命令不是原子事务。portal 地址和其他独立标量设置不属于此规则快照。
+
 `natflow_user_forward_hook()`：
 
 1. 若普通 ct 已有 `IPS_NATFLOW_CT_DROP`，丢弃。
@@ -941,6 +943,10 @@ hash 约束：
 4. 使用 `IPS_NATFLOW_SKIP_BRIDGE` 避免 bridge 与非 bridge hook 双计数。
 
 ## 14. QoS 算法
+
+规则数组、数量、classid mode 和规则速率组成不可变 `qos_conf`，写端在 `qos_conf_lock` 下复制/修改/发布，等待 RCU grace period 后回收旧配置。匹配在 Netfilter RCU 中使用单份快照；rx/tx token 入口显式持有 RCU 读锁。seq start/stop 用配置 mutex 保证当前迭代期间配置不变。写锁顺序是 per-open input mutex → 对应配置 mutex；数据面不取配置 mutex。
+
+令牌桶的锁、余额和时间仍在独立固定数组中，不能随规则复制。组速率由当前快照作为参数传给 `natflow_token_ctrl()`，余额更新仍在 bucket spinlock 下完成。保持现有 `qos_id` 槽位索引语义，clear/re-add 不强制重新匹配已有连接，也不复位桶余额。规则最多 64 条；保留满容量时忽略追加并返回消费长度的既有行为。认证满 16 条时追加返回 `-ENOMEM`。
 
 匹配方向：
 
@@ -1271,11 +1277,11 @@ path notifier：
 - conntrack ext 布局依赖 `krealloc()` shrink 行为，是明确的低层假设。
 - zone 使用 `dev->name[IFNAMSIZ - 1]` 存储隐藏状态。
 - vline/ifname group/PPPoE 使用 `net_device->flags` 高位存储私有状态，可能与未来内核或驱动私有 flags 冲突。
-- 多数字符设备写入使用静态半行 buffer，多 writer 并发不安全。
+- 普通控制输入使用 per-open buffer 与 mutex；这不保证跨多条命令的配置事务，也不代表其他控制面共享状态均已实现并发安全。
 
 ### 20.2 解析和输入限制
 
-- 控制命令最大 256 字节且必须换行。
+- 普通控制命令最大 256 字节，DPI control 最大 512 字节，均包括结尾换行。
 - auth 规则和 bypass ipset 名称使用固定长度缓冲并会截断到 `IPSET_MAXNAMELEN - 1`；当前不会越界写，但过长输入不会显式报错，用户态仍应校验长度。
 - QoS set 名称最多 15 字节。
 - vline endpoint 名最多 15 字节。

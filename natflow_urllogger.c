@@ -40,6 +40,7 @@
 #include <net/udp.h>
 #include <net/ip6_checksum.h>
 #include "natflow_common.h"
+#include "natflow_control.h"
 #include "natflow_dpi.h"
 #include "natflow_l7.h"
 #include "natflow_urllogger.h"
@@ -1647,7 +1648,7 @@ static struct ctl_table_header *urllogger_table_header = NULL;
 static void *hostacl_seq_entry(struct seq_file *m, loff_t *pos)
 {
 	int n = 0;
-	char *hostacl_ctl_buffer = m->private;
+	char *hostacl_ctl_buffer = natflow_ctl_seq_buffer(m);
 
 	if ((*pos) == 0) {
 		struct acl_redirect_config *redirect;
@@ -1730,45 +1731,10 @@ static const struct seq_operations hostacl_seq_ops = {
 	.show = hostacl_show,
 };
 
-static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+static int hostacl_apply_line(struct file *file, char *data)
 {
 	int err = 0;
-	int n, l;
-	int cnt = MAX_IOCTL_LEN;
-	static char data[MAX_IOCTL_LEN];
-	static int data_left = 0;
-
-	cnt -= data_left;
-	if (buf_len < cnt)
-		cnt = buf_len;
-
-	if (copy_from_user(data + data_left, buf, cnt) != 0)
-		return -EACCES;
-
-	n = 0;
-	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
-	if (n) {
-		*offset += n;
-		data_left = 0;
-		return n;
-	}
-
-	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
-	l = 0;
-	while (l < cnt && data[l + data_left] != '\n') l++;
-	if (l >= cnt) {
-		data_left += l;
-		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("error: line too long");
-			data_left = 0;
-			return -EINVAL;
-		}
-		goto done;
-	} else {
-		data[l + data_left] = '\0';
-		data_left = 0;
-		l++;
-	}
+	int n;
 
 	if (strncmp(data, "clear", 5) == 0) {
 		acl_rule_clear();
@@ -1835,10 +1801,14 @@ static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t b
 	}
 
 done:
-	*offset += l;
-	return l;
+	return 0;
 }
 
+
+static ssize_t hostacl_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+{
+	return natflow_ctl_seq_write(file, buf, buf_len, offset, hostacl_apply_line);
+}
 static ssize_t hostacl_read(struct file *file, char __user *buf, size_t buf_len, loff_t *offset)
 {
 	return seq_read(file, buf, buf_len, offset);
@@ -1850,7 +1820,7 @@ static int hostacl_open(struct inode *inode, struct file *file)
 	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
-	ret = seq_open_private(file, &hostacl_seq_ops, PAGE_SIZE);
+	ret = natflow_ctl_seq_open(file, &hostacl_seq_ops);
 	if (ret)
 		return ret;
 	return 0;
@@ -1858,7 +1828,7 @@ static int hostacl_open(struct inode *inode, struct file *file)
 
 static int hostacl_release(struct inode *inode, struct file *file)
 {
-	int ret = seq_release_private(inode, file);
+	int ret = natflow_ctl_seq_release(inode, file);
 	return ret;
 }
 

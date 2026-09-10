@@ -23,6 +23,7 @@
 #include <linux/highmem.h>
 #include "natflow_zone.h"
 #include "natflow_common.h"
+#include "natflow_control.h"
 
 static int natflow_zone_major = 0;
 static int natflow_zone_minor = 0;
@@ -175,7 +176,7 @@ static inline struct zone_match_t *natflow_zone_match_get(int idx)
 static void *natflow_zone_start(struct seq_file *m, loff_t *pos)
 {
 	int n = 0;
-	char *natflow_zone_ctl_buffer = m->private;
+	char *natflow_zone_ctl_buffer = natflow_ctl_seq_buffer(m);
 
 	if ((*pos) == 0) {
 		n = snprintf(natflow_zone_ctl_buffer,
@@ -251,46 +252,11 @@ static ssize_t natflow_zone_read(struct file *file, char __user *buf, size_t buf
 	return seq_read(file, buf, buf_len, offset);
 }
 
-static ssize_t natflow_zone_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+static int natflow_zone_apply_line(struct file *file, char *data)
 {
 	int err = 0;
-	int n, l;
-	int cnt = MAX_IOCTL_LEN;
+	int n;
 	struct zone_match_t zm;
-	static char data[MAX_IOCTL_LEN];
-	static int data_left = 0;
-
-	cnt -= data_left;
-	if (buf_len < cnt)
-		cnt = buf_len;
-
-	if (copy_from_user(data + data_left, buf, cnt) != 0)
-		return -EACCES;
-
-	n = 0;
-	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
-	if (n) {
-		*offset += n;
-		data_left = 0;
-		return n;
-	}
-
-	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
-	l = 0;
-	while (l < cnt && data[l + data_left] != '\n') l++;
-	if (l >= cnt) {
-		data_left += l;
-		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("error: line too long");
-			data_left = 0;
-			return -EINVAL;
-		}
-		goto done;
-	} else {
-		data[l + data_left] = '\0';
-		data_left = 0;
-		l++;
-	}
 
 	if (strncmp(data, "clean", 5) == 0) {
 		natflow_zone_cleanup();
@@ -333,17 +299,21 @@ static ssize_t natflow_zone_write(struct file *file, const char __user *buf, siz
 	}
 
 done:
-	*offset += l;
-	return l;
+	return 0;
 }
 
+
+static ssize_t natflow_zone_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+{
+	return natflow_ctl_seq_write(file, buf, buf_len, offset, natflow_zone_apply_line);
+}
 static int natflow_zone_open(struct inode *inode, struct file *file)
 {
 	int ret;
 	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
-	ret = seq_open_private(file, &natflow_zone_seq_ops, PAGE_SIZE);
+	ret = natflow_ctl_seq_open(file, &natflow_zone_seq_ops);
 	if (ret)
 		return ret;
 	return 0;
@@ -351,7 +321,7 @@ static int natflow_zone_open(struct inode *inode, struct file *file)
 
 static int natflow_zone_release(struct inode *inode, struct file *file)
 {
-	int ret = seq_release_private(inode, file);
+	int ret = natflow_ctl_seq_release(inode, file);
 	return ret;
 }
 

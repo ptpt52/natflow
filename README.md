@@ -223,13 +223,14 @@ echo 1 >/proc/sys/urllogger_store/enable
 
 这些字符设备大多采用相同的控制协议：
 
-- 单行命令最大 `256` 字节。
+- 单行命令最大 `256` 字节（包括结尾换行）；DPI 控制设备保留 `512` 字节上限。
 - 一条命令必须以 `\n` 结束。
 - `cat /dev/*_ctl` 通常会输出 usage 和可重放配置。
 - 未识别命令多数情况下只写内核日志并返回已消费字节；三个 `natflow_*_queue` 的写接口只接受 `cache=N`，未识别命令返回 `-EINVAL`。
 - `natflow_userinfo_ctl` 支持 partial read，用户 buffer 小于单条记录时会分多次读取完成。三个 `natflow_*_queue` 不会拆分单条记录；用户 buffer 小于单条记录时返回 `-EINVAL`，buffer 足够时一次 `read()` 可返回多条完整记录。
 - `/dev/natflow_userinfo_queue`、`/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应以 `O_RDWR` 打开并保持 fd，写入 `cache=N\n` 设置最多缓存 N 条事件后才会缓存新事件；写入 `cache=0\n` 会关闭缓存并清空未读事件。
-- 多个 writer 并发写同一控制设备时，半行缓存可能互相干扰；生产脚本应串行写入。
+- 普通 `*_ctl` 设备按每次 `open` 独立保存半行，关闭时丢弃；不能在不同 fd 上拼接一条命令。同一 open 经 `dup`/`fork` 共享的 fd 使用同一缓冲，单次写入串行，但多次写入组成的命令仍需调用方串行。
+- `write()` 可能只消费前导空白或一行，应按返回长度继续写剩余字节；`EAGAIN` 重试完整命令。跨多条命令的配置重载不是事务，生产脚本仍应串行整个重载过程。
 
 ## 对外接口总览
 
@@ -380,6 +381,7 @@ cat /dev/natflow_user_ctl
 认证规则限制：
 
 - 最多 16 条 auth 规则。
+- 认证规则、bypass 名单名称和 magic 按命令发布为只读快照，并发清空/追加不会读到半条规则；`clean`/追加不会自动更新 magic，仍由 `update_magic` 显式触发。
 - `id` 是业务规则 ID；`szone` 匹配 `/dev/natflow_zone_ctl` 中的 LAN zone id。
 - `type=auto` 命中后直接进入通过状态；`type=web` 命中后进入待认证状态。
 - `sipgrp`、`ipwhite`、`macwhite` 都是 ipset 名称。
@@ -555,7 +557,7 @@ struct natflow_userinfo_event_hdr {
   `update`，因此同一 eventd 内的更新保持队列顺序。consumer 应有明确超时，
   不应在 hotplug 调用内常驻或执行无界阻塞操作。
 - `reload` 由 procd/兼容 init 在 eventd 之外触发，可能与正在处理的 `update`
-  并发。会修改共享运行时状态或写入带全局缓冲的控制设备时，consumer 必须自行
+  并发。会修改共享运行时状态或执行跨多条控制命令的配置更新时，consumer 必须自行
   使用文件锁等机制串行全量与增量处理。
 - 单个 consumer 非零退出不会阻止 `hotplug-call` 继续执行后续脚本；OpenWrt
   脚本也不汇总各 consumer 的退出状态，因此中间脚本失败不一定会传回 eventd。
@@ -813,6 +815,7 @@ echo 'add user=<user>,user_port=<user_port>,remote=<remote>,remote_port=<remote_
 - `proto` 支持 `tcp`、`udp` 或空字段。
 - `rxbytes`、`txbytes` 单位是 Bytes/s。
 - 最多 64 条规则。
+- 规则、数量、classid mode 和速率按命令发布为只读快照；并发读写不访问半更新规则。`clear` 不复位令牌桶余额，已有连接仍使用原 `qos_id` 槽位；规则重载不是跨命令事务。
 
 示例：
 

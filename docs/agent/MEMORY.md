@@ -1,6 +1,6 @@
 # Natflow 智能体记忆
 
-更新时间：2026-08-27
+更新时间：2026-09-11
 
 本文是给智能体快速恢复上下文的压缩记忆，不替代源码。遇到冲突时以源码为准，并修正文档。
 
@@ -35,12 +35,15 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 | `natflow_zone.c/.h` | LAN/WAN zone 规则、设备 zone 标记、zone notifier。 |
 | `natflow_conntrack.c/.h` | `/dev/natflow_conntrackinfo_ctl` conntrack dump；`kickall` 清理 `init_net` 中除 fakeuser 和 NATCAP peer 外的已确认 conntrack。 |
 | `natflow_compat.h` | 跨内核版本 API 差异兼容。 |
+| `natflow_control.h` | 普通控制设备 per-open 半行解析、同 open 写锁、独立 seq 读缓冲。 |
 | `docs/agent/DPI_IMPLEMENTATION_CHECKLIST.md` | DPI/L7 实现阶段的每步自审基线，覆盖 legacy URL/Host ACL、conntrack layout、fast path gate 和 DPI ABI。 |
 
 ## 长期约束
 
 - 源码是最高优先级事实来源，`SYSTEM_DESIGN_SPEC.md` 是反向整理的长期规格。
 - 字符设备命令大多要求单行命令以 `\n` 结束，单条命令长度上限为 `MAX_IOCTL_LEN = 256`。
+- 普通 `*_ctl` 半行按 open 隔离、关闭即丢弃；同 open（含 dup/fork）写锁覆盖 copy/parse/apply。DPI control 保留 512 字节上限，其他 control 为 256（含换行）；三个 queue 单 reader 协议不变。短写按消费长度续写，`EAGAIN` 重试完整命令；跨 write 拼接和跨命令 reload 的业务顺序仍由调用者保证。
+- auth 的规则/数量/bypass/magic 与 QoS 的规则/数量/classid/速率分别为不可变 RCU 快照，写端按各自 mutex 克隆发布并等待 grace period 后回收；seq start/stop 持配置 mutex。Netfilter hook 使用外层 RCU，rx/tx token 入口显式取 RCU。锁序 input mutex → config mutex；数据面不取 mutex。auth 的 `update_magic` 仍手动触发；QoS bucket 不随快照复制，速率作为参数传入原 bucket 锁保护的更新，保留 qos_id 槽位复用和 clear 不复位余额的语义。portal 独立设置不属于 auth 规则快照。
 - `/dev/natflow_conntrackinfo_ctl` 的精确 `kickall` 命令要求 `init_net` 的 `CAP_NET_ADMIN`，通过内核 cleanup iterator 同步删除除 `IPS_NATFLOW_USER` 和 `IPS_NATCAP_PEER` 外的已确认 conntrack；普通业务流即使关联 fakeuser 仍会删除，fakeuser/NATCAP peer 对象自身保留。
 - `/dev/natflow_userinfo_ctl` 的 `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数；timestamp 创建/获取 fakeuser 时写入，user pre hook 中普通活动最多每 32 秒刷新一次，新连接包超过 2 秒可刷新；不要用当前 `no_flow_timeout` 和 conntrack 剩余超时反推。
 - path 默认关闭，通常通过 `/dev/natflow_ctl` 的 `disabled=0` 开启。

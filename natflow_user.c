@@ -44,6 +44,7 @@
 #include <linux/jhash.h>
 #include <net/addrconf.h>
 #include "natflow.h"
+#include "natflow_control.h"
 #include "natflow_common.h"
 #include "natflow_user.h"
 #include "natflow_zone.h"
@@ -342,20 +343,12 @@ static const char * const natflow_user_dev_name = "natflow_user_ctl";
 static struct class *natflow_user_class;
 static struct device *natflow_user_dev;
 
-static uint16_t auth_conf_magic = 0;
+/* Published configurations are immutable. Writers clone under their mutex. */
+static DEFINE_MUTEX(auth_conf_lock);
+static struct auth_conf auth_conf_empty;
+static struct auth_conf __rcu *auth_config = &auth_conf_empty;
 
-static inline void auth_conf_update_magic(int init)
-{
-	if (init) {
-		auth_conf_magic = jiffies;
-	} else {
-		auth_conf_magic++;
-	}
-}
-
-static struct auth_conf *auth_conf = NULL;
-
-static inline int auth_rule_add_one(struct auth_rule_t *rule)
+static inline int auth_rule_add_one(struct auth_conf *auth_conf, const struct auth_rule_t *rule)
 {
 	if (auth_conf->num < MAX_AUTH) {
 		memcpy(&auth_conf->auth[auth_conf->num], rule, sizeof(struct auth_rule_t));
@@ -499,7 +492,7 @@ typedef union {
 	} ip6cidr;
 } qos_addr_field_t;
 
-static struct qos_rule {
+struct qos_rule {
 	qos_addr_field_t user;
 	u_int16_t user_l3num;
 
@@ -539,10 +532,17 @@ static struct qos_rule {
 
 	unsigned int rxbytes;
 	unsigned int txbytes;
-} qos_token_ctrl_rule[QOS_TOKEN_CTRL_GROUP_MAX];
+};
 
-static unsigned int tc_classid_mode = 0;
-static int qos_token_ctrl_num = 0;
+struct qos_conf {
+	unsigned int num;
+	unsigned int tc_classid_mode;
+	struct qos_rule rules[QOS_TOKEN_CTRL_GROUP_MAX];
+};
+
+static DEFINE_MUTEX(qos_conf_lock);
+static struct qos_conf qos_conf_empty;
+static struct qos_conf __rcu *qos_config = &qos_conf_empty;
 
 static int qos_parse_addr_token(const char *p, union nf_inet_addr *addr, u_int16_t *l3num, unsigned int *prefix_len, int *is_cidr)
 {
@@ -662,15 +662,14 @@ static void qos_token_ctrl_init(void)
 
 	memset(&qos_token_ctrl, 0, sizeof(*qos_token_ctrl) * QOS_TOKEN_CTRL_GROUP_MAX);
 
-	memset(&qos_token_ctrl_rule, 0, sizeof(*qos_token_ctrl_rule) * QOS_TOKEN_CTRL_GROUP_MAX);
-
 	for (i = 0; i < QOS_TOKEN_CTRL_GROUP_MAX; i++) {
 		spin_lock_init(&qos_token_ctrl[i].rx.lock);
 		spin_lock_init(&qos_token_ctrl[i].tx.lock);
 	}
 }
 
-static int natflow_token_ctrl(struct sk_buff *skb, struct token_ctrl *tc)
+static int natflow_token_ctrl(struct sk_buff *skb, struct token_ctrl *tc,
+                              unsigned int tokens_per_jiffy)
 {
 	int feed_jiffies = 0;
 	unsigned int current_jiffies = (unsigned int)jiffies;
@@ -678,6 +677,8 @@ static int natflow_token_ctrl(struct sk_buff *skb, struct token_ctrl *tc)
 	int len = skb->len;
 	struct iphdr *iph = ip_hdr(skb);
 	void *l4;
+
+	if (tokens_per_jiffy == 0) return 0;
 
 	if (iph->version == 4) {
 		l4 = (void *)iph + iph->ihl * 4;
@@ -705,8 +706,6 @@ static int natflow_token_ctrl(struct sk_buff *skb, struct token_ctrl *tc)
 
 	if (len <= 0) return 0;
 
-	if (tc->tokens_per_jiffy == 0) return 0;
-
 	spin_lock_bh(&tc->lock);
 	if (tc->tokens > 0) {
 		tc->tokens -= len;
@@ -720,7 +719,7 @@ static int natflow_token_ctrl(struct sk_buff *skb, struct token_ctrl *tc)
 		feed_jiffies = HZ/8 + 1;
 	}
 
-	ret = tc->tokens + (int)(tc->tokens_per_jiffy * feed_jiffies);
+	ret = tc->tokens + (int)(tokens_per_jiffy * feed_jiffies);
 
 	if (feed_jiffies <= HZ) {
 		tc->tokens = ret;
@@ -745,42 +744,50 @@ out:
 
 int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf)
 {
+	const struct qos_conf *qos_conf;
 	int ret = 0;
 
-	if (tc_classid_mode && nf && nf->qos_id) {
+	rcu_read_lock();
+	qos_conf = rcu_dereference(qos_config);
+	if (qos_conf->tc_classid_mode && nf && nf->qos_id) {
 		skb->mark = nf->qos_id * 2 - 1;
+		rcu_read_unlock();
 		return 0;
 	}
 
-	if (nf && nf->qos_id && nf->qos_id <= qos_token_ctrl_num) {
-		ret = natflow_token_ctrl(skb, &qos_token_ctrl[nf->qos_id - 1].rx);
-	}
+	if (nf && nf->qos_id && nf->qos_id <= qos_conf->num)
+		ret = natflow_token_ctrl(skb, &qos_token_ctrl[nf->qos_id - 1].rx,
+		                         qos_conf->rules[nf->qos_id - 1].rxbytes / HZ);
+	rcu_read_unlock();
 
-	if (fud->tc.rx.tokens_per_jiffy == 0 || ret < 0) {
+	if (ret < 0)
 		return ret;
-	}
-
-	return natflow_token_ctrl(skb, &fud->tc.rx);
+	return natflow_token_ctrl(skb, &fud->tc.rx,
+	                          READ_ONCE(fud->tc.rx.tokens_per_jiffy));
 }
 
 int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf)
 {
+	const struct qos_conf *qos_conf;
 	int ret = 0;
 
-	if (tc_classid_mode && nf && nf->qos_id) {
+	rcu_read_lock();
+	qos_conf = rcu_dereference(qos_config);
+	if (qos_conf->tc_classid_mode && nf && nf->qos_id) {
 		skb->mark = nf->qos_id * 2;
+		rcu_read_unlock();
 		return 0;
 	}
 
-	if (nf && nf->qos_id && nf->qos_id <= qos_token_ctrl_num) {
-		ret = natflow_token_ctrl(skb, &qos_token_ctrl[nf->qos_id - 1].tx);
-	}
+	if (nf && nf->qos_id && nf->qos_id <= qos_conf->num)
+		ret = natflow_token_ctrl(skb, &qos_token_ctrl[nf->qos_id - 1].tx,
+		                         qos_conf->rules[nf->qos_id - 1].txbytes / HZ);
+	rcu_read_unlock();
 
-	if (fud->tc.tx.tokens_per_jiffy == 0 || ret < 0) {
+	if (ret < 0)
 		return ret;
-	}
-
-	return natflow_token_ctrl(skb, &fud->tc.tx);
+	return natflow_token_ctrl(skb, &fud->tc.tx,
+	                          READ_ONCE(fud->tc.tx.tokens_per_jiffy));
 }
 
 static unsigned int auth_open_weixin_reply = 0;
@@ -2159,6 +2166,8 @@ static unsigned int natflow_user_pre_hook(void *priv,
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
 	const struct net_device *br_in = NULL;
 #endif
+	/* Netfilter holds the RCU read lock throughout this hook invocation. */
+	const struct auth_conf *auth_conf = rcu_dereference(auth_config);
 	struct fakeuser_data_t *fud;
 	natflow_fakeuser_t *user;
 	struct nf_conn *ct;
@@ -2243,14 +2252,14 @@ static unsigned int natflow_user_pre_hook(void *priv,
 	fud = natflow_fakeuser_data(user);
 
 	if ( fud->auth_status == AUTH_NONE ||
-	        (fud->auth_rule_magic != auth_conf_magic && fud->auth_status != AUTH_OK && fud->auth_status != AUTH_VIP && fud->auth_status != AUTH_BLOCK) ) {
+	        (fud->auth_rule_magic != auth_conf->magic && fud->auth_status != AUTH_OK && fud->auth_status != AUTH_VIP && fud->auth_status != AUTH_BLOCK) ) {
 		int i;
 		int zid = natflow_zone_id_get_safe(in);
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
 		int br_zid = natflow_zone_id_get_safe(br_in);
 #endif
 
-		fud->auth_rule_magic = auth_conf_magic;
+		fud->auth_rule_magic = auth_conf->magic;
 		fud->auth_type = AUTH_TYPE_UNKNOWN;
 		fud->auth_rule_id = INVALID_AUTH_RULE_ID;
 
@@ -2422,6 +2431,9 @@ static unsigned int natflow_user_forward_hook(void *priv,
 	const struct net_device *out = state->out;
 #endif
 #endif
+	/* Netfilter holds the RCU read lock throughout this hook invocation. */
+	const struct auth_conf *auth_conf = rcu_dereference(auth_config);
+	const struct qos_conf *qos_conf = rcu_dereference(qos_config);
 	natflow_t *nf = NULL;
 	struct fakeuser_data_t *fud;
 	natflow_fakeuser_t *user;
@@ -2543,8 +2555,8 @@ static unsigned int natflow_user_forward_hook(void *priv,
 
 			simple_set_bit(NF_FF_QOS_TESTED_BIT, &nf->status);
 
-			for (i = 0; i < qos_token_ctrl_num; i++) {
-				struct qos_rule *qr = &qos_token_ctrl_rule[i];
+			for (i = 0; i < qos_conf->num; i++) {
+				const struct qos_rule *qr = &qos_conf->rules[i];
 				if (qr->proto) {
 					if (qr->proto != iph->protocol) {
 						continue;
@@ -2708,8 +2720,8 @@ static unsigned int natflow_user_forward_hook(void *priv,
 
 			simple_set_bit(NF_FF_QOS_TESTED_BIT, &nf->status);
 
-			for (i = 0; i < qos_token_ctrl_num; i++) {
-				struct qos_rule *qr = &qos_token_ctrl_rule[i];
+			for (i = 0; i < qos_conf->num; i++) {
+				const struct qos_rule *qr = &qos_conf->rules[i];
 				if (qr->proto) {
 					if (qr->proto != ip6h->nexthdr) {
 						continue;
@@ -3322,45 +3334,36 @@ static struct nf_hook_ops user_hooks[] = {
 	},
 };
 
-static inline void auth_conf_cleanup(void)
+static inline void auth_conf_cleanup(struct auth_conf *auth_conf)
 {
-	int i;
+	u16 magic = auth_conf->magic;
 
-	/* auth_conf cannot be NULL, otherwise the module does not load. */
-	auth_conf->dst_bypasslist_name[0] = 0;
-	auth_conf->src_bypasslist_name[0] = 0;
-
-	while (auth_conf->num != 0) {
-		i = --auth_conf->num;
-		auth_conf->auth[i].src_ipgrp_name[0] = 0;
-		auth_conf->auth[i].src_whitelist_name[0] = 0;
-		auth_conf->auth[i].mac_whitelist_name[0] = 0;
-	}
+	memset(auth_conf, 0, sizeof(*auth_conf));
+	auth_conf->magic = magic;
 }
 
+/* Called after hooks are quiescent; module references exclude open controls. */
 static inline void auth_conf_exit(void)
 {
-	if (auth_conf != NULL) {
-		auth_conf_cleanup();
-		kfree(auth_conf);
-		auth_conf = NULL;
-	}
+	struct auth_conf *old = rcu_dereference_protected(auth_config, 1);
+	struct qos_conf *qos_old = rcu_dereference_protected(qos_config, 1);
+
+	RCU_INIT_POINTER(auth_config, &auth_conf_empty);
+	RCU_INIT_POINTER(qos_config, &qos_conf_empty);
+	synchronize_rcu();
+	if (old != &auth_conf_empty)
+		kfree(old);
+	if (qos_old != &qos_conf_empty)
+		kfree(qos_old);
 }
 
-static inline int auth_conf_init(void)
+static inline void auth_conf_init(void)
 {
-	auth_conf_update_magic(1);
-
-	auth_conf = kzalloc(sizeof(struct auth_conf), GFP_KERNEL);
-	if (auth_conf == NULL) {
-		return -ENOMEM;
-	}
-
-	return 0;
+	auth_conf_empty.magic = jiffies;
 }
 
 /* Caller must hold the lock. */
-static inline struct auth_rule_t *natflow_auth_rule_get(int idx)
+static inline const struct auth_rule_t *natflow_auth_rule_get(const struct auth_conf *auth_conf, int idx)
 {
 	if (idx < auth_conf->num) {
 		return &(auth_conf->auth[idx]);
@@ -3369,10 +3372,11 @@ static inline struct auth_rule_t *natflow_auth_rule_get(int idx)
 	return NULL;
 }
 
-static void *natflow_user_start(struct seq_file *m, loff_t *pos)
+static void *natflow_user_seq_entry(struct seq_file *m, loff_t *pos)
 {
+	const struct auth_conf *auth_conf = rcu_dereference_protected(auth_config, lockdep_is_held(&auth_conf_lock));
 	int n = 0;
-	char *natflow_user_ctl_buffer = m->private;
+	char *natflow_user_ctl_buffer = natflow_ctl_seq_buffer(m);
 
 	if ((*pos) == 0) {
 		n = snprintf(natflow_user_ctl_buffer,
@@ -3400,7 +3404,7 @@ static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 		             "clean\n"
 		             "\n",
 		             disabled,
-		             auth_conf_magic,
+		             auth_conf->magic,
 		             &redirect_ip,
 		             &redirect_ip6,
 		             natflow_user_timeout,
@@ -3412,7 +3416,7 @@ static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 		natflow_user_ctl_buffer[n] = 0;
 		return natflow_user_ctl_buffer;
 	} else if ((*pos) > 0) {
-		struct auth_rule_t *rule = natflow_auth_rule_get((*pos) - 1);
+		const struct auth_rule_t *rule = natflow_auth_rule_get(auth_conf, (*pos) - 1);
 
 		if (rule) {
 			natflow_user_ctl_buffer[0] = 0;
@@ -3430,17 +3434,24 @@ static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 	return NULL;
 }
 
+static void *natflow_user_start(struct seq_file *m, loff_t *pos)
+{
+	mutex_lock(&auth_conf_lock);
+	return natflow_user_seq_entry(m, pos);
+}
+
 static void *natflow_user_next(struct seq_file *m, void *v, loff_t *pos)
 {
 	(*pos)++;
 	if ((*pos) > 0) {
-		return natflow_user_start(m, pos);
+		return natflow_user_seq_entry(m, pos);
 	}
 	return NULL;
 }
 
 static void natflow_user_stop(struct seq_file *m, void *v)
 {
+	mutex_unlock(&auth_conf_lock);
 }
 
 static int natflow_user_show(struct seq_file *m, void *v)
@@ -3461,49 +3472,14 @@ static ssize_t natflow_user_read(struct file *file, char __user *buf, size_t buf
 	return seq_read(file, buf, buf_len, offset);
 }
 
-static ssize_t natflow_user_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+static int natflow_user_apply_config(struct auth_conf *auth_conf, char *data)
 {
 	int err = 0;
-	int n, l;
-	int cnt = MAX_IOCTL_LEN;
+	int n;
 	struct auth_rule_t *rule;
-	static char data[MAX_IOCTL_LEN];
-	static int data_left = 0;
-
-	cnt -= data_left;
-	if (buf_len < cnt)
-		cnt = buf_len;
-
-	if (copy_from_user(data + data_left, buf, cnt) != 0)
-		return -EACCES;
-
-	n = 0;
-	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
-	if (n) {
-		*offset += n;
-		data_left = 0;
-		return n;
-	}
-
-	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
-	l = 0;
-	while (l < cnt && data[l + data_left] != '\n') l++;
-	if (l >= cnt) {
-		data_left += l;
-		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("error: line too long");
-			data_left = 0;
-			return -EINVAL;
-		}
-		goto done;
-	} else {
-		data[l + data_left] = '\0';
-		data_left = 0;
-		l++;
-	}
 
 	if (strncmp(data, "clean", 10) == 0) {
-		auth_conf_cleanup();
+		auth_conf_cleanup(auth_conf);
 		goto done;
 	} else if (strncmp(data, "disabled=", 9) == 0) {
 		unsigned int a;
@@ -3513,7 +3489,7 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 			goto done;
 		}
 	} else if (strncmp(data, "update_magic", 10) == 0) {
-		auth_conf_update_magic(0);
+		auth_conf->magic++;
 		goto done;
 	} else if (strncmp(data, "dst_bypasslist_name=", 20) == 0) {
 		char buf[IPSET_MAXNAMELEN];
@@ -3596,7 +3572,7 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 					}
 				} while (0);
 				if (err == 0) {
-					if ((err = auth_rule_add_one(rule)) == 0) {
+					if ((err = auth_rule_add_one(auth_conf, rule)) == 0) {
 						kfree(rule);
 						goto done;
 					}
@@ -3659,17 +3635,48 @@ static ssize_t natflow_user_write(struct file *file, const char __user *buf, siz
 	}
 
 done:
-	*offset += l;
-	return l;
+	return 0;
 }
 
+
+static int natflow_user_apply_line(struct file *file, char *data)
+{
+	struct auth_conf *old, *next;
+	int ret;
+
+	mutex_lock(&auth_conf_lock);
+	old = rcu_dereference_protected(auth_config, lockdep_is_held(&auth_conf_lock));
+	next = kmemdup(old, sizeof(*next), GFP_KERNEL);
+	if (!next) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	ret = natflow_user_apply_config(next, data);
+	if (ret || !memcmp(next, old, sizeof(*next))) {
+		kfree(next);
+		goto out;
+	}
+	rcu_assign_pointer(auth_config, next);
+	/* Bound retired memory even during a sustained configuration flood. */
+	synchronize_rcu();
+	if (old != &auth_conf_empty)
+		kfree(old);
+out:
+	mutex_unlock(&auth_conf_lock);
+	return ret;
+}
+
+static ssize_t natflow_user_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+{
+	return natflow_ctl_seq_write(file, buf, buf_len, offset, natflow_user_apply_line);
+}
 static int natflow_user_open(struct inode *inode, struct file *file)
 {
 	int ret;
 	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
-	ret = seq_open_private(file, &natflow_user_seq_ops, PAGE_SIZE);
+	ret = natflow_ctl_seq_open(file, &natflow_user_seq_ops);
 	if (ret)
 		return ret;
 	return 0;
@@ -3677,7 +3684,7 @@ static int natflow_user_open(struct inode *inode, struct file *file)
 
 static int natflow_user_release(struct inode *inode, struct file *file)
 {
-	int ret = seq_release_private(inode, file);
+	int ret = natflow_ctl_seq_release(inode, file);
 	return ret;
 }
 
@@ -3691,6 +3698,7 @@ static const struct file_operations natflow_user_fops = {
 };
 
 struct userinfo_user {
+	struct natflow_ctl_input input;
 	struct mutex lock;
 	struct list_head head;
 	unsigned int next_bucket;
@@ -3707,47 +3715,12 @@ struct userinfo_user {
 #define USERINFO_MEMSIZE ALIGN(sizeof(struct userinfo_user), 2048)
 #define USERINFO_DATALEN (USERINFO_MEMSIZE - sizeof(struct userinfo_user))
 
-static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+static int userinfo_apply_line(struct file *file, char *data)
 {
 	unsigned long end_time = jiffies + msecs_to_jiffies(100);
 	struct userinfo_user *user = file->private_data;
 	int err = 0;
-	int n, l;
-	int cnt = MAX_IOCTL_LEN;
-	static char data[MAX_IOCTL_LEN];
-	static int data_left = 0;
-
-	cnt -= data_left;
-	if (buf_len < cnt)
-		cnt = buf_len;
-
-	if (copy_from_user(data + data_left, buf, cnt) != 0)
-		return -EACCES;
-
-	n = 0;
-	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
-	if (n) {
-		*offset += n;
-		data_left = 0;
-		return n;
-	}
-
-	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
-	l = 0;
-	while (l < cnt && data[l + data_left] != '\n') l++;
-	if (l >= cnt) {
-		data_left += l;
-		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("error: line too long");
-			data_left = 0;
-			return -EINVAL;
-		}
-		goto done;
-	} else {
-		data[l + data_left] = '\0';
-		data_left = 0;
-		l++;
-	}
+	int n;
 
 	if (strncmp(data, "kickall", 7) == 0) {
 		err = mutex_lock_interruptible(&user->lock);
@@ -3895,8 +3868,8 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 			return -ENOENT;
 
 		fud = natflow_fakeuser_data(user);
-		fud->tc.rx.tokens_per_jiffy = rx / HZ;
-		fud->tc.tx.tokens_per_jiffy = tx / HZ;
+		WRITE_ONCE(fud->tc.rx.tokens_per_jiffy, rx / HZ);
+		WRITE_ONCE(fud->tc.tx.tokens_per_jiffy, tx / HZ);
 		if (tx || rx) {
 			set_bit(IPS_NATFLOW_USER_TOKEN_CTRL_BIT, &user->status);
 		} else {
@@ -3913,12 +3886,18 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 	}
 
 done:
-	*offset += l;
-	return l;
+	return 0;
 again:
 	return -EAGAIN;
 }
 
+
+static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+{
+	struct userinfo_user *user = file->private_data;
+
+	return natflow_ctl_write(&user->input, file, buf, buf_len, offset, userinfo_apply_line);
+}
 /* read one and clear one */
 static ssize_t userinfo_read(struct file *file, char __user *buf,
                              size_t count, loff_t *ppos)
@@ -4114,6 +4093,7 @@ static int userinfo_open(struct inode *inode, struct file *file)
 	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
+	natflow_ctl_input_init(&user->input);
 	mutex_init(&user->lock);
 	user->next_bucket = 0;
 	user->count = 0;
@@ -4139,6 +4119,7 @@ static int userinfo_release(struct inode *inode, struct file *file)
 		kfree(user_i);
 	}
 
+	mutex_destroy(&user->input.lock);
 	mutex_destroy(&user->lock);
 	kfree(user);
 	return 0;
@@ -4500,19 +4481,20 @@ static void userinfo_event_exit(void)
 }
 
 /* Caller must hold the lock. */
-static inline struct qos_rule *qos_rule_get(int idx)
+static inline const struct qos_rule *qos_rule_get(const struct qos_conf *qos_conf, int idx)
 {
-	if (idx < qos_token_ctrl_num) {
-		return &(qos_token_ctrl_rule[idx]);
+	if (idx < qos_conf->num) {
+		return &(qos_conf->rules[idx]);
 	}
 
 	return NULL;
 }
 
-static void *qos_start(struct seq_file *m, loff_t *pos)
+static void *qos_seq_entry(struct seq_file *m, loff_t *pos)
 {
+	const struct qos_conf *qos_conf = rcu_dereference_protected(qos_config, lockdep_is_held(&qos_conf_lock));
 	int n = 0;
-	char *natflow_qos_ctl_buffer = m->private;
+	char *natflow_qos_ctl_buffer = natflow_ctl_seq_buffer(m);
 
 	if ((*pos) == 0) {
 		n = snprintf(natflow_qos_ctl_buffer,
@@ -4526,12 +4508,12 @@ static void *qos_start(struct seq_file *m, loff_t *pos)
 		             "# Reload cmd:\n"
 		             "\n"
 		             "clear\n"
-		             "\n", tc_classid_mode
+		             "\n", qos_conf->tc_classid_mode
 		            );
 		natflow_qos_ctl_buffer[n] = 0;
 		return natflow_qos_ctl_buffer;
 	} else if ((*pos) > 0) {
-		struct qos_rule *qr = qos_rule_get((*pos) - 1);
+		const struct qos_rule *qr = qos_rule_get(qos_conf, (*pos) - 1);
 
 		if (qr) {
 			natflow_qos_ctl_buffer[0] = 0;
@@ -4590,17 +4572,24 @@ static void *qos_start(struct seq_file *m, loff_t *pos)
 	return NULL;
 }
 
+static void *qos_start(struct seq_file *m, loff_t *pos)
+{
+	mutex_lock(&qos_conf_lock);
+	return qos_seq_entry(m, pos);
+}
+
 static void *qos_next(struct seq_file *m, void *v, loff_t *pos)
 {
 	(*pos)++;
 	if ((*pos) > 0) {
-		return qos_start(m, pos);
+		return qos_seq_entry(m, pos);
 	}
 	return NULL;
 }
 
 static void qos_stop(struct seq_file *m, void *v)
 {
+	mutex_unlock(&qos_conf_lock);
 }
 
 static int qos_show(struct seq_file *m, void *v)
@@ -4621,54 +4610,19 @@ static ssize_t qos_read(struct file *file, char __user *buf, size_t buf_len, lof
 	return seq_read(file, buf, buf_len, offset);
 }
 
-static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+static int qos_apply_config(struct qos_conf *qos_conf, char *data)
 {
 	int err = 0;
-	int n, l;
-	int cnt = MAX_IOCTL_LEN;
-	static char data[MAX_IOCTL_LEN];
-	static int data_left = 0;
-
-	cnt -= data_left;
-	if (buf_len < cnt)
-		cnt = buf_len;
-
-	if (copy_from_user(data + data_left, buf, cnt) != 0)
-		return -EACCES;
-
-	n = 0;
-	while (n < cnt && (data[n] == ' ' || data[n] == '\n' || data[n] == '\t')) n++;
-	if (n) {
-		*offset += n;
-		data_left = 0;
-		return n;
-	}
-
-	/* Make sure the line ends with '\n' and is no longer than MAX_IOCTL_LEN. */
-	l = 0;
-	while (l < cnt && data[l + data_left] != '\n') l++;
-	if (l >= cnt) {
-		data_left += l;
-		if (data_left >= MAX_IOCTL_LEN) {
-			NATFLOW_println("error: line too long");
-			data_left = 0;
-			return -EINVAL;
-		}
-		goto done;
-	} else {
-		data[l + data_left] = '\0';
-		data_left = 0;
-		l++;
-	}
+	int n;
 
 	if (strncmp(data, "clear", 5) == 0) {
-		qos_token_ctrl_num = 0;
+		qos_conf->num = 0;
 		goto done;
 	} else if (strncmp(data, "tc_classid_mode=", 16) == 0) {
 		unsigned int a;
 		n = sscanf(data, "tc_classid_mode=%u", &a);
 		if (n == 1) {
-			tc_classid_mode = !!a;
+			qos_conf->tc_classid_mode = !!a;
 			goto done;
 		}
 	} else if (strncmp(data, "add user=", 9) == 0) {
@@ -4855,11 +4809,9 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 				}
 			} while (0);
 			if (err == 0) {
-				if (qos_token_ctrl_num < QOS_TOKEN_CTRL_GROUP_MAX) {
-					memcpy(&qos_token_ctrl_rule[qos_token_ctrl_num], qr, sizeof(struct qos_rule));
-					qos_token_ctrl[qos_token_ctrl_num].rx.tokens_per_jiffy = qr->rxbytes / HZ;
-					qos_token_ctrl[qos_token_ctrl_num].tx.tokens_per_jiffy = qr->txbytes / HZ;
-					qos_token_ctrl_num++;
+				if (qos_conf->num < QOS_TOKEN_CTRL_GROUP_MAX) {
+					memcpy(&qos_conf->rules[qos_conf->num], qr, sizeof(struct qos_rule));
+					qos_conf->num++;
 				}
 				kfree(qr);
 				goto done;
@@ -4875,17 +4827,48 @@ static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_l
 	}
 
 done:
-	*offset += l;
-	return l;
+	return 0;
 }
 
+
+static int qos_apply_line(struct file *file, char *data)
+{
+	struct qos_conf *old, *next;
+	int ret;
+
+	mutex_lock(&qos_conf_lock);
+	old = rcu_dereference_protected(qos_config, lockdep_is_held(&qos_conf_lock));
+	next = kmemdup(old, sizeof(*next), GFP_KERNEL);
+	if (!next) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	ret = qos_apply_config(next, data);
+	if (ret || !memcmp(next, old, sizeof(*next))) {
+		kfree(next);
+		goto out;
+	}
+	rcu_assign_pointer(qos_config, next);
+	/* Bound retired memory even during a sustained configuration flood. */
+	synchronize_rcu();
+	if (old != &qos_conf_empty)
+		kfree(old);
+out:
+	mutex_unlock(&qos_conf_lock);
+	return ret;
+}
+
+static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+{
+	return natflow_ctl_seq_write(file, buf, buf_len, offset, qos_apply_line);
+}
 static int qos_open(struct inode *inode, struct file *file)
 {
 	int ret;
 	/* Set nonseekable. */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 
-	ret = seq_open_private(file, &qos_seq_ops, PAGE_SIZE);
+	ret = natflow_ctl_seq_open(file, &qos_seq_ops);
 	if (ret)
 		return ret;
 	return 0;
@@ -4893,7 +4876,7 @@ static int qos_open(struct inode *inode, struct file *file)
 
 static int qos_release(struct inode *inode, struct file *file)
 {
-	int ret = seq_release_private(inode, file);
+	int ret = natflow_ctl_seq_release(inode, file);
 	return ret;
 }
 
@@ -4985,13 +4968,10 @@ int natflow_user_init(void)
 		*ptr = NULL;
 	}
 
+	auth_conf_init();
 	retval = nf_register_hooks(user_hooks, ARRAY_SIZE(user_hooks));
 	if (retval != 0)
 		goto nf_register_hooks_failed;
-
-	retval = auth_conf_init();
-	if (retval != 0)
-		goto auth_conf_init_failed;
 
 	natflow_user_disabled_set(1);
 
@@ -5064,9 +5044,8 @@ class_create_failed:
 cdev_add_failed:
 	unregister_chrdev_region(devno, 1);
 chrdev_region_failed:
-	auth_conf_exit();
-auth_conf_init_failed:
 	nf_unregister_hooks(user_hooks, ARRAY_SIZE(user_hooks));
+	auth_conf_exit();
 nf_register_hooks_failed:
 	return retval;
 }
@@ -5089,9 +5068,9 @@ void natflow_user_exit(void)
 	natflow_user_disabled_set(1);
 	synchronize_rcu();
 
-	auth_conf_exit();
-
 	nf_unregister_hooks(user_hooks, ARRAY_SIZE(user_hooks));
+
+	auth_conf_exit();
 
 
 	for_each_possible_cpu(cpu) {
