@@ -5316,6 +5316,8 @@ out6:
 							}
 
 							if (!pskb_may_pull(skb, skb->len) || skb_try_make_writable(skb, skb->len)) {
+								/* Own either the stolen original or a private copy. */
+								kfree_skb(skb);
 								return ret;
 							}
 							iph = (void *)ipv6_hdr(skb);

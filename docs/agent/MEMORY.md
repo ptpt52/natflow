@@ -50,6 +50,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - synthetic fakeuser 创建必须在修改 extension 元数据前拒绝已确认的非 `IPS_NATFLOW_USER` conntrack，并在 `nf_conntrack_confirm()` 后重新读取和验证 winner，之后才能访问 fakeuser 尾部或把它关联为 `master`。
 - `natflow_user_get(ct)` 返回 master 链上的借用指针，不增加引用，调用方保持所属 ct 存活且不得直接 put；PRE_ROUTING reply 源地址不匹配时只退出。`natflow_user_find_get[6]()` / `natflow_user_in_get[6]()` 才返回需要 `natflow_user_release_put()` 的独立引用，不能混淆两类接口。
 - IPv4/IPv6 relay 的目标 fakeuser 查找引用必须覆盖所有退出路径；同侧回退内核路由也必须 put，避免逐包泄漏引用。
+- IPv6 ND relay 在接管原包或复制 skb 后，拉取/可写化失败须释放当前 skb 并保留原 verdict；`NF_STOLEN` 原包由模块回收，副本路径不影响内核持有的原包。
 - 字符设备初始化必须返回并记录 `class_create()`/`device_create()` 的真实 `PTR_ERR()`；zone/path netdevice notifier 注册返回值必须检查，失败时中止初始化并只回滚已经成功注册的资源。
 - `NETDEV_UNREGISTER` 必须在任何动态分配或 work 排队之前无条件推进 path magic；正常 work 和 allocation/queue failure 的同步 fallback 都要经过 `synchronize_net()`，保证旧 generation 的在途 fast-path 读者退出后才释放设备引用。
 - `CONFIG_NATFLOW_URLLOGGER` 控制 URL logger、Host ACL 和相关 sysctl。
