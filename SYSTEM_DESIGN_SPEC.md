@@ -1171,6 +1171,7 @@ relay：
 - ARP reply 会用 fakeuser MAC 改写 target/dest。
 - 广播/组播/ARP 通常 clone 一份发往 outdev，原包继续。
 - 单播要求目标 fakeuser 存在且在对侧，否则不 relay。
+- IPv4/IPv6 relay 查找目标 fakeuser 获得的独立引用，必须在转发和同侧回退路由两条分支中都释放。
 
 plain vline：
 

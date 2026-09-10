@@ -3516,6 +3516,7 @@ out:
 							natflow_user_release_put(user);
 						} else {
 							/* Go through kernel route path. */
+							natflow_user_release_put(user);
 							return ret;
 						}
 					} else {
@@ -5401,6 +5402,7 @@ out6:
 								natflow_user_release_put(user);
 							} else {
 								/* Go through kernel route path. */
+								natflow_user_release_put(user);
 								return ret;
 							}
 						} else {
