@@ -917,7 +917,7 @@ hash 约束：
 
 ### 13.2 FORWARD
 
-认证规则、数量、bypass 名称和 magic 组成不可变 `auth_conf`。写端在 `auth_conf_lock` 下复制、修改和 `rcu_assign_pointer()` 发布，等待 grace period 后释放旧快照；失败不发布。Netfilter 自身的 RCU 读侧覆盖整个 hook，每次 hook 只取一次快照。seq 的 start/stop 持同一配置 mutex，next 不重复加锁。`clean` 清规则和 bypass 但保留 magic，`update_magic` 仍是显式命令；多条 reload 命令不是原子事务。portal 地址和其他独立标量设置不属于此规则快照。
+认证规则、数量、bypass 名称和 magic 组成不可变 `auth_conf`。只有 `clean`、`update_magic`、bypass 名称和 `auth id=` 命令在 `auth_conf_lock` 下复制、修改并用 `rcu_assign_pointer()` 发布，等待 grace period 后释放旧快照；失败不发布。`disabled`、redirect 地址、timeout、HTTPS/WeChat 开关和未知命令属于独立设置，在 `auth_scalar_lock` 下直接解析，不分配或发布 auth 快照，也不等待 auth 快照的 RCU 回收。Netfilter 自身的 RCU 读侧覆盖整个 hook，每次 hook 只取一次 auth 快照。seq 的 start/stop 按 `auth_conf_lock` → `auth_scalar_lock` 顺序同时持锁，next 不重复加锁；写端经 per-open input mutex 后只持两者之一，因此没有反向双锁路径。`clean` 清规则和 bypass 但保留 magic，`update_magic` 仍是显式命令；多条 reload 命令不是原子事务。
 
 `natflow_user_forward_hook()`：
 

@@ -345,6 +345,8 @@ static struct device *natflow_user_dev;
 
 /* Published configurations are immutable. Writers clone under their mutex. */
 static DEFINE_MUTEX(auth_conf_lock);
+/* Serializes independent settings with control readers and other writers. */
+static DEFINE_MUTEX(auth_scalar_lock);
 static struct auth_conf auth_conf_empty;
 static struct auth_conf __rcu *auth_config = &auth_conf_empty;
 
@@ -3437,6 +3439,7 @@ static void *natflow_user_seq_entry(struct seq_file *m, loff_t *pos)
 static void *natflow_user_start(struct seq_file *m, loff_t *pos)
 {
 	mutex_lock(&auth_conf_lock);
+	mutex_lock(&auth_scalar_lock);
 	return natflow_user_seq_entry(m, pos);
 }
 
@@ -3451,6 +3454,7 @@ static void *natflow_user_next(struct seq_file *m, void *v, loff_t *pos)
 
 static void natflow_user_stop(struct seq_file *m, void *v)
 {
+	mutex_unlock(&auth_scalar_lock);
 	mutex_unlock(&auth_conf_lock);
 }
 
@@ -3472,7 +3476,7 @@ static ssize_t natflow_user_read(struct file *file, char __user *buf, size_t buf
 	return seq_read(file, buf, buf_len, offset);
 }
 
-static int natflow_user_apply_config(struct auth_conf *auth_conf, char *data)
+static int natflow_user_apply_auth_config(struct auth_conf *auth_conf, char *data)
 {
 	int err = 0;
 	int n;
@@ -3481,13 +3485,6 @@ static int natflow_user_apply_config(struct auth_conf *auth_conf, char *data)
 	if (strncmp(data, "clean", 10) == 0) {
 		auth_conf_cleanup(auth_conf);
 		goto done;
-	} else if (strncmp(data, "disabled=", 9) == 0) {
-		unsigned int a;
-		n = sscanf(data, "disabled=%u", &a);
-		if (n == 1) {
-			natflow_user_disabled_set(!!(a));
-			goto done;
-		}
 	} else if (strncmp(data, "update_magic", 10) == 0) {
 		auth_conf->magic++;
 		goto done;
@@ -3581,6 +3578,29 @@ static int natflow_user_apply_config(struct auth_conf *auth_conf, char *data)
 			}
 			kfree(rule);
 		}
+	}
+
+	NATFLOW_println("ignoring line: [%s]", data);
+	if (err != 0) {
+		return err;
+	}
+
+done:
+	return 0;
+}
+
+static int natflow_user_apply_scalar(char *data)
+{
+	int err = 0;
+	int n;
+
+	if (strncmp(data, "disabled=", 9) == 0) {
+		unsigned int a;
+		n = sscanf(data, "disabled=%u", &a);
+		if (n == 1) {
+			natflow_user_disabled_set(!!(a));
+			goto done;
+		}
 	} else if (strncmp(data, "redirect_ip6=", 13) == 0) {
 		struct in6_addr tmp_ip6;
 		if (in6_pton(data + 13, -1, tmp_ip6.s6_addr, '\n', NULL) > 0 ||
@@ -3638,11 +3658,27 @@ done:
 	return 0;
 }
 
+static inline bool natflow_user_line_updates_auth_conf(const char *data)
+{
+	return strncmp(data, "clean", 10) == 0 ||
+	       strncmp(data, "update_magic", 10) == 0 ||
+	       strncmp(data, "dst_bypasslist_name=", 20) == 0 ||
+	       strncmp(data, "src_bypasslist_name=", 20) == 0 ||
+	       strncmp(data, "auth id=", 8) == 0;
+}
+
 
 static int natflow_user_apply_line(struct file *file, char *data)
 {
 	struct auth_conf *old, *next;
 	int ret;
+
+	if (!natflow_user_line_updates_auth_conf(data)) {
+		mutex_lock(&auth_scalar_lock);
+		ret = natflow_user_apply_scalar(data);
+		mutex_unlock(&auth_scalar_lock);
+		return ret;
+	}
 
 	mutex_lock(&auth_conf_lock);
 	old = rcu_dereference_protected(auth_config, lockdep_is_held(&auth_conf_lock));
@@ -3651,7 +3687,7 @@ static int natflow_user_apply_line(struct file *file, char *data)
 		ret = -ENOMEM;
 		goto out;
 	}
-	ret = natflow_user_apply_config(next, data);
+	ret = natflow_user_apply_auth_config(next, data);
 	if (ret || !memcmp(next, old, sizeof(*next))) {
 		kfree(next);
 		goto out;
