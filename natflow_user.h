@@ -148,6 +148,17 @@ extern natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3,
 extern void natflow_user_ingress_ifname_learn(struct sk_buff *skb,
         const union nf_inet_addr *saddr, u_int16_t l3num);
 
+/* Finalize a private reply skb after constructing its headers and checksums. */
+static inline void natflow_tcp_reply_prepare(struct sk_buff *skb, const struct tcphdr *tcph)
+{
+	skb_set_transport_header(skb, (const unsigned char *)tcph - skb->data);
+	skb_shinfo(skb)->gso_size = 0;
+	skb_shinfo(skb)->gso_segs = 0;
+	skb_shinfo(skb)->gso_type = 0;
+	skb->ip_summed = CHECKSUM_NONE;
+	skb->csum = 0;
+}
+
 static inline int natflow_auth_convert_tcprst(struct sk_buff *skb, int bridge)
 {
 	unsigned int thoff, len;

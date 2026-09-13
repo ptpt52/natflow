@@ -1559,7 +1559,7 @@ static inline void natflow_auth_reply_fmt_fin(int max_payload_len, struct sk_buf
 		ph->length = htons(ntohs(ip_hdr(nskb)->tot_len) + 2);
 	}
 	nskb->dev = (struct net_device *)dev;
-	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+	natflow_tcp_reply_prepare(nskb, ntcph);
 	dev_queue_xmit(nskb);
 out:
 	if (pppoe_hdr) {
@@ -1666,7 +1666,7 @@ static inline void natflow_auth_reply_fmt_fin6(int max_payload_len, struct sk_bu
 		ph->length = htons(ntohs(ipv6_hdr(nskb)->payload_len) + sizeof(struct ipv6hdr) + 2);
 	}
 	nskb->dev = (struct net_device *)dev;
-	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+	natflow_tcp_reply_prepare(nskb, ntcph);
 	dev_queue_xmit(nskb);
 out:
 	if (pppoe_hdr) {
@@ -1762,7 +1762,7 @@ static inline void natflow_auth_reply_payload_fin(const char *payload, int paylo
 		ph->length = htons(ntohs(ip_hdr(nskb)->tot_len) + 2);
 	}
 	nskb->dev = (struct net_device *)dev;
-	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+	natflow_tcp_reply_prepare(nskb, ntcph);
 	dev_queue_xmit(nskb);
 out:
 	if (pppoe_hdr) {
@@ -1852,7 +1852,7 @@ static inline void natflow_auth_reply_payload_fin6(const char *payload, int payl
 		ph->length = htons(ntohs(ipv6_hdr(nskb)->payload_len) + sizeof(struct ipv6hdr) + 2);
 	}
 	nskb->dev = (struct net_device *)dev;
-	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+	natflow_tcp_reply_prepare(nskb, ntcph);
 	dev_queue_xmit(nskb);
 out:
 	if (pppoe_hdr) {
@@ -2030,7 +2030,7 @@ static inline void natflow_auth_tcp_reply_finack(const struct net_device *dev, s
 		ph->length = htons(ntohs(ip_hdr(nskb)->tot_len) + 2);
 	}
 	nskb->dev = (struct net_device *)dev;
-	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+	natflow_tcp_reply_prepare(nskb, ntcph);
 
 	dev_queue_xmit(nskb);
 out:
@@ -2116,7 +2116,7 @@ static inline void natflow_auth_tcp_reply_finack6(const struct net_device *dev, 
 		ph->length = htons(ntohs(ipv6_hdr(nskb)->payload_len) + sizeof(struct ipv6hdr) + 2);
 	}
 	nskb->dev = (struct net_device *)dev;
-	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+	natflow_tcp_reply_prepare(nskb, ntcph);
 
 	dev_queue_xmit(nskb);
 out:

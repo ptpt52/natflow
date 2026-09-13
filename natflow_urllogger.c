@@ -798,7 +798,7 @@ static inline void natflow_urllogger_tcp_reply_rstack(const struct net_device *d
 		ph->length = htons(ntohs(ip_hdr(nskb)->tot_len) + 2);
 	}
 	nskb->dev = (struct net_device *)dev;
-	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+	natflow_tcp_reply_prepare(nskb, ntcph);
 
 	dev_queue_xmit(nskb);
 out:
@@ -889,7 +889,7 @@ static inline void natflow_urllogger_tcp_reply_rstack6(const struct net_device *
 		ph->length = htons(ntohs(ipv6_hdr(nskb)->payload_len) + sizeof(struct ipv6hdr) + 2);
 	}
 	nskb->dev = (struct net_device *)dev;
-	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+	natflow_tcp_reply_prepare(nskb, ntcph);
 
 	dev_queue_xmit(nskb);
 out:
@@ -994,7 +994,7 @@ static inline void natflow_urllogger_tcp_reply_302(const struct net_device *dev,
 		ph->length = htons(ntohs(ip_hdr(nskb)->tot_len) + 2);
 	}
 	nskb->dev = (struct net_device *)dev;
-	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+	natflow_tcp_reply_prepare(nskb, ntcph);
 
 	dev_queue_xmit(nskb);
 out:
@@ -1097,7 +1097,7 @@ static inline void natflow_urllogger_tcp_reply_302_v6(const struct net_device *d
 		ph->length = htons(ntohs(ipv6_hdr(nskb)->payload_len) + sizeof(struct ipv6hdr) + 2);
 	}
 	nskb->dev = (struct net_device *)dev;
-	nskb->ip_summed = CHECKSUM_UNNECESSARY;
+	natflow_tcp_reply_prepare(nskb, ntcph);
 
 	dev_queue_xmit(nskb);
 out:

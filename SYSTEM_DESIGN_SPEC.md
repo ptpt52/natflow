@@ -816,6 +816,11 @@ AI 重建实现时必须显式处理 conntrack ext 内存布局，不能把 `nat
 保留并重建 `CHECKSUM_PARTIAL` 种子或重算软件 checksum 并标记 `CHECKSUM_NONE`；
 PPPoE 包同步更新 length。转换失败时调用方丢弃当前包。
 
+认证和 Host ACL 用 `skb_copy_expand()` 构造独立 TCP 回复时，复制会保留原包 GSO 和头部偏移。
+完成回复头部及软件 checksum 后，发送前统一调用 `natflow_tcp_reply_prepare()`：
+按实际 TCP 位置重设 transport header，清除 GSO 分段信息，将 checksum 状态设为 `CHECKSUM_NONE`
+并清零 skb csum，避免短回复继续按原 GRO/GSO 包分段。该 helper 只用于数据区独占且 checksum 已完成的回复。
+
 `natflow_path.h` 提供 fast path 使用的内联改写函数：
 
 - IPv4 SNAT/DNAT 会同时改写 IP 地址、TCP/UDP 端口、IPv4 header checksum 和 L4 checksum。
