@@ -926,7 +926,7 @@ hash 约束：
 3. 初始化 `natflow_t`。
 4. 首次匹配 QoS，设置 `qos_id` 和 `NF_FF_TOKEN_CTRL`。
 5. 根据 fakeuser 认证状态处理：
-   - `AUTH_REQ + WEB`：允许 DNS/DHCP/旁路名单；非 TCP 丢弃；HTTP GET/POST 生成 302；其他数据丢弃；裸 ACK 转 RST。生成 302 响应时，采用静态预格式化模板并使用 `skb_copy_expand` 进行 payload 注入，避免运行时大块内存动态分配。
+   - `AUTH_REQ + WEB`：允许 DNS/DHCP/旁路名单；非 TCP 丢弃；HTTP GET/POST 生成 302；其他数据丢弃；裸 ACK 转 RST。检查 HTTP 前验证 IP/TCP 长度并拉取最多 5 字节 payload；无法准备时丢弃当前包。WeChat 特殊回复先验证并拉取完整 payload，至少有 31 字节才比较 URI，失败时保留后续包重试机会。生成 302 响应时，采用静态预格式化模板并使用 `skb_copy_expand` 进行 payload 注入，避免运行时大块内存动态分配。
    - `AUTH_REQ + AUTO`：转为 `AUTH_OK`。
    - `AUTH_OK`：可处理 WeChat 自动 portal 特例。
    - `AUTH_VIP` / `AUTH_BYPASS`：设置 bypass。

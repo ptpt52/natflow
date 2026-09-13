@@ -376,7 +376,7 @@ cat /dev/natflow_user_ctl
 | `no_flow_timeout=<seconds>` | 设置无流量用户超时。 |
 | `https_redirect_en=0/1` | 开启或关闭 HTTPS redirect。 |
 | `https_redirect_port=<port>` | 设置 HTTPS redirect 端口，合法范围 `0..65535`。 |
-| `auth_open_weixin_reply=0/1` | 控制微信相关自动 portal 回复逻辑。 |
+| `auth_open_weixin_reply=0/1` | 控制微信相关自动 portal 回复逻辑；仅检查长度完整、可读的 HTTP 请求，短 payload 不触发特殊回复。 |
 
 认证规则限制：
 

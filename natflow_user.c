@@ -2395,6 +2395,49 @@ out:
 }
 
 
+/* Return the declared payload length, with at most pull_limit bytes linear. */
+static int natflow_auth_tcp_payload(struct sk_buff *skb, unsigned int family,
+                                    unsigned int pull_limit, unsigned char **data)
+{
+	unsigned int thoff, total_len, tcp_hlen, data_len;
+	struct tcphdr *tcph;
+
+	*data = NULL;
+	if (family == AF_INET) {
+		struct iphdr *iph;
+		if (!pskb_may_pull(skb, sizeof(struct iphdr)))
+			return -EINVAL;
+		iph = ip_hdr(skb);
+		if (iph->version != 4 || iph->ihl < 5 || iph->protocol != IPPROTO_TCP)
+			return -EINVAL;
+		thoff = iph->ihl * 4;
+		total_len = ntohs(iph->tot_len);
+	} else if (family == AF_INET6) {
+		struct ipv6hdr *ip6h;
+		if (!pskb_may_pull(skb, sizeof(struct ipv6hdr)))
+			return -EINVAL;
+		ip6h = ipv6_hdr(skb);
+		if (ip6h->version != 6 || ip6h->nexthdr != IPPROTO_TCP)
+			return -EINVAL;
+		thoff = sizeof(struct ipv6hdr);
+		total_len = thoff + ntohs(ip6h->payload_len);
+	} else {
+		return -EINVAL;
+	}
+	if (total_len > skb->len || total_len < thoff + sizeof(struct tcphdr) ||
+	        !pskb_may_pull(skb, thoff + sizeof(struct tcphdr)))
+		return -EINVAL;
+	tcph = (void *)(skb_network_header(skb) + thoff);
+	tcp_hlen = tcph->doff * 4;
+	if (tcp_hlen < sizeof(struct tcphdr) || total_len < thoff + tcp_hlen)
+		return -EINVAL;
+	data_len = total_len - thoff - tcp_hlen;
+	if (!pskb_may_pull(skb, thoff + tcp_hlen + min(data_len, pull_limit)))
+		return -ENOMEM;
+	*data = skb_network_header(skb) + thoff + tcp_hlen;
+	return data_len;
+}
+
 #if NATFLOW_NF_HOOK_OPS_HAVE_HOOKNUM_ARG
 static unsigned int natflow_user_forward_hook(unsigned int hooknum,
         struct sk_buff *skb,
@@ -2913,8 +2956,13 @@ static unsigned int natflow_user_forward_hook(void *priv,
 					goto out;
 				}
 
-				data = skb->data + (iph->ihl * 4) + (TCPH(l4)->doff * 4);
-				data_len = ntohs(iph->tot_len) - ((iph->ihl * 4) + (TCPH(l4)->doff * 4));
+				data_len = natflow_auth_tcp_payload(skb, AF_INET, 5, &data);
+				if (data_len < 0) {
+					ret = NF_DROP;
+					goto out;
+				}
+				iph = ip_hdr(skb);
+				l4 = (void *)iph + iph->ihl * 4;
 				if ((data_len > 4 && strncasecmp(data, "GET ", 4) == 0) || (data_len > 5 && strncasecmp(data, "POST ", 5) == 0)) {
 					NATFLOW_INFO(DEBUG_TCP_FMT ": sending HTTP 302 redirect dev=%s\n", DEBUG_TCP_ARG(iph, l4), in->name);
 					natflow_auth_http_302(in, skb, user, bridge);
@@ -2968,8 +3016,13 @@ static unsigned int natflow_user_forward_hook(void *priv,
 					goto out;
 				}
 
-				data = skb->data + sizeof(struct ipv6hdr) + (TCPH(l4)->doff * 4);
-				data_len = ntohs(ip6h->payload_len) - (TCPH(l4)->doff * 4);
+				data_len = natflow_auth_tcp_payload(skb, AF_INET6, 5, &data);
+				if (data_len < 0) {
+					ret = NF_DROP;
+					goto out;
+				}
+				ip6h = ipv6_hdr(skb);
+				l4 = (void *)ip6h + sizeof(struct ipv6hdr);
 				if ((data_len > 4 && strncasecmp(data, "GET ", 4) == 0) || (data_len > 5 && strncasecmp(data, "POST ", 5) == 0)) {
 					NATFLOW_INFO(DEBUG_FMT6_TCP ": sending HTTP 302 redirect dev=%s\n", DEBUG_ARG6_TCP(ip6h, l4), in->name);
 					natflow_auth_http_302(in, skb, user, bridge);
@@ -2998,9 +3051,12 @@ static unsigned int natflow_user_forward_hook(void *priv,
 			void *l4 = (void *)iph + iph->ihl * 4;
 
 			if (iph->protocol == IPPROTO_TCP && auth_open_weixin_reply != 0) {
-				data = skb->data + (iph->ihl * 4) + (TCPH(l4)->doff * 4);
-				data_len = ntohs(iph->tot_len) - ((iph->ihl * 4) + (TCPH(l4)->doff * 4));
-				if (data_len > 0) {
+				data_len = natflow_auth_tcp_payload(skb, AF_INET, 65535, &data);
+				if (data_len < 0)
+					goto out;
+				iph = ip_hdr(skb);
+				l4 = (void *)iph + iph->ihl * 4;
+				if (data_len >= 31) {
 					if (TCPH(l4)->dest == __constant_htons(80)) {
 						int i = 0;
 						if (strncasecmp(data, "GET /auto-portal-subscribe.html", 31) == 0) {
