@@ -5544,7 +5544,11 @@ out6:
 							}
 							iph = (void *)ipv6_hdr(skb);
 							l4 = (void *)iph + sizeof(struct ipv6hdr);
-							if (IPV6H->nexthdr != IPPROTO_ICMPV6 || ICMP6H(l4)->icmp6_type != NDISC_NEIGHBOUR_SOLICITATION) {
+							if (IPV6H->nexthdr != IPPROTO_ICMPV6 ||
+							        ICMP6H(l4)->icmp6_type != NDISC_NEIGHBOUR_SOLICITATION ||
+							        ICMP6H(l4)->icmp6_code != 0 || IPV6H->hop_limit != 255 ||
+							        ntohs(IPV6H->payload_len) < 24 ||
+							        ntohs(IPV6H->payload_len) > skb->len - sizeof(struct ipv6hdr)) {
 								break;
 							}
 
@@ -5556,36 +5560,58 @@ out6:
 
 							if (skb->len >= sizeof(struct ipv6hdr) + 8 + 16) {
 								struct ethhdr *eth;
-
-								if (skb->len < sizeof(struct ipv6hdr) + 8 + 16 + 8 &&
-								        pskb_expand_head(skb, skb_headroom(skb), sizeof(struct ipv6hdr) + 8 + 16 + 8 - skb->len, GFP_ATOMIC)) {
-									break;
-								}
-								iph = (void *)ipv6_hdr(skb);
-								l4 = (void *)iph + sizeof(struct ipv6hdr);
-
-								skb->len = sizeof(struct ipv6hdr) + 8 + 16 + 8;
+								unsigned int na_len = sizeof(struct ipv6hdr) + 8 + 16 + 8;
+								int dad;
 
 								ta = l4 + 8;
 								if (!(ta[0] == 0xfe && ta[1] == 0x80 && ta[11] == 0xff && ta[12] == 0xfe)) {
 									break;
 								}
-
+								if (skb->len < na_len) {
+									unsigned int extra = na_len - skb->len;
+									if (skb_tailroom(skb) < extra &&
+									        pskb_expand_head(skb, 0, extra - skb_tailroom(skb), GFP_ATOMIC))
+										return NF_DROP;
+									skb_put(skb, extra);
+								} else {
+									skb_trim(skb, na_len);
+								}
+								iph = (void *)ipv6_hdr(skb);
+								l4 = (void *)iph + sizeof(struct ipv6hdr);
+								ta = l4 + 8;
 								eth = eth_hdr(skb);
+								dad = ipv6_addr_any(&IPV6H->saddr);
 
 								ICMP6H(l4)->icmp6_type = NDISC_NEIGHBOUR_ADVERTISEMENT;
 								ICMP6H(l4)->icmp6_code = 0;
 								ICMP6H(l4)->icmp6_cksum = 0;
 
 								ICMP6H(l4)->icmp6_router = 1;
-								ICMP6H(l4)->icmp6_solicited = 1;
+								ICMP6H(l4)->icmp6_solicited = !dad;
 								ICMP6H(l4)->icmp6_override = 0;
 								ICMP6H(l4)->icmp6_ndiscreserved = 0;
 
-								IPV6H->daddr = IPV6H->saddr;
+								if (dad) {
+									/* DAD has no unicast source: advertise to all nodes. */
+									memset(&IPV6H->daddr, 0, sizeof(IPV6H->daddr));
+									IPV6H->daddr.s6_addr[0] = 0xff;
+									IPV6H->daddr.s6_addr[1] = 0x02;
+									IPV6H->daddr.s6_addr[15] = 0x01;
+								} else {
+									IPV6H->daddr = IPV6H->saddr;
+								}
 								memcpy(&IPV6H->saddr, ta, 16);
+								IPV6H->payload_len = htons(na_len - sizeof(struct ipv6hdr));
+								IPV6H->hop_limit = 255;
 
-								ether_addr_copy(eth->h_dest, eth->h_source);
+								if (dad) {
+									memset(eth->h_dest, 0, ETH_ALEN);
+									eth->h_dest[0] = 0x33;
+									eth->h_dest[1] = 0x33;
+									eth->h_dest[5] = 0x01;
+								} else {
+									ether_addr_copy(eth->h_dest, eth->h_source);
+								}
 								eth->h_source[0] = ta[8] ^ 0x02;
 								eth->h_source[1] = ta[9];
 								eth->h_source[2] = ta[10];
@@ -5593,10 +5619,11 @@ out6:
 								eth->h_source[4] = ta[14];
 								eth->h_source[5] = ta[15];
 
-								ta[16] = 1; /* Type: Source link-layer address. */
+								ta[16] = ND_OPT_TARGET_LL_ADDR;
 								ta[17] = 1; /* Length: 8 bytes. */
 								ether_addr_copy(ta + 18, eth->h_source);
 
+								skb->ip_summed = CHECKSUM_NONE;
 								ICMP6H(l4)->icmp6_cksum = csum_ipv6_magic(&IPV6H->saddr,
 								                          &IPV6H->daddr,
 								                          skb->len - sizeof(struct ipv6hdr),

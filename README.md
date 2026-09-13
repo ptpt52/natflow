@@ -285,6 +285,7 @@ echo 'vline_clear' >/dev/natflow_ctl
 使用限制：
 
 - vline/relay 只在启用 `CONFIG_NETFILTER_INGRESS` 的 fast path 路径中生效。
+- IPv6 plain vline 向 NOARP 设备转发时，可对 EUI-64 link-local 地址的合法 NS 模拟 NA 回复；普通请求回复请求方，DAD 请求回复 all-nodes multicast。
 - 最多缓存 8 条配置。
 - 接口名最长 15 个可见字符，不允许逗号。
 - 两端设备必须在 `init_net` 中存在；桥场景应配置 bridge master，不要配置桥下挂端口。

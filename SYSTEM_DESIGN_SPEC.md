@@ -1216,6 +1216,7 @@ relay：
 plain vline：
 
 - 支持 NOARP 到 Ethernet、Ethernet 到 NOARP 的特殊转换。
+- Ethernet 到 NOARP 的 link-local NS 模拟回复先校验 NS 长度、code、hop-limit 和 EUI-64 target，再通过 tailroom 扩容及 skb_put/trim 构造 NA；同步 IPv6 payload_len、hop-limit、Target LL option 和软件 checksum。DAD（源地址 `::`）回复 all-nodes multicast，并清除 solicited 位。
 - Link-local、ND、组播、非 ND ICMPv6 都有分支处理。
 - 对 LAN 侧且目标属于 outdev 非 link-local prefix 的包会回路由路径。
 - 非 ND ICMPv6 可触发 conntrack。
@@ -1307,7 +1308,6 @@ path notifier：
 - TLS ClientHello 跨多个 TLS record 的场景当前不能完整支持，恶意客户端可利用异常分片降低识别率。
 - QUIC 只覆盖 UDP/443 QUIC v1 Initial 中常见的 CRYPTO/ClientHello SNI；不覆盖 QUIC v2、version negotiation、Retry 后复杂路径、coalesced datagram 后续 packet、稀疏 CRYPTO fragment、HTTP/3 `:authority` 或 ECH 内层域名。
 - URL logger 输出版本化二进制事件，payload 是未 NUL 结尾的 `host + uri`；单次 `read()` 可能返回多条按 `record_len` 拼接的完整记录，用户态必须循环按 `record_len/header_len/host_len` 解析，并处理小 buffer 返回 `-EINVAL` 等限制。
-- plain vline IPv6 Ethernet/NOARP 的 Neighbor Advertisement 构造路径仍直接调整 `skb->len` 并依赖当前 tail/headroom 状态，后续应改为更明确的 skb length/tailroom helper 流程并补充回归测试。
 
 ### 20.3 行为限制
 
