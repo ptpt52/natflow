@@ -820,6 +820,7 @@ PPPoE 包同步更新 length。转换失败时调用方丢弃当前包。
 
 - IPv4 SNAT/DNAT 会同时改写 IP 地址、TCP/UDP 端口、IPv4 header checksum 和 L4 checksum。
 - IPv6 SNAT/DNAT 不存在 IPv6 header checksum，只逐个 32 位分片更新 TCP/UDP pseudo-header checksum，再改写地址。
+- checksum 增量更新时，IP 地址变化传 `pseudohdr=true`，TCP/UDP 端口和 DHCP flags 等 L4 内容变化传 `false`；`CHECKSUM_PARTIAL` 的伪首部种子不随端口或 payload 修改，后续 offload/软件完成 checksum 时计入新内容。
 - UDP checksum 为 0 且 skb 不是 `CHECKSUM_PARTIAL` 时不会强制计算；若更新后 checksum 为 0，会写 `CSUM_MANGLED_0`。
 - IPv6 分支只按固定 IPv6 header 后的 TCP/UDP 头计算，不解析 extension header。
 - 非 TCP/UDP 返回失败或跳过，因此 fast path 建表和命中都围绕 TCP/UDP。

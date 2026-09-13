@@ -3419,7 +3419,7 @@ out:
 											/* Update UDP checksum. */
 											if (UDPH(l4)->check || skb->ip_summed == CHECKSUM_PARTIAL) {
 												inet_proto_csum_replace2(&UDPH(l4)->check, skb, htons(0x0000),
-												                         htons(0x8000), true);
+												                         htons(0x8000), false);
 												if (!UDPH(l4)->check)
 													UDPH(l4)->check = CSUM_MANGLED_0;
 											}
