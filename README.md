@@ -153,6 +153,14 @@ make -f Makefile.dkms install
 make -f Makefile.dkms uninstall
 ```
 
+只验证 DKMS 源码打包及构建，可使用临时目录，无需安装模块：
+
+```sh
+natflow_dkms_test_dir=$(mktemp -d /tmp/natflow-dkms.XXXXXX)
+make -f Makefile.dkms src_install DKMS_DEST="$natflow_dkms_test_dir"
+make -C "$natflow_dkms_test_dir" PWD="$natflow_dkms_test_dir"
+```
+
 加载模块时内核日志会打印 `version=<NATFLOW_VERSION>` 和 major/minor。设备节点通常由内核 device/class 机制创建；如果系统没有自动创建设备节点，请根据 `dmesg` 中打印的 major/minor 手动处理。
 
 ## Warning

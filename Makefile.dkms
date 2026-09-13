@@ -13,6 +13,7 @@ src_install:
 		natflow_common.c \
 		natflow_compat.h \
 		natflow_common.h \
+		natflow_control.h \
 		natflow_conntrack.c \
 		natflow_conntrack.h \
 		natflow_dpi.c \

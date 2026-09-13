@@ -67,7 +67,7 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 DKMS Makefile：
 
 - 版本来自 `natflow_common.h` 的 `NATFLOW_VERSION`，当前为 `1.0.1`。
-- 拷贝源码和头文件到 `/usr/src/natflow-<version>`；复制清单不包含 `natflow.mod.c` 等 Kbuild 生成物。
+- 拷贝源码和头文件到 `/usr/src/natflow-<version>`，包括控制设备共用的 `natflow_control.h`；复制清单不包含 `natflow.mod.c` 等 Kbuild 生成物。
 - 生成的 DKMS Makefile 会把 `#EXTRA_CFLAGS` 行替换为 `EXTRA_CFLAGS = -DCONFIG_NATFLOW_PATH -DCONFIG_NATFLOW_URLLOGGER`。
 - DKMS 安装位置为 `/kernel/drivers/net`，`AUTOINSTALL="yes"`。
 
@@ -1397,7 +1397,7 @@ path notifier：
 构建验证：
 
 - `make EXTRA_CFLAGS="-DCONFIG_NATFLOW_PATH -DCONFIG_NATFLOW_URLLOGGER"`。
-- `make -f Makefile.dkms src_install` 只在可写 `/usr/src` 环境验证。
+- `make -f Makefile.dkms src_install DKMS_DEST=<临时目录>` 后执行 `make -C <临时目录> PWD=<临时目录>`，验证打包源码能独立构建；不要求写入 `/usr/src` 或执行系统 DKMS 安装。
 - 至少在目标内核上验证 `CONFIG_NF_NAT`、conntrack、ipset、bridge netfilter、ingress hook 能力。
 
 接口验证：
