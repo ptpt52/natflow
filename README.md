@@ -1139,6 +1139,8 @@ tuple。TCP SYN、ACK 等零 payload 包不会提前终态，LOCAL_OUT 应答当
 
 reply 方向只进入 DPI packet consumer；URL logger、Host ACL、HTTP/TLS/QUIC host 和 DNS QNAME domain 仍只处理 original。DNS reply 必须通过 response header 和第一问结构校验，其他原生协议机器也必须匹配 payload 证据，端口不会直接产生分类。
 
+TLS/QUIC 跨包解析缓存按地址族和连接地址/端口区分，IPv4 与 IPv6 缓存互不匹配；QUIC 还区分版本和 DCID。
+
 TCP 只有 DPI packet consumer 时，为 App HTTP 输入最多 pull 512 字节；通用原生协议 parser 仍只检查其中前 96 字节。TCP SYN/ACK/keepalive 等零负载包只进入 app/transport/conntrack 包数的轻量生命周期检查，不运行 payload parser，也不增加 `packet_inspect_*`。UDP 通常最多 pull 96 字节，payload 总长为 121..299 字节的爱奇艺候选会 pull 完整 datagram 以执行 `PPStream` 有界搜索。URL 或 DPI domain host consumer 激活时，HTTP/TLS producer 会先将完整 payload 拉取为线性数据；失败时跳过本包 host 解析，DPI packet consumer 仍可使用已准备的有界前缀。
 
 当前 DPI 仍是 audit-only：不执行 drop/reset/QoS，不覆盖 Host ACL、认证或 conntrack drop 结果；未命中、禁用、无对应 parser 或无法创建 natflow session 时 fail-open。L7 shared hook 在解析前会统一调用 `natflow_session_in()` 确保 URL/DPI 共享同一个 `natflow_t.status` 终态存储；若 confirmed、内存或布局限制导致 session 不存在，则跳过本次 L7 解析，不输出无状态 DPI match event，也不写入 `app_id`。protocol-only 命中要求 `app_id=0`，用于避免每包重复事件。

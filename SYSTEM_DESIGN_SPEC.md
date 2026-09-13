@@ -1026,6 +1026,7 @@ DPI 有界前缀，重新获取 packet view 指针后继续独立的 DPI packet 
 7. 解析 TLS SNI：
    - 解析 TLS ClientHello extension type 0。
    - 使用 per-CPU SNI cache 拼接跨包数据。仅缓存纯 payload 数据而非原始 skb，以避免复杂的 ownership/destructor 问题和降低内存占用。
+   - TLS cache key 包含地址族、源/目的地址及端口；IPv4 和 IPv6 不会因地址联合体前四字节相同而互相命中。
    - 单条追加数据小于 32KB。
    - cache 每 CPU 64 个节点，超时 4 秒。attach 新节点时会在遍历过程中主动清理过期节点（cache eviction），避免被过期节点耗尽。
    - TLS record 长度不足但已确认 handshake type 是 ClientHello 时，会继续在已收到字节中探测；若可确认 handshake type 不是 ClientHello，则返回非 ClientHello。
@@ -1037,6 +1038,7 @@ DPI 有界前缀，重新获取 packet view 指针后继续独立的 DPI packet 
    - 使用 QUIC v1 Initial salt 派生 client initial secret，并依赖内核 crypto 的 `hmac(sha256)`、`ecb(aes)` header protection 和 `gcm(aes)` payload 解密。
    - 解密 Initial payload 后解析 CRYPTO frame 中的 TLS ClientHello SNI。
    - 使用 per-CPU QUIC cache 缓存连续 CRYPTO stream 数据。
+   - QUIC cache key 包含地址族、源/目的地址及端口、版本和 DCID；attach 查重与 detach 查找都必须校验地址族。
    - CRYPTO stream 只缓存从 offset 0 开始的连续前缀；offset 大于当前连续长度的片段不会作为稀疏片段保存。
    - 只处理当前 UDP datagram 中解析出的第一个 QUIC packet，不遍历 coalesced datagram 中后续 packet。
    - packet number reconstruction 简化为把解保护后的截断 packet number 当完整 packet number 使用，适合常见首包，不覆盖所有 Initial 重传/高 packet number 场景。

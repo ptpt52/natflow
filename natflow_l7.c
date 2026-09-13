@@ -67,6 +67,7 @@ int natflow_l7_consumer_active(unsigned int consumer)
 
 struct natflow_l7_tls_cache_node {
 	unsigned long active_jiffies;
+	u_int16_t l3num;
 	union {
 		__be32 src_ip;
 		struct in6_addr src_ipv6;
@@ -126,6 +127,7 @@ struct natflow_l7_quic_crypto_ctx {
 
 struct natflow_l7_quic_cache_node {
 	unsigned long active_jiffies;
+	u_int16_t l3num;
 	union {
 		__be32 src_ip;
 		struct in6_addr src_ipv6;
@@ -213,7 +215,8 @@ int natflow_l7_tls_cache_attach(__be32 src_ip, __be16 src_port,
 			               NATFLOW_L7_TLS_CACHE_TIMEOUT * HZ)) {
 				kfree(natflow_l7_tls_cache[i][j].data);
 				natflow_l7_tls_cache[i][j].data = NULL;
-			} else if (natflow_l7_tls_cache[i][j].src_ip == src_ip &&
+			} else if (natflow_l7_tls_cache[i][j].l3num == AF_INET &&
+			           natflow_l7_tls_cache[i][j].src_ip == src_ip &&
 			           natflow_l7_tls_cache[i][j].src_port == src_port &&
 			           natflow_l7_tls_cache[i][j].dst_ip == dst_ip &&
 			           natflow_l7_tls_cache[i][j].dst_port == dst_port) {
@@ -228,6 +231,7 @@ int natflow_l7_tls_cache_attach(__be32 src_ip, __be16 src_port,
 	if (next_to_use == NATFLOW_L7_TLS_CACHE_NODE_MAX)
 		return -ENOMEM;
 
+	natflow_l7_tls_cache[i][next_to_use].l3num = AF_INET;
 	natflow_l7_tls_cache[i][next_to_use].src_ip = src_ip;
 	natflow_l7_tls_cache[i][next_to_use].src_port = src_port;
 	natflow_l7_tls_cache[i][next_to_use].dst_ip = dst_ip;
@@ -258,7 +262,8 @@ int natflow_l7_tls_cache_attach6(const struct in6_addr *src_ip,
 			               NATFLOW_L7_TLS_CACHE_TIMEOUT * HZ)) {
 				kfree(natflow_l7_tls_cache[i][j].data);
 				natflow_l7_tls_cache[i][j].data = NULL;
-			} else if (memcmp(&natflow_l7_tls_cache[i][j].src_ipv6,
+			} else if (natflow_l7_tls_cache[i][j].l3num == AF_INET6 &&
+			           memcmp(&natflow_l7_tls_cache[i][j].src_ipv6,
 			                  src_ip, sizeof(*src_ip)) == 0 &&
 			           natflow_l7_tls_cache[i][j].src_port == src_port &&
 			           memcmp(&natflow_l7_tls_cache[i][j].dst_ipv6,
@@ -275,6 +280,7 @@ int natflow_l7_tls_cache_attach6(const struct in6_addr *src_ip,
 	if (next_to_use == NATFLOW_L7_TLS_CACHE_NODE_MAX)
 		return -ENOMEM;
 
+	natflow_l7_tls_cache[i][next_to_use].l3num = AF_INET6;
 	memcpy(&natflow_l7_tls_cache[i][next_to_use].src_ipv6, src_ip,
 	       sizeof(*src_ip));
 	natflow_l7_tls_cache[i][next_to_use].src_port = src_port;
@@ -307,7 +313,8 @@ unsigned char *natflow_l7_tls_cache_detach(__be32 src_ip, __be16 src_port,
 			               NATFLOW_L7_TLS_CACHE_TIMEOUT * HZ)) {
 				kfree(natflow_l7_tls_cache[i][j].data);
 				natflow_l7_tls_cache[i][j].data = NULL;
-			} else if (natflow_l7_tls_cache[i][j].src_ip == src_ip &&
+			} else if (natflow_l7_tls_cache[i][j].l3num == AF_INET &&
+			           natflow_l7_tls_cache[i][j].src_ip == src_ip &&
 			           natflow_l7_tls_cache[i][j].src_port == src_port &&
 			           natflow_l7_tls_cache[i][j].dst_ip == dst_ip &&
 			           natflow_l7_tls_cache[i][j].dst_port == dst_port) {
@@ -341,7 +348,8 @@ unsigned char *natflow_l7_tls_cache_detach6(const struct in6_addr *src_ip,
 			               NATFLOW_L7_TLS_CACHE_TIMEOUT * HZ)) {
 				kfree(natflow_l7_tls_cache[i][j].data);
 				natflow_l7_tls_cache[i][j].data = NULL;
-			} else if (memcmp(&natflow_l7_tls_cache[i][j].src_ipv6,
+			} else if (natflow_l7_tls_cache[i][j].l3num == AF_INET6 &&
+			           memcmp(&natflow_l7_tls_cache[i][j].src_ipv6,
 			                  src_ip, sizeof(*src_ip)) == 0 &&
 			           natflow_l7_tls_cache[i][j].src_port == src_port &&
 			           memcmp(&natflow_l7_tls_cache[i][j].dst_ipv6,
@@ -748,6 +756,7 @@ static int natflow_l7_quic_cache_match(const struct natflow_l7_quic_cache_node *
                                        const struct natflow_l7_quic_initial_info *info)
 {
 	return node->crypto_data != NULL &&
+	       node->l3num == AF_INET &&
 	       node->src_ip == src_ip &&
 	       node->src_port == src_port &&
 	       node->dst_ip == dst_ip &&
@@ -763,6 +772,7 @@ static int natflow_l7_quic_cache_match6(const struct natflow_l7_quic_cache_node 
                                         const struct natflow_l7_quic_initial_info *info)
 {
 	return node->crypto_data != NULL &&
+	       node->l3num == AF_INET6 &&
 	       memcmp(&node->src_ipv6, src_ip, sizeof(*src_ip)) == 0 &&
 	       node->src_port == src_port &&
 	       memcmp(&node->dst_ipv6, dst_ip, sizeof(*dst_ip)) == 0 &&
@@ -806,6 +816,7 @@ int natflow_l7_quic_cache_attach(__be32 src_ip, __be16 src_port,
 	if (next_to_use == NATFLOW_L7_QUIC_CACHE_NODE_MAX)
 		return -ENOMEM;
 
+	natflow_l7_quic_cache[i][next_to_use].l3num = AF_INET;
 	natflow_l7_quic_cache[i][next_to_use].src_ip = src_ip;
 	natflow_l7_quic_cache[i][next_to_use].src_port = src_port;
 	natflow_l7_quic_cache[i][next_to_use].dst_ip = dst_ip;
@@ -854,6 +865,7 @@ int natflow_l7_quic_cache_attach6(const struct in6_addr *src_ip,
 	if (next_to_use == NATFLOW_L7_QUIC_CACHE_NODE_MAX)
 		return -ENOMEM;
 
+	natflow_l7_quic_cache[i][next_to_use].l3num = AF_INET6;
 	memcpy(&natflow_l7_quic_cache[i][next_to_use].src_ipv6, src_ip,
 	       sizeof(*src_ip));
 	natflow_l7_quic_cache[i][next_to_use].src_port = src_port;
