@@ -98,6 +98,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - 2026-07-12 对 `11824c1..9dbcba7` 的 L7/DPI 收尾确认结论：代码审查未发现阻断问题，`git diff --check HEAD~2..HEAD` 和串行构建矩阵通过，维护者真机测试未发现问题。已覆盖 default、`CONFIG_NATFLOW_URLLOGGER`、`CONFIG_NATFLOW_DPI`、URLLOGGER+DPI、PATH+URLLOGGER+DPI 和 NO_DEBUG PATH+URLLOGGER+DPI 构建面。
 - 2026-07 对 `e3c6601..5430b33` 的提交审核结论：本仓库风格是慢路径保持 Linux 原生语义、fast path 做机会性加速；新增能力后通常继续收紧边界、资源归属、RCU 和 ABI 文档。
 - 包处理路径访问头部前必须先证明数据可读，写 skb 前必须确认可写；`pskb_may_pull()`、`skb_try_make_writable()`、`skb_cow_head()`、trim/csum 后要重新获取 `iph`/`l4`/payload 指针。
+- TCP L7 的完整 host payload 必须先 pull 再可写化；完整 pull 失败也要刷新 view 指针，并保留已拉取的 DPI 前缀供独立 packet consumer 使用，不能把 skb 总长度当作线性长度。
 - 策略模块在等待认证、URL/SNI/QUIC 解析、L7 原生协议机器或 Host ACL 决策时必须设置对应 busy bit，完成后再清除，避免 fast path 提前接管。
 - 控制面写、数据面读的共享对象优先采用“mutex 串行构造新对象 + RCU 发布 + grace period 后释放”的模式；临时 cache、skb/data buffer 必须有清晰唯一 owner，attach 成功后调用方不要再释放。
 - 所有外部输入和内核状态值都按不可信处理：`sscanf` 要有宽度，字符串要保留 NUL，zone id、ifindex、TCP state、QUIC/TLS 长度字段都要先做边界检查。

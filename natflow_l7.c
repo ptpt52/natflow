@@ -1872,7 +1872,8 @@ static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_HOOK_ARGS,
 	total_len = ntohs(iph->tot_len);
 	l4 = (void *)iph + ihl;
 	tcp_hlen = TCPH(l4)->doff * 4;
-	if (tcp_hlen < sizeof(struct tcphdr) || total_len < ihl + tcp_hlen)
+	if (tcp_hlen < sizeof(struct tcphdr) || total_len < ihl + tcp_hlen ||
+	        total_len > skb->len)
 		return ret;
 	data_len = total_len - (ihl + tcp_hlen);
 
@@ -1910,6 +1911,7 @@ static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_HOOK_ARGS,
 	        natflow_l7_host_consumer_mask(view->consumer_mask) == 0) {
 		flow.data = view->payload;
 	} else if (data_len > 0 &&
+	           pskb_may_pull(skb, ihl + tcp_hlen + data_len) &&
 	           !skb_try_make_writable(skb, ihl + tcp_hlen + data_len)) {
 		iph = ip_hdr(skb);
 		ihl = iph->ihl * 4;
@@ -1929,6 +1931,10 @@ static noinline unsigned int natflow_l7_tcp4(NATFLOW_L7_HOOK_ARGS,
 		view->payload_len = data_len;
 		view->payload_linear_len = data_len;
 	}
+	/* A failed pull may still have moved the head. Refresh the DPI prefix too. */
+	view->l3 = ip_hdr(skb);
+	view->l4 = (unsigned char *)view->l3 + ihl;
+	view->payload = data_len > 0 ? (unsigned char *)view->l4 + tcp_hlen : NULL;
 	view->sport = TCPH(view->l4)->source;
 	view->dport = TCPH(view->l4)->dest;
 
@@ -1965,13 +1971,15 @@ static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_HOOK_ARGS,
 	if (ip6h->version != 6 || ip6h->nexthdr != IPPROTO_TCP)
 		return ret;
 
-	if (skb_try_make_writable(skb, sizeof(struct ipv6hdr) + sizeof(struct tcphdr)))
+	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct tcphdr)) ||
+	        skb_try_make_writable(skb, sizeof(struct ipv6hdr) + sizeof(struct tcphdr)))
 		return ret;
 	ip6h = ipv6_hdr(skb);
 	total_len = ntohs(ip6h->payload_len);
 	l4 = (void *)ip6h + sizeof(struct ipv6hdr);
 	tcp_hlen = TCPH(l4)->doff * 4;
-	if (tcp_hlen < sizeof(struct tcphdr) || total_len < tcp_hlen)
+	if (tcp_hlen < sizeof(struct tcphdr) || total_len < tcp_hlen ||
+	        total_len > skb->len - sizeof(struct ipv6hdr))
 		return ret;
 	data_len = total_len - tcp_hlen;
 
@@ -2009,6 +2017,7 @@ static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_HOOK_ARGS,
 	        natflow_l7_host_consumer_mask(view->consumer_mask) == 0) {
 		flow.data = view->payload;
 	} else if (data_len > 0 &&
+	           pskb_may_pull(skb, sizeof(struct ipv6hdr) + tcp_hlen + data_len) &&
 	           !skb_try_make_writable(skb, sizeof(struct ipv6hdr) +
 	                                  tcp_hlen + data_len)) {
 		ip6h = ipv6_hdr(skb);
@@ -2028,6 +2037,9 @@ static noinline unsigned int natflow_l7_tcp6(NATFLOW_L7_HOOK_ARGS,
 		view->payload_len = data_len;
 		view->payload_linear_len = data_len;
 	}
+	view->l3 = ipv6_hdr(skb);
+	view->l4 = (unsigned char *)view->l3 + sizeof(struct ipv6hdr);
+	view->payload = data_len > 0 ? (unsigned char *)view->l4 + tcp_hlen : NULL;
 	view->sport = TCPH(view->l4)->source;
 	view->dport = TCPH(view->l4)->dest;
 

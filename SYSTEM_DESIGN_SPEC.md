@@ -999,6 +999,11 @@ DNS，FIN/RST 结束仍未完成的本机 query。TCP DNS 不做 stream reassemb
 
 ### 15.2 解析流程
 
+TCP producer 先验证 IP/TCP 声明长度和实际 skb 长度。HTTP/TLS host consumer
+访问完整 payload 前必须 `pskb_may_pull()` 拉取完整范围，再处理可写性；
+`skb_try_make_writable()` 本身不保证分片数据线性可读。完整拉取失败时保留已准备的
+DPI 有界前缀，重新获取 packet view 指针后继续独立的 DPI packet consumer。
+
 1. 若 URL、DPI domain 和 DPI packet consumer 都未激活，则直接 accept；`/proc/sys/urllogger_store/enable=1` 激活 URL/HostACL consumer，DPI `enable=1` 直接激活静态 host 与固定 protocol packet consumer，不要求存在规则。
 2. 跳过已设置 `IPS_NATFLOW_CT_DROP` 的连接。
 3. original 方向可进入 URL、DPI domain 和 DPI packet consumer；reply 方向只进入 DPI packet consumer。进入解析前统一调用 `natflow_session_in()` 确保存在 natflow session。若 confirmed、内存或布局限制导致无法创建 session，则 fail-open 跳过本次 L7 解析，避免在无 `nf->status` 可写时产生无状态 URL/DPI 结果。
