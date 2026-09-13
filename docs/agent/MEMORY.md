@@ -93,6 +93,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - 非 seek 字符设备使用 `natflow_no_llseek()` 保持 `-ESPIPE`，不要直接依赖新旧内核是否暴露 `no_llseek`。
 - 热路径要优先考虑性能、RCU/锁语义、skb 可写性、校验和、MTU、TTL/hop-limit、VLAN/PPPoE 和设备生命周期。
 - `inet_proto_csum_replace*()` 的 `pseudohdr` 只对 IP 地址等伪首部字段传 true；端口 NAT 和 DHCP flags 修改必须传 false，避免污染 `CHECKSUM_PARTIAL` 种子。
+- QoS 的 IPv4 和 IPv6 IP/CIDR 匹配均须检查 user/remote 各自的 l3num；不能把 IPv6 联合体按 IPv4 地址/掩码解释，空字段和 ipset 仍保持原语义。
 - QUIC crypto/HKDF/shash 临时缓冲放在 L7 per-CPU `natflow_l7_quic_crypto_ctx` 中，避免包处理路径栈膨胀和 `CONFIG_VMAP_STACK` scatterlist 风险；crypto 初始化失败只禁用 QUIC hostname parser，不导致 URL logger 或 L7 初始化失败。
 - L7/DPI 数据面栈预算按入口到 consumer 的整条调用链评估，不按单个函数帧孤立评估；HTTP host view 可携带原始 Host 和 `host_flags`，URL/DPI consumer 在边界 normalize，已规范化的 URL/ACL/DNS host 走 DPI normalized classify，URL record 分配失败的 `urllogger_acl_lookup` 大对象只应出现在异常 fallback。
 - 完整 L7 构建要求 `THREAD_SIZE >= 8192`；Kbuild 对 L7/DPI/URL consumer 数据面对象设置 512 字节单函数栈帧上限。2026-07-18 使用 x86_64 GCC 9.4、PATH+URLLOGGER+DPI 配置生成 `.su`：最大单帧 360 字节；显式传递 narrowed consumer mask、复用入口 packet view 后，模块内部最坏累计链由约 1936 字节降至约 1624 字节，不含 hook 上游和外部内核函数栈；8 KiB 目标仍需按实际工具链生成 `.su` 并做运行时栈余量验证。

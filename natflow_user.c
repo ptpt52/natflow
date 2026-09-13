@@ -2602,6 +2602,12 @@ static unsigned int natflow_user_forward_hook(void *priv,
 
 			for (i = 0; i < qos_conf->num; i++) {
 				const struct qos_rule *qr = &qos_conf->rules[i];
+				if ((qr->flag & (USER_TYPE_IP | USER_TYPE_IPCIDR)) &&
+				        qr->user_l3num != AF_INET)
+					continue;
+				if ((qr->flag & (REMOTE_TYPE_IP | REMOTE_TYPE_IPCIDR)) &&
+				        qr->remote_l3num != AF_INET)
+					continue;
 				if (qr->proto) {
 					if (qr->proto != iph->protocol) {
 						continue;

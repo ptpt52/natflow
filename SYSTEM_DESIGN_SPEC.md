@@ -959,6 +959,7 @@ hash 约束：
 - 先判断包与 fakeuser 的方向关系。
 - 用户侧地址/端口与 `user/user_port` 匹配。
 - 对端地址/端口与 `remote/remote_port` 匹配。
+- IPv4/IPv6 的 IP/CIDR 规则只匹配同地址族，user 和 remote 分别校验；空字段通配和 ipset 字段不使用地址联合体的 family 限制。
 - 协议字段为 tcp/udp/通配。
 
 匹配类型：

@@ -811,6 +811,7 @@ echo 'add user=<user>,user_port=<user_port>,remote=<remote>,remote_port=<remote_
 字段：
 
 - `user`、`remote` 支持 IPv4、IPv4 CIDR、IPv6、IPv6 CIDR 或 ipset 名称。
+- IP/CIDR 条件只匹配同地址族；例如 IPv6 `::/0` 不匹配 IPv4 流量。空字段仍表示通配。
 - `user_port`、`remote_port` 支持端口号或 ipset 端口集合名；空字段表示任意。
 - `proto` 支持 `tcp`、`udp` 或空字段。
 - `rxbytes`、`txbytes` 单位是 Bytes/s。
