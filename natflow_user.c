@@ -2522,30 +2522,34 @@ static unsigned int natflow_user_forward_hook(void *priv,
 
 	if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.l3num == AF_INET) {
 		struct iphdr *iph;
+		u8 protocol;
 
 		if (!pskb_may_pull(skb, sizeof(struct iphdr))) {
 			goto out;
 		}
 
 		iph = ip_hdr(skb);
-		if (iph->protocol == IPPROTO_TCP && !pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct tcphdr))) {
+		protocol = iph->protocol;
+		if (protocol == IPPROTO_TCP && !pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct tcphdr))) {
 			goto out;
 		}
-		if (iph->protocol == IPPROTO_UDP && !pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr))) {
+		if (protocol == IPPROTO_UDP && !pskb_may_pull(skb, iph->ihl * 4 + sizeof(struct udphdr))) {
 			goto out;
 		}
 	} else {
 		struct ipv6hdr *ip6h;
+		u8 nexthdr;
 
 		if (!pskb_may_pull(skb, sizeof(struct ipv6hdr))) {
 			goto out;
 		}
 
 		ip6h = ipv6_hdr(skb);
-		if (ip6h->nexthdr == IPPROTO_TCP && !pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct tcphdr))) {
+		nexthdr = ip6h->nexthdr;
+		if (nexthdr == IPPROTO_TCP && !pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct tcphdr))) {
 			goto out;
 		}
-		if (ip6h->nexthdr == IPPROTO_UDP && !pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr))) {
+		if (nexthdr == IPPROTO_UDP && !pskb_may_pull(skb, sizeof(struct ipv6hdr) + sizeof(struct udphdr))) {
 			goto out;
 		}
 	}
