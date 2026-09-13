@@ -1211,6 +1211,7 @@ relay：
 - ND 包会学习源 IPv6/MAC 到 fakeuser。
 - ND relay 在取得原包所有权（`NF_STOLEN`）或创建私有副本后，完整拉取/可写化失败必须释放当前 skb；返回原 verdict，确保副本路径中的原包仍由内核继续处理。
 - ND option 中的 link-layer address 会改写为 outdev MAC，并重算 ICMPv6 checksum。
+- ND option 长度以至少 32 位整数计算（线上的 8 位长度单位为 8 字节）；遍历按 IPv6 payload_len 的剩余字节数检查，排除 skb 尾部 padding，遇到零长度或截断选项停止，checksum 也只覆盖有效 payload。
 - 单播要求目标 fakeuser 存在且在对侧。
 
 plain vline：

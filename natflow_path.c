@@ -5325,6 +5325,9 @@ out6:
 
 							do {
 								unsigned char *opt_ptr;
+								unsigned int opt_off = 8; /* RS fixed header. */
+								unsigned int payload_len = ntohs(IPV6H->payload_len);
+								unsigned int opt_left;
 								eth = eth_hdr(skb);
 								user = natflow_user_in_get6((const union nf_inet_addr *)&IPV6H->saddr,
 								                            eth->h_source);
@@ -5339,30 +5342,36 @@ out6:
 								natflow_user_release_put(user);
 								ether_addr_copy(eth->h_source, outdev->dev_addr);
 
-								opt_ptr = (unsigned char *)(l4 + 8); /* RS option pointer. */
 								if (ICMP6H(l4)->icmp6_type == NDISC_ROUTER_ADVERTISEMENT) {
-									opt_ptr = (unsigned char *)(l4 + 16);
+									opt_off = 16;
 								} else if (ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION ||
 								           ICMP6H(l4)->icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT) {
-									opt_ptr = (unsigned char *)(l4 + 24);
+									opt_off = 24;
 								}
+								if (payload_len < opt_off ||
+								        payload_len > skb->len - sizeof(struct ipv6hdr))
+									break;
+								opt_ptr = (unsigned char *)l4 + opt_off;
+								opt_left = payload_len - opt_off;
 
-								while (opt_ptr + 2 <= skb_tail_pointer(skb)) {
+								while (opt_left >= 2) {
 									u8 opt_type = opt_ptr[0];
-									u8 opt_len = opt_ptr[1] * 8;
-									if (opt_len == 0 || opt_ptr + opt_len > skb_tail_pointer(skb))
+									unsigned int opt_len = opt_ptr[1] * 8;
+									if (opt_len == 0 || opt_len > opt_left)
 										break;
 									if ((opt_type == 1 || opt_type == 2 /* NA */) && opt_len >= 8) {
 										memcpy(opt_ptr + 2, outdev->dev_addr, ETH_ALEN);
+										skb->ip_summed = CHECKSUM_NONE;
 										ICMP6H(l4)->icmp6_cksum = 0;
 										ICMP6H(l4)->icmp6_cksum = csum_ipv6_magic(&IPV6H->saddr,
 										                          &IPV6H->daddr,
-										                          skb->len - sizeof(struct ipv6hdr),
+										                          payload_len,
 										                          IPPROTO_ICMPV6,
-										                          csum_partial(l4, skb->len - sizeof(struct ipv6hdr), 0));
+										                          csum_partial(l4, payload_len, 0));
 										break;
 									}
 									opt_ptr += opt_len;
+									opt_left -= opt_len;
 								}
 							} while (0);
 							skb_push(skb, ETH_HLEN);
