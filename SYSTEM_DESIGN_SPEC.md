@@ -811,6 +811,11 @@ AI 重建实现时必须显式处理 conntrack ext 内存布局，不能把 `nat
 
 ### 11.1 NAT 改写和校验和契约
 
+认证/Host ACL 的原包 RST 转换先验证并拉取 IP/TCP 固定头，解除克隆数据区共享
+（包括 shared_info），裁剪为无 payload 的 TCP RST，再重新获取指针。成功后清除 GSO 分段信息，
+保留并重建 `CHECKSUM_PARTIAL` 种子或重算软件 checksum 并标记 `CHECKSUM_NONE`；
+PPPoE 包同步更新 length。转换失败时调用方丢弃当前包。
+
 `natflow_path.h` 提供 fast path 使用的内联改写函数：
 
 - IPv4 SNAT/DNAT 会同时改写 IP 地址、TCP/UDP 端口、IPv4 header checksum 和 L4 checksum。

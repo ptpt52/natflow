@@ -100,6 +100,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - 包处理路径访问头部前必须先证明数据可读，写 skb 前必须确认可写；`pskb_may_pull()`、`skb_try_make_writable()`、`skb_cow_head()`、trim/csum 后要重新获取 `iph`/`l4`/payload 指针。
 - TCP L7 的完整 host payload 必须先 pull 再可写化；完整 pull 失败也要刷新 view 指针，并保留已拉取的 DPI 前缀供独立 packet consumer 使用，不能把 skb 总长度当作线性长度。
 - WEB 认证 payload 读取通过 `natflow_auth_tcp_payload()` 验证 IP/TCP 长度并拉取所需范围，GET/POST 只拉取最多 5 字节，WeChat 扫描拉取完整 payload 且 URI 比较要求至少 31 字节；pull 后重新获取头部指针。
+- `natflow_auth_convert_tcprst[6](skb, bridge)` 返回转换结果，调用方失败必须 drop；转换先保证可读并解除整个克隆数据区共享（包括 shared_info），trim 后重新获取头部，清 GSO，重建 checksum 状态并同步 PPPoE length。
 - 策略模块在等待认证、URL/SNI/QUIC 解析、L7 原生协议机器或 Host ACL 决策时必须设置对应 busy bit，完成后再清除，避免 fast path 提前接管。
 - 控制面写、数据面读的共享对象优先采用“mutex 串行构造新对象 + RCU 发布 + grace period 后释放”的模式；临时 cache、skb/data buffer 必须有清晰唯一 owner，attach 成功后调用方不要再释放。
 - 所有外部输入和内核状态值都按不可信处理：`sscanf` 要有宽度，字符串要保留 NUL，zone id、ifindex、TCP state、QUIC/TLS 长度字段都要先做边界检查。

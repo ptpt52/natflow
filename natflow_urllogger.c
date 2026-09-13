@@ -1176,10 +1176,12 @@ static inline unsigned int urllogger_reply_acl_action(URLLOGGER_HOOK_CTX_ARGS,
 	if (acl_action == URLINFO_ACL_ACTION_RESET && reset_reply) {
 		if (l3num == AF_INET6) {
 			natflow_urllogger_tcp_reply_rstack6(reply_dev, skb, ct, bridge);
-			natflow_auth_convert_tcprst6(skb);
+			if (natflow_auth_convert_tcprst6(skb, bridge))
+				return NF_DROP;
 		} else {
 			natflow_urllogger_tcp_reply_rstack(reply_dev, skb, ct, bridge);
-			natflow_auth_convert_tcprst(skb);
+			if (natflow_auth_convert_tcprst(skb, bridge))
+				return NF_DROP;
 		}
 		return NF_ACCEPT;
 	}
@@ -1190,10 +1192,12 @@ static inline unsigned int urllogger_reply_acl_action(URLLOGGER_HOOK_CTX_ARGS,
 	if (redirect_reply == URLLOGGER_REDIRECT_RST) {
 		if (l3num == AF_INET6) {
 			natflow_urllogger_tcp_reply_rstack6(reply_dev, skb, ct, bridge);
-			natflow_auth_convert_tcprst6(skb);
+			if (natflow_auth_convert_tcprst6(skb, bridge))
+				return NF_DROP;
 		} else {
 			natflow_urllogger_tcp_reply_rstack(reply_dev, skb, ct, bridge);
-			natflow_auth_convert_tcprst(skb);
+			if (natflow_auth_convert_tcprst(skb, bridge))
+				return NF_DROP;
 		}
 		return NF_ACCEPT;
 	}
@@ -1205,14 +1209,16 @@ static inline unsigned int urllogger_reply_acl_action(URLLOGGER_HOOK_CTX_ARGS,
 				natflow_urllogger_tcp_reply_302_v6(reply_dev, skb, ct, bridge);
 			else
 				natflow_urllogger_tcp_reply_rstack6(reply_dev, skb, ct, bridge);
-			natflow_auth_convert_tcprst6(skb);
+			if (natflow_auth_convert_tcprst6(skb, bridge))
+				return NF_DROP;
 		} else {
 			if (http_method == NATFLOW_HTTP_GET ||
 			        http_method == NATFLOW_HTTP_POST)
 				natflow_urllogger_tcp_reply_302(reply_dev, skb, ct, bridge);
 			else
 				natflow_urllogger_tcp_reply_rstack(reply_dev, skb, ct, bridge);
-			natflow_auth_convert_tcprst(skb);
+			if (natflow_auth_convert_tcprst(skb, bridge))
+				return NF_DROP;
 		}
 		return NF_ACCEPT;
 	}

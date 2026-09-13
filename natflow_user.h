@@ -148,24 +148,30 @@ extern natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3,
 extern void natflow_user_ingress_ifname_learn(struct sk_buff *skb,
         const union nf_inet_addr *saddr, u_int16_t l3num);
 
-static inline void natflow_auth_convert_tcprst(struct sk_buff *skb)
+static inline int natflow_auth_convert_tcprst(struct sk_buff *skb, int bridge)
 {
-	int offset = 0;
-	int len;
+	unsigned int thoff, len;
 	struct iphdr *iph;
 	struct tcphdr *tcph;
 
+	if ((bridge && skb_headroom(skb) < PPPOE_SES_HLEN) ||
+	        !pskb_may_pull(skb, sizeof(struct iphdr)))
+		return -EINVAL;
 	iph = ip_hdr(skb);
-	if (iph->protocol != IPPROTO_TCP)
-		return;
-	if (skb->len < ntohs(iph->tot_len))
-		return;
-	tcph = (struct tcphdr *)((void *)iph + iph->ihl * 4);
-	offset = iph->ihl * 4 + sizeof(struct tcphdr) - skb->len;
-	if (offset > 0)
-		return;
-	if (pskb_trim(skb, skb->len + offset))
-		return;
+	if (iph->version != 4 || iph->ihl < 5 || iph->protocol != IPPROTO_TCP)
+		return -EINVAL;
+	thoff = iph->ihl * 4;
+	len = thoff + sizeof(struct tcphdr);
+	if (skb->len < ntohs(iph->tot_len) || ntohs(iph->tot_len) < len ||
+	        !pskb_may_pull(skb, len))
+		return -EINVAL;
+	/* GSO metadata lives in shared_info: unshare even a writable clone header. */
+	if ((skb_cloned(skb) && pskb_expand_head(skb, 0, 0, GFP_ATOMIC)) ||
+	        pskb_trim(skb, len))
+		return -ENOMEM;
+	iph = ip_hdr(skb);
+	tcph = (void *)iph + thoff;
+	skb_set_transport_header(skb, thoff);
 
 	tcph->res1 = 0;
 	tcph->doff = 5;
@@ -194,6 +200,7 @@ static inline void natflow_auth_convert_tcprst(struct sk_buff *skb)
 		skb->csum_start = (unsigned char *)tcph - skb->head;
 		skb->csum_offset = offsetof(struct tcphdr, check);
 	} else {
+		skb->ip_summed = CHECKSUM_NONE;
 		iph->check = 0;
 		iph->check = ip_fast_csum(iph, iph->ihl);
 		skb->csum = 0;
@@ -201,23 +208,37 @@ static inline void natflow_auth_convert_tcprst(struct sk_buff *skb)
 		skb->csum = skb_checksum(skb, iph->ihl * 4, len - iph->ihl * 4, 0);
 		tcph->check = csum_tcpudp_magic(iph->saddr, iph->daddr, len - iph->ihl * 4, iph->protocol, skb->csum);
 	}
+	skb_shinfo(skb)->gso_size = 0;
+	skb_shinfo(skb)->gso_segs = 0;
+	skb_shinfo(skb)->gso_type = 0;
+	if (bridge)
+		PPPOEH(skb_network_header(skb) - PPPOE_SES_HLEN)->length = htons(skb->len + 2);
+	return 0;
 }
 
-static inline void natflow_auth_convert_tcprst6(struct sk_buff *skb)
+static inline int natflow_auth_convert_tcprst6(struct sk_buff *skb, int bridge)
 {
-	struct ipv6hdr *ip6h = ipv6_hdr(skb);
+	struct ipv6hdr *ip6h;
 	struct tcphdr *tcph;
-	int tcphoff = sizeof(struct ipv6hdr);
+	unsigned int tcphoff = sizeof(struct ipv6hdr);
 
-	if (ip6h->nexthdr != IPPROTO_TCP)
-		return;
-	if (skb->len < tcphoff + sizeof(struct tcphdr))
-		return;
-	tcph = (struct tcphdr *)((void *)ip6h + tcphoff);
+	if ((bridge && skb_headroom(skb) < PPPOE_SES_HLEN) ||
+	        !pskb_may_pull(skb, tcphoff))
+		return -EINVAL;
+	ip6h = ipv6_hdr(skb);
+	if (ip6h->version != 6 || ip6h->nexthdr != IPPROTO_TCP ||
+	        ntohs(ip6h->payload_len) < sizeof(struct tcphdr) ||
+	        skb->len < tcphoff + ntohs(ip6h->payload_len) ||
+	        !pskb_may_pull(skb, tcphoff + sizeof(struct tcphdr)))
+		return -EINVAL;
+	if ((skb_cloned(skb) && pskb_expand_head(skb, 0, 0, GFP_ATOMIC)) ||
+	        pskb_trim(skb, tcphoff + sizeof(struct tcphdr)))
+		return -ENOMEM;
+	ip6h = ipv6_hdr(skb);
+	tcph = (void *)ip6h + tcphoff;
+	skb_set_transport_header(skb, tcphoff);
 
-	if (pskb_trim(skb, tcphoff + sizeof(struct tcphdr)))
-		return;
-
+	tcph->res1 = 0;
 	tcph->doff = 5;
 	tcph->syn = 0;
 	tcph->rst = 1;
@@ -240,12 +261,19 @@ static inline void natflow_auth_convert_tcprst6(struct sk_buff *skb)
 		skb->csum_start = (unsigned char *)tcph - skb->head;
 		skb->csum_offset = offsetof(struct tcphdr, check);
 	} else {
+		skb->ip_summed = CHECKSUM_NONE;
 		skb->csum = 0;
 		tcph->check = 0;
 		skb->csum = skb_checksum(skb, tcphoff, sizeof(struct tcphdr), 0);
 		tcph->check = csum_ipv6_magic(&ip6h->saddr, &ip6h->daddr,
 		                              sizeof(struct tcphdr), IPPROTO_TCP, skb->csum);
 	}
+	skb_shinfo(skb)->gso_size = 0;
+	skb_shinfo(skb)->gso_segs = 0;
+	skb_shinfo(skb)->gso_type = 0;
+	if (bridge)
+		PPPOEH(skb_network_header(skb) - PPPOE_SES_HLEN)->length = htons(skb->len + 2);
+	return 0;
 }
 
 #endif /* _NATFLOW_USER_H_ */

@@ -852,6 +852,9 @@ echo 'add acl=<id>,<act>,<host>' >/dev/hostacl_ctl
 | 2 | `reset` | 对 TCP 尝试 reset。 |
 | 3 | `redirect` | HTTP 请求（GET/POST）返回 302 重定向；HTTPS/QUIC 则退化为 TCP reset 或丢弃。 |
 
+认证或 Host ACL 将原包转换为 TCP RST 时，会同步调整报文长度和校验和状态，
+支持 PPPoE 封装；若无法准备可写报文或完成裁剪，则丢弃当前包。
+
 说明：
 
 - ACL 槽位范围是 `0..31`。

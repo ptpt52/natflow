@@ -2974,7 +2974,8 @@ static unsigned int natflow_user_forward_hook(void *priv,
 					ret = NF_DROP;
 					goto out;
 				} else if (TCPH(l4)->ack && !TCPH(l4)->syn) {
-					natflow_auth_convert_tcprst(skb);
+					if (natflow_auth_convert_tcprst(skb, bridge))
+						ret = NF_DROP;
 					goto out;
 				}
 			} else {
@@ -3034,7 +3035,8 @@ static unsigned int natflow_user_forward_hook(void *priv,
 					ret = NF_DROP;
 					goto out;
 				} else if (TCPH(l4)->ack && !TCPH(l4)->syn) {
-					natflow_auth_convert_tcprst6(skb);
+					if (natflow_auth_convert_tcprst6(skb, bridge))
+						ret = NF_DROP;
 					goto out;
 				}
 			}
@@ -3066,7 +3068,8 @@ static unsigned int natflow_user_forward_hook(void *priv,
 								i++;
 								if (i + 24 < data_len && strncasecmp(data + i, "Host: open.weixin.qq.com", 24) == 0) {
 									natflow_auth_open_weixin_reply(in, skb, bridge);
-									natflow_auth_convert_tcprst(skb);
+									if (natflow_auth_convert_tcprst(skb, bridge))
+										ret = NF_DROP;
 									set_bit(IPS_NATFLOW_CT_DROP_BIT, &ct->status);
 									goto out;
 								}
