@@ -6161,6 +6161,9 @@ static struct workqueue_struct *natflow_netdev_wq;
 #define NETIF_F_GRO_FRAGLIST 0
 #endif
 
+#define NATFLOW_NETDEV_OFFLOAD_FEATURES \
+	(NETIF_F_GRO | NETIF_F_GRO_FRAGLIST | NETIF_F_GSO | NETIF_F_ALL_TSO)
+
 static int natflow_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
@@ -6246,10 +6249,11 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (event == NETDEV_UP) {
-		if ((dev->features & (NETIF_F_GRO | NETIF_F_GRO_FRAGLIST))) {
-			dev->wanted_features &= ~(NETIF_F_GRO | NETIF_F_GRO_FRAGLIST);
+		if ((dev->features | dev->wanted_features) &
+		        NATFLOW_NETDEV_OFFLOAD_FEATURES) {
+			dev->wanted_features &= ~NATFLOW_NETDEV_OFFLOAD_FEATURES;
 			netdev_update_features(dev);
-			NATFLOW_println("removed NETIF_F_GRO/NETIF_F_GRO_FRAGLIST for dev=%s", dev->name);
+			NATFLOW_println("disabled GRO/GRO_FRAGLIST/GSO/TSO for dev=%s", dev->name);
 		}
 		if (!((dev->flags & IFF_LOOPBACK) ||
 		        netif_is_bridge_master(dev) ||
