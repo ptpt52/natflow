@@ -1271,8 +1271,9 @@ zone notifier：
 path notifier：
 
 - `NETDEV_UP`：
-  - 从 `wanted_features` 禁用 GRO/GRO_FRAGLIST、GSO 和所有 TSO 变体，并调用
-    `netdev_update_features()` 应用新的 netdev feature 集合。
+  - 对合格设备排队执行 feature 更新；工作项在 notifier 返回后，按 ethtool
+    feature-set 语义从 `wanted_features` 清除设备 `hw_features` 支持的
+    GRO/GRO_FRAGLIST、GSO 和全部 TSO 变体，并调用 `netdev_update_features()`。
   - 对合格设备注册 ingress hook。
   - 尝试识别 PPPoE/PPE 设备。
   - 触发 vline ifup 更新。

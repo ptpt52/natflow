@@ -25,8 +25,12 @@
 #include <linux/string.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
+#include <linux/version.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter_bridge.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 0)
+#include <net/netdev_lock.h>
+#endif
 #include <net/ndisc.h>
 #include <net/ip.h>
 #include <net/ip6_route.h>
@@ -6164,6 +6168,75 @@ static struct workqueue_struct *natflow_netdev_wq;
 #define NATFLOW_NETDEV_OFFLOAD_FEATURES \
 	(NETIF_F_GRO | NETIF_F_GRO_FRAGLIST | NETIF_F_GSO | NETIF_F_ALL_TSO)
 
+#ifdef CONFIG_NETFILTER_INGRESS
+struct netdev_features_wq {
+	struct work_struct work;
+	struct net_device *dev;
+};
+
+static void netdev_features_workfn(struct work_struct *work)
+{
+	struct netdev_features_wq *wq = container_of(work, struct netdev_features_wq, work);
+	struct net_device *dev = wq->dev;
+	netdev_features_t mask;
+
+	rtnl_lock();
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 0)
+	netdev_lock_ops(dev);
+#endif
+	if (dev->reg_state != NETREG_REGISTERED || !netif_running(dev))
+		goto out_unlock;
+
+	/* Match ethtool's feature-set semantics: only change bits exposed in
+	 * hw_features, then let the networking core and driver fix/apply them.
+	 * Running this outside NETDEV_UP also avoids changing upper-device
+	 * feature propagation while the notifier chain is still in progress.
+	 */
+	mask = NATFLOW_NETDEV_OFFLOAD_FEATURES & dev->hw_features;
+	if ((dev->features | dev->wanted_features) & mask) {
+		dev->wanted_features &= ~mask;
+		netdev_update_features(dev);
+		NATFLOW_println("updated GRO/GRO_FRAGLIST/GSO/TSO for dev=%s (active=%d,%d,%d)",
+		                dev->name,
+		                !!(dev->features & (NETIF_F_GRO | NETIF_F_GRO_FRAGLIST)),
+		                !!(dev->features & NETIF_F_GSO),
+		                !!(dev->features & NETIF_F_ALL_TSO));
+	}
+
+out_unlock:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 0)
+	netdev_unlock_ops(dev);
+#endif
+	rtnl_unlock();
+	dev_put(dev);
+	kfree(wq);
+}
+
+static void natflow_disable_netdev_features(struct net_device *dev)
+{
+	struct netdev_features_wq *wq;
+	netdev_features_t mask = NATFLOW_NETDEV_OFFLOAD_FEATURES & dev->hw_features;
+
+	if (!((dev->features | dev->wanted_features) & mask))
+		return;
+
+	wq = kzalloc(sizeof(*wq), GFP_KERNEL);
+	if (!wq) {
+		NATFLOW_println("failed to allocate feature work for dev=%s", dev->name);
+		return;
+	}
+
+	dev_hold(dev);
+	wq->dev = dev;
+	INIT_WORK(&wq->work, netdev_features_workfn);
+	if (!queue_work(natflow_netdev_wq, &wq->work)) {
+		NATFLOW_println("failed to queue feature work for dev=%s", dev->name);
+		dev_put(dev);
+		kfree(wq);
+	}
+}
+#endif
+
 static int natflow_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
@@ -6249,12 +6322,6 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 
 #ifdef CONFIG_NETFILTER_INGRESS
 	if (event == NETDEV_UP) {
-		if ((dev->features | dev->wanted_features) &
-		        NATFLOW_NETDEV_OFFLOAD_FEATURES) {
-			dev->wanted_features &= ~NATFLOW_NETDEV_OFFLOAD_FEATURES;
-			netdev_update_features(dev);
-			NATFLOW_println("disabled GRO/GRO_FRAGLIST/GSO/TSO for dev=%s", dev->name);
-		}
 		if (!((dev->flags & IFF_LOOPBACK) ||
 		        netif_is_bridge_master(dev) ||
 		        netif_is_ovs_master(dev) ||
@@ -6263,6 +6330,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 		        dev->type == ARPHRD_RAWIP) {
 			netdev_features_t features = dev->features;
 			netdev_features_t vlan_features = netdev_intersect_features(features, dev->vlan_features | NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX);
+			natflow_disable_netdev_features(dev);
 			NATFLOW_println("caught event NETDEV_UP for dev=%s(tso=%d,%d,hw_csum=%d,%d), added ingress hook",
 			                dev->name,
 			                !!(features & NETIF_F_TSO),

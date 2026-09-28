@@ -163,9 +163,10 @@ make -C "$natflow_dkms_test_dir" PWD="$natflow_dkms_test_dir"
 
 加载模块时内核日志会打印 `version=<NATFLOW_VERSION>` 和 major/minor。设备节点通常由内核 device/class 机制创建；如果系统没有自动创建设备节点，请根据 `dmesg` 中打印的 major/minor 手动处理。
 
-启用 `CONFIG_NETFILTER_INGRESS` 时，path 设备 notifier 会在每个 netdev 的
-`NETDEV_UP` 事件中关闭 GRO、GRO_FRAGLIST、GSO 和全部 TSO 变体，再注册适用的
-ingress hook。可使用 `ethtool -k <设备名>` 检查最终生效状态。
+启用 `CONFIG_NETFILTER_INGRESS` 时，path 设备 notifier 会在适用 netdev 的
+`NETDEV_UP` 处理完成后，按 ethtool feature-set 语义关闭 GRO、GRO_FRAGLIST、
+GSO 和全部 TSO 变体。更新只作用于设备 `hw_features` 中可配置的位，并由网络
+核心和驱动应用；可使用 `ethtool -k <设备名>` 检查最终生效状态。
 
 ## Warning
 
