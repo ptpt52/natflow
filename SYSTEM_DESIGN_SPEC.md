@@ -92,8 +92,10 @@ DKMS Makefile：
 | `CONFIG_NATFLOW_URLLOGGER` | 编译并初始化 URL logger、host ACL、sysctl。 |
 | `CONFIG_NATFLOW_DPI` | 编译并初始化 DPI 控制/事件接口，提供 `/dev/natflow_dpi_ctl`、19 个固定应用、DNS QNAME 查询意图、26 个固定原生协议状态机和 `/dev/natflow_dpi_queue`；默认关闭。DPI enabled 即激活 L7 DPI host/packet consumer，不要求规则或 `/proc/sys/urllogger_store/enable`。 |
 | `CONFIG_NETFILTER_INGRESS` | 使用 per-netdev ingress hook；当前源码也只在该模式下分配 `natflow_fast_nat_table` 并编译主要软件 fastnat 命中/建表路径；vline/relay 只在该模式下有实际转发路径。 |
-| `CONFIG_NET_RALINK_OFFLOAD` | 启用 Ralink/MTK 硬件 offload 相关代码。 |
-| `NATFLOW_OFFLOAD_HWNAT_FAKE` + `CONFIG_NET_MEDIATEK_SOC` | 启用 fake HWNAT/MTK offload 分支。 |
+| `NATFLOW_HAVE_HW_OFFLOAD` | 统一硬件 offload 编译开关；由 Ralink offload，或 fake HWNAT ABI 配合 MTK/Airoha Ethernet 驱动启用。 |
+| `CONFIG_NET_RALINK_OFFLOAD` | 启用 Ralink/MTK 硬件 offload 相关代码，并使 `NATFLOW_HAVE_HW_OFFLOAD=1`。 |
+| `NATFLOW_OFFLOAD_HWNAT_FAKE` + (`CONFIG_NET_MEDIATEK_SOC` 或 `CONFIG_NET_AIROHA`) | 使用内核补丁提供的 fake HWNAT ABI，并使 `NATFLOW_HAVE_HW_OFFLOAD=1`。 |
+| `NATFLOW_OFFLOAD_AN7563_SRAM_HASH` | 由 995 内核补丁在 `CONFIG_SOC_AIROHA_AN7563` 下导出；将 fastnat 表固定为 512 项、4-way，并选择 AN7563 PPE SRAM hash mode 1 的 7-bit 分段折叠。 |
 | `CONFIG_NET_MEDIATEK_SOC_WED` | 允许配置 `hwnat_wed_disabled`。 |
 | `CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH` | 硬件外部设备 offload 以 VLAN hash 辅助索引。 |
 | `CONFIG_HWNAT_EXTDEV_DISABLED` | 禁用部分外部设备硬件 offload 分支。 |
@@ -893,11 +895,15 @@ hash 约束：
 - IPv4/IPv6 使用各自 inline hash。
 - hash 返回值是相邻探测窗口的 base slot；窗口宽度由 `NATFLOW_FASTNAT_TABLE_WAYS` 决定。
 - MT7621 平台 `natflow_hash_skip()` 会跳过特定 bucket：`12,25,38,51,76,89,102` modulo 128。
+- AN7563 SRAM-only 模式使用 512 项、4-way 表；tuple mixer 的 32-bit 结果按
+  `bits 0..6, 7..13, 14..20, 21..27, 28..31` 异或折叠为 7 bit，再左移 2
+  得到 bucket base。该模式不执行通用的 `hash ^= hash >> 16`，也不应用
+  MT7621 保留 bucket 跳过规则。
 - 发生冲突时最多使用有限备用 slot；不能动态扩容。
 
 ### 12.4 硬件 offload
 
-在 MTK/Ralink 分支中，path 会基于设备的 `ndo_flow_offload` 或外部设备 offload API 下发流：
+在 `NATFLOW_HAVE_HW_OFFLOAD=1` 时，path 会基于设备的 `ndo_flow_offload` 或外部设备 offload API 下发流：
 
 - 支持原始/回复方向不同设备组合。
 - 支持 VLAN、PPPoE、DSA、bridge、WED 标志。
@@ -905,6 +911,22 @@ hash 约束：
 - `hwnat_wed_disabled` 控制 WED 使用。
 - `CONFIG_HWNAT_EXTDEV_DISABLED` 会禁用部分外部设备路径。
 - 硬件 offload keepalive 会回写流量并延长 conntrack timeout。
+
+Airoha AN7563 使用与 MTK patch 相同的 fake HWNAT ABI，但由 Airoha PPE V2
+后端实现双向 flow ownership 和 keepalive：
+
+- 995 内核补丁在 `CONFIG_SOC_AIROHA_AN7563` 下导出
+  `NATFLOW_OFFLOAD_AN7563_SRAM_HASH`，natflow 自动选择 512 项、4-way SRAM
+  hash，无需包 Makefile 传入私有 `CONFIG_` 宏。
+- 支持 IPv4 TCP/UDP HNAPT、无 NAT 的 IPv6 TCP/UDP 5-tuple route。
+- 支持 Ethernet、单层 802.1Q、PPPoE、bridge 和 MTK DSA 用户口；不接受
+  802.1ad、第二层 VLAN 或非 MTK DSA tag。
+- AN7563 datapath 初始化时直接启用 SRAM-only、CPU-direct PPE；不依赖 NPU，
+  SRAM Hash1 和 DRAM 表保持关闭。
+- AN7563 当前没有 per-flow PPE 统计项，keepalive 只延长 fastnat/conntrack
+  生命周期，传给 natflow 的 bytes/packets 为 0。
+- AN7563 OpenWrt 包只定义 `CONFIG_HWNAT_EXTDEV_DISABLED`；在 WED 数据面未启用时，
+  Wi-Fi 单边流保持软件 fast path，不误下发到 PPE。
 
 硬件 offload 是可选增强；软件 fast path 必须在没有硬件能力时仍可工作。
 

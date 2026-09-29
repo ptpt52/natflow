@@ -49,6 +49,19 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - `/dev/natflow_userinfo_ctl` 的 `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数；timestamp 创建/获取 fakeuser 时写入，user pre hook 中普通活动最多每 32 秒刷新一次，新连接包超过 2 秒可刷新；不要用当前 `no_flow_timeout` 和 conntrack 剩余超时反推。
 - path 默认关闭，通常通过 `/dev/natflow_ctl` 的 `disabled=0` 开启。
 - `CONFIG_NATFLOW_PATH` 控制 fast path、vline/relay 和硬件 offload 相关能力。
+- 2026-09-28 fake HWNAT 编译条件统一为 `NATFLOW_HAVE_HW_OFFLOAD`：
+  `CONFIG_NET_RALINK_OFFLOAD`，或 `NATFLOW_OFFLOAD_HWNAT_FAKE` 配合
+  `CONFIG_NET_MEDIATEK_SOC`/`CONFIG_NET_AIROHA`。
+- 2026-09-29 AN7563 SRAM-only 集成由 995 内核补丁在
+  `CONFIG_SOC_AIROHA_AN7563` 下导出 `NATFLOW_OFFLOAD_AN7563_SRAM_HASH`；natflow
+  自动选择 512 项、4-way 表和 AN7563 hash，无需包 Makefile 传入私有 `CONFIG_`
+  宏。tuple mixer 后按 7-bit 分段异或折叠并左移 2，与 PPE SRAM Hash0 mode 1
+  完全一致；不执行通用 `hash ^= hash >> 16`，也不应用 MT7621 skip bucket。
+  驱动关闭 SRAM Hash1/DRAM，校验 natflow 的 `base + way` 后直接写该 SRAM
+  槽位，目标槽位已有 owner/BND 时拒绝覆盖。AN7563 PPE 在 datapath 初始化时
+  以 CPU-direct 模式启用，不依赖 NPU；支持 IPv4 HNAPT、无 NAT IPv6 5T、
+  单层 802.1Q、PPPoE、bridge 和 MTK DSA，keepalive 当前无 per-flow
+  bytes/packets。包只关闭 extdev 分支，Wi-Fi 单边流保留软件 fast path。
 - 启用 `CONFIG_NETFILTER_INGRESS` 时，path netdevice notifier 为合格设备排队
   执行 feature 更新；工作项在 notifier 返回后，按 ethtool feature-set 语义
   从 `wanted_features` 清除 `hw_features` 支持的 GRO/GRO_FRAGLIST、GSO 和全部

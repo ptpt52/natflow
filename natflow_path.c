@@ -42,7 +42,8 @@
 #include <net/netfilter/nf_conntrack_acct.h>
 #include <linux/if_pppox.h>
 #include <linux/ppp_defs.h>
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#include "natflow_compat.h"
+#if NATFLOW_HAVE_HW_OFFLOAD
 #include <net/netfilter/nf_flow_table.h>
 #endif
 #include "natflow_common.h"
@@ -552,7 +553,7 @@ struct net_device *ifname_group_get(int idx)
 	return NULL;
 }
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 unsigned short hwnat = 1;
 #if defined(CONFIG_NET_MEDIATEK_SOC_WED)
 unsigned short hwnat_wed_disabled = 0;
@@ -816,7 +817,7 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 					struct net_device *dev;
 
 					dev = nf->rroute[!d].outdev;
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 					if (hw && (((nf->status & NF_FF_ORIGINAL_DSA) && d == NF_FF_DIR_REPLY) ||
 					           ((nf->status & NF_FF_REPLY_DSA) && d == NF_FF_DIR_ORIGINAL))) {
 						struct net_device_stats *stats = &dev->stats;
@@ -838,7 +839,7 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 					}
 
 					dev = nf->rroute[d].outdev;
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 					if (hw && (((nf->status & NF_FF_ORIGINAL_DSA) && (!d) == NF_FF_DIR_REPLY) ||
 					           ((nf->status & NF_FF_REPLY_DSA) && (!d) == NF_FF_DIR_ORIGINAL))) {
 						struct net_device_stats *stats = &dev->stats;
@@ -1053,7 +1054,7 @@ __keepalive_ipv6_main:
 					struct net_device *dev;
 
 					dev = nf->rroute[!d].outdev;
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 					if (hw && (((nf->status & NF_FF_ORIGINAL_DSA) && d == NF_FF_DIR_REPLY) ||
 					           ((nf->status & NF_FF_REPLY_DSA) && d == NF_FF_DIR_ORIGINAL))) {
 						struct net_device_stats *stats = &dev->stats;
@@ -1075,7 +1076,7 @@ __keepalive_ipv6_main:
 					}
 
 					dev = nf->rroute[d].outdev;
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 					if (hw && (((nf->status & NF_FF_ORIGINAL_DSA) && (!d) == NF_FF_DIR_REPLY) ||
 					           ((nf->status & NF_FF_REPLY_DSA) && (!d) == NF_FF_DIR_ORIGINAL))) {
 						struct net_device_stats *stats = &dev->stats;
@@ -1224,7 +1225,7 @@ __keepalive_ipv6_main:
 	return -2;
 }
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 static struct net_device __rcu *ppe_dev = NULL;
 #define PPE_DEV_CACHE_NUM 4
 static struct net_device *ppe_dev_cache[PPE_DEV_CACHE_NUM] = {NULL, NULL, NULL, NULL};
@@ -1677,7 +1678,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		u32 hash;
 		natflow_fastnat_node_t *nfn;
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 		/* XXX: check MTK_CPU_REASON_HIT_BIND_FORCE_CPU
 		 * nated-skb come to cpu from ppe, we just forward to ext dev(Wi-Fi)
 		 * skb->hash stored the hash key
@@ -1835,7 +1836,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 		skb->protocol = __constant_htons(ETH_P_IP);
 		skb->transport_header = skb->network_header + ip_hdr(skb)->ihl * 4;
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 		/* XXX:
 		 * MT7622 hwnat cannot handle vlan for ext dev
@@ -1893,7 +1894,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					re_learn = 1;
 					goto slow_fastpath;
 				}
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 				/* check hnat hw timeout */
 				if (_I > 14 * HZ && (nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
@@ -1922,7 +1923,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					nfn->count = (nfn->jiffies / HZ) & 0x3f;
 					wmb();
 					clear_bit(0, &nfn->status);
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 4*1024*1024/8) {
 						if (hwnat && !(nfn->flags & FASTNAT_EXT_HWNAT_FLAG))
 							re_learn = 2;
@@ -1944,7 +1945,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 					}
 				}
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 					if (hwnat_wed_disabled) {
@@ -2143,7 +2144,7 @@ fast_output:
 					re_learn = 1;
 					goto slow_fastpath;
 				}
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 				/* check hnat hw timeout */
 				if (_I > 14 * HZ && (nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
@@ -2165,7 +2166,7 @@ fast_output:
 					nfn->count = (nfn->jiffies / HZ) & 0x3f;
 					wmb();
 					clear_bit(0, &nfn->status);
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 4*1024*1024/8) {
 						if (hwnat && !(nfn->flags & FASTNAT_EXT_HWNAT_FLAG))
 							re_learn = 2;
@@ -2181,7 +2182,7 @@ fast_output:
 				nfn->flow_bytes += skb->len;
 				nfn->flow_packets += 1;
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 					if (hwnat_wed_disabled) {
@@ -2346,7 +2347,7 @@ slow_fastpath:
 			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 		}
 	}
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 	else if (re_learn == 2 && !(nf->status & NF_FF_ORIGINAL_OFFLOAD) && !(nf->status & NF_FF_REPLY_OFFLOAD)) {
 		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
@@ -2782,7 +2783,7 @@ fastnat_check:
 											nfn_i->l2_fast_fwd = 1;
 										}
 									}
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 									if (hwnat && (re_learn == 2 || iph->protocol == IPPROTO_UDP)) {
 										/* hwnat enabled */
 										struct net_device *orig_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
@@ -3631,7 +3632,7 @@ __hook_ipv6_main:
 		u32 hash;
 		natflow_fastnat_node_t *nfn;
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 		/* XXX: check MTK_CPU_REASON_HIT_BIND_FORCE_CPU
 		 * nated-skb come to cpu from ppe, we just forward to ext dev(Wi-Fi)
 		 * skb->hash stored the hash key
@@ -3765,7 +3766,7 @@ __hook_ipv6_main:
 		skb->protocol = __constant_htons(ETH_P_IPV6);
 		skb->transport_header = skb->network_header + sizeof(struct ipv6hdr);
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 		/* XXX:
 		 * MT7622 hwnat cannot handle vlan for ext dev
@@ -3824,7 +3825,7 @@ __hook_ipv6_main:
 					re_learn = 1;
 					goto slow_fastpath6;
 				}
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 				/* check hnat hw timeout */
 				if (_I > 14 * HZ && (nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
@@ -3853,7 +3854,7 @@ __hook_ipv6_main:
 					nfn->count = (nfn->jiffies / HZ) & 0x3f;
 					wmb();
 					clear_bit(0, &nfn->status);
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 4*1024*1024/8) {
 						if (hwnat && !(nfn->flags & FASTNAT_EXT_HWNAT_FLAG))
 							re_learn = 2;
@@ -3875,7 +3876,7 @@ __hook_ipv6_main:
 					}
 				}
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 					if (hwnat_wed_disabled) {
@@ -4076,7 +4077,7 @@ fast_output6:
 					re_learn = 1;
 					goto slow_fastpath6;
 				}
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 				/* check hnat hw timeout */
 				if (_I > 14 * HZ && (nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 					nfn->flags &= ~FASTNAT_EXT_HWNAT_FLAG;
@@ -4098,7 +4099,7 @@ fast_output6:
 					nfn->count = (nfn->jiffies / HZ) & 0x3f;
 					wmb();
 					clear_bit(0, &nfn->status);
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 					if (bytes >= NATFLOW_FF_SAMPLE_TIME * 4*1024*1024/8) {
 						if (hwnat && !(nfn->flags & FASTNAT_EXT_HWNAT_FLAG))
 							re_learn = 2;
@@ -4114,7 +4115,7 @@ fast_output6:
 				nfn->flow_bytes += skb->len;
 				nfn->flow_packets += 1;
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 				if ((nfn->flags & FASTNAT_EXT_HWNAT_FLAG)) {
 #if defined(CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH) && !defined(CONFIG_HWNAT_EXTDEV_DISABLED)
 					if (hwnat_wed_disabled) {
@@ -4247,7 +4248,7 @@ slow_fastpath6:
 			simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
 		}
 	}
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 	else if (re_learn == 2 && !(nf->status & NF_FF_ORIGINAL_OFFLOAD) && !(nf->status & NF_FF_REPLY_OFFLOAD)) {
 		simple_clear_bit(NF_FF_ORIGINAL_CHECK_BIT, &nf->status);
 		simple_clear_bit(NF_FF_REPLY_CHECK_BIT, &nf->status);
@@ -4676,7 +4677,7 @@ fastnat_check6:
 											nfn_i->l2_fast_fwd = 1;
 										}
 									}
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 									if (hwnat && (re_learn == 2 || IPV6H->nexthdr == IPPROTO_UDP) && !(ct->status & (IPS_DST_NAT | IPS_SRC_NAT))) {
 										/* hwnat enabled */
 										struct net_device *orig_dev = get_vlan_real_dev(nf->rroute[NF_FF_DIR_ORIGINAL].outdev);
@@ -6008,7 +6009,7 @@ out:
 	return ret;
 }
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 static void natflow_hwnat_stop(struct net_device *dev)
 {
 
@@ -6242,7 +6243,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
 	if (event == NETDEV_UP || event == NETDEV_CHANGE) {
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 		if (dev->type == ARPHRD_PPP && dev->netdev_ops->ndo_flow_offload_check) {
 			flow_offload_hw_path_t path = {
 				.dev = dev,
@@ -6296,7 +6297,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 #endif
 		vline_fwd_map_ifup_handle(dev);
 	} else if (event == NETDEV_DOWN) {
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 		if (dev->netdev_ops->ndo_flow_offload) {
 			int i;
 			mutex_lock(&ppe_dev_cache_lock);
@@ -6353,7 +6354,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 	natflow_unhook_device(dev);
 #endif
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 	natflow_hwnat_stop(dev);
 #endif
 	vline_fwd_map_unregister_handle(dev);
@@ -6396,7 +6397,7 @@ int natflow_path_init(void)
 		return -ENOMEM;
 	}
 
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 	ret = natflow_offload_init();
 	if (ret != 0)
 		goto natflow_offload_init_failed;
@@ -6433,7 +6434,7 @@ register_netdevice_notifier_failed:
 	kfree(natflow_fast_nat_table);
 alloc_natflow_fast_nat_table_failed:
 #endif
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 	natflow_offload_cleanup();
 natflow_offload_init_failed:
 #endif
@@ -6443,7 +6444,7 @@ natflow_offload_init_failed:
 
 void natflow_path_exit(void)
 {
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 	struct net_device *local_ppe_dev;
 #endif
 	disabled = 1;
@@ -6457,7 +6458,7 @@ void natflow_path_exit(void)
 
 #ifdef CONFIG_NETFILTER_INGRESS
 	synchronize_rcu();
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 	rcu_read_lock();
 	local_ppe_dev = rcu_dereference(ppe_dev);
 	if (local_ppe_dev)
@@ -6483,7 +6484,7 @@ void natflow_path_exit(void)
 #else
 	synchronize_rcu();
 #endif
-#if (defined(CONFIG_NET_RALINK_OFFLOAD) || defined(NATFLOW_OFFLOAD_HWNAT_FAKE) && defined(CONFIG_NET_MEDIATEK_SOC))
+#if NATFLOW_HAVE_HW_OFFLOAD
 	natflow_offload_cleanup();
 #endif
 }

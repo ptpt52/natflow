@@ -125,6 +125,7 @@ make
 | `CONFIG_NATFLOW_PATH` | 启用 fast path、vline/relay、硬件 offload 相关控制。 |
 | `CONFIG_NATFLOW_URLLOGGER` | 启用 URL logger、Host ACL 和 `/proc/sys/urllogger_store`。 |
 | `CONFIG_NATFLOW_DPI` | 启用 DPI 控制/事件接口、19 个固定应用、DNS QNAME 查询意图、26 个固定原生协议状态机和 `/dev/natflow_dpi_queue`；默认关闭。DPI enabled 即激活 host/packet consumer，不依赖规则或 `/proc/sys/urllogger_store/enable`。 |
+| `NATFLOW_OFFLOAD_HWNAT_FAKE` + (`CONFIG_NET_MEDIATEK_SOC` 或 `CONFIG_NET_AIROHA`) | 使用内核补丁提供的 fake HWNAT ABI；Airoha 支持由 AN7563 PPE 驱动提供。 |
 | `CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH` | MTK 外部设备硬件 offload 使用 VLAN hash 模式；会影响 bridge VLAN filter。 |
 | `CONFIG_HWNAT_EXTDEV_DISABLED` | 禁用部分外部设备硬件 offload 分支。 |
 | `NO_DEBUG=1` | 追加 `-DNO_DEBUG -Os`，编译期关闭日志宏。 |
