@@ -96,6 +96,7 @@ DKMS Makefile：
 | `CONFIG_NET_RALINK_OFFLOAD` | 启用 Ralink/MTK 硬件 offload 相关代码，并使 `NATFLOW_HAVE_HW_OFFLOAD=1`。 |
 | `NATFLOW_OFFLOAD_HWNAT_FAKE` + (`CONFIG_NET_MEDIATEK_SOC` 或 `CONFIG_NET_AIROHA`) | 使用内核补丁提供的 fake HWNAT ABI，并使 `NATFLOW_HAVE_HW_OFFLOAD=1`。 |
 | `NATFLOW_OFFLOAD_AN7563_SRAM_HASH` | 由 995 内核补丁在 `CONFIG_SOC_AIROHA_AN7563` 下导出；将 fastnat 表固定为 512 项、4-way，并选择 AN7563 PPE SRAM hash mode 1 的 7-bit 分段折叠。 |
+| `NATFLOW_OFFLOAD_MTK_HNAT_8K_4WAY` | 由 MT7987 的 995 内核补丁导出；将 fastnat 表固定为 8192 项、4-way，与 SDK HNAT FOE 表及 hash mode 1 保持一致。 |
 | `CONFIG_NET_MEDIATEK_SOC_WED` | 允许配置 `hwnat_wed_disabled`。 |
 | `CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH` | 硬件外部设备 offload 以 VLAN hash 辅助索引。 |
 | `CONFIG_HWNAT_EXTDEV_DISABLED` | 禁用部分外部设备硬件 offload 分支。 |
@@ -895,6 +896,8 @@ hash 约束：
 - IPv4/IPv6 使用各自 inline hash。
 - hash 返回值是相邻探测窗口的 base slot；窗口宽度由 `NATFLOW_FASTNAT_TABLE_WAYS` 决定。
 - MT7621 平台 `natflow_hash_skip()` 会跳过特定 bucket：`12,25,38,51,76,89,102` modulo 128。
+- MT7987 SDK HNAT 使用 8192 项、4-way 表，沿用通用 MTK tuple mixer、
+  `hash ^= hash >> 16` 和左移 2 的 bucket base 算法。
 - AN7563 SRAM-only 模式使用 512 项、4-way 表；tuple mixer 的 32-bit 结果按
   `bits 0..6, 7..13, 14..20, 21..27, 28..31` 异或折叠为 7 bit，再左移 2
   得到 bucket base。该模式不执行通用的 `hash ^= hash >> 16`，也不应用
@@ -911,6 +914,19 @@ hash 约束：
 - `hwnat_wed_disabled` 控制 WED 使用。
 - `CONFIG_HWNAT_EXTDEV_DISABLED` 会禁用部分外部设备路径。
 - 硬件 offload keepalive 会回写流量并延长 conntrack timeout。
+
+MT7987 SDK HNAT 后端支持一个 Ethernet 端和一个软件 extdev 端组成的双向流：
+
+- extdev 入方向由 natflow fast path 设置 `skb->mark/hash` magic，并通过 MTK
+  QDMA TX 描述符把包重新注入 PPE0。非 DSA 且原包没有 VLAN metadata 时，描述符
+  临时插入 VLAN 1 供 PPE parser 识别；它不是业务 VLAN，实际出口 VLAN 层数和 TCI
+  仍由 FOE 项决定。该方向 FOE 使用 QDMA source port，由 PPE 完成 TTL、NAT、
+  校验和和二层改写后发往 Ethernet。
+- Ethernet 入方向直接进入对应 PPE；发往 extdev 的 FOE 使用 PDMA/CPU destination
+  port，驱动在 `HIT_BIND_FORCE_TO_CPU` 时恢复 natflow hash，natflow 再把已经改写的
+  skb 发送到 extdev。
+- 当前只支持软件 extdev 重注入，不接管 WED 元数据路径，也不注册 extdev-to-extdev
+  的全局 offload 后端；不支持的组合继续保留软件 fast path。
 
 Airoha AN7563 使用与 MTK patch 相同的 fake HWNAT ABI，但由 Airoha PPE V2
 后端实现双向 flow ownership 和 keepalive：
