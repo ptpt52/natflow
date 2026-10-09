@@ -291,7 +291,8 @@ struct natflow_fastnat_node_t {
 #define NATFLOW_FF_SAMPLE_TIME 2
 
 /* MAX 65536; table ways control adjacent-slot collision probing. */
-#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && \
+#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7987) || \
+     defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981)) && \
 	NATFLOW_HAVE_HW_OFFLOAD
 #define NATFLOW_FASTNAT_MTK_HWNAT_4WAY 1
 #else
@@ -300,6 +301,9 @@ struct natflow_fastnat_node_t {
 
 #if defined(NATFLOW_OFFLOAD_AN7563_SRAM_HASH)
 #define NATFLOW_FASTNAT_TABLE_SIZE 512
+#define NATFLOW_FASTNAT_TABLE_WAYS 4
+#elif defined(NATFLOW_OFFLOAD_MTK_HNAT_16K_4WAY)
+#define NATFLOW_FASTNAT_TABLE_SIZE 16384
 #define NATFLOW_FASTNAT_TABLE_WAYS 4
 #elif defined(NATFLOW_OFFLOAD_MTK_HNAT_8K_4WAY)
 #define NATFLOW_FASTNAT_TABLE_SIZE 8192
@@ -406,7 +410,7 @@ static inline int natflow_hash_skip(u32 hash)
 }
 
 #if NATFLOW_HAVE_HW_OFFLOAD
-#if (defined(CONFIG_PINCTRL_MT7988) || defined(CONFIG_PINCTRL_MT7986) || defined(CONFIG_PINCTRL_MT7981))
+#if NATFLOW_FASTNAT_TABLE_SIZE > 8192
 #define HWNAT_QUEUE_MAPPING_MAGIC      0x8000
 #define HWNAT_QUEUE_MAPPING_MAGIC_MASK 0xc000
 #define HWNAT_QUEUE_MAPPING_HASH_MASK  0x3fff

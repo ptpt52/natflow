@@ -96,7 +96,8 @@ DKMS Makefile：
 | `CONFIG_NET_RALINK_OFFLOAD` | 启用 Ralink/MTK 硬件 offload 相关代码，并使 `NATFLOW_HAVE_HW_OFFLOAD=1`。 |
 | `NATFLOW_OFFLOAD_HWNAT_FAKE` + (`CONFIG_NET_MEDIATEK_SOC` 或 `CONFIG_NET_AIROHA`) | 使用内核补丁提供的 fake HWNAT ABI，并使 `NATFLOW_HAVE_HW_OFFLOAD=1`。 |
 | `NATFLOW_OFFLOAD_AN7563_SRAM_HASH` | 由 995 内核补丁在 `CONFIG_SOC_AIROHA_AN7563` 下导出；将 fastnat 表固定为 512 项、4-way，并选择 AN7563 PPE SRAM hash mode 1 的 7-bit 分段折叠。 |
-| `NATFLOW_OFFLOAD_MTK_HNAT_8K_4WAY` | 由 MT7987 的 995 内核补丁导出；将 fastnat 表固定为 8192 项、4-way，与 SDK HNAT FOE 表及 hash mode 1 保持一致。 |
+| `NATFLOW_OFFLOAD_MTK_HNAT_16K_4WAY` | 由 MT7987 SDK 的 995 内核补丁导出；将 fastnat 表固定为 16384 项、4-way，与 SDK HNAT FOE 表及 hash mode 1 保持一致。 |
+| `NATFLOW_OFFLOAD_MTK_HNAT_8K_4WAY` | 兼容旧 SDK 内核补丁；将 fastnat 表固定为 8192 项、4-way，优先于按芯片选择的默认容量。 |
 | `CONFIG_NET_MEDIATEK_SOC_WED` | 允许配置 `hwnat_wed_disabled`。 |
 | `CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH` | 硬件外部设备 offload 以 VLAN hash 辅助索引。 |
 | `CONFIG_HWNAT_EXTDEV_DISABLED` | 禁用部分外部设备硬件 offload 分支。 |
@@ -726,7 +727,8 @@ fastnat 哈希表节点，cacheline 对齐，保存：
 表大小：
 
 - `natflow_fast_nat_table` 只在 `CONFIG_NETFILTER_INGRESS` 下分配；未定义该宏时，path 仍注册 IPv4/IPv6 PRE_ROUTING 和 POST_ROUTING hook（以及 bridge PRE_ROUTING 兼容 hook），但没有软件 fastnat 表和实际 vline/relay 数据面。
-- MT7988/MT7986/MT7981 且启用相关 offload：`16384`，`4-way` 相邻槽探测。
+- 内核导出 `NATFLOW_OFFLOAD_MTK_HNAT_16K_4WAY`：`16384`，`4-way`；旧 `NATFLOW_OFFLOAD_MTK_HNAT_8K_4WAY`：`8192`，`4-way`。AN7563 SRAM 专用配置优先于 MTK 配置。
+- MT7988/MT7987/MT7986/MT7981 且启用相关 offload：默认 `16384`，`4-way` 相邻槽探测；内核显式表容量宏优先。
 - x86/x86_64：`16384`，`4-way` 相邻槽探测。
 - 其他常见 64 位/ARM/ARM64：`8192`，`2-way` 相邻槽探测。
 - ATH79/MT7620 等资源较小平台：`4096`，`2-way` 相邻槽探测。
@@ -903,8 +905,12 @@ hash 约束：
 - IPv4/IPv6 使用各自 inline hash。
 - hash 返回值是相邻探测窗口的 base slot；窗口宽度由 `NATFLOW_FASTNAT_TABLE_WAYS` 决定。
 - MT7621 平台 `natflow_hash_skip()` 会跳过特定 bucket：`12,25,38,51,76,89,102` modulo 128。
-- MT7987 SDK HNAT 使用 8192 项、4-way 表，沿用通用 MTK tuple mixer、
-  `hash ^= hash >> 16` 和左移 2 的 bucket base 算法。
+- MT7987 SDK HNAT 使用 16384 项、4-way 表，沿用通用 MTK tuple mixer、
+  `hash ^= hash >> 16` 和左移 2 的 bucket base 算法；SDK 分配失败时不得
+  缩小表容量，各 PPE 必须与 natflow 使用相同容量。
+- 回注 magic/hash mask 根据实际 `NATFLOW_FASTNAT_TABLE_SIZE` 选择：大于
+  8192 项时为 `0xc000`/`0x3fff`，否则为 `0xe000`/`0x1fff`。这样旧 8K
+  SDK 内核的明确配置仍保持 13-bit 索引，而 16K 的后半表不会被当作无效 magic。
 - AN7563 SRAM-only 模式使用 512 项、4-way 表；tuple mixer 的 32-bit 结果按
   `bits 0..6, 7..13, 14..20, 21..27, 28..31` 异或折叠为 7 bit，再左移 2
   得到 bucket base。该模式不执行通用的 `hash ^= hash >> 16`，也不应用

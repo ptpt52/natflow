@@ -62,9 +62,12 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
   以 CPU-direct 模式启用，不依赖 NPU；支持 IPv4 HNAPT、无 NAT IPv6 5T、
   单层 802.1Q、PPPoE、bridge 和 MTK DSA，keepalive 当前无 per-flow
   bytes/packets。包只关闭 extdev 分支，Wi-Fi 单边流保留软件 fast path。
-- 2026-09-30 MT7987 SDK 集成由 995 内核补丁导出
-  `NATFLOW_OFFLOAD_MTK_HNAT_8K_4WAY`；natflow 自动选择 8192 项、4-way
-  表，保持与 SDK HNAT hash mode 1 一致，不通过包 Makefile传入平台宏。
+- 2026-10-09 MT7987 SDK 集成由 995 内核补丁导出
+  `NATFLOW_OFFLOAD_MTK_HNAT_16K_4WAY`；natflow 自动选择 16384 项、4-way
+  表，保持与 SDK HNAT hash mode 1 一致，不通过包 Makefile 传入平台宏。
+  X-WRT 6.18 的 995 与 natflow 均把 MT7987 纳入默认 16K、4-way 平台。
+  旧 SDK 的 `NATFLOW_OFFLOAD_MTK_HNAT_8K_4WAY` 仍覆盖芯片默认值；回注
+  magic/hash mask 根据实际表容量选择，16K 为 `0xc000`/`0x3fff`。
 - 2026-10-08 MT7987 SDK 支持 Ethernet 与软件 extdev 间的单边硬件 offload：
   extdev 入方向的 `skb->mark/hash` magic 由 QDMA TX 转为 PPE0 FPORT；非 DSA、
   无 VLAN metadata 的包临时插入 VLAN 1 供 PPE parser 识别，真实出口 VLAN 仍由

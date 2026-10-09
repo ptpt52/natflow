@@ -126,9 +126,16 @@ make
 | `CONFIG_NATFLOW_URLLOGGER` | 启用 URL logger、Host ACL 和 `/proc/sys/urllogger_store`。 |
 | `CONFIG_NATFLOW_DPI` | 启用 DPI 控制/事件接口、19 个固定应用、DNS QNAME 查询意图、26 个固定原生协议状态机和 `/dev/natflow_dpi_queue`；默认关闭。DPI enabled 即激活 host/packet consumer，不依赖规则或 `/proc/sys/urllogger_store/enable`。 |
 | `NATFLOW_OFFLOAD_HWNAT_FAKE` + (`CONFIG_NET_MEDIATEK_SOC` 或 `CONFIG_NET_AIROHA`) | 使用内核补丁提供的 fake HWNAT ABI；Airoha 支持由 AN7563 PPE 驱动提供。 |
+| `NATFLOW_OFFLOAD_MTK_HNAT_16K_4WAY` | 由 MT7987 SDK 的 995 内核补丁导出，选择 16384 项、4-way hash 和 14-bit 回注索引；无需包 Makefile 传入。 |
+| `NATFLOW_OFFLOAD_MTK_HNAT_8K_4WAY` | 兼容旧 SDK 内核补丁，继续使用 8192 项、4-way hash 和 13-bit 回注索引。 |
 | `CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH` | MTK 外部设备硬件 offload 使用 VLAN hash 模式；会影响 bridge VLAN filter。 |
 | `CONFIG_HWNAT_EXTDEV_DISABLED` | 禁用部分外部设备硬件 offload 分支。 |
 | `NO_DEBUG=1` | 追加 `-DNO_DEBUG -Os`，编译期关闭日志宏。 |
+
+MT7987 的 16K 硬件转发需要内核 995 patch 与 natflow 一起更新并重新编译。
+X-WRT 6.18 的 995 patch 和 natflow 均将 MT7987 纳入 16K、4-way 平台；
+SDK 通过上表的内核宏明确表容量。内核 FOE 表、软件 hash、碰撞槽数和
+回注标记必须一致，16K 使用 magic mask `0xc000`、hash mask `0x3fff`。
 
 启用 `CONFIG_NATFLOW_URLLOGGER` 或 `CONFIG_NATFLOW_DPI` 时，目标内核的
 `THREAD_SIZE` 必须至少为 8192 字节，否则构建会失败。L7、DPI 和 URL
