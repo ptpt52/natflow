@@ -1612,9 +1612,7 @@ static unsigned int natflow_path_pre_ct_in_hook(unsigned int hooknum,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
-#ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = PF_INET;
-#endif
 #elif NATFLOW_NF_HOOK_OPS_HAVE_DEV_ARGS
 static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
@@ -1622,18 +1620,14 @@ static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
         const struct net_device *out,
         int (*okfn)(struct sk_buff *))
 {
-#ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = ops->pf;
-#endif
 	unsigned int hooknum = ops->hooknum;
 #elif NATFLOW_NF_HOOK_OPS_HAVE_STATE_ARG
 static unsigned int natflow_path_pre_ct_in_hook(const struct nf_hook_ops *ops,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
-#ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = state->pf;
-#endif
 	unsigned int hooknum = state->hook;
 	//const struct net_device *in = state->in;
 	//const struct net_device *out = state->out;
@@ -1642,9 +1636,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
         struct sk_buff *skb,
         const struct nf_hook_state *state)
 {
-#ifdef CONFIG_NETFILTER_INGRESS
 	u_int8_t pf = state->pf;
-#endif
 	unsigned int hooknum = state->hook;
 	//const struct net_device *in = state->in;
 #if NATFLOW_NF_HOOK_STATE_HAS_OUTDEV
@@ -2466,16 +2458,20 @@ slow_fastpath:
 	}
 
 	if (!simple_test_bit(NF_FF_BRIDGE_BIT, &nf->status)) {
-		if (skb->len > nf->rroute[dir].mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU)) {
+		/* Only IPv4 input has initialized IPCB; ingress cb is private data. */
+		bool frag_pmtu = pf == NFPROTO_IPV4 && hooknum == NF_INET_PRE_ROUTING &&
+		                 (IPCB(skb)->flags & IPSKB_FRAG_PMTU);
+
+		if (skb->len > nf->rroute[dir].mtu || frag_pmtu) {
 			if (!skb_is_gso(skb)) {
 				switch (iph->protocol) {
 				case IPPROTO_TCP:
-					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": pmtu=%u FRAG=%p\n",
-					              DEBUG_TCP_ARG(iph, l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+					NATFLOW_DEBUG("(PCO)" DEBUG_TCP_FMT ": pmtu=%u FRAG=%d\n",
+					              DEBUG_TCP_ARG(iph, l4), nf->rroute[dir].mtu, frag_pmtu);
 					break;
 				case IPPROTO_UDP:
-					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%p\n",
-					              DEBUG_UDP_ARG(iph, l4), nf->rroute[dir].mtu, (void *)(IPCB(skb)->flags & IPSKB_FRAG_PMTU));
+					NATFLOW_DEBUG("(PCO)" DEBUG_UDP_FMT ": pmtu=%u FRAG=%d\n",
+					              DEBUG_UDP_ARG(iph, l4), nf->rroute[dir].mtu, frag_pmtu);
 					break;
 				}
 				goto out;

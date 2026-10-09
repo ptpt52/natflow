@@ -891,6 +891,13 @@ PPPoE 包同步更新 length。转换失败时调用方丢弃当前包。
    - 双向 MAC 和 flags 可逆且一致时可 L2 fast forward。
 10. 尝试硬件 offload；失败则设置 fail bit，约 8 秒后重试。
 
+IPv4 PMTU 检查只在 IPv4 PRE_ROUTING 中读取 `IPCB(skb)->flags` 的
+`IPSKB_FRAG_PMTU`。NETDEV ingress 早于 `ip_rcv_core()`，其 `skb->cb`
+可能仍是驱动、GRO 或 TC 的私有数据，不能按 IPv4 控制块解释；调用
+`nf_conntrack_in_compat()` 也不会初始化 IPCB。ingress 保留已有的
+`ip_is_fragment()`、MTU 和 GSO 检查。PMTU 调试日志使用同一经过协议族
+和 hook 检查的布尔值输出 `FRAG=0/1`，不再次直接读取控制块。
+
 hash 约束：
 
 - IPv4/IPv6 使用各自 inline hash。

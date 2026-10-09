@@ -1546,7 +1546,7 @@ conntrack 表中除 fakeuser (`IPS_NATFLOW_USER`) 和 NATCAP peer
 
 1. 先确认模块是否加载、设备节点是否存在：`ls -l /dev/*natflow* /dev/*info* /dev/*acl*`。
 2. 写命令无效时，确认命令带换行，且没有超过 256 字节。
-3. fast path 不生效时，检查 `disabled=0`、zone 是否刷新、`debug` 日志、conntrack 是否存在。
+3. fast path 不生效时，检查 `disabled=0`、zone 是否刷新、`debug` 日志、conntrack 是否存在。PMTU 日志中的 `FRAG=1` 表示 IPv4 PRE_ROUTING 的有效 `IPSKB_FRAG_PMTU` 标志，`FRAG=0` 表示该检查未命中；它不是 IP 头的 DF 位，NETDEV ingress 不读取该控制块标志。
 4. URL/Host ACL 不生效时，确认 `echo 1 >/proc/sys/urllogger_store/enable`，并让 reader 以 `O_RDWR` 打开 `/dev/natflow_urllogger_queue` 后写入正数 `cache=N`，再看队列是否输出目标 host。
 5. QoS 不生效时，先 `cat /dev/natflow_qos_ctl` 确认规则已加载，再检查是否已有连接缓存了旧规则；生产变更建议配合重新建连或刷新相关连接状态。
 6. 老内核如果不能正确处理 ingress hook 的 `NF_STOLEN`，需要内核侧补丁；详细实现约束见 `SYSTEM_DESIGN_SPEC.md`。
