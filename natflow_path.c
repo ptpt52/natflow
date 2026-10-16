@@ -555,7 +555,7 @@ struct net_device *ifname_group_get(int idx)
 
 #if NATFLOW_HAVE_HW_OFFLOAD
 unsigned short hwnat = 1;
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) || defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 unsigned short hwnat_wed_disabled = 0;
 #else
 unsigned short hwnat_wed_disabled = 1;
@@ -2924,7 +2924,7 @@ fastnat_check:
 												flow_offload_hw_path_t reply = {
 													.dev = reply_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) || defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
 #else
 													| FLOW_OFFLOAD_PATH_WED_DIS
@@ -3037,7 +3037,7 @@ fastnat_check:
 											flow_offload_hw_path_t orig = {
 												.dev = orig_dev,
 												.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) || defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 												| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
 #else
 												| FLOW_OFFLOAD_PATH_WED_DIS
@@ -3159,7 +3159,7 @@ fastnat_check:
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) || defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
 #else
 													| FLOW_OFFLOAD_PATH_WED_DIS
@@ -3172,7 +3172,7 @@ fastnat_check:
 												flow_offload_hw_path_t reply = {
 													.dev = reply_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) || defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
 #else
 													| FLOW_OFFLOAD_PATH_WED_DIS
@@ -4818,7 +4818,7 @@ fastnat_check6:
 												flow_offload_hw_path_t reply = {
 													.dev = reply_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) || defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
 #else
 													| FLOW_OFFLOAD_PATH_WED_DIS
@@ -4931,7 +4931,7 @@ fastnat_check6:
 											flow_offload_hw_path_t orig = {
 												.dev = orig_dev,
 												.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) || defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 												| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
 #else
 												| FLOW_OFFLOAD_PATH_WED_DIS
@@ -5053,7 +5053,7 @@ fastnat_check6:
 												flow_offload_hw_path_t orig = {
 													.dev = orig_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) || defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
 #else
 													| FLOW_OFFLOAD_PATH_WED_DIS
@@ -5066,7 +5066,7 @@ fastnat_check6:
 												flow_offload_hw_path_t reply = {
 													.dev = reply_dev,
 													.flags = FLOW_OFFLOAD_PATH_ETHERNET
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) || defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 													| (hwnat_wed_disabled * FLOW_OFFLOAD_PATH_WED_DIS)
 #else
 													| FLOW_OFFLOAD_PATH_WED_DIS
@@ -6020,6 +6020,42 @@ static void natflow_hwnat_stop(struct net_device *dev)
 }
 #endif
 
+#if defined(NATFLOW_OFFLOAD_AIROHA_NPU) && NATFLOW_HAVE_HW_OFFLOAD
+static DEFINE_MUTEX(natflow_wlan_mode_lock);
+
+/* Called with natflow_wlan_mode_lock held; dev is protected by RCU/RTNL. */
+static int natflow_hwnat_wed_disabled_sync(struct net_device *dev)
+{
+	flow_offload_hw_path_t path = {
+		.dev = dev,
+		.flags = FLOW_OFFLOAD_PATH_ETHERNET | FLOW_OFFLOAD_PATH_WLAN_CHANGE,
+	};
+
+	if (hwnat_wed_disabled)
+		path.flags |= FLOW_OFFLOAD_PATH_WED_DIS;
+	if (dev && dev->netdev_ops->ndo_flow_offload_check)
+		return dev->netdev_ops->ndo_flow_offload_check(&path);
+	return 0;
+}
+
+int natflow_hwnat_wed_disabled_set(unsigned int value)
+{
+	struct net_device *dev;
+	int err;
+
+	mutex_lock(&natflow_wlan_mode_lock);
+	WRITE_ONCE(hwnat_wed_disabled, !!value);
+	/* Retire old software associations as well as the NPU BINDs. */
+	natflow_update_magic(0);
+	rcu_read_lock();
+	dev = rcu_dereference(ppe_dev);
+	err = natflow_hwnat_wed_disabled_sync(dev);
+	rcu_read_unlock();
+	mutex_unlock(&natflow_wlan_mode_lock);
+	return err;
+}
+#endif
+
 static struct nf_hook_ops path_hooks[] = {
 	{
 #if NATFLOW_NF_HOOK_OPS_HAVE_OWNER
@@ -6253,6 +6289,9 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 		}
 		if (dev->netdev_ops->ndo_flow_offload) {
 			int i;
+#if defined(NATFLOW_OFFLOAD_AIROHA_NPU)
+			bool added = false;
+#endif
 			if (netif_running(dev) && netif_carrier_ok(dev)) {
 				mutex_lock(&ppe_dev_cache_lock);
 				for (i = 0; i < PPE_DEV_CACHE_NUM; i++) {
@@ -6260,12 +6299,29 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 						break;
 					if (ppe_dev_cache[i] == NULL) {
 						ppe_dev_cache[i] = dev;
+#if defined(NATFLOW_OFFLOAD_AIROHA_NPU)
+						added = true;
+#endif
 						break;
 					}
 				}
 				rcu_assign_pointer(ppe_dev, ppe_dev_cache[0]);
 				NATFLOW_println("caught event %s for dev=%s: set ppe=%s", event == NETDEV_UP ? "NETDEV_UP" : "NETDEV_CHANGE", dev->name, ppe_dev_cache[0] ? ppe_dev_cache[0]->name : "(null)");
 				mutex_unlock(&ppe_dev_cache_lock);
+#if defined(NATFLOW_OFFLOAD_AIROHA_NPU)
+				/* Reconcile persistent PPE state after module reload or
+				 * when no native interface was up at the last switch.
+				 */
+				if (added) {
+					int err;
+
+					mutex_lock(&natflow_wlan_mode_lock);
+					err = natflow_hwnat_wed_disabled_sync(dev);
+					mutex_unlock(&natflow_wlan_mode_lock);
+					if (err)
+						NATFLOW_println("failed to sync wireless offload mode for %s: %d", dev->name, err);
+				}
+#endif
 			} else {
 				mutex_lock(&ppe_dev_cache_lock);
 				for (i = 0; i < PPE_DEV_CACHE_NUM;) {

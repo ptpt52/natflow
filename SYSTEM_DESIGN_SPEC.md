@@ -98,6 +98,7 @@ DKMS Makefile：
 | `NATFLOW_OFFLOAD_AN7563_SRAM_HASH` | 由 995 内核补丁在 `CONFIG_SOC_AIROHA_AN7563` 下导出；将 fastnat 表固定为 512 项、4-way，并选择 AN7563 PPE SRAM hash mode 1 的 7-bit 分段折叠。 |
 | `NATFLOW_OFFLOAD_MTK_HNAT_16K_4WAY` | 由 MT7987 SDK 的 995 内核补丁导出；将 fastnat 表固定为 16384 项、4-way，与 SDK HNAT FOE 表及 hash mode 1 保持一致。 |
 | `NATFLOW_OFFLOAD_MTK_HNAT_8K_4WAY` | 兼容旧 SDK 内核补丁；将 fastnat 表固定为 8192 项、4-way，优先于按芯片选择的默认容量。 |
+| `NATFLOW_OFFLOAD_AIROHA_NPU` | 由配套 AN758x 995 内核补丁导出；允许配置无线 offload 开关，向后端传递 WED_DIS/WLAN_CHANGE 并同步撤销 NPU 无线流。 |
 | `CONFIG_NET_MEDIATEK_SOC_WED` | 允许配置 `hwnat_wed_disabled`。 |
 | `CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH` | 硬件外部设备 offload 以 VLAN hash 辅助索引。 |
 | `CONFIG_HWNAT_EXTDEV_DISABLED` | 禁用部分外部设备硬件 offload 分支。 |
@@ -252,7 +253,7 @@ AI 重建时必须保留换行结束、上述长度上限、per-open 半行状�
 
 - path `disabled=1`，模块加载后 fast path 默认关闭。
 - `delay_pkts=0`，`go_slowpath_if_no_qos=0`。
-- HWNAT 分支中 `hwnat=1`；`hwnat_wed_disabled` 在 `CONFIG_NET_MEDIATEK_SOC_WED` 下默认 0，否则默认 1。
+- HWNAT 分支中 `hwnat=1`；`hwnat_wed_disabled` 在 `CONFIG_NET_MEDIATEK_SOC_WED` 或 `NATFLOW_OFFLOAD_AIROHA_NPU` 下默认 0，否则默认 1。
 
 写命令：
 
@@ -261,7 +262,7 @@ AI 重建时必须保留换行结束、上述长度上限、per-open 半行状�
 | `debug=<u>` | 总是可用 | 设置全局日志 bitmask（1=error, 2=warn, 4=info, 8=debug, 16=fixme, 32=debug_ratelimited）。 |
 | `disabled=<u>` | `CONFIG_NATFLOW_PATH` | 设置 path `disabled`，布尔化。 |
 | `hwnat=<u>` | HWNAT 分支 | 设置硬件 offload 开关。 |
-| `hwnat_wed_disabled=<u>` | `CONFIG_NET_MEDIATEK_SOC_WED` | 设置 WED 禁用标志。 |
+| `hwnat_wed_disabled=<u>` | HWNAT 分支，且有 `CONFIG_NET_MEDIATEK_SOC_WED` 或 `NATFLOW_OFFLOAD_AIROHA_NPU` | 设置无线硬件 offload 禁用标志；Airoha 将写入值布尔化、推进 path magic 并同步后端状态，返回撤流错误。 |
 | `delay_pkts=<u>` | path | fastnat 建立前延迟包数阈值。 |
 | `go_slowpath_if_no_qos=<u>` | path | 无 QoS 命中时是否停止 fast path。 |
 | `ifname_group_type=<u>` | path | 接口组过滤模式：0 全部；1 仅 group 双向；2 group 双向走慢路径。 |
@@ -927,6 +928,19 @@ hash 约束：
 - `hwnat_wed_disabled` 控制 WED 使用。
 - `CONFIG_HWNAT_EXTDEV_DISABLED` 会禁用部分外部设备路径。
 - 硬件 offload keepalive 会回写流量并延长 conntrack timeout。
+
+AN758x 的配套内核 ABI 通过 `NATFLOW_OFFLOAD_AIROHA_NPU` 开放同名无线开关：
+
+- IPv4/IPv6 的双向硬件路径均携带 `FLOW_OFFLOAD_PATH_WED_DIS`；0 允许后端
+  验证过的 NPU AP/GDM 组合，非零强制软件 extdev。
+- `natflow_wlan_mode_lock` 串行控制写入和设备事件的状态同步。写入先布尔化
+  并推进 path magic，再在 RCU 保护下向当前 `ppe_dev` 发送
+  `FLOW_OFFLOAD_PATH_WLAN_CHANGE`；后端在返回前撤销已有无线硬件流，错误直接
+  返回控制设备。失败时开关值和已推进的 generation 不回滚。
+- 原生设备加入 PPE 缓存时，在释放 `ppe_dev_cache_lock` 后同步当前模式，
+  避免模块重载或上次切换时没有可用原生接口而遗留后端状态。
+- 配套 mt76 驱动负责 owner/peer 生命周期；该开关不改变 NPU/WDMA 出口或
+  扩展其统计能力。未导出此 ABI 的内核保留原有行为。
 
 MT7987 SDK HNAT 后端支持一个 Ethernet 端和一个软件 extdev 端组成的双向流：
 

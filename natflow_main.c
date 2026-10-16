@@ -96,7 +96,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 #if defined(CONFIG_NATFLOW_PATH)
 #if NATFLOW_HAVE_HW_OFFLOAD
 		             "#    hwnat=%u\n"
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) || defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 		             "#    hwnat_wed_disabled=%u\n"
 #endif
 #endif
@@ -116,7 +116,7 @@ static void *natflow_start(struct seq_file *m, loff_t *pos)
 #if defined(CONFIG_NATFLOW_PATH)
 #if NATFLOW_HAVE_HW_OFFLOAD
 		             hwnat,
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) || defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 		             hwnat_wed_disabled,
 #endif
 #endif
@@ -223,12 +223,16 @@ static int natflow_apply_line(struct file *file, char *data)
 			hwnat = d;
 			goto done;
 		}
-#if defined(CONFIG_NET_MEDIATEK_SOC_WED)
+#if defined(CONFIG_NET_MEDIATEK_SOC_WED) || defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 	} else if (strncmp(data, "hwnat_wed_disabled=", 19) == 0) {
 		int d;
 		n = sscanf(data, "hwnat_wed_disabled=%u", &d);
 		if (n == 1) {
+#if defined(NATFLOW_OFFLOAD_AIROHA_NPU)
+			return natflow_hwnat_wed_disabled_set(d);
+#else
 			hwnat_wed_disabled = d;
+#endif
 			goto done;
 		}
 #endif

@@ -1,6 +1,6 @@
 # Natflow 智能体记忆
 
-更新时间：2026-09-11
+更新时间：2026-10-16
 
 本文是给智能体快速恢复上下文的压缩记忆，不替代源码。遇到冲突时以源码为准，并修正文档。
 
@@ -49,6 +49,13 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - `/dev/natflow_userinfo_ctl` 的 `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数；timestamp 创建/获取 fakeuser 时写入，user pre hook 中普通活动最多每 32 秒刷新一次，新连接包超过 2 秒可刷新；不要用当前 `no_flow_timeout` 和 conntrack 剩余超时反推。
 - path 默认关闭，通常通过 `/dev/natflow_ctl` 的 `disabled=0` 开启。
 - `CONFIG_NATFLOW_PATH` 控制 fast path、vline/relay 和硬件 offload 相关能力。
+- 2026-10-16 Airoha NPU 无线开关：配套内核导出 `NATFLOW_OFFLOAD_AIROHA_NPU`
+  与 `FLOW_OFFLOAD_PATH_WLAN_CHANGE` 后，`hwnat_wed_disabled` 默认 0，并在
+  IPv4/IPv6 的硬件路径中传递 WED_DIS。非零强制软件 extdev；控制写入在
+  `natflow_wlan_mode_lock` 下布尔化、推进 path magic 并同步后端撤流，错误
+  直接返回且不回滚 generation。设备加入 PPE 缓存后重新同步模式，覆盖
+  模块重载及上次切换时没有原生接口的情形；无线 owner/peer 由配套 mt76
+  维护，NPU/WDMA 出口与统计限制不变。
 - 2026-09-28 fake HWNAT 编译条件统一为 `NATFLOW_HAVE_HW_OFFLOAD`：
   `CONFIG_NET_RALINK_OFFLOAD`，或 `NATFLOW_OFFLOAD_HWNAT_FAKE` 配合
   `CONFIG_NET_MEDIATEK_SOC`/`CONFIG_NET_AIROHA`。
