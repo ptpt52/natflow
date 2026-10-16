@@ -304,6 +304,10 @@ MTK WED 平台也将写入值布尔化并串行处理模式切换。仅在模式
 path magic，强制软件连接重学；旧硬件规则由后续 keepalive 撤销，不保证
 控制命令返回时已同步清空。
 
+软件 fast path 和硬件 offload 的 keepalive 将 VLAN 接口流量按底层设备、
+802.1Q/802.1ad 协议和 VID 匹配后回写；两种协议使用相同 VID 时分别记账。
+仅匹配直接挂在该底层设备上的 VLAN 接口，接口不存在时跳过其统计。
+
 vline/relay：
 
 ```sh

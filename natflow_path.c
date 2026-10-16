@@ -827,7 +827,8 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 #endif
 					if (nf->rroute[!d].vlan_present) {
 						rcu_read_lock();
-						dev = vlan_lookup_dev(dev, nf->rroute[!d].vlan_tci);
+						dev = vlan_lookup_dev(dev, nf->rroute[!d].vlan_proto,
+						                      nf->rroute[!d].vlan_tci);
 						if (dev) {
 							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
 							u64_stats_update_begin(&vpstats->syncp);
@@ -849,7 +850,8 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 #endif
 					if (nf->rroute[d].vlan_present) {
 						rcu_read_lock();
-						dev = vlan_lookup_dev(dev, nf->rroute[d].vlan_tci);
+						dev = vlan_lookup_dev(dev, nf->rroute[d].vlan_proto,
+						                      nf->rroute[d].vlan_tci);
 						if (dev) {
 							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
 							u64_stats_update_begin(&vpstats->syncp);
@@ -1064,7 +1066,8 @@ __keepalive_ipv6_main:
 #endif
 					if (nf->rroute[!d].vlan_present) {
 						rcu_read_lock();
-						dev = vlan_lookup_dev(dev, nf->rroute[!d].vlan_tci);
+						dev = vlan_lookup_dev(dev, nf->rroute[!d].vlan_proto,
+						                      nf->rroute[!d].vlan_tci);
 						if (dev) {
 							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
 							u64_stats_update_begin(&vpstats->syncp);
@@ -1086,7 +1089,8 @@ __keepalive_ipv6_main:
 #endif
 					if (nf->rroute[d].vlan_present) {
 						rcu_read_lock();
-						dev = vlan_lookup_dev(dev, nf->rroute[d].vlan_tci);
+						dev = vlan_lookup_dev(dev, nf->rroute[d].vlan_proto,
+						                      nf->rroute[d].vlan_tci);
 						if (dev) {
 							struct vlan_pcpu_stats *vpstats = this_cpu_ptr(vlan_dev_priv(dev)->vlan_pcpu_stats);
 							u64_stats_update_begin(&vpstats->syncp);

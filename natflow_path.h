@@ -291,19 +291,27 @@ static inline int natflow_do_dnat6(struct sk_buff *skb, struct nf_conn *ct, int 
 	return 0;
 }
 
-static inline struct net_device *vlan_lookup_dev(struct net_device *dev, unsigned short vlan_id)
+static inline struct net_device *vlan_lookup_dev(struct net_device *dev,
+        unsigned short vlan_proto, unsigned short vlan_id)
 {
 	struct net_device *vlan_dev;
+	__be16 proto;
 
 	/* Caller must hold rcu_read_lock() while using the returned device. */
-	for_each_netdev_rcu(dev_net(dev), vlan_dev) {
-		if (is_vlan_dev(vlan_dev)) {
-			struct vlan_dev_priv *vlan = vlan_dev_priv(vlan_dev);
-			if (vlan->vlan_id == vlan_id && vlan->real_dev == dev) {
-				return vlan_dev;
-			}
-		}
-	}
+	if (!READ_ONCE(dev->vlan_info))
+		return NULL;
+
+	if (vlan_proto == FF_ETH_P_8021Q)
+		proto = htons(ETH_P_8021Q);
+	else if (vlan_proto == FF_ETH_P_8021AD)
+		proto = htons(ETH_P_8021AD);
+	else
+		return NULL;
+
+	vlan_dev = __vlan_find_dev_deep_rcu(dev, proto, vlan_id);
+	/* The deep lookup may follow a master if vlan_info disappears. */
+	if (vlan_dev && vlan_dev_priv(vlan_dev)->real_dev == dev)
+		return vlan_dev;
 	return NULL;
 }
 

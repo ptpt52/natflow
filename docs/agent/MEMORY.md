@@ -49,6 +49,9 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - `/dev/natflow_userinfo_ctl` 的 `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数；timestamp 创建/获取 fakeuser 时写入，user pre hook 中普通活动最多每 32 秒刷新一次，新连接包超过 2 秒可刷新；不要用当前 `no_flow_timeout` 和 conntrack 剩余超时反推。
 - path 默认关闭，通常通过 `/dev/natflow_ctl` 的 `disabled=0` 开启。
 - `CONFIG_NATFLOW_PATH` 控制 fast path、vline/relay 和硬件 offload 相关能力。
+- keepalive 的 VLAN 统计通过内核 VLAN 索引按底层设备、协议和 VID 查询，
+  不扫描 netdev 列表；结果须匹配原 `real_dev`，拒绝 master 上的 VLAN，
+  802.1Q/802.1ad 相同 VID 分别记账。查询及统计使用保持在同一 RCU 临界区。
 - 2026-10-16 Airoha NPU 无线开关：配套内核导出 `NATFLOW_OFFLOAD_AIROHA_NPU`
   与 `FLOW_OFFLOAD_PATH_WLAN_CHANGE` 后，`hwnat_wed_disabled` 默认 0，并在
   IPv4/IPv6 的硬件路径中传递 WED_DIS。非零强制软件 extdev；控制写入在

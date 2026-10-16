@@ -929,6 +929,12 @@ hash 约束：
 - `CONFIG_HWNAT_EXTDEV_DISABLED` 会禁用部分外部设备路径。
 - 硬件 offload keepalive 会回写流量并延长 conntrack timeout。
 
+软件采样和硬件 keepalive 回写 VLAN 设备统计时，在 RCU 保护下通过
+`__vlan_find_dev_deep_rcu()` 按底层设备、802.1Q/802.1ad 协议和 VID 查询
+内核 VLAN 索引，不遍历网络命名空间的设备列表。查询结果必须仍以传入
+设备为 `real_dev`，不得将 master 上的 VLAN 作为命中；没有对应 VLAN
+设备时跳过该设备统计。相同底层设备和 VID 的不同 VLAN 协议分别记账。
+
 AN758x 的配套内核 ABI 通过 `NATFLOW_OFFLOAD_AIROHA_NPU` 开放同名无线开关：
 
 - IPv4/IPv6 的双向硬件路径均携带 `FLOW_OFFLOAD_PATH_WED_DIS`；0 允许后端
