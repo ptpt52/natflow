@@ -285,7 +285,7 @@ cat /dev/natflow_ctl
 | `debug=<num>` | 设置日志 bitmask：`1=error`、`2=warn`、`4=info`、`8=debug`、`16=fixme`、`32=debug_ratelimited`。 |
 | `disabled=0/1` | 开启或关闭 fast path。模块加载后默认关闭。 |
 | `hwnat=0/1` | 支持 HWNAT 的平台上开启或关闭硬件 offload。 |
-| `hwnat_wed_disabled=0/1` | MTK WED 或配套 Airoha NPU 平台的无线硬件 offload 开关；Airoha 上 0 允许受支持的 NPU 路径，非零强制软件 extdev，并同步撤销已有无线硬件流。 |
+| `hwnat_wed_disabled=0/1` | MTK WED 或配套 Airoha NPU 平台的无线硬件 offload 开关；0 允许各自支持的无线硬件路径，非零强制软件 extdev。 |
 | `delay_pkts=<n>` | fastnat 建立前延迟若干包。 |
 | `go_slowpath_if_no_qos=0/1` | 无 QoS 命中时是否走慢路径。 |
 | `ifname_group_type=<n>` | 接口组过滤模式。 |
@@ -299,6 +299,10 @@ Airoha NPU 的无线开关依赖内核导出 `NATFLOW_OFFLOAD_AIROHA_NPU` 和
 写入值会布尔化，切换会推进 path magic；后端撤流失败时命令返回对应错误。
 模块重载或原生接口启用后会重新同步开关状态。该开关不改变 NPU/WDMA
 出口路径，也不补充该路径缺少的流量计数。
+
+MTK WED 平台也将写入值布尔化并串行处理模式切换。仅在模式改变时推进
+path magic，强制软件连接重学；旧硬件规则由后续 keepalive 撤销，不保证
+控制命令返回时已同步清空。
 
 vline/relay：
 

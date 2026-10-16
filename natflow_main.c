@@ -228,11 +228,7 @@ static int natflow_apply_line(struct file *file, char *data)
 		int d;
 		n = sscanf(data, "hwnat_wed_disabled=%u", &d);
 		if (n == 1) {
-#if defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 			return natflow_hwnat_wed_disabled_set(d);
-#else
-			hwnat_wed_disabled = d;
-#endif
 			goto done;
 		}
 #endif

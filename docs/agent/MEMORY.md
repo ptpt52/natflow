@@ -56,6 +56,10 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
   直接返回且不回滚 generation。设备加入 PPE 缓存后重新同步模式，覆盖
   模块重载及上次切换时没有原生接口的情形；无线 owner/peer 由配套 mt76
   维护，NPU/WDMA 出口与统计限制不变。
+- 2026-10-16 MTK WED 模式切换复用 `natflow_hwnat_wed_disabled_set()` 控制入口，
+  以 mutex 串行、布尔化写入，仅在值变化时推进 path magic。旧软件关联必须
+  重学，已有硬件项由后续 keepalive 异步撤销；不要将控制命令成功解释为已
+  同步清空 FOE。Airoha 分支继续执行其同步后端通知。
 - 2026-09-28 fake HWNAT 编译条件统一为 `NATFLOW_HAVE_HW_OFFLOAD`：
   `CONFIG_NET_RALINK_OFFLOAD`，或 `NATFLOW_OFFLOAD_HWNAT_FAKE` 配合
   `CONFIG_NET_MEDIATEK_SOC`/`CONFIG_NET_AIROHA`。

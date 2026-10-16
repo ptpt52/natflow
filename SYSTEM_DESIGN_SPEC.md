@@ -262,7 +262,7 @@ AI 重建时必须保留换行结束、上述长度上限、per-open 半行状�
 | `debug=<u>` | 总是可用 | 设置全局日志 bitmask（1=error, 2=warn, 4=info, 8=debug, 16=fixme, 32=debug_ratelimited）。 |
 | `disabled=<u>` | `CONFIG_NATFLOW_PATH` | 设置 path `disabled`，布尔化。 |
 | `hwnat=<u>` | HWNAT 分支 | 设置硬件 offload 开关。 |
-| `hwnat_wed_disabled=<u>` | HWNAT 分支，且有 `CONFIG_NET_MEDIATEK_SOC_WED` 或 `NATFLOW_OFFLOAD_AIROHA_NPU` | 设置无线硬件 offload 禁用标志；Airoha 将写入值布尔化、推进 path magic 并同步后端状态，返回撤流错误。 |
+| `hwnat_wed_disabled=<u>` | HWNAT 分支，且有 `CONFIG_NET_MEDIATEK_SOC_WED` 或 `NATFLOW_OFFLOAD_AIROHA_NPU` | 布尔化无线硬件 offload 禁用标志；MTK 仅在变化时触发重学并异步撤流，Airoha 每次写入均推进 path magic 并同步后端状态、返回撤流错误。 |
 | `delay_pkts=<u>` | path | fastnat 建立前延迟包数阈值。 |
 | `go_slowpath_if_no_qos=<u>` | path | 无 QoS 命中时是否停止 fast path。 |
 | `ifname_group_type=<u>` | path | 接口组过滤模式：0 全部；1 仅 group 双向；2 group 双向走慢路径。 |
@@ -925,7 +925,7 @@ hash 约束：
 - 支持原始/回复方向不同设备组合。
 - 支持 VLAN、PPPoE、DSA、bridge、WED 标志。
 - `hwnat` 总开关控制是否尝试。
-- `hwnat_wed_disabled` 控制 WED 使用。
+- `hwnat_wed_disabled` 控制 WED 使用。MTK WED 平台将写入值布尔化，并在模式变化时推进 path magic，强制软件连接重学；已有硬件项在后续 keepalive 中因 generation 失配撤销，不保证控制命令返回时已同步清空。
 - `CONFIG_HWNAT_EXTDEV_DISABLED` 会禁用部分外部设备路径。
 - 硬件 offload keepalive 会回写流量并延长 conntrack timeout。
 

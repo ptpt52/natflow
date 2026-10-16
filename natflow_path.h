@@ -31,7 +31,7 @@ extern unsigned int delay_pkts;
 extern unsigned int go_slowpath_if_no_qos;
 
 extern void natflow_disabled_set(int v);
-#if defined(NATFLOW_OFFLOAD_AIROHA_NPU)
+#if defined(NATFLOW_OFFLOAD_AIROHA_NPU) || defined(CONFIG_NET_MEDIATEK_SOC_WED)
 extern int natflow_hwnat_wed_disabled_set(unsigned int disabled);
 #endif
 extern int natflow_disabled_get(void);

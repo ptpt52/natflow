@@ -6054,6 +6054,23 @@ int natflow_hwnat_wed_disabled_set(unsigned int value)
 	mutex_unlock(&natflow_wlan_mode_lock);
 	return err;
 }
+#elif defined(CONFIG_NET_MEDIATEK_SOC_WED) && NATFLOW_HAVE_HW_OFFLOAD
+static DEFINE_MUTEX(natflow_wlan_mode_lock);
+
+int natflow_hwnat_wed_disabled_set(unsigned int value)
+{
+	value = !!value;
+	mutex_lock(&natflow_wlan_mode_lock);
+	if (READ_ONCE(hwnat_wed_disabled) != value) {
+		WRITE_ONCE(hwnat_wed_disabled, value);
+		/* Old FOEs are retired by keepalive; software paths must relearn
+		 * instead of reusing the previous WED/extdev associations.
+		 */
+		natflow_update_magic(0);
+	}
+	mutex_unlock(&natflow_wlan_mode_lock);
+	return 0;
+}
 #endif
 
 static struct nf_hook_ops path_hooks[] = {
