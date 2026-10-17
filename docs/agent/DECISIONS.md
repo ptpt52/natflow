@@ -282,3 +282,32 @@ queue pressure 和 queue stream 也已验证。继续扩展 IPv6 extension heade
 - generic TLS/QUIC 等基础协议不能过早写入 `app_id`，否则会阻止后续应用细分。
 - 详细数据模型、并发合同和里程碑见
   `DPI_HARDCODED_STATE_MACHINE_DESIGN.md`。
+
+## ADR-0010：QoS 缓存包在入队 CPU 续发
+
+状态：Accepted
+
+### 背景
+
+全局缓存队列的 timer/tasklet 可能在其他 CPU 恢复 skb 处理。当前要求缓存包
+由其入队 CPU 续发；CPU 亲和性不能代替跨异步边界的设备生命周期保护。
+
+### 决策
+
+- 使用 per-CPU 红黑树、固定 CPU 的 hrtimer 和本 CPU tasklet；队列选择和
+  timer 启动处于 BH 禁止迁移区域，所有启动使用 ABS_PINNED。
+- CPUHP_AP_ONLINE_DYN 下线回调先禁止入队，再停止 timer/tasklet 并丢弃
+  本 CPU 待发送缓存。异常跨 CPU tasklet 只清队，不续发。
+- 共用自旋锁保护所有队列、全局容量和 generation；4096 skb / 8 MiB 是
+  模块总体上限。配置清队不从控制 CPU 重新启动其他 CPU 的 timer。
+- 保留逐包 dev/socket/net/dst 引用，不恢复共享设备引用上下文或 PATH magic
+  校验方案。
+
+### 后果
+
+- CPU 下线会丢弃该 CPU 的缓存，重新上线后恢复入队；注册 hotplug 回调
+  失败时模块初始化失败，不留下缺少亲和性保障的运行状态。
+- 同 CPU 续发覆盖 Natflow 调用 dev_queue_xmit 或恢复 POST hook；后续
+  qdisc/驱动的执行 CPU 不属于此保证。同流跨 CPU 入队仍可能实际乱序。
+- 宿主机测试验证逻辑 CPU 绑定与清理，实际 CPU hotplug 和流量平滑需真机
+  验证。

@@ -1,6 +1,6 @@
 # QoS 缓存验证
 
-宿主机预约算法回归：
+宿主机预约与 CPU 绑定回归：
 
 ```sh
 sh tests/qos/run.sh
@@ -9,8 +9,15 @@ sh tests/qos/run.sh
 从当前源码提取预约函数和 bucket 结构，编译实际实现，模拟 skb payload 长度、
 时钟和 spinlock。ASan/UBSan 覆盖突发平滑、时延边界、组/用户共同限速、
 不限速、零 payload、空闲不积累 burst、generation 切换、最高速率的向上
-取整和 8 线程共享组的 800 次无重复预约。不模拟真实内核 timer、RCU、
-红黑树或网络 continuation。
+取整和 8 线程共享组的 800 次无重复预约。
+
+同时直接编译 `natflow_qos.c`，以逻辑 CPU、timer/tasklet、树、hook 和引用
+模型检查：快路径发送及 IPv4/IPv6/bridge POST continuation 的 CPU 与入队
+一致；固定 CPU 的 timer 重置、相同时间的 FIFO、128 包预算；CPU 下线清队、
+上线复用、意外迁移只丢包；其他 CPU 发起 generation reset 不远程启动 timer；
+全局 4096 包/8 MiB 上限；分配、dst、socket 和 hotplug 注册失败；逐包引用
+平衡；三个 CPU 并发入队的 2400 个 skb。树模型不实现 RB 平衡，逻辑 CPU
+模型不执行真实的内核软中断、CPU hotplug 或 RCU 调度。
 
 目标设备测试需在可重置的测试路由器上进行，保存配置后对比 `buffer_ms=0`
 和 `buffer_ms=100`：
@@ -29,5 +36,10 @@ sh tests/qos/run.sh
 5. 排队期间执行 clear、buffer_ms 切换、classid 模式切换、规则重载、用户
    速率更新、设备删除、模块卸载/重载。以 KASAN/lockdep 检查引用、锁顺序、
    hrtimer/tasklet 清理和无双重释放；验证旧 generation 不重新入队。
+
+6. 用 ftrace/kprobe 或测试探针记录 skb 入队和 Natflow 出队发送/后续 hook
+   的 CPU，核对每个缓存 skb 的 CPU 一致；覆盖多接收队列和 RPS。排队期间
+   下线对应 CPU，确认其未发送缓存计入 dropped、释放引用且不迁移续发；
+   重新上线后恢复入队。后续 qdisc/驱动的执行 CPU 不属于此保证。
 
 这些目标设备测试未由宿主机回归自动执行。

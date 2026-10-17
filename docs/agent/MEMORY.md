@@ -45,8 +45,14 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - Linux >=4.14 的 QoS 默认 `buffer_ms=100`，0 恢复旧丢包模式，最大 1000 ms；
   缓存全局限 4096 skb / 8 MiB，按 payload 和组/用户共同预约的时间放行。
   QoS 配置变化或 clear 丢弃旧队列并推进 generation；token 余额不清零。
-  用户速率更新只重置后续预约，已入队包保留原时间。hrtimer 只调度 tasklet，
-  不在 hardirq 中发送；每批最多 128 包。慢路径必须从原 POST hook 之后继续，
+  用户速率更新只重置后续预约，已入队包保留原时间。队列/hrtimer/tasklet
+  按 CPU 独立，BH 禁止迁移后选队列，timer 在所属 CPU 以 ABS_PINNED 启动；
+  tasklet 在入队 CPU 续发，每批最多 128 包，不在 hardirq 中发送。
+  CPUHP 下线先拒绝入队，再 cancel/kill/purge，不迁移续发；异常跨 CPU
+  tasklet 也丢弃。全局锁维持总体容量限制，配置清队不远程重置 timer。
+  同流跨 CPU 入队不保证实际发送顺序；后续 qdisc/驱动可自行调度。
+  保留逐包 dev/socket/net/dst 引用，不以 CPU 绑定或 PATH magic 替代生命周期。
+  慢路径必须从原 POST hook 之后继续，
   保留后续 conntrack confirm，不能直接调用 okfn 跳过剩余 hook。GSO 仍可能
   成批发出，共享规则没有用户公平保证；构建/宿主机模型不能替代真机抖动验证。
 

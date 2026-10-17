@@ -10,6 +10,9 @@
 #include "natflow_common.h"
 
 #if NATFLOW_HAVE_QOS_BUFFER
+#include <linux/cpuhotplug.h>
+#include <linux/percpu.h>
+
 struct natflow_qos_packet {
 	struct rb_node node;
 	struct list_head list;
@@ -25,9 +28,17 @@ struct natflow_qos_packet {
 };
 
 static DEFINE_SPINLOCK(qos_queue_lock);
-static struct rb_root qos_queue = RB_ROOT;
-static struct hrtimer qos_timer;
-static struct tasklet_struct qos_tasklet;
+struct natflow_qos_cpu_queue {
+	struct rb_root packets;
+	struct hrtimer timer;
+	struct tasklet_struct tasklet;
+	unsigned int cpu;
+	bool online;
+};
+
+/* Queues are CPU-local; the lock also protects global admission and resets. */
+static DEFINE_PER_CPU(struct natflow_qos_cpu_queue, qos_cpu_queues);
+static int qos_cpuhp_state = -1;
 static struct natflow_qos_stats qos_stats;
 static u32 qos_generation = 1;
 static bool qos_stopping;
@@ -99,11 +110,47 @@ static void qos_post_resume(struct natflow_qos_packet *p)
 	rcu_read_unlock();
 }
 
-/* Networking continuations run in softirq, never in the hrtimer hardirq. */
-static void qos_dequeue(unsigned long unused)
+/* Caller holds qos_queue_lock. Release packet references after unlocking. */
+static void qos_purge_cpu(struct natflow_qos_cpu_queue *q, struct list_head *discard)
 {
+	struct rb_node *node;
+
+	while ((node = rb_first(&q->packets)) != NULL) {
+		struct natflow_qos_packet *p = rb_entry(node, struct natflow_qos_packet, node);
+
+		rb_erase(node, &q->packets);
+		qos_stats.packets--;
+		qos_stats.memory -= p->memory;
+		qos_stats.dropped++;
+		list_add_tail(&p->list, discard);
+	}
+}
+
+static void qos_free_discard(struct list_head *discard)
+{
+	struct natflow_qos_packet *p, *next;
+
+	list_for_each_entry_safe(p, next, discard, list) {
+		qos_packet_free(p);
+	}
+}
+
+/* Networking continuations run on the enqueue CPU, in softirq context. */
+static void qos_dequeue(unsigned long data)
+{
+	struct natflow_qos_cpu_queue *q = (struct natflow_qos_cpu_queue *)data;
 	unsigned int budget = 128;
 
+	/* Never transmit a tasklet migrated during CPU teardown. */
+	if (unlikely(q->cpu != smp_processor_id())) {
+		LIST_HEAD(discard);
+
+		spin_lock_bh(&qos_queue_lock);
+		qos_purge_cpu(q, &discard);
+		spin_unlock_bh(&qos_queue_lock);
+		qos_free_discard(&discard);
+		return;
+	}
 	while (budget--) {
 		struct natflow_qos_packet *p;
 		struct rb_node *first;
@@ -111,22 +158,25 @@ static void qos_dequeue(unsigned long unused)
 		u64 now = ktime_get_ns();
 
 		spin_lock_bh(&qos_queue_lock);
-		first = rb_first(&qos_queue);
+		if (qos_stopping || !q->online) {
+			spin_unlock_bh(&qos_queue_lock);
+			return;
+		}
+		first = rb_first(&q->packets);
 		if (!first) {
 			spin_unlock_bh(&qos_queue_lock);
 			return;
 		}
 		p = rb_entry(first, struct natflow_qos_packet, node);
 		if (p->stamp.time > now) {
-			if (!qos_stopping)
-				hrtimer_start(&qos_timer, ns_to_ktime(p->stamp.time), HRTIMER_MODE_ABS);
+			hrtimer_start(&q->timer, ns_to_ktime(p->stamp.time), HRTIMER_MODE_ABS_PINNED);
 			spin_unlock_bh(&qos_queue_lock);
 			return;
 		}
-		rb_erase(first, &qos_queue);
+		rb_erase(first, &q->packets);
 		qos_stats.packets--;
 		qos_stats.memory -= p->memory;
-		drop = qos_stopping || p->stamp.generation != qos_generation;
+		drop = p->stamp.generation != qos_generation;
 		spin_unlock_bh(&qos_queue_lock);
 
 		if (!qos_dev_ready(p->dev) || !qos_dev_ready(p->state.in) ||
@@ -151,14 +201,16 @@ static void qos_dequeue(unsigned long unused)
 	}
 	/* Yield between batches even if there are more overdue packets. */
 	spin_lock_bh(&qos_queue_lock);
-	if (!qos_stopping && !RB_EMPTY_ROOT(&qos_queue))
-		hrtimer_start(&qos_timer, ns_to_ktime(ktime_get_ns() + 1000), HRTIMER_MODE_ABS);
+	if (!qos_stopping && q->online && !RB_EMPTY_ROOT(&q->packets))
+		hrtimer_start(&q->timer, ns_to_ktime(ktime_get_ns() + 1000), HRTIMER_MODE_ABS_PINNED);
 	spin_unlock_bh(&qos_queue_lock);
 }
 
 static enum hrtimer_restart qos_timer_fn(struct hrtimer *timer)
 {
-	tasklet_schedule(&qos_tasklet);
+	struct natflow_qos_cpu_queue *q = container_of(timer, struct natflow_qos_cpu_queue, timer);
+
+	tasklet_schedule(&q->tasklet);
 	return HRTIMER_NORESTART;
 }
 
@@ -167,6 +219,7 @@ static bool qos_enqueue(struct sk_buff *skb, const struct nf_hook_state *state,
                         nf_hookfn *hook, const struct natflow_qos_stamp *stamp)
 {
 	struct natflow_qos_packet *p;
+	struct natflow_qos_cpu_queue *q;
 	struct rb_node **link, *parent = NULL;
 	bool had_dst = skb_dst(skb) != NULL;
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
@@ -215,13 +268,15 @@ static bool qos_enqueue(struct sk_buff *skb, const struct nf_hook_state *state,
 #endif
 	}
 	spin_lock_bh(&qos_queue_lock);
-	if (qos_stopping || stamp->generation != qos_generation ||
+	/* BH exclusion pins both the queue selection and timer start to this CPU. */
+	q = this_cpu_ptr(&qos_cpu_queues);
+	if (qos_stopping || !q->online || stamp->generation != qos_generation ||
 	        qos_stats.packets >= NATFLOW_QOS_QUEUE_PACKETS ||
 	        p->memory > NATFLOW_QOS_QUEUE_MEMORY - qos_stats.memory) {
 		spin_unlock_bh(&qos_queue_lock);
 		goto free_packet;
 	}
-	link = &qos_queue.rb_node;
+	link = &q->packets.rb_node;
 	while (*link) {
 		struct natflow_qos_packet *other = rb_entry(*link, struct natflow_qos_packet, node);
 		parent = *link;
@@ -232,12 +287,12 @@ static bool qos_enqueue(struct sk_buff *skb, const struct nf_hook_state *state,
 	}
 	p->skb = skb;
 	rb_link_node(&p->node, parent, link);
-	rb_insert_color(&p->node, &qos_queue);
+	rb_insert_color(&p->node, &q->packets);
 	qos_stats.packets++;
 	qos_stats.memory += p->memory;
 	qos_stats.queued++;
-	if (rb_first(&qos_queue) == &p->node)
-		hrtimer_start(&qos_timer, ns_to_ktime(stamp->time), HRTIMER_MODE_ABS);
+	if (rb_first(&q->packets) == &p->node)
+		hrtimer_start(&q->timer, ns_to_ktime(stamp->time), HRTIMER_MODE_ABS_PINNED);
 	spin_unlock_bh(&qos_queue_lock);
 	return true;
 
@@ -264,45 +319,85 @@ void natflow_qos_queue_stats(struct natflow_qos_stats *stats)
 
 void natflow_qos_queue_reset(u32 generation)
 {
-	struct natflow_qos_packet *p, *next;
-	struct rb_node *node;
+	unsigned int cpu;
 	LIST_HEAD(discard);
 
 	spin_lock_bh(&qos_queue_lock);
 	qos_generation = generation;
-	while ((node = rb_first(&qos_queue)) != NULL) {
-		p = rb_entry(node, struct natflow_qos_packet, node);
-		rb_erase(node, &qos_queue);
-		list_add_tail(&p->list, &discard);
-		qos_stats.dropped++;
+	for_each_possible_cpu(cpu) {
+		qos_purge_cpu(per_cpu_ptr(&qos_cpu_queues, cpu), &discard);
 	}
-	qos_stats.packets = 0;
-	qos_stats.memory = 0;
 	spin_unlock_bh(&qos_queue_lock);
-	list_for_each_entry_safe(p, next, &discard, list) {
-		qos_packet_free(p);
-	}
+	/* Existing timers can expire empty; do not rearm them from a remote CPU. */
+	qos_free_discard(&discard);
 }
 
-void natflow_qos_queue_init(void)
+static int qos_cpu_online(unsigned int cpu)
 {
+	struct natflow_qos_cpu_queue *q = per_cpu_ptr(&qos_cpu_queues, cpu);
+
+	spin_lock_bh(&qos_queue_lock);
+	q->online = true;
+	spin_unlock_bh(&qos_queue_lock);
+	return 0;
+}
+
+static int qos_cpu_offline(unsigned int cpu)
+{
+	struct natflow_qos_cpu_queue *q = per_cpu_ptr(&qos_cpu_queues, cpu);
+	LIST_HEAD(discard);
+
+	spin_lock_bh(&qos_queue_lock);
+	q->online = false;
+	spin_unlock_bh(&qos_queue_lock);
+	/* Drain before the kernel can migrate this CPU's timers and tasklets. */
+	hrtimer_cancel(&q->timer);
+	tasklet_kill(&q->tasklet);
+	spin_lock_bh(&qos_queue_lock);
+	qos_purge_cpu(q, &discard);
+	spin_unlock_bh(&qos_queue_lock);
+	qos_free_discard(&discard);
+	return 0;
+}
+
+int natflow_qos_queue_init(void)
+{
+	unsigned int cpu;
+	int ret;
+
+	for_each_possible_cpu(cpu) {
+		struct natflow_qos_cpu_queue *q = per_cpu_ptr(&qos_cpu_queues, cpu);
+
+		q->packets = RB_ROOT;
+		q->cpu = cpu;
 #if NATFLOW_HAVE_HRTIMER_SETUP
-	hrtimer_setup(&qos_timer, qos_timer_fn, CLOCK_MONOTONIC, HRTIMER_MODE_ABS);
+		hrtimer_setup(&q->timer, qos_timer_fn, CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED);
 #else
-	hrtimer_init(&qos_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS);
-	qos_timer.function = qos_timer_fn;
+		hrtimer_init(&q->timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED);
+		q->timer.function = qos_timer_fn;
 #endif
-	tasklet_init(&qos_tasklet, qos_dequeue, 0);
+		tasklet_init(&q->tasklet, qos_dequeue, (unsigned long)q);
+	}
+	ret = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "net/natflow_qos:online",
+	                        qos_cpu_online, qos_cpu_offline);
+	if (ret < 0)
+		return ret;
+	qos_cpuhp_state = ret;
+	return 0;
 }
 
 void natflow_qos_queue_exit(void)
 {
+	unsigned int cpu;
+
 	spin_lock_bh(&qos_queue_lock);
 	qos_stopping = true;
 	spin_unlock_bh(&qos_queue_lock);
-	hrtimer_cancel(&qos_timer);
-	tasklet_kill(&qos_tasklet);
-	natflow_qos_queue_reset(qos_generation + 1);
+	/* Serialize with hotplug before cancelling even offline CPUs' work. */
+	cpuhp_remove_state_nocalls(qos_cpuhp_state);
+	for_each_possible_cpu(cpu) {
+		qos_cpu_offline(cpu);
+	}
 }
 
 unsigned int natflow_qos_post_queue(struct sk_buff *skb,
@@ -314,7 +409,10 @@ unsigned int natflow_qos_post_queue(struct sk_buff *skb,
 	return qos_enqueue(skb, state, hook, stamp) ? NF_STOLEN : NF_DROP;
 }
 #else
-void natflow_qos_queue_init(void) {}
+int natflow_qos_queue_init(void)
+{
+	return 0;
+}
 void natflow_qos_queue_exit(void) {}
 void natflow_qos_queue_reset(u32 generation) {}
 void natflow_qos_drop(void) {}

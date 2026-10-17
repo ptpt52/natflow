@@ -1066,12 +1066,20 @@ classid 模式：
   准入，预计等待超过 `buffer_ms` 时两者均不扣账。准入后分别增加按 payload
   和各自速率算出的序列化时间，不累计空闲 burst。rx/tx 独立，零速率和零
   payload 不预约，速率精度仍是 `bytes/HZ`。共享组没有公平排队保证。
-- 队列使用按绝对单调时间排序的红黑树，相同时间按入队顺序处理。全局上限
-  4096 skb、8 MiB（skb truesize + 队列节点）；内存分配使用 GFP_ATOMIC，
+- 每个可能 CPU 独立持有按绝对单调时间排序的红黑树、hrtimer 和 tasklet，
+  同一 CPU 相同时间按入队顺序处理。共用队列自旋锁保护树、全局准入和
+  清队；全局上限仍为 4096 skb、8 MiB（skb truesize + 队列节点），不是
+  按 CPU 倍增。内存分配使用 GFP_ATOMIC，
   队列满、分配失败或旧 generation 准入失败直接丢包。预约后若封包/入队
   失败不回滚其他 CPU 已观察的发送时间，可能暂时少发。
-- hrtimer 只唤醒 tasklet；tasklet 每批最多处理 128 包，在队列锁外恢复网络
-  处理，余量通过定时器重新调度。以 skb 为粒度，GSO/软件分段可能形成微突发；
+- 入队在 spin_lock_bh 内通过 this_cpu_ptr 选定队列，所有启动/重置定时器
+  的操作均在队列所属 CPU 上使用 HRTIMER_MODE_ABS_PINNED。hrtimer 只
+  唤醒本 CPU 的 tasklet；tasklet 校验所属 CPU，每批最多处理 128 包，
+  在队列锁外恢复网络处理，余量通过本 CPU 定时器重新调度。若意外迁移到
+  其他 CPU 则清队丢弃，不能在其他 CPU 续发。保证范围是 Natflow 的
+  dev_queue_xmit / POST hook continuation，后续 qdisc/驱动可自行调度；
+  同流跨 CPU 入队分别排队，不保证跨 CPU 实际发送顺序。
+  以 skb 为粒度，GSO/软件分段可能形成微突发；
   buffer_ms 限制的是预约等待，softirq 拥塞会增加实际驻留时间。
 - 软件快路径把预约时间传到最终封包/分段出口，再移交队列。慢路径在 user
   POST_ROUTING 统计完成、恢复 PPPoE 后返回 NF_STOLEN；延迟后在当前 RCU
@@ -1086,8 +1094,13 @@ classid 模式：
   在途预约也不得重新入队。桶在首次遇到新 generation 时重置预约时间。
   旧模式 token 余额不重置。set-token-ctrl 在桶锁下更新速率并重置该用户
   发生变化方向的预约时间，已缓存包保留原预约。
-- 缓存初始化早于 user hook 注册；退出在 path/user hook 停止后，先设置
-  stopping，再 cancel hrtimer、kill tasklet、purge 队列，最后释放配置。
+- 缓存初始化早于 user hook 注册；注册 CPUHP_AP_ONLINE_DYN 回调，注册
+  失败使 user 初始化失败并回收配置，不注册 user hook。CPU 上线时开放
+  本 CPU 入队；下线时先关闭入队，再 cancel hrtimer、kill tasklet、丢弃
+  该 CPU 未发送的包并释放引用，先于内核的 timer/tasklet 迁移。
+  配置清队遍历所有 CPU，不从控制 CPU 重新启动其他 CPU 的定时器；残留
+  定时器可以空触发。退出在 path/user hook 停止后设置 stopping，移除
+  hotplug 回调并与其同步，再逐 CPU 停止 timer/tasklet、清队，最后释放配置。
   4.14/4.15 读取旧二维 hook 表，>=4.16 读取 family 数组；>=6.13 使用
   hrtimer_setup，更旧版本使用 hrtimer_init。<4.14 保留旧 policing。
 - 控制读出 packets/memory 当前占用和 queued/released/dropped 累计计数。

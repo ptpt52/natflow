@@ -5176,7 +5176,9 @@ int natflow_user_init(void)
 
 	auth_conf_init();
 	qos_token_ctrl_init();
-	natflow_qos_queue_init();
+	retval = natflow_qos_queue_init();
+	if (retval)
+		goto qos_queue_init_failed;
 	retval = nf_register_hooks(user_hooks, ARRAY_SIZE(user_hooks));
 	if (retval != 0)
 		goto nf_register_hooks_failed;
@@ -5255,6 +5257,7 @@ chrdev_region_failed:
 	nf_unregister_hooks(user_hooks, ARRAY_SIZE(user_hooks));
 nf_register_hooks_failed:
 	natflow_qos_queue_exit();
+qos_queue_init_failed:
 	auth_conf_exit();
 	return retval;
 }

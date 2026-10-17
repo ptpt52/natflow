@@ -41,7 +41,7 @@ static inline bool natflow_qos_reserve(u64 now, u64 limit,
 	return true;
 }
 
-void natflow_qos_queue_init(void);
+int natflow_qos_queue_init(void);
 void natflow_qos_queue_exit(void);
 void natflow_qos_queue_reset(u32 generation);
 void natflow_qos_queue_stats(struct natflow_qos_stats *stats);
