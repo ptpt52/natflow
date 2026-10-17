@@ -1092,8 +1092,23 @@ classid 模式：
   原 hook 已移除时丢包；不占用 Netfilter 的全局 NFQUEUE handler。
 - 跨异步边界对 noref dst 执行 skb_dst_force；持有 skb dev、state in/out、
   bridge physin/physout、fake rtable 所属 bridge dev、socket 和 net 引用。
+  bridge 元数据持有和释放不依赖是否保存慢路径 hook，软件快路径同样覆盖；
+  fake rtable 依据 dst 的 DST_FAKE_RTABLE 标志识别，不限定 hook family。
+  新内核 physin 查询使用保存的 state net，快路径使用 skb dev 所属 net。
   skb 自带 conntrack 引用；队列不保存 fakeuser/natflow 的借用指针。出队前
-  检查设备的 running/present 状态，失败/清理路径统一释放引用。
+  及准入时检查所有持有设备的 running/present 状态，失败/清理统一释放引用。
+- 独立 netdev notifier 在 NETDEV_GOING_DOWN / NETDEV_DOWN / NETDEV_UNREGISTER
+  时递增 QoS 设备代次，不复用 PATH magic，也不维护共享设备引用上下文。
+  保守地使全模块旧缓存失效，包括其他设备的缓存。同步 on_each_cpu IPI 只
+  唤醒在线且未 stopping 队列的 tasklet，不访问树；停机 CPU 不重新调度已
+  kill 的 tasklet。notifier 再通过 synchronize_net 等待已开始的入队/续发
+  RCU 临界区，保证旧设备上下文不会越过该事件完成后再进入续发；已经转交
+  qdisc/驱动的包不属于此保证。
+  每个 CPU 的队列只含同一设备代次的包，准入要求入队开始时的全局代次、
+  当前全局代次和本地代次相同。代次不匹配时不看原预约时间，tasklet 每批
+  最多丢弃 128 包并通过本地 timer 继续清理；树空后才确认最新代次并恢复
+  准入。CPU 上线先发布 online，再读全局代次，避免并发 IPI 漏过新队列。
+  数据面仍无队列自旋锁，代价是设备切换时其他设备的缓存也可能丢弃。
 - QoS 配置实际变化或显式 clear 时，控制面持 qos_conf_lock 串行 reset 和
   发布。在 cpus_read_lock 保护下更新最新 generation，并通过 work_on_cpu
   同步在各在线 CPU 更新其队列 generation、清理旧缓存；全部完成后才发布
@@ -1102,12 +1117,14 @@ classid 模式：
   同步下取得最新 generation。桶在首次遇到新 generation 时重置预约时间。
   旧模式 token 余额不重置。set-token-ctrl 在桶锁下更新速率并重置该用户
   发生变化方向的预约时间，已缓存包保留原预约。
-- 缓存初始化早于 user hook 注册；注册 CPUHP_AP_ONLINE_DYN 回调，注册
-  失败使 user 初始化失败并回收配置，不注册 user hook。CPU 上线时开放
+- 缓存初始化早于 user hook 注册；先注册 CPUHP_AP_ONLINE_DYN 回调，再注册
+  netdev notifier；任一失败使 user 初始化失败并回收配置，后者失败还撤销
+  CPUHP 回调，不注册 user hook。CPU 上线时开放
   本 CPU 入队；下线时先关闭入队，再 cancel hrtimer、kill tasklet、丢弃
   该 CPU 未发送的包并释放引用，先于内核的 timer/tasklet 迁移。
   配置清队不从控制 CPU 修改远程树或重新启动定时器；残留定时器可以空
-  触发。退出在 path/user hook 停止后设置 stopping，通过 cpuhp_remove_state
+  触发。退出在 path/user hook 停止后设置 stopping、注销 netdev notifier，
+  同步 IPI 和 notifier grace period 不留下卸载后回调，再通过 cpuhp_remove_state
   在各在线 CPU 执行 teardown，停止 timer/tasklet 并清队，与 hotplug 同步，
   最后释放配置。
   4.14/4.15 读取旧二维 hook 表，>=4.16 读取 family 数组；>=6.13 使用

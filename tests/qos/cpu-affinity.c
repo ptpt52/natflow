@@ -4,6 +4,7 @@
 static void mock_tree_access(const struct rb_root *root)
 {
 	assert(mock_bh_depth);
+	assert(!mock_in_ipi);
 	assert(root == &qos_cpu_queues[mock_cpu].packets);
 }
 
@@ -14,8 +15,8 @@ static struct natflow_qos_stats queue_stats(void)
 	return stats;
 }
 
-static struct net_device dev = { .running = true, .present = true, .refs = 1 };
 static struct net net = { .refs = 1 };
+static struct net_device dev = { .running = true, .present = true, .refs = 1, .net = &net };
 static struct sock sk = { .sk_refcnt = 1 };
 static unsigned int continued;
 
@@ -98,6 +99,7 @@ static unsigned int next_hook(void *priv, struct sk_buff *skb,
 static int okfn(struct net *n, struct sock *s, struct sk_buff *skb)
 {
 	assert(n == &net && s == &sk);
+	assert(n == dev_net(skb->dev));
 	dev_queue_xmit(skb);
 	return 0;
 }
@@ -483,12 +485,274 @@ static void test_reset_with_offline_cpu(void)
 	assert_empty();
 }
 
+static void assert_device_released(struct net_device *d)
+{
+	assert(atomic_load(&d->refs) == 1);
+	assert(atomic_load(&d->holds) == atomic_load(&d->puts));
+}
+
+static void test_bridge_dependencies(void)
+{
+	struct net_device physin = { .running = true, .present = true, .refs = 1 };
+	struct net_device physout = { .running = true, .present = true, .refs = 1 };
+	struct net_device bridge = { .running = true, .present = true, .refs = 1 };
+	struct dst_entry dst = { .dev = &bridge, .flags = DST_FAKE_RTABLE };
+	struct nf_hook_entries entries = {
+		.num_hook_entries = 2, .hooks = {{ .hook = original }, { .hook = next_hook }}
+	};
+	struct nf_hook_state state = {
+		.pf = NFPROTO_IPV4, .hook = 4, .in = &dev, .out = &dev,
+		.net = &net, .sk = &sk, .okfn = okfn
+	};
+
+	net.nf.hooks_ipv4[4] = &entries;
+	for (unsigned int slow = 0; slow < 2; slow++) {
+		for (unsigned int action = 0; action < 3; action++) {
+			mock_cpu = 1;
+			struct natflow_qos_stamp s = stamp(mock_now + 100);
+			struct sk_buff *skb = packet(0, 256);
+			skb->physin = &physin;
+			skb->physout = &physout;
+			skb->dst = &dst;
+			/* Dependency readiness applies to admission, including fast packets. */
+			if (action == 2) physin.running = false;
+			if (slow) {
+				unsigned int verdict = natflow_qos_post_queue(skb, &state, original, &s);
+				assert(verdict == (action == 2 ? NF_DROP : NF_STOLEN));
+				if (verdict == NF_DROP) kfree_skb(skb);
+			} else natflow_qos_xmit(skb, &s);
+			if (action != 2) {
+				assert(atomic_load(&physin.refs) == 2);
+				assert(atomic_load(&physout.refs) == 2);
+				assert(atomic_load(&bridge.refs) == 2);
+				if (action == 1) natflow_qos_queue_reset(qos_generation + 1);
+				else {
+					mock_now += 100;
+					poll_cpu(1);
+				}
+			}
+			physin.running = true;
+			assert_empty();
+			assert_device_released(&physin);
+			assert_device_released(&physout);
+			assert_device_released(&bridge);
+		}
+	}
+	net.nf.hooks_ipv4[4] = NULL;
+}
+
+static void test_device_lifecycle(void)
+{
+	const unsigned long events[] = { NETDEV_GOING_DOWN, NETDEV_DOWN, NETDEV_UNREGISTER };
+	struct net moved_net = { .refs = 1 };
+	struct net_device other = { .running = true, .present = true, .refs = 1 };
+	struct nf_hook_entries entries = {
+		.num_hook_entries = 2, .hooks = {{ .hook = original }, { .hook = next_hook }}
+	};
+	struct nf_hook_state state = {
+		.pf = NFPROTO_IPV4, .hook = 4, .in = &dev, .out = &dev,
+		.net = &net, .sk = &sk, .okfn = okfn
+	};
+
+	net.nf.hooks_ipv4[4] = &entries;
+	for (unsigned int i = 0; i < sizeof(events) / sizeof(events[0]); i++) {
+		struct natflow_qos_stats before = queue_stats();
+		unsigned int sent = atomic_load(&xmitted), hooks = continued;
+		mock_cpu = 0;
+		queue(0, mock_now + 1000000);
+		mock_cpu = 1;
+		struct natflow_qos_stamp s = stamp(mock_now + 1000000);
+		assert(natflow_qos_post_queue(packet(0, 256), &state, original, &s) == NF_STOLEN);
+		mock_cpu = 2;
+		struct sk_buff *skb = packet(0, 256);
+		skb->dev = &other;
+		natflow_qos_xmit(skb, &s);
+		mock_cpu = 3;
+		/* REGISTER/UP must not disturb existing queues. */
+		u32 epoch = atomic_read(&qos_device_generation);
+		mock_netdev_event(NETDEV_REGISTER, &dev);
+		mock_netdev_event(NETDEV_UP, &dev);
+		assert((u32)atomic_read(&qos_device_generation) == epoch);
+		mock_netdev_event(events[i], &dev);
+		/* The same object is closed, moved and reopened before the old deadline. */
+		dev.running = false;
+		dev.net = &moved_net;
+		dev.running = true;
+		mock_cpu = 0;
+		queue(0, mock_now + 100); /* Reject until this CPU has drained its old epoch. */
+		assert(queue_stats().packets == 3);
+		for (unsigned int cpu = 0; cpu < MOCK_CPUS; cpu++) poll_cpu(cpu);
+		assert_empty();
+		assert_device_released(&other);
+		assert(continued == hooks && atomic_load(&xmitted) == sent);
+		assert(queue_stats().dropped == before.dropped + 4);
+		/* New packets can enter after the owner CPU acknowledges the new epoch. */
+		queue(0, mock_now + 100);
+		mock_now += 100;
+		poll_cpu(0);
+		assert(atomic_load(&xmitted) == sent + 1);
+		assert_empty();
+		dev.net = &net;
+	}
+	net.nf.hooks_ipv4[4] = NULL;
+
+	/* Invalidation ignores future deadlines, while retaining the 128-packet budget. */
+	mock_cpu = 2;
+	unsigned int sent = atomic_load(&xmitted);
+	for (unsigned int i = 0; i < 260; i++) queue(0, mock_now + 1000000);
+	mock_cpu = 3;
+	mock_netdev_event(NETDEV_DOWN, &other);
+	poll_cpu(2);
+	assert(queue_stats().packets == 132);
+	mock_cpu = 2;
+	queue(0, mock_now + 100);
+	assert(queue_stats().packets == 132);
+	mock_now += 1000;
+	poll_cpu(2);
+	assert(queue_stats().packets == 4);
+	mock_now += 1000;
+	poll_cpu(2);
+	assert(atomic_load(&xmitted) == sent);
+	for (unsigned int cpu = 0; cpu < MOCK_CPUS; cpu++) poll_cpu(cpu);
+	assert_empty();
+
+	/* IPIs must not resurrect a tasklet already killed by CPU teardown. */
+	mock_hotplug_cpu(1, false);
+	mock_cpu = 1;
+	qos_schedule_cpu(NULL);
+	assert(!qos_cpu_queues[1].tasklet.scheduled);
+	mock_cpu = 3;
+	mock_netdev_event(NETDEV_UNREGISTER, &other);
+	assert(!qos_cpu_queues[1].tasklet.scheduled);
+	mock_hotplug_cpu(1, true);
+	for (unsigned int cpu = 0; cpu < MOCK_CPUS; cpu++) poll_cpu(cpu);
+}
+
+/* A device event must wait for a packet already selected for continuation. */
+static pthread_mutex_t event_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t event_cond = PTHREAD_COND_INITIALIZER;
+static bool xmit_paused, sync_waiting, release_xmit, event_done;
+
+static void pause_xmit(void)
+{
+	assert(mock_cpu == 0 && mock_rcu_depth && mock_bh_depth);
+	assert(!pthread_mutex_lock(&event_lock));
+	xmit_paused = true;
+	assert(!pthread_cond_broadcast(&event_cond));
+	while (!release_xmit) assert(!pthread_cond_wait(&event_cond, &event_lock));
+	assert(!pthread_mutex_unlock(&event_lock));
+}
+
+static void signal_sync_net(void)
+{
+	assert(!pthread_mutex_lock(&event_lock));
+	sync_waiting = true;
+	assert(!pthread_cond_broadcast(&event_cond));
+	assert(!pthread_mutex_unlock(&event_lock));
+}
+
+static void *inflight_send(void *arg)
+{
+	(void)arg;
+	mock_cpu = 0;
+	poll_cpu(0);
+	return NULL;
+}
+
+static void *device_event_control(void *arg)
+{
+	(void)arg;
+	mock_cpu = 3;
+	mock_netdev_event(NETDEV_GOING_DOWN, &dev);
+	assert(!pthread_mutex_lock(&event_lock));
+	event_done = true;
+	assert(!pthread_cond_broadcast(&event_cond));
+	assert(!pthread_mutex_unlock(&event_lock));
+	return NULL;
+}
+
+static void test_inflight_device_event(void)
+{
+	pthread_t sender, notifier;
+	unsigned int sent = atomic_load(&xmitted);
+
+	mock_cpu = 0;
+	queue(0, mock_now + 100);
+	mock_now += 100;
+	mock_before_xmit = pause_xmit;
+	mock_before_sync_net = signal_sync_net;
+	assert(!pthread_create(&sender, NULL, inflight_send, NULL));
+	assert(!pthread_mutex_lock(&event_lock));
+	while (!xmit_paused) assert(!pthread_cond_wait(&event_cond, &event_lock));
+	assert(!pthread_mutex_unlock(&event_lock));
+	assert(!pthread_create(&notifier, NULL, device_event_control, NULL));
+	assert(!pthread_mutex_lock(&event_lock));
+	while (!sync_waiting) assert(!pthread_cond_wait(&event_cond, &event_lock));
+	assert(!event_done);
+	release_xmit = true;
+	assert(!pthread_cond_broadcast(&event_cond));
+	assert(!pthread_mutex_unlock(&event_lock));
+	assert(!pthread_join(sender, NULL));
+	assert(!pthread_join(notifier, NULL));
+	assert(event_done && atomic_load(&xmitted) == sent + 1);
+	mock_before_xmit = NULL;
+	mock_before_sync_net = NULL;
+	for (unsigned int cpu = 0; cpu < MOCK_CPUS; cpu++) poll_cpu(cpu);
+	assert_empty();
+}
+
+static void *online_device_event(void *arg)
+{
+	(void)arg;
+	mock_cpu = 3;
+	mock_netdev_event(NETDEV_DOWN, &dev);
+	return NULL;
+}
+
+static void interrupt_online_snapshot(const atomic_t *counter)
+{
+	pthread_t notifier;
+
+	if (counter != &qos_device_generation || mock_cpu != 1) return;
+	assert(mock_bh_depth);
+	mock_after_atomic_read = NULL;
+	/* Advance the epoch and deliver the IPI before the old snapshot is stored. */
+	assert(!pthread_create(&notifier, NULL, online_device_event, NULL));
+	assert(!pthread_join(notifier, NULL));
+}
+
+static void test_online_racing_device_event(void)
+{
+	mock_cpu = 3;
+	mock_hotplug_cpu(1, false);
+	mock_after_atomic_read = interrupt_online_snapshot;
+	mock_hotplug_cpu(1, true);
+	assert(!mock_after_atomic_read);
+	assert(qos_cpu_queues[1].tasklet.scheduled);
+	for (unsigned int cpu = 0; cpu < MOCK_CPUS; cpu++) poll_cpu(cpu);
+	mock_cpu = 1;
+	queue(0, mock_now + 100);
+	assert(queue_stats().packets == 1);
+	mock_now += 100;
+	poll_cpu(1);
+	assert_empty();
+}
+
 int main(void)
 {
 	fail_cpuhp = 1;
 	assert(natflow_qos_queue_init() == -ENOMEM);
 	assert(!mock_startup && !mock_teardown);
 	fail_cpuhp = 0;
+	fail_notifier = true;
+	assert(natflow_qos_queue_init() == -ENOMEM);
+	assert(!mock_startup && !mock_teardown && !mock_netdev_notifier);
+	for (unsigned int cpu = 0; cpu < MOCK_CPUS; cpu++) {
+		assert(!qos_cpu_queues[cpu].online);
+		assert(!qos_cpu_queues[cpu].timer.active);
+		assert(!qos_cpu_queues[cpu].tasklet.scheduled);
+	}
+	fail_notifier = false;
 	assert(!natflow_qos_queue_init());
 	assert(!qos_cpu_queues[3].online);
 	mock_cpu = 3;
@@ -503,10 +767,15 @@ int main(void)
 	test_concurrent_capacity();
 	test_reset_racing_enqueue();
 	test_reset_with_offline_cpu();
+	test_bridge_dependencies();
+	test_device_lifecycle();
+	test_inflight_device_event();
+	test_online_racing_device_event();
 	for (mock_cpu = 0; mock_cpu < 3; mock_cpu++) queue(0, mock_now + 100);
 	mock_cpu = 0;
 	natflow_qos_queue_exit();
 	assert(!mock_startup && !mock_teardown);
+	assert(!mock_netdev_notifier);
 	for (unsigned int cpu = 0; cpu < MOCK_CPUS; cpu++) {
 		assert(!qos_cpu_queues[cpu].timer.active);
 		assert(!qos_cpu_queues[cpu].tasklet.scheduled);
@@ -514,6 +783,6 @@ int main(void)
 	assert_empty();
 	queue(0, mock_now + 100);
 	assert_empty();
-	puts("QoS owner CPU, atomic limits, concurrent reset, hotplug and ownership: PASS");
+	puts("QoS owner CPU, atomic limits, reset, hotplug, bridge references and device lifecycle: PASS");
 	return 0;
 }

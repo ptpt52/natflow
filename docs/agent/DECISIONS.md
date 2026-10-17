@@ -344,3 +344,38 @@ queue pressure 和 queue stream 也已验证。继续扩展 IPv6 extension heade
   同时刻快照。控制命令需等待各在线 CPU 的清理工作完成。
 - 非 RT 内核的 BH 同步是该方案的运行前提；真实流量下的性能与 CPU 热插拔
   压力仍需目标设备验证。
+
+## ADR-0012：设备事件使 QoS 旧缓存失效
+
+状态：Accepted
+
+### 背景
+
+逐包 dev_hold 只保证设备对象存在，不能防止同一个 net_device 关闭、迁移到
+另一个 network namespace 后重开。仅检查出队时 running/present 会错过
+该过程。软件快路径的 skb 也可能保留 bridge 物理端口和 fake rtable 元数据，
+必须独立持有相关设备引用。
+
+### 决策
+
+- 快、慢路径均持有 physin、physout 和 DST_FAKE_RTABLE 所属 bridge 引用，
+  与 skb dev、慢路径 state in/out、socket/net 引用分别配对释放。
+- 用独立原子设备代次响应 GOING_DOWN/DOWN/UNREGISTER，保守地使全模块
+  已有缓存失效；不复用 PATH magic，不恢复共享引用上下文或队列锁。
+- notifier 同步向各在线 CPU 发 IPI，仅唤醒 online 且未 stopping 队列的
+  tasklet；树仍只由所属 CPU 在 BH 禁用区操作。旧队列忽略预约时间按
+  128 包预算分批清理，清空前不混入新设备代次，清空后恢复准入。
+- 续发的代次/设备检查和快、慢 continuation 均在 RCU 临界区；设备事件
+  在发出 IPI 后 synchronize_net，等待已开始的处理完成。上线先置 online
+  再读取设备代次，避免快照与 IPI 交错后漏掉需要确认新代次的空队列。
+- notifier 注册失败撤销 CPUHP；退出先 stopping，再注销 notifier，最后
+  CPUHP 清队。同步 IPI 不留卸载后回调，不向已 kill 的 tasklet 重新排队。
+
+### 后果
+
+- 设备切换会连带丢弃其他设备上的旧缓存，各 CPU 清队期间会拒绝新缓存；
+  换取无设备索引表、无队列锁且保持本 CPU 清理的生命周期保障。
+- 不依靠旧缓存的预约时刻推进清理，设备注销等待引用的时间受分批 softirq
+  调度影响；已经交给 qdisc/驱动的包由后续路径自行处理。
+- 宿主机模型覆盖引用配对、关闭/迁移/重开、在途续发等待和 CPU 上线竞态，
+  真实设备切换、CPU hotplug、KASAN/lockdep 压力验证仍需目标内核运行。

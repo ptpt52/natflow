@@ -25,6 +25,15 @@ sh tests/qos/run.sh
 仍能推进入队，清队同步等待本地操作完成，返回后所有旧包/额度被回收。
 另验离线 CPU 不接收清队工作、重新上线继承最新 generation。
 
+设备生命周期回归使用不同的 output、physin、physout 和 fake rtable bridge，
+检查快路径及 IPv4 慢路径的引用持有、发送/清队/拒绝准入释放。分别触发
+GOING_DOWN/DOWN/UNREGISTER，在旧预约到期前关闭、迁移 namespace 并重开
+同一设备，确认快、慢路径和其他设备的旧缓存均不续发；旧队列清空前拒绝
+新缓存，清空后恢复。覆盖未来预约的 260 包按 128 包预算分批丢弃、notifier
+注册失败回收 CPUHP、IPI 不访问树/不重新唤醒已下线 tasklet、卸载事件回放。
+受控竞态暂停 RCU 内已选中的发送，确认设备事件等待它完成；在 CPU 上线
+读取设备代次时插入事件和 IPI，确认新队列不会永久停留在旧代次。
+
 树模型不实现 RB 平衡；u64_stats_sync 使用读写锁模型，不模拟真实 seqcount。
 逻辑 CPU 模型不执行真实内核软中断、CPU hotplug 或 RCU 调度。
 
@@ -49,5 +58,10 @@ sh tests/qos/run.sh
    的 CPU，核对每个缓存 skb 的 CPU 一致；覆盖多接收队列和 RPS。排队期间
    下线对应 CPU，确认其未发送缓存计入 dropped、释放引用且不迁移续发；
    重新上线后恢复入队。后续 qdisc/驱动的执行 CPU 不属于此保证。
+7. 在缓存未到期及正在续发时并发执行设备 down/up、物理端口/bridge 删除、
+   network namespace 迁移，确认旧包不会在设备重开/迁移后继续进入 Natflow
+   continuation，独立物理端口/fake rtable bridge 的引用最终释放。其他设备
+   的旧缓存也应丢弃，分批清完后恢复准入；结合 CPU 上下线反复运行，以
+   KASAN/lockdep/RCU stall 检查 IPI、grace period、RTNL 和清队的交错。
 
 这些目标设备测试未由宿主机回归自动执行。

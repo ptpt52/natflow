@@ -2,6 +2,7 @@
 #include <linux/interrupt.h>
 #include <linux/netdevice.h>
 #include <linux/netfilter_bridge.h>
+#include <linux/notifier.h>
 #include <linux/rbtree.h>
 #include <linux/skbuff.h>
 #include <net/dst.h>
@@ -14,6 +15,7 @@
 #include <linux/cpu.h>
 #include <linux/cpuhotplug.h>
 #include <linux/percpu.h>
+#include <linux/smp.h>
 #include <linux/u64_stats_sync.h>
 #include <linux/workqueue.h>
 
@@ -37,6 +39,7 @@ struct natflow_qos_cpu_queue {
 	struct tasklet_struct tasklet;
 	unsigned int cpu;
 	u32 generation;
+	u32 device_generation;
 	bool online;
 	struct u64_stats_sync stats_sync;
 	u64 queued;
@@ -49,6 +52,7 @@ static DEFINE_PER_CPU(struct natflow_qos_cpu_queue, qos_cpu_queues);
 static int qos_cpuhp_state = -1;
 static atomic_t qos_packets = ATOMIC_INIT(0);
 static atomic_t qos_memory = ATOMIC_INIT(0);
+static atomic_t qos_device_generation = ATOMIC_INIT(1);
 static u32 qos_generation = 1;
 static bool qos_stopping;
 
@@ -91,23 +95,30 @@ static bool qos_dev_ready(struct net_device *dev)
 	return !dev || (netif_running(dev) && netif_device_present(dev));
 }
 
+static bool qos_packet_ready(const struct natflow_qos_packet *p)
+{
+	return qos_dev_ready(p->dev) && qos_dev_ready(p->state.in) &&
+	       qos_dev_ready(p->state.out) && qos_dev_ready(p->physin) &&
+	       qos_dev_ready(p->physout) && qos_dev_ready(p->bridge_dev);
+}
+
 static void qos_packet_free(struct natflow_qos_packet *p)
 {
 	if (p->skb)
 		kfree_skb(p->skb);
 	if (p->dev)
 		dev_put(p->dev);
+	if (p->physin)
+		dev_put(p->physin);
+	if (p->physout)
+		dev_put(p->physout);
+	if (p->bridge_dev)
+		dev_put(p->bridge_dev);
 	if (p->hook) {
 		if (p->state.in)
 			dev_put(p->state.in);
 		if (p->state.out)
 			dev_put(p->state.out);
-		if (p->physin)
-			dev_put(p->physin);
-		if (p->physout)
-			dev_put(p->physout);
-		if (p->bridge_dev)
-			dev_put(p->bridge_dev);
 		if (p->state.sk)
 			sock_gen_put(p->state.sk);
 		put_net(p->state.net);
@@ -184,6 +195,8 @@ static void qos_dequeue(unsigned long data)
 	unsigned int budget = 128;
 
 	local_bh_disable();
+	/* Pair readiness/epoch checks and both continuations with synchronize_net(). */
+	rcu_read_lock();
 	/* CPU teardown drains before migration; never touch another CPU's tree. */
 	if (unlikely(q->cpu != smp_processor_id()))
 		goto out;
@@ -196,20 +209,21 @@ static void qos_dequeue(unsigned long data)
 		if (READ_ONCE(qos_stopping) || !q->online)
 			goto out;
 		first = rb_first(&q->packets);
-		if (!first)
+		if (!first) {
+			q->device_generation = (u32)atomic_read(&qos_device_generation);
 			goto out;
+		}
 		p = rb_entry(first, struct natflow_qos_packet, node);
-		if (p->stamp.time > now) {
+		drop = p->stamp.generation != q->generation ||
+		       q->device_generation != (u32)atomic_read(&qos_device_generation);
+		/* Invalidated queues drain now, including packets far in the future. */
+		if (!drop && p->stamp.time > now) {
 			hrtimer_start(&q->timer, ns_to_ktime(p->stamp.time), HRTIMER_MODE_ABS_PINNED);
 			goto out;
 		}
 		rb_erase(first, &q->packets);
 		qos_uncharge(p);
-		drop = p->stamp.generation != q->generation;
-
-		if (!qos_dev_ready(p->dev) || !qos_dev_ready(p->state.in) ||
-		        !qos_dev_ready(p->state.out) || !qos_dev_ready(p->physin) ||
-		        !qos_dev_ready(p->physout) || !qos_dev_ready(p->bridge_dev))
+		if (!qos_packet_ready(p))
 			drop = true;
 		if (!drop) {
 			if (p->hook) {
@@ -222,10 +236,13 @@ static void qos_dequeue(unsigned long data)
 		qos_count(q, 0, !p->skb, !!p->skb);
 		qos_packet_free(p);
 	}
+	if (RB_EMPTY_ROOT(&q->packets))
+		q->device_generation = (u32)atomic_read(&qos_device_generation);
 	/* Yield between batches even if there are more overdue packets. */
 	if (!READ_ONCE(qos_stopping) && q->online && !RB_EMPTY_ROOT(&q->packets))
 		hrtimer_start(&q->timer, ns_to_ktime(ktime_get_ns() + 1000), HRTIMER_MODE_ABS_PINNED);
 out:
+	rcu_read_unlock();
 	local_bh_enable();
 }
 
@@ -237,6 +254,36 @@ static enum hrtimer_restart qos_timer_fn(struct hrtimer *timer)
 	return HRTIMER_NORESTART;
 }
 
+/* IPI context: only schedule; the owner CPU's tasklet mutates its tree. */
+static void qos_schedule_cpu(void *unused)
+{
+	struct natflow_qos_cpu_queue *q = this_cpu_ptr(&qos_cpu_queues);
+
+	(void)unused;
+	/* An offline callback may already have killed this CPU's tasklet. */
+	if (READ_ONCE(q->online) && !READ_ONCE(qos_stopping))
+		tasklet_schedule(&q->tasklet);
+}
+
+static int qos_netdev_event(struct notifier_block *nb, unsigned long event, void *ptr)
+{
+	(void)nb;
+	(void)ptr;
+	if (event != NETDEV_GOING_DOWN && event != NETDEV_DOWN && event != NETDEV_UNREGISTER)
+		return NOTIFY_DONE;
+	/* Conservatively invalidate all buffered devices, without a device table. */
+	atomic_inc(&qos_device_generation);
+	/* Synchronous IPIs cannot outlive notifier unregistration/module teardown. */
+	on_each_cpu(qos_schedule_cpu, NULL, 1);
+	/* Selected packets must finish before device teardown or a namespace move. */
+	synchronize_net();
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block qos_netdev_notifier = {
+	.notifier_call = qos_netdev_event,
+};
+
 /* On success the queue owns skb. On failure the caller still owns it. */
 static bool qos_enqueue(struct sk_buff *skb, const struct nf_hook_state *state,
                         nf_hookfn *hook, const struct natflow_qos_stamp *stamp)
@@ -245,6 +292,7 @@ static bool qos_enqueue(struct sk_buff *skb, const struct nf_hook_state *state,
 	struct natflow_qos_cpu_queue *q;
 	struct rb_node **link, *parent = NULL;
 	bool had_dst = skb_dst(skb) != NULL;
+	u32 device_generation = (u32)atomic_read(&qos_device_generation);
 #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
 	struct dst_entry *dst;
 #endif
@@ -274,26 +322,33 @@ static bool qos_enqueue(struct sk_buff *skb, const struct nf_hook_state *state,
 			dev_hold(state->in);
 		if (state->out)
 			dev_hold(state->out);
-#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
-		dst = skb_dst(skb);
-		p->physin = nf_bridge_get_physindev_compat(skb);
-		p->physout = nf_bridge_get_physoutdev(skb);
-		if (p->physin)
-			dev_hold(p->physin);
-		if (p->physout)
-			dev_hold(p->physout);
-		/* A bridge fake rtable is embedded in the bridge's private storage. */
-		if (state->pf == NFPROTO_BRIDGE && dst && (dst->flags & DST_FAKE_RTABLE)) {
-			p->bridge_dev = READ_ONCE(dst->dev);
-			if (p->bridge_dev)
-				dev_hold(p->bridge_dev);
-		}
-#endif
 	}
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+	/* Fast packets can carry bridge metadata too, regardless of saved hook. */
+	dst = skb_dst(skb);
+#if NATFLOW_NF_BRIDGE_PHYSINDEV_TAKES_NET
+	p->physin = nf_bridge_get_physindev(skb, state ? state->net : dev_net(skb->dev));
+#else
+	p->physin = nf_bridge_get_physindev_compat(skb);
+#endif
+	p->physout = nf_bridge_get_physoutdev(skb);
+	if (p->physin)
+		dev_hold(p->physin);
+	if (p->physout)
+		dev_hold(p->physout);
+	/* A bridge fake rtable is embedded in the bridge's private storage. */
+	if (dst && (dst->flags & DST_FAKE_RTABLE)) {
+		p->bridge_dev = READ_ONCE(dst->dev);
+		if (p->bridge_dev)
+			dev_hold(p->bridge_dev);
+	}
+#endif
 	local_bh_disable();
 	q = this_cpu_ptr(&qos_cpu_queues);
 	if (READ_ONCE(qos_stopping) || !q->online || stamp->generation != q->generation ||
-	        !qos_charge(&qos_packets, 1, NATFLOW_QOS_QUEUE_PACKETS))
+	        device_generation != q->device_generation ||
+	        device_generation != (u32)atomic_read(&qos_device_generation) ||
+	        !qos_packet_ready(p) || !qos_charge(&qos_packets, 1, NATFLOW_QOS_QUEUE_PACKETS))
 		goto enable_bh;
 	if (!qos_charge(&qos_memory, p->memory, NATFLOW_QOS_QUEUE_MEMORY)) {
 		atomic_dec(&qos_packets);
@@ -369,6 +424,7 @@ static long qos_reset_cpu(void *arg)
 	q = this_cpu_ptr(&qos_cpu_queues);
 	q->generation = *(u32 *)arg;
 	qos_purge_cpu(q, &discard);
+	q->device_generation = (u32)atomic_read(&qos_device_generation);
 	local_bh_enable();
 	/* Old timers may expire empty; never rearm from a remote CPU. */
 	qos_free_discard(&discard);
@@ -394,7 +450,9 @@ static int qos_cpu_online(unsigned int cpu)
 
 	local_bh_disable();
 	q->generation = READ_ONCE(qos_generation);
-	q->online = true;
+	WRITE_ONCE(q->online, true);
+	/* An event racing the snapshot must see online and schedule its tasklet. */
+	q->device_generation = (u32)atomic_read(&qos_device_generation);
 	local_bh_enable();
 	return 0;
 }
@@ -405,7 +463,7 @@ static int qos_cpu_offline(unsigned int cpu)
 	LIST_HEAD(discard);
 
 	local_bh_disable();
-	q->online = false;
+	WRITE_ONCE(q->online, false);
 	local_bh_enable();
 	/* Drain on this CPU before the kernel can migrate its timers and tasklets. */
 	hrtimer_cancel(&q->timer);
@@ -441,12 +499,18 @@ int natflow_qos_queue_init(void)
 	if (ret < 0)
 		return ret;
 	qos_cpuhp_state = ret;
+	ret = register_netdevice_notifier(&qos_netdev_notifier);
+	if (ret) {
+		cpuhp_remove_state(qos_cpuhp_state);
+		return ret;
+	}
 	return 0;
 }
 
 void natflow_qos_queue_exit(void)
 {
 	WRITE_ONCE(qos_stopping, true);
+	unregister_netdevice_notifier(&qos_netdev_notifier);
 	/* Teardown callbacks run on each online CPU and serialize with hotplug. */
 	cpuhp_remove_state(qos_cpuhp_state);
 }

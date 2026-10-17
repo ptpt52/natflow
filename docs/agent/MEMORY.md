@@ -60,6 +60,15 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
   不触碰远程树。卸载使用 cpuhp_remove_state 在在线 CPU 执行下线清理。
   同流跨 CPU 入队不保证实际发送顺序；后续 qdisc/驱动可自行调度。
   保留逐包 dev/socket/net/dst 引用，不以 CPU 绑定或 PATH magic 替代生命周期。
+  bridge physin/physout 与 fake rtable 所属 bridge 的引用覆盖快、慢路径，
+  不依赖保存 hook；fake rtable 按 dst 标志识别，不限定 family。
+  netdev GOING_DOWN/DOWN/UNREGISTER 推进独立 QoS 设备代次，使全模块旧缓存
+  失效（包括其他设备）。同步 on_each_cpu IPI 只唤醒 online 且未 stopping
+  的本地 tasklet；禁止 IPI 改树或唤醒已下线/kill 的 tasklet。随后通过
+  synchronize_net 等待 RCU 内已选中的续发。每 CPU 仅含一个设备代次，
+  不匹配时忽略预约时间、每批最多丢 128 包，清空后才确认新代次/恢复准入。
+  上线必须先置 online 再读设备代次，避免事件 IPI 漏过。初始化 notifier
+  失败撤销 CPUHP；卸载先 stopping、注销 notifier，再移除 CPUHP 清队。
   慢路径必须从原 POST hook 之后继续，
   保留后续 conntrack confirm，不能直接调用 okfn 跳过剩余 hook。GSO 仍可能
   成批发出，共享规则没有用户公平保证；构建/宿主机模型不能替代真机抖动验证。

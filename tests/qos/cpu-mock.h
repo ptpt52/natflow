@@ -27,6 +27,7 @@ typedef uint64_t u64;
 #define unlikely(x) (x)
 #define MOCK_CPUS 4
 static _Thread_local unsigned int mock_cpu;
+static _Thread_local bool mock_in_ipi;
 #define DEFINE_PER_CPU(type, name) type name[MOCK_CPUS]
 #define per_cpu_ptr(ptr, cpu) (&(*(ptr))[cpu])
 #define this_cpu_ptr(ptr) per_cpu_ptr(ptr, mock_cpu)
@@ -56,8 +57,11 @@ typedef struct {
 	atomic_int value;
 } atomic_t;
 #define ATOMIC_INIT(n) { ATOMIC_VAR_INIT(n) }
+static void (*mock_after_atomic_read)(const atomic_t *);
 static int atomic_read(const atomic_t *v) {
-	return atomic_load(&v->value);
+	int value = atomic_load(&v->value);
+	if (mock_after_atomic_read) mock_after_atomic_read(v);
+	return value;
 }
 static void (*mock_after_charge)(atomic_t *);
 static int atomic_cmpxchg(atomic_t *v, int old, int n)
@@ -72,6 +76,9 @@ static void atomic_sub(int n, atomic_t *v)
 }
 static void atomic_dec(atomic_t *v) {
 	atomic_sub(1, v);
+}
+static void atomic_inc(atomic_t *v) {
+	atomic_fetch_add(&v->value, 1);
 }
 
 /* This models reader/writer exclusion, not a real kernel seqcount. */
@@ -120,6 +127,14 @@ static void rcu_read_unlock(void)
 #define rcu_read_lock_bh rcu_read_lock
 #define rcu_read_unlock_bh rcu_read_unlock
 #define rcu_dereference(p) (p)
+static void (*mock_before_sync_net)(void);
+static void synchronize_net(void)
+{
+	assert(!mock_rcu_depth && !mock_bh_depth);
+	if (mock_before_sync_net) mock_before_sync_net();
+	assert(!pthread_rwlock_wrlock(&mock_rcu));
+	assert(!pthread_rwlock_unlock(&mock_rcu));
+}
 
 struct list_head {
 	struct list_head *next, *prev;
@@ -215,7 +230,11 @@ static void kfree(void *p)
 struct net_device {
 	atomic_bool running, present;
 	atomic_uint refs, holds, puts;
+	struct net *net;
 };
+static struct net *dev_net(struct net_device *dev) {
+	return dev->net;
+}
 static bool netif_running(const struct net_device *dev) {
 	return atomic_load(&dev->running);
 }
@@ -262,7 +281,8 @@ static struct dst_entry *skb_dst(struct sk_buff *skb) {
 static void skb_dst_force(struct sk_buff *skb) {
 	if (skb->fail_dst) skb->dst = NULL;
 }
-static struct net_device *nf_bridge_get_physindev_compat(struct sk_buff *skb) {
+static struct net_device *nf_bridge_get_physindev(struct sk_buff *skb, struct net *net) {
+	(void)net;
 	return skb->physin;
 }
 static struct net_device *nf_bridge_get_physoutdev(struct sk_buff *skb) {
@@ -279,10 +299,12 @@ static void kfree_skb(struct sk_buff *skb)
 static atomic_uint xmitted;
 static unsigned int last_sequence[MOCK_CPUS];
 static bool check_sequence;
+static void (*mock_before_xmit)(void);
 static void dev_queue_xmit(struct sk_buff *skb)
 {
 	assert(mock_cpu == skb->enqueue_cpu);
 	assert(atomic_load(&skb->dev->refs) > 1);
+	if (mock_before_xmit) mock_before_xmit();
 	if (check_sequence) {
 		assert(skb->sequence == last_sequence[mock_cpu] + 1);
 		last_sequence[mock_cpu] = skb->sequence;
@@ -349,8 +371,8 @@ struct hrtimer {
 struct tasklet_struct {
 	void (*function)(unsigned long);
 	unsigned long data;
-	bool scheduled;
-	unsigned int cpu;
+	atomic_bool scheduled;
+	atomic_uint cpu;
 };
 static u64 mock_now = 1000000000ULL;
 static u64 ktime_get_ns(void) {
@@ -455,8 +477,64 @@ static int cpuhp_setup_state(int state, const char *name,
 }
 static void cpuhp_remove_state(int state)
 {
+	unsigned int saved = mock_cpu;
+
 	assert(state == CPUHP_AP_ONLINE_DYN + 1 && mock_startup);
-	for (unsigned int cpu = 0; cpu < MOCK_CPUS; cpu++)
-		if (mock_online[cpu]) mock_hotplug_cpu(cpu, false);
+	/* Removing a callback does not physically offline the CPU. */
+	for (unsigned int cpu = 0; cpu < MOCK_CPUS; cpu++) {
+		if (!mock_online[cpu]) continue;
+		mock_cpu = cpu;
+		assert(!mock_teardown(cpu));
+	}
+	mock_cpu = saved;
 	mock_startup = mock_teardown = NULL;
+}
+
+/* IPIs may interrupt BH-disabled code; they must never access the queue tree. */
+static unsigned int mock_ipi_calls;
+static void on_each_cpu(void (*fn)(void *), void *arg, int wait)
+{
+	unsigned int saved = mock_cpu;
+
+	assert(wait == 1 && !mock_in_ipi);
+	mock_in_ipi = true;
+	for (unsigned int cpu = 0; cpu < MOCK_CPUS; cpu++) {
+		if (!mock_online[cpu]) continue;
+		mock_cpu = cpu;
+		mock_ipi_calls++;
+		fn(arg);
+	}
+	mock_cpu = saved;
+	mock_in_ipi = false;
+}
+#define NETDEV_REGISTER 1
+#define NETDEV_UP 2
+#define NETDEV_GOING_DOWN 3
+#define NETDEV_DOWN 4
+#define NETDEV_UNREGISTER 5
+#define NOTIFY_DONE 0
+struct notifier_block {
+	int (*notifier_call)(struct notifier_block *, unsigned long, void *);
+};
+static struct notifier_block *mock_netdev_notifier;
+static bool fail_notifier;
+static int register_netdevice_notifier(struct notifier_block *nb)
+{
+	assert(!mock_netdev_notifier);
+	if (fail_notifier) return -ENOMEM;
+	mock_netdev_notifier = nb;
+	return 0;
+}
+static void unregister_netdevice_notifier(struct notifier_block *nb)
+{
+	assert(mock_netdev_notifier == nb);
+	/* Like the kernel, replay removal events during unregistration. */
+	nb->notifier_call(nb, NETDEV_DOWN, NULL);
+	nb->notifier_call(nb, NETDEV_UNREGISTER, NULL);
+	mock_netdev_notifier = NULL;
+}
+static void mock_netdev_event(unsigned long event, struct net_device *dev)
+{
+	assert(mock_netdev_notifier);
+	assert(mock_netdev_notifier->notifier_call(mock_netdev_notifier, event, dev) == NOTIFY_DONE);
 }
