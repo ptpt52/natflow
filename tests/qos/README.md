@@ -14,10 +14,19 @@ sh tests/qos/run.sh
 同时直接编译 `natflow_qos.c`，以逻辑 CPU、timer/tasklet、树、hook 和引用
 模型检查：快路径发送及 IPv4/IPv6/bridge POST continuation 的 CPU 与入队
 一致；固定 CPU 的 timer 重置、相同时间的 FIFO、128 包预算；CPU 下线清队、
-上线复用、意外迁移只丢包；其他 CPU 发起 generation reset 不远程启动 timer；
+上线复用、意外迁移不访问远程树；其他 CPU 发起 generation reset 不远程启动 timer；
 全局 4096 包/8 MiB 上限；分配、dst、socket 和 hotplug 注册失败；逐包引用
-平衡；三个 CPU 并发入队的 2400 个 skb。树模型不实现 RB 平衡，逻辑 CPU
-模型不执行真实的内核软中断、CPU hotplug 或 RCU 调度。
+平衡；三个 CPU 并发入队的 2400 个 skb。
+
+新增本 CPU BH 互斥模型和树访问断言，检查所有树操作在所属 CPU 的 BH 禁用
+区域执行。三 CPU 两组各 9000 次入队分别打满包数/内存上限，并发读取统计
+确认额度不瞬时超限，失败不泄漏额度，清队后归零。受控竞态暂停 CPU 0 的
+入队（已预占包数、未预占内存），同时开始配置清队和 CPU 下线，验证 CPU 1
+仍能推进入队，清队同步等待本地操作完成，返回后所有旧包/额度被回收。
+另验离线 CPU 不接收清队工作、重新上线继承最新 generation。
+
+树模型不实现 RB 平衡；u64_stats_sync 使用读写锁模型，不模拟真实 seqcount。
+逻辑 CPU 模型不执行真实内核软中断、CPU hotplug 或 RCU 调度。
 
 目标设备测试需在可重置的测试路由器上进行，保存配置后对比 `buffer_ms=0`
 和 `buffer_ms=100`：
@@ -36,7 +45,6 @@ sh tests/qos/run.sh
 5. 排队期间执行 clear、buffer_ms 切换、classid 模式切换、规则重载、用户
    速率更新、设备删除、模块卸载/重载。以 KASAN/lockdep 检查引用、锁顺序、
    hrtimer/tasklet 清理和无双重释放；验证旧 generation 不重新入队。
-
 6. 用 ftrace/kprobe 或测试探针记录 skb 入队和 Natflow 出队发送/后续 hook
    的 CPU，核对每个缓存 skb 的 CPU 一致；覆盖多接收队列和 RPS。排队期间
    下线对应 CPU，确认其未发送缓存计入 dropped、释放引用且不迁移续发；

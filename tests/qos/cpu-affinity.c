@@ -1,6 +1,19 @@
 #include "cpu-mock.h"
 #include "production-queue.h"
 
+static void mock_tree_access(const struct rb_root *root)
+{
+	assert(mock_bh_depth);
+	assert(root == &qos_cpu_queues[mock_cpu].packets);
+}
+
+static struct natflow_qos_stats queue_stats(void)
+{
+	struct natflow_qos_stats stats;
+	natflow_qos_queue_stats(&stats);
+	return stats;
+}
+
 static struct net_device dev = { .running = true, .present = true, .refs = 1 };
 static struct net net = { .refs = 1 };
 static struct sock sk = { .sk_refcnt = 1 };
@@ -21,7 +34,7 @@ static struct sk_buff *packet(unsigned int sequence, unsigned int size)
 static struct natflow_qos_stamp stamp(u64 time)
 {
 	return (struct natflow_qos_stamp) {
-		time, qos_generation
+		time, READ_ONCE(qos_generation)
 	};
 }
 
@@ -136,7 +149,7 @@ static void test_order_and_budget(void)
 	mock_now += 200;
 	poll_cpu(1);
 	assert(atomic_load(&xmitted) == sent + 128);
-	assert(qos_stats.packets == 132);
+	assert(queue_stats().packets == 132);
 	assert(qos_cpu_queues[1].timer.expires == mock_now + 1000);
 	mock_now += 1000;
 	poll_cpu(1);
@@ -151,19 +164,18 @@ static void test_order_and_budget(void)
 static void test_hotplug_and_reset(void)
 {
 	unsigned int sent = atomic_load(&xmitted);
-	u64 dropped = qos_stats.dropped;
+	u64 dropped = queue_stats().dropped;
 	mock_cpu = 0;
 	queue(0, mock_now + 100);
 	mock_cpu = 1;
 	queue(0, mock_now + 100);
 	/* Also kill a tasklet already scheduled on the CPU going offline. */
 	qos_cpu_queues[1].timer.function(&qos_cpu_queues[1].timer);
-	assert(!mock_teardown(1));
-	mock_online[1] = false;
+	mock_hotplug_cpu(1, false);
 	assert(!qos_cpu_queues[1].timer.active && !qos_cpu_queues[1].tasklet.scheduled);
-	assert(qos_stats.packets == 1 && qos_stats.dropped == dropped + 1);
+	assert(queue_stats().packets == 1 && queue_stats().dropped == dropped + 1);
 	queue(0, mock_now + 100); /* Admission after teardown must fail. */
-	assert(qos_stats.dropped == dropped + 2);
+	assert(queue_stats().dropped == dropped + 2);
 	mock_cpu = 3;
 	mock_now += 100;
 	poll_cpu(0);
@@ -172,20 +184,22 @@ static void test_hotplug_and_reset(void)
 	assert_empty();
 
 	mock_cpu = 1;
-	mock_online[1] = true;
-	assert(!mock_startup(1));
+	mock_hotplug_cpu(1, true);
 	queue(0, mock_now + 100);
 	mock_now += 100;
 	poll_cpu(1);
 	assert(atomic_load(&xmitted) == sent + 2);
 	assert_empty();
 
-	/* Defend against an unexpected migrated tasklet: drop, never send. */
+	/* A migrated tasklet must neither send nor touch the remote tree. */
 	queue(0, mock_now + 100);
 	mock_cpu = 2;
 	qos_dequeue((unsigned long)&qos_cpu_queues[1]);
 	assert(atomic_load(&xmitted) == sent + 2);
+	assert(queue_stats().packets == 1);
+	mock_hotplug_cpu(1, false);
 	assert_empty();
+	mock_hotplug_cpu(1, true);
 	mock_now += 100;
 	poll_cpu(1);
 
@@ -214,10 +228,10 @@ static void test_global_caps_and_failures(void)
 		mock_cpu = i % 3;
 		queue(0, mock_now + 100);
 	}
-	assert(qos_stats.packets == NATFLOW_QOS_QUEUE_PACKETS);
-	u64 dropped = qos_stats.dropped;
+	assert(queue_stats().packets == NATFLOW_QOS_QUEUE_PACKETS);
+	u64 dropped = queue_stats().dropped;
 	queue(0, mock_now + 100);
-	assert(qos_stats.packets == NATFLOW_QOS_QUEUE_PACKETS && qos_stats.dropped == dropped + 1);
+	assert(queue_stats().packets == NATFLOW_QOS_QUEUE_PACKETS && queue_stats().dropped == dropped + 1);
 	natflow_qos_queue_reset(qos_generation + 1);
 	assert_empty();
 
@@ -227,9 +241,9 @@ static void test_global_caps_and_failures(void)
 	natflow_qos_xmit(packet(0, size), &s);
 	mock_cpu = 2;
 	natflow_qos_xmit(packet(0, size), &s);
-	assert(qos_stats.memory == NATFLOW_QOS_QUEUE_MEMORY && qos_stats.packets == 2);
+	assert(queue_stats().memory == NATFLOW_QOS_QUEUE_MEMORY && queue_stats().packets == 2);
 	queue(0, mock_now + 100);
-	assert(qos_stats.memory == NATFLOW_QOS_QUEUE_MEMORY && qos_stats.packets == 2);
+	assert(queue_stats().memory == NATFLOW_QOS_QUEUE_MEMORY && queue_stats().packets == 2);
 	natflow_qos_queue_reset(qos_generation + 1);
 	assert_empty();
 
@@ -275,14 +289,197 @@ static void test_concurrent_producers(void)
 	for (uintptr_t cpu = 0; cpu < 3; cpu++)
 		assert(!pthread_create(&threads[cpu], NULL, producer, (void *)cpu));
 	for (unsigned int cpu = 0; cpu < 3; cpu++) assert(!pthread_join(threads[cpu], NULL));
-	assert(qos_stats.packets == 2400);
+	assert(queue_stats().packets == 2400);
 	mock_now += 100;
-	while (qos_stats.packets) {
+	while (queue_stats().packets) {
 		for (unsigned int cpu = 0; cpu < 3; cpu++) poll_cpu(cpu);
 		mock_now += 1000;
 	}
 	for (unsigned int cpu = 0; cpu < 3; cpu++) assert(last_sequence[cpu] == 800);
 	check_sequence = false;
+	assert_empty();
+}
+
+static pthread_barrier_t cap_start;
+static atomic_uint cap_done;
+struct cap_producer {
+	unsigned int cpu, size;
+};
+
+static void *fill_capacity(void *arg)
+{
+	struct cap_producer *p = arg;
+	mock_cpu = p->cpu;
+	int ret = pthread_barrier_wait(&cap_start);
+	assert(!ret || ret == PTHREAD_BARRIER_SERIAL_THREAD);
+	for (unsigned int i = 0; i < 3000; i++) {
+		struct natflow_qos_stamp s = stamp(mock_now + 100);
+		natflow_qos_xmit(packet(0, p->size), &s);
+	}
+	atomic_fetch_add(&cap_done, 1);
+	return NULL;
+}
+
+static void test_concurrent_capacity(void)
+{
+	for (unsigned int memory_limit = 0; memory_limit < 2; memory_limit++) {
+		struct cap_producer args[3];
+		pthread_t threads[3];
+		unsigned int charge = memory_limit ? NATFLOW_QOS_QUEUE_MEMORY / 16 :
+		                      256 + sizeof(struct natflow_qos_packet);
+		unsigned int expected = memory_limit ? 16 : NATFLOW_QOS_QUEUE_PACKETS;
+		struct natflow_qos_stats before = queue_stats();
+
+		atomic_store(&cap_done, 0);
+		assert(!pthread_barrier_init(&cap_start, NULL, 4));
+		for (unsigned int cpu = 0; cpu < 3; cpu++) {
+			args[cpu] = (struct cap_producer) {
+				cpu, charge - sizeof(struct natflow_qos_packet)
+			};
+			assert(!pthread_create(&threads[cpu], NULL, fill_capacity, &args[cpu]));
+		}
+		mock_cpu = 3;
+		int ret = pthread_barrier_wait(&cap_start);
+		assert(!ret || ret == PTHREAD_BARRIER_SERIAL_THREAD);
+		while (atomic_load(&cap_done) < 3) {
+			struct natflow_qos_stats current = queue_stats();
+			assert(current.packets <= NATFLOW_QOS_QUEUE_PACKETS);
+			assert(current.memory <= NATFLOW_QOS_QUEUE_MEMORY);
+			sched_yield();
+		}
+		for (unsigned int cpu = 0; cpu < 3; cpu++) assert(!pthread_join(threads[cpu], NULL));
+		assert(!pthread_barrier_destroy(&cap_start));
+		struct natflow_qos_stats after = queue_stats();
+		assert(after.packets == expected && after.memory == charge * expected);
+		assert(after.queued == before.queued + expected);
+		assert(after.dropped == before.dropped + 9000 - expected);
+		natflow_qos_queue_reset(qos_generation + 1);
+		assert_empty();
+	}
+}
+
+/* Pause enqueue between reserving its packet slot and its memory quota. */
+static pthread_mutex_t reset_race_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t reset_race_cond = PTHREAD_COND_INITIALIZER;
+static bool charge_paused, reset_waiting, release_charge;
+static bool hotplug_started, hotplug_completed;
+static struct natflow_qos_stamp reset_old_stamp;
+
+static void pause_charge(atomic_t *counter)
+{
+	if (counter != &qos_packets || mock_cpu != 0) return;
+	assert(mock_bh_depth);
+	assert(!pthread_mutex_lock(&reset_race_lock));
+	charge_paused = true;
+	assert(!pthread_cond_broadcast(&reset_race_cond));
+	while (!release_charge) assert(!pthread_cond_wait(&reset_race_cond, &reset_race_lock));
+	assert(!pthread_mutex_unlock(&reset_race_lock));
+}
+
+static void signal_reset(unsigned int cpu)
+{
+	if (cpu) return;
+	assert(!pthread_mutex_lock(&reset_race_lock));
+	reset_waiting = true;
+	assert(!pthread_cond_broadcast(&reset_race_cond));
+	assert(!pthread_mutex_unlock(&reset_race_lock));
+}
+
+static void *paused_enqueue(void *arg)
+{
+	(void)arg;
+	mock_cpu = 0;
+	natflow_qos_xmit(packet(0, 256), &reset_old_stamp);
+	return NULL;
+}
+
+static void *reset_control(void *arg)
+{
+	(void)arg;
+	mock_cpu = 3;
+	natflow_qos_queue_reset(reset_old_stamp.generation + 1);
+	return NULL;
+}
+
+static void *hotplug_during_reset(void *arg)
+{
+	(void)arg;
+	mock_cpu = 2;
+	assert(!pthread_mutex_lock(&reset_race_lock));
+	hotplug_started = true;
+	assert(!pthread_cond_broadcast(&reset_race_cond));
+	assert(!pthread_mutex_unlock(&reset_race_lock));
+	mock_hotplug_cpu(2, false);
+	assert(!pthread_mutex_lock(&reset_race_lock));
+	hotplug_completed = true;
+	assert(!pthread_cond_broadcast(&reset_race_cond));
+	assert(!pthread_mutex_unlock(&reset_race_lock));
+	return NULL;
+}
+
+static void test_reset_racing_enqueue(void)
+{
+	pthread_t producer_thread, reset_thread, hotplug_thread;
+	struct natflow_qos_stats before = queue_stats();
+
+	reset_old_stamp = stamp(mock_now + 100);
+	mock_after_charge = pause_charge;
+	mock_before_work = signal_reset;
+	assert(!pthread_create(&producer_thread, NULL, paused_enqueue, NULL));
+	assert(!pthread_mutex_lock(&reset_race_lock));
+	while (!charge_paused) assert(!pthread_cond_wait(&reset_race_cond, &reset_race_lock));
+	assert(!pthread_mutex_unlock(&reset_race_lock));
+	assert(!pthread_create(&reset_thread, NULL, reset_control, NULL));
+	assert(!pthread_mutex_lock(&reset_race_lock));
+	while (!reset_waiting) assert(!pthread_cond_wait(&reset_race_cond, &reset_race_lock));
+	assert(!pthread_mutex_unlock(&reset_race_lock));
+
+	assert(!pthread_create(&hotplug_thread, NULL, hotplug_during_reset, NULL));
+	assert(!pthread_mutex_lock(&reset_race_lock));
+	while (!hotplug_started) assert(!pthread_cond_wait(&reset_race_cond, &reset_race_lock));
+	assert(!hotplug_completed);
+	assert(!pthread_mutex_unlock(&reset_race_lock));
+
+	/* CPU 0 is blocked in enqueue; CPU 1 still admits its old config's packet. */
+	mock_cpu = 1;
+	natflow_qos_xmit(packet(0, 256), &reset_old_stamp);
+	assert(queue_stats().packets == 2);
+	assert(!pthread_mutex_lock(&reset_race_lock));
+	release_charge = true;
+	assert(!pthread_cond_broadcast(&reset_race_cond));
+	assert(!pthread_mutex_unlock(&reset_race_lock));
+	assert(!pthread_join(producer_thread, NULL));
+	assert(!pthread_join(reset_thread, NULL));
+	assert(!pthread_join(hotplug_thread, NULL));
+	assert(hotplug_completed && !qos_cpu_queues[2].online);
+	mock_hotplug_cpu(2, true);
+	mock_after_charge = NULL;
+	mock_before_work = NULL;
+	assert_empty();
+	struct natflow_qos_stats after = queue_stats();
+	assert(after.queued == before.queued + 2 && after.dropped == before.dropped + 2);
+	for (mock_cpu = 0; mock_cpu < MOCK_CPUS; mock_cpu++) {
+		natflow_qos_xmit(packet(0, 256), &reset_old_stamp);
+		assert_empty();
+	}
+}
+
+static void test_reset_with_offline_cpu(void)
+{
+	mock_cpu = 3;
+	mock_hotplug_cpu(1, false);
+	struct natflow_qos_stamp old = stamp(mock_now + 100);
+	unsigned int calls = mock_work_calls;
+	natflow_qos_queue_reset(qos_generation + 1);
+	assert(mock_work_calls == calls + MOCK_CPUS - 1);
+	mock_hotplug_cpu(1, true);
+	mock_cpu = 1;
+	assert(qos_cpu_queues[1].generation == qos_generation);
+	natflow_qos_xmit(packet(0, 256), &old);
+	assert_empty();
+	queue(0, mock_now + 100);
+	mock_now += 100;
+	poll_cpu(1);
 	assert_empty();
 }
 
@@ -297,13 +494,15 @@ int main(void)
 	mock_cpu = 3;
 	queue(0, mock_now + 100);
 	assert_empty();
-	mock_online[3] = true;
-	assert(!mock_startup(3));
+	mock_hotplug_cpu(3, true);
 	test_affinity_and_continuation();
 	test_order_and_budget();
 	test_hotplug_and_reset();
 	test_global_caps_and_failures();
 	test_concurrent_producers();
+	test_concurrent_capacity();
+	test_reset_racing_enqueue();
+	test_reset_with_offline_cpu();
 	for (mock_cpu = 0; mock_cpu < 3; mock_cpu++) queue(0, mock_now + 100);
 	mock_cpu = 0;
 	natflow_qos_queue_exit();
@@ -315,6 +514,6 @@ int main(void)
 	assert_empty();
 	queue(0, mock_now + 100);
 	assert_empty();
-	puts("QoS CPU affinity, continuation, hotplug, global limits and ownership: PASS");
+	puts("QoS owner CPU, atomic limits, concurrent reset, hotplug and ownership: PASS");
 	return 0;
 }

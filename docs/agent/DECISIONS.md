@@ -297,9 +297,9 @@ queue pressure 和 queue stream 也已验证。继续扩展 IPv6 extension heade
 - 使用 per-CPU 红黑树、固定 CPU 的 hrtimer 和本 CPU tasklet；队列选择和
   timer 启动处于 BH 禁止迁移区域，所有启动使用 ABS_PINNED。
 - CPUHP_AP_ONLINE_DYN 下线回调先禁止入队，再停止 timer/tasklet 并丢弃
-  本 CPU 待发送缓存。异常跨 CPU tasklet 只清队，不续发。
-- 共用自旋锁保护所有队列、全局容量和 generation；4096 skb / 8 MiB 是
-  模块总体上限。配置清队不从控制 CPU 重新启动其他 CPU 的 timer。
+  本 CPU 待发送缓存。异常跨 CPU tasklet 不续发，不触碰远程队列。
+- 4096 skb / 8 MiB 是模块总体上限。队列同步、容量和 generation 管理由
+  ADR-0011 约束；配置清队不从控制 CPU 重新启动其他 CPU 的 timer。
 - 保留逐包 dev/socket/net/dst 引用，不恢复共享设备引用上下文或 PATH magic
   校验方案。
 
@@ -311,3 +311,36 @@ queue pressure 和 queue stream 也已验证。继续扩展 IPv6 extension heade
   qdisc/驱动的执行 CPU 不属于此保证。同流跨 CPU 入队仍可能实际乱序。
 - 宿主机测试验证逻辑 CPU 绑定与清理，实际 CPU hotplug 和流量平滑需真机
   验证。
+
+## ADR-0011：QoS 队列使用本 CPU 同步和原子额度
+
+状态：Accepted
+
+### 背景
+
+队列已经按 CPU 划分，全局自旋锁仍串行所有 CPU 的入队、出队和统计。移除
+该锁需要同时消除控制面远程改树，并保证配置清队、在途预约和 hotplug 的时序。
+本轮按维护者要求仅考虑非 RT 内核，不增加 PREEMPT_RT 适配分支。
+
+### 决策
+
+- 红黑树、本地 generation、online 和统计写入只在所属 CPU 的 BH 禁用区
+  操作；不增加 per-CPU 队列锁。hrtimer 回调只唤醒 tasklet，不改树。
+- 包数和内存各用一个 32 位 atomic_t，经 cmpxchg 检查并预占；失败回退，
+  出队/丢弃逐节点归还，不先递增再判超限，也不在清队时清零全局计数。
+- 控制面由 qos_conf_lock 串行，持 cpus_read_lock 更新最新 generation，
+  用 work_on_cpu 同步执行各在线 CPU 的本地 generation 更新和清队。
+  全部完成后再发布 RCU 配置，确保旧快照不能在清队后重新挂入旧包。
+- CPU 下线在所属 CPU 停止准入、timer/tasklet 并清队；上线读取最新
+  generation。卸载使用 cpuhp_remove_state 调用在线 CPU 的 teardown。
+  意外跨 CPU 的 tasklet 直接返回，不修改远程树。
+- queued/sent/dropped 按 CPU 更新，使用 u64_stats_sync 防止 32 位读撕裂，
+  读取时汇总全部可能 CPU。保留 group/user 速率预约锁和逐包资源引用。
+
+### 后果
+
+- 数据面不再争用全局队列锁，但全局原子额度仍有共享 cacheline 开销。
+- 包数/内存占用包括入队中的预占额度，统计字段独立采样，不能作为全模块
+  同时刻快照。控制命令需等待各在线 CPU 的清理工作完成。
+- 非 RT 内核的 BH 同步是该方案的运行前提；真实流量下的性能与 CPU 热插拔
+  压力仍需目标设备验证。

@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -31,16 +32,78 @@ static _Thread_local unsigned int mock_cpu;
 #define this_cpu_ptr(ptr) per_cpu_ptr(ptr, mock_cpu)
 #define for_each_possible_cpu(cpu) for ((cpu) = 0; (cpu) < MOCK_CPUS; (cpu)++)
 #define smp_processor_id() mock_cpu
-#define READ_ONCE(x) (x)
+#define READ_ONCE(x) __atomic_load_n(&(x), __ATOMIC_RELAXED)
+#define WRITE_ONCE(x, v) __atomic_store_n(&(x), (v), __ATOMIC_RELAXED)
 #define container_of(p, type, member) ((type *)((char *)(p) - offsetof(type, member)))
 
-typedef pthread_mutex_t spinlock_t;
-#define DEFINE_SPINLOCK(name) spinlock_t name = PTHREAD_MUTEX_INITIALIZER
-static void spin_lock_bh(spinlock_t *lock) {
-	assert(!pthread_mutex_lock(lock));
+/* Each logical CPU serializes BH sections independently of all other CPUs. */
+static pthread_mutex_t mock_bh_locks[MOCK_CPUS] = {
+	PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
+	PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER
+};
+static _Thread_local unsigned int mock_bh_depth;
+static void local_bh_disable(void)
+{
+	if (!mock_bh_depth++) assert(!pthread_mutex_lock(&mock_bh_locks[mock_cpu]));
 }
-static void spin_unlock_bh(spinlock_t *lock) {
-	assert(!pthread_mutex_unlock(lock));
+static void local_bh_enable(void)
+{
+	assert(mock_bh_depth);
+	if (!--mock_bh_depth) assert(!pthread_mutex_unlock(&mock_bh_locks[mock_cpu]));
+}
+
+typedef struct {
+	atomic_int value;
+} atomic_t;
+#define ATOMIC_INIT(n) { ATOMIC_VAR_INIT(n) }
+static int atomic_read(const atomic_t *v) {
+	return atomic_load(&v->value);
+}
+static void (*mock_after_charge)(atomic_t *);
+static int atomic_cmpxchg(atomic_t *v, int old, int n)
+{
+	if (atomic_compare_exchange_strong(&v->value, &old, n) && mock_after_charge)
+		mock_after_charge(v);
+	return old;
+}
+static void atomic_sub(int n, atomic_t *v)
+{
+	assert(atomic_fetch_sub(&v->value, n) >= n);
+}
+static void atomic_dec(atomic_t *v) {
+	atomic_sub(1, v);
+}
+
+/* This models reader/writer exclusion, not a real kernel seqcount. */
+struct u64_stats_sync {
+	pthread_rwlock_t lock;
+	bool initialized;
+};
+static void u64_stats_init(struct u64_stats_sync *s)
+{
+	if (s->initialized) assert(!pthread_rwlock_destroy(&s->lock));
+	assert(!pthread_rwlock_init(&s->lock, NULL));
+	s->initialized = true;
+}
+static void u64_stats_update_begin(struct u64_stats_sync *s)
+{
+	assert(mock_bh_depth);
+	assert(!pthread_rwlock_wrlock(&s->lock));
+}
+static void u64_stats_update_end(struct u64_stats_sync *s)
+{
+	assert(!pthread_rwlock_unlock(&s->lock));
+}
+static unsigned int u64_stats_fetch_begin(struct u64_stats_sync *s)
+{
+	assert(!pthread_rwlock_rdlock(&s->lock));
+	return 0;
+}
+static bool u64_stats_fetch_retry(struct u64_stats_sync *s, unsigned int start)
+{
+	(void)start;
+	assert(!pthread_rwlock_unlock(&s->lock));
+	return false;
 }
 
 static pthread_rwlock_t mock_rcu = PTHREAD_RWLOCK_INITIALIZER;
@@ -87,8 +150,10 @@ struct rb_root {
 #define rb_left left
 #define rb_right right
 #define rb_entry(p, type, member) container_of(p, type, member)
+static void mock_tree_access(const struct rb_root *root);
 static struct rb_node *rb_first(const struct rb_root *root)
 {
+	mock_tree_access(root);
 	struct rb_node *n = root->rb_node;
 	if (n) while (n->left) n = n->left;
 	return n;
@@ -101,7 +166,7 @@ static void rb_link_node(struct rb_node *n, struct rb_node *parent, struct rb_no
 }
 static void rb_insert_color(struct rb_node *n, struct rb_root *root) {
 	(void)n;
-	(void)root;
+	mock_tree_access(root);
 }
 static void rb_replace(struct rb_root *root, struct rb_node *old, struct rb_node *n)
 {
@@ -112,6 +177,7 @@ static void rb_replace(struct rb_root *root, struct rb_node *old, struct rb_node
 }
 static void rb_erase(struct rb_node *n, struct rb_root *root)
 {
+	mock_tree_access(root);
 	if (!n->left) rb_replace(root, n, n->right);
 	else if (!n->right) rb_replace(root, n, n->left);
 	else {
@@ -288,7 +354,7 @@ struct tasklet_struct {
 };
 static u64 mock_now = 1000000000ULL;
 static u64 ktime_get_ns(void) {
-	return mock_now;
+	return READ_ONCE(mock_now);
 }
 static u64 ns_to_ktime(u64 n) {
 	return n;
@@ -300,7 +366,7 @@ static void hrtimer_init(struct hrtimer *t, int clock, int mode) {
 	t->active = false;
 }
 static void hrtimer_start(struct hrtimer *t, u64 n, int mode) {
-	assert(mode == HRTIMER_MODE_ABS_PINNED);
+	assert(mode == HRTIMER_MODE_ABS_PINNED && mock_bh_depth);
 	t->expires = n;
 	t->cpu = mock_cpu;
 	t->active = true;
@@ -325,23 +391,72 @@ static void tasklet_kill(struct tasklet_struct *t) {
 
 #define CPUHP_AP_ONLINE_DYN 100
 static bool mock_online[MOCK_CPUS] = { true, true, true, false };
+static pthread_rwlock_t mock_hotplug_lock = PTHREAD_RWLOCK_INITIALIZER;
+static _Thread_local bool mock_cpus_locked;
+#define for_each_online_cpu(cpu) \
+	for_each_possible_cpu(cpu) if (mock_online[cpu])
+static void cpus_read_lock(void)
+{
+	assert(!mock_bh_depth && !mock_cpus_locked);
+	assert(!pthread_rwlock_rdlock(&mock_hotplug_lock));
+	mock_cpus_locked = true;
+}
+static void cpus_read_unlock(void)
+{
+	assert(mock_cpus_locked);
+	mock_cpus_locked = false;
+	assert(!pthread_rwlock_unlock(&mock_hotplug_lock));
+}
+static void (*mock_before_work)(unsigned int);
+static unsigned int mock_work_calls;
+static long work_on_cpu(unsigned int cpu, long (*fn)(void *), void *arg)
+{
+	unsigned int saved = mock_cpu;
+	long ret;
+
+	assert(mock_cpus_locked && mock_online[cpu] && !mock_bh_depth);
+	if (mock_before_work) mock_before_work(cpu);
+	mock_work_calls++;
+	mock_cpu = cpu;
+	ret = fn(arg);
+	assert(!mock_bh_depth);
+	mock_cpu = saved;
+	return ret;
+}
 static int (*mock_startup)(unsigned int), (*mock_teardown)(unsigned int);
+static void mock_hotplug_cpu(unsigned int cpu, bool online)
+{
+	unsigned int saved = mock_cpu;
+
+	assert(!mock_bh_depth && !mock_cpus_locked);
+	assert(!pthread_rwlock_wrlock(&mock_hotplug_lock));
+	mock_cpu = cpu;
+	if (online) {
+		mock_online[cpu] = true;
+		assert(!mock_startup(cpu));
+	} else {
+		assert(!mock_teardown(cpu));
+		mock_online[cpu] = false;
+	}
+	mock_cpu = saved;
+	assert(!pthread_rwlock_unlock(&mock_hotplug_lock));
+}
 static int cpuhp_setup_state(int state, const char *name,
                              int (*startup)(unsigned int), int (*teardown)(unsigned int))
 {
-	unsigned int saved = mock_cpu;
 	(void)name;
 	assert(state == CPUHP_AP_ONLINE_DYN && !mock_startup);
 	if (fail_cpuhp) return -ENOMEM;
 	mock_startup = startup;
 	mock_teardown = teardown;
-	for (mock_cpu = 0; mock_cpu < MOCK_CPUS; mock_cpu++)
-		if (mock_online[mock_cpu]) assert(!startup(mock_cpu));
-	mock_cpu = saved;
+	for (unsigned int cpu = 0; cpu < MOCK_CPUS; cpu++)
+		if (mock_online[cpu]) mock_hotplug_cpu(cpu, true);
 	return state + 1;
 }
-static void cpuhp_remove_state_nocalls(int state)
+static void cpuhp_remove_state(int state)
 {
 	assert(state == CPUHP_AP_ONLINE_DYN + 1 && mock_startup);
+	for (unsigned int cpu = 0; cpu < MOCK_CPUS; cpu++)
+		if (mock_online[cpu]) mock_hotplug_cpu(cpu, false);
 	mock_startup = mock_teardown = NULL;
 }

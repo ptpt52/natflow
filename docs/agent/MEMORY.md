@@ -48,8 +48,16 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
   用户速率更新只重置后续预约，已入队包保留原时间。队列/hrtimer/tasklet
   按 CPU 独立，BH 禁止迁移后选队列，timer 在所属 CPU 以 ABS_PINNED 启动；
   tasklet 在入队 CPU 续发，每批最多 128 包，不在 hardirq 中发送。
-  CPUHP 下线先拒绝入队，再 cancel/kill/purge，不迁移续发；异常跨 CPU
-  tasklet 也丢弃。全局锁维持总体容量限制，配置清队不远程重置 timer。
+  非 RT 队列仅由所属 CPU 在 local_bh_disable 区域操作，无队列自旋锁。
+  两个 32 位 atomic_t 经 cmpxchg 预占包数/内存额度，失败回退，出队逐节点
+  归还；不能用 atomic_read 后递增，也不能在 reset 直接清零全局额度。
+  累计统计 per-CPU + u64_stats_sync，读出逐项采样/汇总，包含离线 CPU；
+  packets/memory 包括正在入队的预占额度，不是全字段一致快照。
+  配置面持 qos_conf_lock，再在 cpus_read_lock 下逐在线 CPU work_on_cpu
+  同步更新本地 generation、清队，完成后才发布配置；离线 CPU 上线时读取
+  最新 generation。清队不远程改树/重置 timer，group/user 预约锁仍保留。
+  CPUHP 下线先拒绝入队，再 cancel/kill/purge；异常跨 CPU tasklet 直接返回，
+  不触碰远程树。卸载使用 cpuhp_remove_state 在在线 CPU 执行下线清理。
   同流跨 CPU 入队不保证实际发送顺序；后续 qdisc/驱动可自行调度。
   保留逐包 dev/socket/net/dst 引用，不以 CPU 绑定或 PATH magic 替代生命周期。
   慢路径必须从原 POST hook 之后继续，

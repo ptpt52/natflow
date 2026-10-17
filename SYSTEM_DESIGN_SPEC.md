@@ -1067,17 +1067,21 @@ classid 模式：
   和各自速率算出的序列化时间，不累计空闲 burst。rx/tx 独立，零速率和零
   payload 不预约，速率精度仍是 `bytes/HZ`。共享组没有公平排队保证。
 - 每个可能 CPU 独立持有按绝对单调时间排序的红黑树、hrtimer 和 tasklet，
-  同一 CPU 相同时间按入队顺序处理。共用队列自旋锁保护树、全局准入和
-  清队；全局上限仍为 4096 skb、8 MiB（skb truesize + 队列节点），不是
-  按 CPU 倍增。内存分配使用 GFP_ATOMIC，
+  同一 CPU 相同时间按入队顺序处理。队列只在所属 CPU 的 BH 禁用区操作，
+  不使用全局或 per-CPU 队列自旋锁；此同步方案面向非 RT 内核。
+  全局包数、内存各用一个 32 位 atomic_t，通过 cmpxchg 检查并预占额度，
+  任一失败均不入队并回退已占额度；出队/清理按节点归还，不直接重置计数。
+  全局上限仍为 4096 skb、8 MiB（skb truesize + 队列节点），不是按 CPU
+  倍增，原子计数也不瞬时超限。内存分配使用 GFP_ATOMIC，
   队列满、分配失败或旧 generation 准入失败直接丢包。预约后若封包/入队
   失败不回滚其他 CPU 已观察的发送时间，可能暂时少发。
-- 入队在 spin_lock_bh 内通过 this_cpu_ptr 选定队列，所有启动/重置定时器
+- 入队在 local_bh_disable 内通过 this_cpu_ptr 选定队列，所有启动/重置定时器
   的操作均在队列所属 CPU 上使用 HRTIMER_MODE_ABS_PINNED。hrtimer 只
   唤醒本 CPU 的 tasklet；tasklet 校验所属 CPU，每批最多处理 128 包，
-  在队列锁外恢复网络处理，余量通过本 CPU 定时器重新调度。若意外迁移到
-  其他 CPU 则清队丢弃，不能在其他 CPU 续发。保证范围是 Natflow 的
-  dev_queue_xmit / POST hook continuation，后续 qdisc/驱动可自行调度；
+  在 BH 禁用区恢复网络处理，余量通过本 CPU 定时器重新调度。若意外迁移到
+  其他 CPU 则直接返回，不访问远程队列、不续发；正常下线先清队再迁移。
+  保证范围是 Natflow 的 dev_queue_xmit / POST hook continuation，后续
+  qdisc/驱动可自行调度；
   同流跨 CPU 入队分别排队，不保证跨 CPU 实际发送顺序。
   以 skb 为粒度，GSO/软件分段可能形成微突发；
   buffer_ms 限制的是预约等待，softirq 拥塞会增加实际驻留时间。
@@ -1090,22 +1094,30 @@ classid 模式：
   bridge physin/physout、fake rtable 所属 bridge dev、socket 和 net 引用。
   skb 自带 conntrack 引用；队列不保存 fakeuser/natflow 的借用指针。出队前
   检查设备的 running/present 状态，失败/清理路径统一释放引用。
-- QoS 配置实际变化或显式 clear 时推进 generation，清空旧缓存；旧快照的
-  在途预约也不得重新入队。桶在首次遇到新 generation 时重置预约时间。
+- QoS 配置实际变化或显式 clear 时，控制面持 qos_conf_lock 串行 reset 和
+  发布。在 cpus_read_lock 保护下更新最新 generation，并通过 work_on_cpu
+  同步在各在线 CPU 更新其队列 generation、清理旧缓存；全部完成后才发布
+  新 RCU 配置。已清队 CPU 拒绝旧快照在途预约；未清队 CPU 接收的旧包会
+  在其清队任务返回前回收。离线 CPU 已在下线时清空，上线回调在 hotplug
+  同步下取得最新 generation。桶在首次遇到新 generation 时重置预约时间。
   旧模式 token 余额不重置。set-token-ctrl 在桶锁下更新速率并重置该用户
   发生变化方向的预约时间，已缓存包保留原预约。
 - 缓存初始化早于 user hook 注册；注册 CPUHP_AP_ONLINE_DYN 回调，注册
   失败使 user 初始化失败并回收配置，不注册 user hook。CPU 上线时开放
   本 CPU 入队；下线时先关闭入队，再 cancel hrtimer、kill tasklet、丢弃
   该 CPU 未发送的包并释放引用，先于内核的 timer/tasklet 迁移。
-  配置清队遍历所有 CPU，不从控制 CPU 重新启动其他 CPU 的定时器；残留
-  定时器可以空触发。退出在 path/user hook 停止后设置 stopping，移除
-  hotplug 回调并与其同步，再逐 CPU 停止 timer/tasklet、清队，最后释放配置。
+  配置清队不从控制 CPU 修改远程树或重新启动定时器；残留定时器可以空
+  触发。退出在 path/user hook 停止后设置 stopping，通过 cpuhp_remove_state
+  在各在线 CPU 执行 teardown，停止 timer/tasklet 并清队，与 hotplug 同步，
+  最后释放配置。
   4.14/4.15 读取旧二维 hook 表，>=4.16 读取 family 数组；>=6.13 使用
   hrtimer_setup，更旧版本使用 hrtimer_init。<4.14 保留旧 policing。
-- 控制读出 packets/memory 当前占用和 queued/released/dropped 累计计数。
-  released 是向后续处理移交次数；后续 hook 或设备仍可能丢包。dropped 只
-  计缓存调度的准入/入队/清理丢包。原用户流量统计在预约准入时更新，不是
+- 控制读出 packets/memory 原子额度（包括入队过程中已预占但未挂树的额度）
+  和 queued/released/dropped 累计计数；累计值按 CPU 更新，u64_stats_sync
+  防止 32 位读撕裂，读取时汇总全部可能 CPU，包括已下线 CPU。字段分别
+  采样，不保证是同一时刻的完整快照。released 是向后续处理移交次数；
+  后续 hook 或设备仍可能丢包。dropped 只计缓存调度的准入/入队/清理丢包。
+  原用户流量统计在预约准入时更新，不是
   网卡完成发送统计；异步入队失败等后续丢包可能已经计入用户流量。
 
 ## 15. Shared L7、URL logger 和 host ACL 算法
