@@ -841,6 +841,7 @@ cat /dev/natflow_qos_ctl
 ```sh
 echo 'clear' >/dev/natflow_qos_ctl
 echo 'tc_classid_mode=1' >/dev/natflow_qos_ctl
+echo 'buffer_ms=100' >/dev/natflow_qos_ctl
 echo 'add user=<user>,user_port=<user_port>,remote=<remote>,remote_port=<remote_port>,proto=<tcp|udp|>,rxbytes=<Bytes>,txbytes=<Bytes>' >/dev/natflow_qos_ctl
 ```
 
@@ -853,6 +854,27 @@ echo 'add user=<user>,user_port=<user_port>,remote=<remote>,remote_port=<remote_
 - `rxbytes`、`txbytes` 单位是 Bytes/s。
 - 最多 64 条规则。
 - 规则、数量、classid mode 和速率按命令发布为只读快照；并发读写不访问半更新规则。`clear` 不复位令牌桶余额，已有连接仍使用原 `qos_id` 槽位；规则重载不是跨命令事务。
+
+Linux 4.14 及以后默认启用 `buffer_ms=100`：规则级和 `set-token-ctrl`
+用户级限速会按 payload 速率安排发送时间，短时突发先缓存，再定时放行。
+`buffer_ms` 是预计排队时延上限，范围为 `1..1000` ms；写入 `0` 恢复原来的
+令牌不足即丢包模式。更旧内核保留原模式，设置非零值返回 `EOPNOTSUPP`。
+`tc_classid_mode=1` 命中的规则仍只设置 mark，交给外部 tc 排队。
+
+缓存同时覆盖 IPv4/IPv6 的软件快路径及慢路径，包括 bridge/PPPoE；全模块
+最多缓存 4096 个 skb，总内存预算 8 MiB（`skb->truesize` 加队列节点）。
+超过预计时延、包数或内存上限以及分配失败时丢包。共享规则按统一发送时间
+调度，不提供用户间的公平排队；同组慢用户可能增加其他用户的等待时间。
+调度以 skb 为单位，GSO 包及其拆分出的分段仍可能成批发出，实际时延和
+平滑程度受 softirq 调度与网卡影响。速率继续使用 `bytes/HZ` 精度；非零但
+小于 `HZ` 的速率仍等效于不限速。
+
+读取控制设备可查看 `buffer_ms`、`buffer_supported`、当前 `packets/memory`
+及累计 `queued/released/dropped`。`released` 表示已交给发送路径或后续 hook，
+不代表网卡成功发送；`dropped` 只统计缓存调度丢包。QoS 配置实际变化或
+执行 `clear` 会丢弃尚在队列中的旧包并重置预约发送时间；不会重置旧模式
+的 token 余额。用户级速率更新影响后续预约，已经缓存的包按原预约处理。
+模块卸载会停止定时器、停止出队并释放缓存。
 
 示例：
 

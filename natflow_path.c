@@ -1647,6 +1647,7 @@ static unsigned int natflow_path_pre_ct_in_hook(void *priv,
 	//const struct net_device *out = state->out;
 #endif
 #endif
+	struct natflow_qos_stamp qos_stamp = { 0 };
 	int dir = 0;
 	enum ip_conntrack_info ctinfo;
 	struct nf_conn_acct *acct;
@@ -2507,7 +2508,7 @@ slow_fastpath:
 
 		fud = natflow_fakeuser_data(user);
 		if (d == 0) {
-			if (rx_token_ctrl(skb, fud, nf) < 0) {
+			if (rx_token_ctrl(skb, fud, nf, &qos_stamp) < 0) {
 				return NF_DROP;
 			} else {
 				/* download */
@@ -2531,7 +2532,7 @@ slow_fastpath:
 				atomic_add(skb->len, &fud->rx_speed_bytes[j]);
 			}
 		} else {
-			if (tx_token_ctrl(skb, fud, nf) < 0) {
+			if (tx_token_ctrl(skb, fud, nf, &qos_stamp) < 0) {
 				return NF_DROP;
 			} else {
 				/* upload */
@@ -3356,7 +3357,7 @@ fastnat_check:
 			__vlan_hwaccel_clear_tag(skb);
 #endif
 		skb->next = NULL;
-		dev_queue_xmit(skb);
+		natflow_qos_xmit(skb, &qos_stamp);
 		skb = next;
 	} while (skb);
 
@@ -4407,7 +4408,7 @@ slow_fastpath6:
 
 		fud = natflow_fakeuser_data(user);
 		if (d == 0) {
-			if (rx_token_ctrl(skb, fud, nf) < 0) {
+			if (rx_token_ctrl(skb, fud, nf, &qos_stamp) < 0) {
 				return NF_DROP;
 			} else {
 				/* download */
@@ -4431,7 +4432,7 @@ slow_fastpath6:
 				atomic_add(skb->len, &fud->rx_speed_bytes[j]);
 			}
 		} else {
-			if (tx_token_ctrl(skb, fud, nf) < 0) {
+			if (tx_token_ctrl(skb, fud, nf, &qos_stamp) < 0) {
 				return NF_DROP;
 			} else {
 				/* upload */
@@ -5250,7 +5251,7 @@ fastnat_check6:
 			__vlan_hwaccel_clear_tag(skb);
 #endif
 		skb->next = NULL;
-		dev_queue_xmit(skb);
+		natflow_qos_xmit(skb, &qos_stamp);
 		skb = next;
 	} while (skb);
 

@@ -17,12 +17,15 @@
 #include <net/udp.h>
 #include <net/ip6_checksum.h>
 #include "natflow.h"
+#include "natflow_qos.h"
 
 struct token_ctrl {
 	spinlock_t lock;
 	int tokens;
 	int tokens_per_jiffy;
 	uint32_t jiffies;
+	u64 next_send;
+	u32 schedule_generation;
 };
 
 typedef struct fakeuser_data_t {
@@ -79,8 +82,8 @@ struct natflow_userinfo_event_hdr {
 	__u8 ifname[IFNAMSIZ];
 } __packed;
 
-extern int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf);
-extern int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf);
+extern int rx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf, struct natflow_qos_stamp *stamp);
+extern int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natflow_t *nf, struct natflow_qos_stamp *stamp);
 
 extern natflow_fakeuser_t *natflow_user_get(struct nf_conn *ct);
 

@@ -24,6 +24,8 @@ src_install:
 		natflow_main.c \
 		natflow_path.c \
 		natflow_path.h \
+		natflow_qos.c \
+		natflow_qos.h \
 		natflow_urllogger.c \
 		natflow_urllogger.h \
 		natflow_user.c \

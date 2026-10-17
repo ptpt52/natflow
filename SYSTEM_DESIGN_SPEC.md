@@ -348,14 +348,16 @@ AI 重建时必须保留换行结束、上述长度上限、per-open 半行状�
 
 - usage。
 - `tc_classid_mode=<0|1>`。
+- 可重放的 `buffer_ms=<0..1000>`，以及注释形式的缓存占用和累计统计。
 - `clear` 和所有 QoS 规则的可重放命令。
 
 写命令：
 
 | 命令 | 行为 |
 | --- | --- |
-| `clear` | 发布规则数为 0 的 QoS 快照；不复位 token bucket 的历史余额/时间。 |
+| `clear` | 发布规则数为 0 的 QoS 快照，清空缓存并切换预约 generation；不复位旧 token bucket 的历史余额/时间。 |
 | `tc_classid_mode=<u>` | 布尔化设置 classid 模式。 |
+| `buffer_ms=<0..1000>` | Linux >=4.14 默认 100 ms；0 恢复丢包 policing，非零设置预计排队时延上限。旧内核只接受 0，非零返回 `-EOPNOTSUPP`。 |
 | `add user=<addr/set>,user_port=<port/set>,remote=<addr/set>,remote_port=<port/set>,proto=<tcp/udp/>,rxbytes=<u>,txbytes=<u>` | 追加规则。 |
 
 字段规格：
@@ -369,7 +371,7 @@ AI 重建时必须保留换行结束、上述长度上限、per-open 半行状�
 - token 速率保存为 `bytes / HZ`；若 `rxbytes` 或 `txbytes` 小于 `HZ`，`tokens_per_jiffy` 会变成 0，实际限速行为可能不符合预期。
 - `rxbytes/txbytes` 字段未提供时规则仍可能被加入，速率默认为 0；匹配后 token 控制函数会因 `tokens_per_jiffy == 0` 放行。
 
-`tc_classid_mode=1` 时不消耗 token，而是对 rx/tx 分别设置 `skb->mark = qos_id * 2 - 1` 和 `qos_id * 2`。`tc_classid_mode=0` 时使用 token bucket 丢弃/放行。
+`tc_classid_mode=1` 时不消耗 token，而是对 rx/tx 分别设置 `skb->mark = qos_id * 2 - 1` 和 `qos_id * 2`。其他包由 `buffer_ms` 选择缓存调度或旧 token bucket 丢弃/放行。
 
 ### 7.5 `/dev/natflow_userinfo_ctl`
 
@@ -1026,7 +1028,7 @@ Airoha AN7563 使用与 MTK patch 相同的 fake HWNAT ABI，但由 Airoha PPE V
 
 ## 14. QoS 算法
 
-规则数组、数量、classid mode 和规则速率组成不可变 `qos_conf`，写端在 `qos_conf_lock` 下复制/修改/发布，等待 RCU grace period 后回收旧配置。匹配在 Netfilter RCU 中使用单份快照；rx/tx token 入口显式持有 RCU 读锁。seq start/stop 用配置 mutex 保证当前迭代期间配置不变。写锁顺序是 per-open input mutex → 对应配置 mutex；数据面不取配置 mutex。
+规则数组、数量、classid mode、buffer_ms、generation 和规则速率组成不可变 `qos_conf`，写端在 `qos_conf_lock` 下复制/修改/发布，等待 RCU grace period 后回收旧配置。匹配在 Netfilter RCU 中使用单份快照；rx/tx token 入口显式持有 RCU 读锁。seq start/stop 用配置 mutex 保证当前迭代期间配置不变。写锁顺序是 per-open input mutex → 对应配置 mutex；数据面不取配置 mutex。
 
 令牌桶的锁、余额和时间仍在独立固定数组中，不能随规则复制。组速率由当前快照作为参数传给 `natflow_token_ctrl()`，余额更新仍在 bucket spinlock 下完成。保持现有 `qos_id` 槽位索引语义，clear/re-add 不强制重新匹配已有连接，也不复位桶余额。规则最多 64 条；保留满容量时忽略追加并返回消费长度的既有行为。认证满 16 条时追加返回 `-ENOMEM`。
 
@@ -1056,6 +1058,42 @@ classid 模式：
 
 - 不丢包。
 - 只写 `skb->mark`，交给 tc 处理。
+
+缓存调度（`natflow_qos.c/.h`，Linux >=4.14，默认 `buffer_ms=100`）：
+
+- `token_ctrl` 另有 `next_send` 和 `schedule_generation`。在组桶 → 用户桶的
+  固定锁顺序下，预约时间取 `max(now, group_next, user_next)`；两个桶共同
+  准入，预计等待超过 `buffer_ms` 时两者均不扣账。准入后分别增加按 payload
+  和各自速率算出的序列化时间，不累计空闲 burst。rx/tx 独立，零速率和零
+  payload 不预约，速率精度仍是 `bytes/HZ`。共享组没有公平排队保证。
+- 队列使用按绝对单调时间排序的红黑树，相同时间按入队顺序处理。全局上限
+  4096 skb、8 MiB（skb truesize + 队列节点）；内存分配使用 GFP_ATOMIC，
+  队列满、分配失败或旧 generation 准入失败直接丢包。预约后若封包/入队
+  失败不回滚其他 CPU 已观察的发送时间，可能暂时少发。
+- hrtimer 只唤醒 tasklet；tasklet 每批最多处理 128 包，在队列锁外恢复网络
+  处理，余量通过定时器重新调度。以 skb 为粒度，GSO/软件分段可能形成微突发；
+  buffer_ms 限制的是预约等待，softirq 拥塞会增加实际驻留时间。
+- 软件快路径把预约时间传到最终封包/分段出口，再移交队列。慢路径在 user
+  POST_ROUTING 统计完成、恢复 PPPoE 后返回 NF_STOLEN；延迟后在当前 RCU
+  hook 表中按函数身份重新找到原 hook，只执行其后的 hook，再按 nf_hook_slow
+  返回值调用 okfn，保留 conntrack confirm 等后续处理，不重复 NAT 或统计。
+  原 hook 已移除时丢包；不占用 Netfilter 的全局 NFQUEUE handler。
+- 跨异步边界对 noref dst 执行 skb_dst_force；持有 skb dev、state in/out、
+  bridge physin/physout、fake rtable 所属 bridge dev、socket 和 net 引用。
+  skb 自带 conntrack 引用；队列不保存 fakeuser/natflow 的借用指针。出队前
+  检查设备的 running/present 状态，失败/清理路径统一释放引用。
+- QoS 配置实际变化或显式 clear 时推进 generation，清空旧缓存；旧快照的
+  在途预约也不得重新入队。桶在首次遇到新 generation 时重置预约时间。
+  旧模式 token 余额不重置。set-token-ctrl 在桶锁下更新速率并重置该用户
+  发生变化方向的预约时间，已缓存包保留原预约。
+- 缓存初始化早于 user hook 注册；退出在 path/user hook 停止后，先设置
+  stopping，再 cancel hrtimer、kill tasklet、purge 队列，最后释放配置。
+  4.14/4.15 读取旧二维 hook 表，>=4.16 读取 family 数组；>=6.13 使用
+  hrtimer_setup，更旧版本使用 hrtimer_init。<4.14 保留旧 policing。
+- 控制读出 packets/memory 当前占用和 queued/released/dropped 累计计数。
+  released 是向后续处理移交次数；后续 hook 或设备仍可能丢包。dropped 只
+  计缓存调度的准入/入队/清理丢包。原用户流量统计在预约准入时更新，不是
+  网卡完成发送统计；异步入队失败等后续丢包可能已经计入用户流量。
 
 ## 15. Shared L7、URL logger 和 host ACL 算法
 
