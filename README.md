@@ -67,6 +67,30 @@ graph TB
 
 ## Natflow Hardware Acceleration Overview
 
+### Qualcomm PPE 控制面（配套内核 API v1）
+
+配套 qualcommax 内核提供 `linux/qca_ppe_natflow.h` 后，Kbuild 自动检测接口，
+并在 PPE、`CONFIG_NATFLOW_PATH`、netfilter ingress 均启用时编译客户端。
+首版支持 IPQ807x/IPQ60xx 同一 PPE 的两个原生有线端口间 IPv4 TCP/UDP 路由和
+单侧 NAT；显式 VLAN/PPPoE、IPv6、纯桥接、conntrack zone、软件 token control
+以及外部设备仍走软件路径。此接口不改变 MTK/Airoha 的私有 netdev ABI。
+
+PPE 使用有界异步队列处理双向连接，排队与真正 READY 分开，失败回滚两方向。
+natflow 保留 conntrack 引用，验证双向软件槽位、各槽位发布代次、path generation
+和当前策略；软件 hash 不等于 PPE 的硬件索引。驱动每秒轮询活动性和真实计数，
+反馈 conntrack/fakeuser 统计及保活；bridge/VLAN 统计由 PPE 计入，避免重复。
+仅 age 变化时只能估计活动性，不能补造 bytes/packets，实际计数能力需要实机核验。
+
+测试时先关闭 firewall 的标准软件/硬件 flow offload 并重启 firewall，再通过
+`/dev/natflow_ctl` 写入以换行结束的 `hwnat=1`、`disabled=0`。同一 PPE 上 native
+nft 硬件 flowtable 与 natflow 请求互斥。`hwnat=0` 和 `disabled=1` 会先停止准入、
+等待在途提交退出，再同步排空队列、表项及回调；模块卸载在释放软件表前执行同样清理。
+改变软件路径代次、连接关闭、用户封禁或 token control 生效后，旧请求不再保活，
+后端轮询会撤销硬件项。新增 `natflow_qca.h` 也包含在 DKMS 源码清单中。
+
+该路径已提供主机状态测试和编译验证入口；设备启动、NAT 正确性、硬件统计和
+真实流量压力测试仍需在目标设备完成。
+
 ### Hardware Acceleration Support on X-WRT
 
 **Natflow** supports hardware acceleration on [X-WRT](https://github.com/x-wrt/x-wrt), providing high-performance NAT and packet forwarding capabilities.

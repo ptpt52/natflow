@@ -922,6 +922,35 @@ hash 约束：
 
 ### 12.4 硬件 offload
 
+Qualcomm PPE 使用单独的 `NATFLOW_HAVE_QCA_PPE` 分支。Kbuild 只在目标内核源码
+存在 `include/linux/qca_ppe_natflow.h` 时设置 `NATFLOW_QCA_PPE_API_AVAILABLE`；
+兼容头检查 API 版本、PPE 配置、PATH 和 ingress。`NATFLOW_HAVE_ANY_HW_OFFLOAD`
+只用于共享 `hwnat` 控制，不使 Qualcomm 编译到旧的 MTK fake HWNAT ABI。
+
+`natflow_qca.h` 管理软件槽位的 owner、64 位发布代次和重试时间，不扩大
+`natflow_t`/conntrack extension。IPv4、IPv6 软件节点发布均在专用 spinlock 下
+先撤销旧 owner 并推进槽位代次；普通逐包转发不取此锁。请求持有 conntrack，
+复制双向 tuple、出口 Ethernet header 和两个入口设备；后端复制并引用设备后
+返回排队成功，随后通过 CHECK/READY/STATS/RELEASE 回调驱动状态，RELEASE 恰好
+一次释放 conntrack。回调在 BH 禁止和 RCU 下运行，PPE 不持 flow/vlan mutex。
+验证涵盖软件 tuple、slot owner/代次、完整 path generation、25 秒软件超时、
+dying/TCP 状态、busy/stop/token 和用户封禁。失败后相同槽位等待 8 秒再尝试。
+
+首版只接受 init_net/default zone、无显式 VLAN/PPPoE 的同 PPE 有线路由 IPv4
+TCP/UDP，不提交 bridge、外部设备或软件限速流。地址/端口改写来自反向 conntrack
+tuple 的反转，不把软件 hash 传作硬件槽位。每秒硬件轮询通过真实增量或最大 age
+估计活动性；无活动轮询不续软件超时，20 秒无观察活动撤销双向项。计数由硬件
+提供，age 不能代替实际流量。PPE 负责 bridge/VLAN 记账，natflow 的 keepalive_ex
+跳过 netdev 记账，且 tuple 查询结果必须是 ticket 持有的 conntrack，才更新
+conntrack/fakeuser。此路径与 native nft HW flowtable
+互斥，由 PPE 共用表项及资源管理执行双向失败回滚、控制事件和驱动卸载清理。
+
+QCA 控制写入共用 mutex，避免另一个 open 在同步排空期间恢复提交。
+`hwnat=0`/`disabled=1` 发布停止标志、推进 path generation、synchronize_net
+等待提交者退出，再在进程上下文调用按 owner 的同步 flush。模块退出在注销
+hook/notifier 和同步 RCU 后 flush，再释放 QCA 槽位和 fastnat 表。没有配套
+内核 API 时该分支完全不参与编译，现有后端保留如下语义。
+
 在 `NATFLOW_HAVE_HW_OFFLOAD=1` 时，path 会基于设备的 `ndo_flow_offload` 或外部设备 offload API 下发流：
 
 - 支持原始/回复方向不同设备组合。

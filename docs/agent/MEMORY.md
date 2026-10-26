@@ -1,6 +1,6 @@
 # Natflow 智能体记忆
 
-更新时间：2026-10-17
+更新时间：2026-10-27
 
 本文是给智能体快速恢复上下文的压缩记忆，不替代源码。遇到冲突时以源码为准，并修正文档。
 
@@ -81,6 +81,15 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - `/dev/natflow_userinfo_ctl` 的 `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数；timestamp 创建/获取 fakeuser 时写入，user pre hook 中普通活动最多每 32 秒刷新一次，新连接包超过 2 秒可刷新；不要用当前 `no_flow_timeout` 和 conntrack 剩余超时反推。
 - path 默认关闭，通常通过 `/dev/natflow_ctl` 的 `disabled=0` 开启。
 - `CONFIG_NATFLOW_PATH` 控制 fast path、vline/relay 和硬件 offload 相关能力。
+- 2026-10-26 Qualcomm PPE 使用目标内核 `linux/qca_ppe_natflow.h` API v1，Kbuild
+  自动检测后由 `NATFLOW_HAVE_QCA_PPE` 编译独立客户端；不扩展 MTK fake ABI 或
+  `natflow_t`。`natflow_qca.h` 用 slot owner、64 位发布代次、完整 path generation
+  及所持 conntrack 验证异步请求，IPv4/IPv6 节点重写均撤销旧 owner，普通转发不
+  取该发布锁。仅准入同 PPE 原生有线 IPv4 TCP/UDP 路由/单侧 NAT，无显式封装、
+  zone、bridge 或 token control。后端双向回滚、每秒轮询保活/统计，native nft
+  HW 与其互斥；PPE 计 bridge/VLAN，natflow 计 ct/fakeuser。`hwnat=0`、`disabled=1`
+  共用控制 mutex，和卸载同步排空请求及回调后再释放软件表。保活的 tuple 查询
+  必须命中 ticket 持有的同一 ct。主机测试不替代真机统计/流量验证。
 - keepalive 的 VLAN 统计通过内核 VLAN 索引按底层设备、协议和 VID 查询，
   不扫描 netdev 列表；结果须匹配原 `real_dev`，拒绝 master 上的 VLAN，
   802.1Q/802.1ad 相同 VID 分别记账。查询及统计使用保持在同一 RCU 临界区。

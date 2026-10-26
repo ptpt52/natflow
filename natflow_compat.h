@@ -71,6 +71,18 @@ static inline loff_t natflow_no_llseek(struct file *file, loff_t offset, int whe
 #define NATFLOW_HAVE_HW_OFFLOAD 0
 #endif
 
+/* Qualcomm's versioned API is optional; other kernels retain their ABI. */
+#if defined(NATFLOW_QCA_PPE_API_AVAILABLE) && IS_ENABLED(CONFIG_QCOM_80211AX_PPE)
+#include <linux/qca_ppe_natflow.h>
+#endif
+#if defined(QCA_PPE_NATFLOW_API_VERSION) && QCA_PPE_NATFLOW_API_VERSION == 1 && \
+	defined(CONFIG_NATFLOW_PATH) && defined(CONFIG_NETFILTER_INGRESS)
+#define NATFLOW_HAVE_QCA_PPE 1
+#else
+#define NATFLOW_HAVE_QCA_PPE 0
+#endif
+#define NATFLOW_HAVE_ANY_HW_OFFLOAD (NATFLOW_HAVE_HW_OFFLOAD || NATFLOW_HAVE_QCA_PPE)
+
 #define NATFLOW_HAVE_IP_SET_STATE_API NATFLOW_KERNEL_AT_LEAST(4, 10, 0)
 #define NATFLOW_HAVE_IP_SET_NET_API NATFLOW_KERNEL_AT_LEAST(3, 13, 0)
 #define NATFLOW_HAVE_XT_ACTION_PARAM_NET NATFLOW_KERNEL_AT_LEAST(4, 4, 0)

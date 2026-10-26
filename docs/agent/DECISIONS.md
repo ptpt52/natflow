@@ -2,6 +2,15 @@
 
 本文件记录需要后续智能体长期遵守的仓库级决策。小型实现细节不要放在这里。
 
+## 2026-10-26：Qualcomm PPE 使用独立异步接口
+
+Qualcomm PPE 的 KEY 模式由硬件分配槽位，现有 PPE 控制面可以睡眠，而 natflow
+收包路径不能睡眠。因此使用目标内核的版本化 API，共用 PPE 表项管理，由后端
+复制请求、引用设备并排队；保留 MTK/Airoha ABI，不把软件 hash 当硬件索引。
+客户端通过独立 slot owner/generation 和持有的 conntrack 验证请求，不扩大已有
+conntrack 扩展布局。同步停止必须先 quiesce 收包提交，再排空后端及回调。
+首版与 native nft HW 互斥，只覆盖同 PPE 有线 IPv4 TCP/UDP 路由及单侧 NAT。
+
 ## ADR-0001：采用“仓库即智能体记忆”结构
 
 日期：2026-07-04

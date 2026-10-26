@@ -12,6 +12,7 @@ src_install:
 	cp \
 		natflow_common.c \
 		natflow_compat.h \
+		natflow_qca.h \
 		natflow_common.h \
 		natflow_control.h \
 		natflow_conntrack.c \

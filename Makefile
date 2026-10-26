@@ -12,6 +12,11 @@ endif
 
 ccflags-y += $(EXTRA_CFLAGS)
 
+# The API belongs to the target kernel, not to a board name or a host header.
+ifneq ($(wildcard $(srctree)/include/linux/qca_ppe_natflow.h),)
+ccflags-y += -DNATFLOW_QCA_PPE_API_AVAILABLE
+endif
+
 # Keep individual L7 data-plane frames bounded.  The cumulative call-chain
 # budget is reviewed separately with compiler-generated .su files.
 CFLAGS_natflow_l7.o += -Werror=frame-larger-than=512

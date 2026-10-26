@@ -553,7 +553,7 @@ struct net_device *ifname_group_get(int idx)
 	return NULL;
 }
 
-#if NATFLOW_HAVE_HW_OFFLOAD
+#if NATFLOW_HAVE_ANY_HW_OFFLOAD
 unsigned short hwnat = 1;
 #if defined(CONFIG_NET_MEDIATEK_SOC_WED) || defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 unsigned short hwnat_wed_disabled = 0;
@@ -564,11 +564,44 @@ unsigned short hwnat_wed_disabled = 1;
 unsigned int delay_pkts = 0;
 unsigned int go_slowpath_if_no_qos = 0;
 
+#if NATFLOW_HAVE_QCA_PPE
+static void natflow_qca_stop(void);
+static DEFINE_MUTEX(natflow_qca_control_lock);
+#endif
+
 static int disabled = 1;
 void natflow_disabled_set(int v)
 {
-	disabled = v;
+#if NATFLOW_HAVE_QCA_PPE
+	mutex_lock(&natflow_qca_control_lock);
+#endif
+	WRITE_ONCE(disabled, v);
+#if NATFLOW_HAVE_QCA_PPE
+	if (v) {
+		natflow_update_magic(0);
+		synchronize_net();
+		natflow_qca_stop();
+	}
+	mutex_unlock(&natflow_qca_control_lock);
+#endif
 }
+#if NATFLOW_HAVE_ANY_HW_OFFLOAD
+void natflow_hwnat_set(unsigned int value)
+{
+#if NATFLOW_HAVE_QCA_PPE
+	mutex_lock(&natflow_qca_control_lock);
+#endif
+	WRITE_ONCE(hwnat, value);
+#if NATFLOW_HAVE_QCA_PPE
+	natflow_update_magic(0);
+	if (!value) {
+		synchronize_net();
+		natflow_qca_stop();
+	}
+	mutex_unlock(&natflow_qca_control_lock);
+#endif
+}
+#endif
 int natflow_disabled_get(void)
 {
 	return disabled;
@@ -719,7 +752,7 @@ static noinline natflow_fastnat_node_t *nfn_invert_get6(natflow_fastnat_node_t *
 	return NULL;
 }
 
-static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, unsigned long packets, unsigned int *speed_bytes, unsigned int *speed_packets, int hw, unsigned long current_jiffies)
+static int natflow_offload_keepalive_ex(unsigned int hash, unsigned long bytes, unsigned long packets, unsigned int *speed_bytes, unsigned int *speed_packets, int hw, unsigned long current_jiffies, int account_netdev, struct nf_conn *expected_ct)
 {
 	struct nf_conn_acct *acct;
 	natflow_fastnat_node_t *nfn, *nfn_i = NULL;
@@ -756,6 +789,11 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 			__be16 source = ct->tuplehash[d].tuple.src.u.all;
 			__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
 			__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
+
+			if (expected_ct && ct != expected_ct) {
+				nf_ct_put(ct);
+				return -ESTALE;
+			}
 
 			if (d == 1) {
 				diff_jiffies = ulongmindiff(current_jiffies, nfn->keepalive_jiffies);
@@ -809,9 +847,11 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 				atomic64_add(packets, &counter[!d].packets);
 				atomic64_add(bytes, &counter[!d].bytes);
 			}
-			/* stats to net_device */
+			/* PPE can account netdev statistics separately. */
 			do {
 				struct natflow_t *nf;
+				if (!account_netdev)
+					break;
 				nf = natflow_session_get(ct);
 				if (nf) {
 					struct net_device *dev;
@@ -996,6 +1036,11 @@ __keepalive_ipv6_main:
 			__be16 dest = ct->tuplehash[d].tuple.dst.u.all;
 			__be16 protonum = ct->tuplehash[d].tuple.dst.protonum;
 
+			if (expected_ct && ct != expected_ct) {
+				nf_ct_put(ct);
+				return -ESTALE;
+			}
+
 			if (d == 1) {
 				diff_jiffies = ulongmindiff(current_jiffies, nfn->keepalive_jiffies);
 				nfn->keepalive_jiffies = current_jiffies;
@@ -1048,9 +1093,11 @@ __keepalive_ipv6_main:
 				atomic64_add(packets, &counter[!d].packets);
 				atomic64_add(bytes, &counter[!d].bytes);
 			}
-			/* stats to net_device */
+			/* PPE can account netdev statistics separately. */
 			do {
 				struct natflow_t *nf;
+				if (!account_netdev)
+					break;
 				nf = natflow_session_get(ct);
 				if (nf) {
 					struct net_device *dev;
@@ -1228,6 +1275,13 @@ __keepalive_ipv6_main:
 
 	return -2;
 }
+
+static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, unsigned long packets, unsigned int *speed_bytes, unsigned int *speed_packets, int hw, unsigned long current_jiffies)
+{
+	return natflow_offload_keepalive_ex(hash, bytes, packets, speed_bytes, speed_packets, hw, current_jiffies, 1, NULL);
+}
+
+#include "natflow_qca.h"
 
 #if NATFLOW_HAVE_HW_OFFLOAD
 static struct net_device __rcu *ppe_dev = NULL;
@@ -2647,6 +2701,7 @@ fastnat_check:
 						          nfn->source == source && nfn->dest == dest &&
 						          NFN_PROTO_DEC(nfn->flags) == protonum))) {
 
+							natflow_qca_write_begin(hash);
 							if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH) {
 								nfn->status = 0;
 								nfn->flow_bytes = 0;
@@ -2697,6 +2752,7 @@ fastnat_check:
 							nfn->magic = path_magic;
 							nfn->jiffies = jiffies;
 							nfn->keepalive_jiffies = jiffies;
+							natflow_qca_write_end();
 
 							switch (iph->protocol) {
 							case IPPROTO_TCP:
@@ -3279,6 +3335,7 @@ fastnat_check:
 				}
 			}
 		} /* for (d = 0; d < NF_FF_DIR_MAX; d++) */
+		natflow_qca_try(ct, nf);
 	} else {
 		/* NF_FF_FAIL: loop try FF every 8 seconds */
 		if (!(nf->status & NF_FF_RETRY)) {
@@ -4543,6 +4600,7 @@ fastnat_check6:
 						         (memcmp(nfn->saddr6, saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, daddr.s6_addr32, 16) == 0 &&
 						          nfn->source == source && nfn->dest == dest && NFN_PROTO_DEC(nfn->flags) == protonum))) {
 
+							natflow_qca_write_begin(hash);
 							if (ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH) {
 								nfn->status = 0;
 								nfn->flow_bytes = 0;
@@ -4593,6 +4651,7 @@ fastnat_check6:
 							nfn->magic = path_magic;
 							nfn->jiffies = jiffies;
 							nfn->keepalive_jiffies = jiffies;
+							natflow_qca_write_end();
 
 							switch (IPV6H->nexthdr) {
 							case IPPROTO_TCP:
@@ -6296,6 +6355,12 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
+#if NATFLOW_HAVE_QCA_PPE
+	if (event == NETDEV_GOING_DOWN || event == NETDEV_DOWN ||
+	        event == NETDEV_CHANGEUPPER || event == NETDEV_CHANGEADDR ||
+	        event == NETDEV_CHANGEMTU)
+		natflow_update_magic(0);
+#endif
 	if (event == NETDEV_UP || event == NETDEV_CHANGE) {
 #if NATFLOW_HAVE_HW_OFFLOAD
 		if (dev->type == ARPHRD_PPP && dev->netdev_ops->ndo_flow_offload_check) {
@@ -6485,6 +6550,14 @@ int natflow_path_init(void)
 	}
 #endif
 
+#if NATFLOW_HAVE_QCA_PPE
+	natflow_qca_slots = kcalloc(NATFLOW_FASTNAT_TABLE_SIZE, sizeof(*natflow_qca_slots), GFP_KERNEL);
+	if (!natflow_qca_slots) {
+		ret = -ENOMEM;
+		goto alloc_natflow_qca_slots_failed;
+	}
+#endif
+
 	vline_fwd_map_config_clear();
 	vline_fwd_map_config_apply();
 	need_conntrack();
@@ -6504,6 +6577,11 @@ int natflow_path_init(void)
 nf_register_hooks_failed:
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
 register_netdevice_notifier_failed:
+#if NATFLOW_HAVE_QCA_PPE
+	kfree(natflow_qca_slots);
+	natflow_qca_slots = NULL;
+alloc_natflow_qca_slots_failed:
+#endif
 #ifdef CONFIG_NETFILTER_INGRESS
 	kfree(natflow_fast_nat_table);
 alloc_natflow_fast_nat_table_failed:
@@ -6553,6 +6631,11 @@ void natflow_path_exit(void)
 		dev_put(local_ppe_dev);
 		synchronize_rcu();
 	}
+#endif
+#if NATFLOW_HAVE_QCA_PPE
+	natflow_qca_stop();
+	kfree(natflow_qca_slots);
+	natflow_qca_slots = NULL;
 #endif
 	kfree(natflow_fast_nat_table);
 #else
