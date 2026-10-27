@@ -978,6 +978,39 @@ hook/notifier 和同步 RCU 后 flush，再释放 QCA 槽位和 fastnat 表。�
 设备为 `real_dev`，不得将 master 上的 VLAN 作为命中；没有对应 VLAN
 设备时跳过该设备统计。相同底层设备和 VID 的不同 VLAN 协议分别记账。
 
+#### 逻辑 PPP 接口补账
+
+- `CONFIG_NETFILTER_INGRESS` 下，`natflow_t` 在既有 DPI 字段之后追加
+  `ppp[2]`，共 16 字节，每项为 generation 和完整 32 位 ifindex，索引与
+  `rroute[]` 相同。原 route/app/DPI 偏移不变；layout guard 校验新增尾部。
+  session getter 的长度检查拒绝升级前缺少尾部的旧扩展，不解释旧内存。
+- PRE 学习在 `natflow_session_learn()` 跳过 PPP 设备之前，记录入口到
+  `ppp[!dir]`；IP POST_ROUTING 从 hook 的真实 `out` 记录到 `ppp[dir]`。
+  仅接受 `init_net` 中 running/carrier 的 `ARPHRD_PPP` 设备。逻辑接口记录
+  不改变转发设备、不保存裸 dev/socket 引用，也不按设备名或地址反查。
+- `natflow_ppp_ready()` 对路由 PPPoE 的物理 L2 路径要求当前代次的接口
+  映射；缺少映射时返回慢路径，使首个入方向包能经过 PPP 解封装学习。
+  此门槛先于软件节点发布及硬件提交；纯桥接 PPPoE 不要求逻辑 PPP 接口。
+- IPv4/IPv6 keepalive 在 `account_netdev` 判断之前调用同一补账 helper，
+  所以 QCA 仍跳过 bridge/VLAN 补账而保留 PPP 补账。只对含完整 PPPoE
+  L2 头的 route 增量补记：当前包方向的出口增加 TX，反方向出口增加 RX。
+  L3-only PPP 出口与 bridge 不补，避免重复原生 PPP 统计。采样/慢快路径
+  当前包不在 fastnat 累计量中，IPv4/IPv6 输出在重建 L2 前逐段独立补账；
+  原入口是已学习的逻辑 PPP 设备时跳过该侧 RX，避免重复原生接收计数。
+- `natflow_ppp_lock` 用 BH 禁止串行学习、慢快输出/keepalive 补账和设备失效，
+  不进入普通逐包 fast path。补账在 RCU 下按 ifindex 查询 `init_net` 设备，复核类型、
+  running/carrier 及 `tstats`，用当前 CPU 的 `u64_stats_sync` 累加。
+  旧 PPP 私有计数布局不做推断；缺少 `tstats` 时不写 `dev->stats`。
+- PPP 的 GOING_DOWN/DOWN/UNREGISTER/UP/CHANGE/CHANGEUPPER/CHANGEADDR/
+  CHANGEMTU 在同一锁下推进全局 PPP generation 和 path magic，使全部旧
+  映射及加速节点失效。补账持锁复核 keepalive/包入口快照的 path magic 和
+  当前 session magic，拒绝事件前回调向已重学的新映射记账。软件节点
+  在 magic 改变后重新发布时清空旧累计量，避免把上代尾量记入新会话。
+- 软件沿用现有 IP bytes，硬件沿用后端 bytes/packets，不猜测硬件封装开销。
+  无计数资源的硬件无法靠此 helper 补全流量；现有采样/撤流未上报的尾量
+  也没有全量保证。不修改 PPP 私有 last_xmit/last_recv。宿主回归入口为
+  `python3 tests/test-ppp-accounting.py`；设备流量、并发与重拨仍须实机验证。
+
 AN758x 的配套内核 ABI 通过 `NATFLOW_OFFLOAD_AIROHA_NPU` 开放同名无线开关：
 
 - IPv4/IPv6 的双向硬件路径均携带 `FLOW_OFFLOAD_PATH_WED_DIS`；0 允许后端
@@ -1015,8 +1048,9 @@ Airoha AN7563 使用与 MTK patch 相同的 fake HWNAT ABI，但由 Airoha PPE V
   802.1ad、第二层 VLAN 或非 MTK DSA tag。
 - AN7563 datapath 初始化时直接启用 SRAM-only、CPU-direct PPE；不依赖 NPU，
   SRAM Hash1 和 DRAM 表保持关闭。
-- AN7563 当前没有 per-flow PPE 统计项，keepalive 只延长 fastnat/conntrack
-  生命周期，传给 natflow 的 bytes/packets 为 0。
+- 当前配套 995 后端可选分配 QDMA ACNT0 统计项并回传增量；资源耗尽、未分配
+  或读取失败时仍可 offload，此类 keepalive 只保活、没有有效 bytes/packets。
+  因此不能仅靠模块 PPP 补账保证所有硬件流量都计入接口。
 - AN7563 OpenWrt 包只定义 `CONFIG_HWNAT_EXTDEV_DISABLED`；在 WED 数据面未启用时，
   Wi-Fi 单边流保持软件 fast path，不误下发到 PPE。
 

@@ -207,8 +207,8 @@ static int natflow_qca_notify(void *context, enum qca_ppe_natflow_event event,
 		for (d = 0; d < 2; d++) {
 			if (!(stats->active & BIT(d)))
 				continue;
-			/* PPE credits bridge/VLAN statistics, natflow credits ct
-			 * and fakeuser. Each direction uses its own SOFTWARE hash.
+			/* PPE credits bridge/VLAN statistics, natflow credits ct,
+			 * fakeuser and PPP. Each direction uses its own SOFTWARE hash.
 			 */
 			ret = natflow_offload_keepalive_ex(ticket->hash[d],
 			                                   stats->bytes[d], stats->packets[d], NULL, NULL, 2,

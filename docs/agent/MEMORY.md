@@ -98,6 +98,18 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - keepalive 的 VLAN 统计通过内核 VLAN 索引按底层设备、协议和 VID 查询，
   不扫描 netdev 列表；结果须匹配原 `real_dev`，拒绝 master 上的 VLAN，
   802.1Q/802.1ad 相同 VID 分别记账。查询及统计使用保持在同一 RCU 临界区。
+- PPPoE 路由接口统计只改模块：`natflow_t` 尾部新增 16 字节 `ppp[2]`
+  （generation/ifindex），保留原 route/app/DPI 偏移。PRE 从实际 PPP 入口
+  学习反方向出口，IP POST 从真实 out 学习当前出口；映射缺失时先慢路径，
+  避免首个回包在解封装前被 ingress 接管。IPv4/IPv6 keepalive 独立于
+  account_netdev 给逻辑 PPP 补 RX/TX；仅 routed PPPoE L2 路径补账，bridge
+  与原生 L3 PPP 不重复计数。慢快输出另计采样当前包，跳过已原生接收的
+  PPP RX；持锁复核入口 path magic，防止事件前回调记入重学后的新映射。
+  全局 BH spinlock 串行学习/补账/PPP 事件失效，
+  RCU 按 init_net/ifindex 查询，设备事件推进 PPP generation 和 path magic；
+  magic 变化重写软件节点时清旧累计量。需 PPP 使用 dev->tstats；旧 PPP
+  私有计数、硬件缺少增量、未上报尾量和 PPP idle time 不在补齐保证内。
+  回归入口 `python3 tests/test-ppp-accounting.py`，不能替代设备流量验证。
 - 2026-10-16 Airoha NPU 无线开关：配套内核导出 `NATFLOW_OFFLOAD_AIROHA_NPU`
   与 `FLOW_OFFLOAD_PATH_WLAN_CHANGE` 后，`hwnat_wed_disabled` 默认 0，并在
   IPv4/IPv6 的硬件路径中传递 WED_DIS。非零强制软件 extdev；控制写入在
@@ -120,8 +132,9 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
   驱动关闭 SRAM Hash1/DRAM，校验 natflow 的 `base + way` 后直接写该 SRAM
   槽位，目标槽位已有 owner/BND 时拒绝覆盖。AN7563 PPE 在 datapath 初始化时
   以 CPU-direct 模式启用，不依赖 NPU；支持 IPv4 HNAPT、无 NAT IPv6 5T、
-  单层 802.1Q、PPPoE、bridge 和 MTK DSA，keepalive 当前无 per-flow
-  bytes/packets。包只关闭 extdev 分支，Wi-Fi 单边流保留软件 fast path。
+  单层 802.1Q、PPPoE、bridge 和 MTK DSA。当前配套 995 可选分配 QDMA
+  ACNT0 回传统计；资源不足或读取失败的流仍可 offload，只保活无有效增量。
+  包只关闭 extdev 分支，Wi-Fi 单边流保留软件 fast path。
 - 2026-10-09 MT7987 SDK 集成由 995 内核补丁导出
   `NATFLOW_OFFLOAD_MTK_HNAT_16K_4WAY`；natflow 自动选择 16384 项、4-way
   表，保持与 SDK HNAT hash mode 1 一致，不通过包 Makefile 传入平台宏。

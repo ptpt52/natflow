@@ -116,6 +116,11 @@ typedef struct natflow_t {
 	unsigned char dpi_packet_count[NF_FF_DIR_MAX];
 	unsigned char layout_pad[2];
 	unsigned int dpi_automaton;
+	/* Logical PPP statistics endpoints, indexed like rroute[]. No dev refs. */
+	struct {
+		unsigned int generation;
+		int ifindex;
+	} ppp[NF_FF_DIR_MAX];
 } natflow_t;
 
 struct nf_conn;
