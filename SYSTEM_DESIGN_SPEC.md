@@ -924,7 +924,7 @@ hash 约束：
 
 Qualcomm PPE 使用单独的 `NATFLOW_HAVE_QCA_PPE` 分支。Kbuild 只在目标内核源码
 存在 `include/linux/qca_ppe_natflow.h` 时设置 `NATFLOW_QCA_PPE_API_AVAILABLE`；
-兼容头检查 API 版本、PPE 配置、PATH 和 ingress。`NATFLOW_HAVE_ANY_HW_OFFLOAD`
+兼容头接受 API v1/v2，并检查 PPE 配置、PATH 和 ingress。`NATFLOW_HAVE_ANY_HW_OFFLOAD`
 只用于共享 `hwnat` 控制，不使 Qualcomm 编译到旧的 MTK fake HWNAT ABI。
 
 `natflow_qca.h` 管理软件槽位的 owner、64 位发布代次和重试时间，不扩大
@@ -936,8 +936,20 @@ Qualcomm PPE 使用单独的 `NATFLOW_HAVE_QCA_PPE` 分支。Kbuild 只在目标
 验证涵盖软件 tuple、slot owner/代次、完整 path generation、25 秒软件超时、
 dying/TCP 状态、busy/stop/token 和用户封禁。失败后相同槽位等待 8 秒再尝试。
 
-首版只接受 init_net/default zone、无显式 VLAN/PPPoE 的同 PPE 有线路由 IPv4
-TCP/UDP，不提交 bridge、外部设备或软件限速流。地址/端口改写来自反向 conntrack
+只接受 init_net/default zone、同 PPE 有线路由 IPv4 TCP/UDP，不提交 bridge、
+外部设备或软件限速流。API v2 通过新增 submit_encap 入口单独复制两方向的
+802.1Q VID/proto、PPPoE SID 和 IP MTU，保留 v1 请求布局及提交符号。客户端
+从 rroute 的物理设备、VLAN metadata 和完整 PPPoE header 取值，校验版本、code、
+IPv4 PPP protocol 和有效 SID，拒绝 QinQ/S-tag；对 v1 内核保留无封装准入。
+后端在任一 flow entry 创建前预持两个路径的 uplink/session 引用，防止入方向
+先落入裸 VSI 后被反方向建立的 PPPoE uplink 清理。成对删除所有 flow entry 后
+才释放预持引用；失败和重复调用清理都不泄漏会话资源。出口限制取物理帧上限
+与路径 MTU 加封装头的较小值，并作为 egress L3 interface 的资源 key。
+客户端每次回调复核 VID/SID、MAC、设备及 MTU。PPP/VLAN 设备事件在 PPE 锁下
+立即清理已装 natflow 项，不在 RTNL 内等待回调；up/change 推进客户端 path
+generation，排队请求仍需 CHECK/READY 验证。软件重学两方向均先清除 VLAN
+metadata，避免 tagged 路径重学成 untagged 时沿用旧 VID。
+地址/端口改写来自反向 conntrack
 tuple 的反转，不把软件 hash 传作硬件槽位。每秒硬件轮询通过真实增量或最大 age
 估计活动性；无活动轮询不续软件超时，20 秒无观察活动撤销双向项。计数由硬件
 提供，age 不能代替实际流量。PPE 负责 bridge/VLAN 记账，natflow 的 keepalive_ex

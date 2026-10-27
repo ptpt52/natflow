@@ -81,12 +81,17 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - `/dev/natflow_userinfo_ctl` 的 `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数；timestamp 创建/获取 fakeuser 时写入，user pre hook 中普通活动最多每 32 秒刷新一次，新连接包超过 2 秒可刷新；不要用当前 `no_flow_timeout` 和 conntrack 剩余超时反推。
 - path 默认关闭，通常通过 `/dev/natflow_ctl` 的 `disabled=0` 开启。
 - `CONFIG_NATFLOW_PATH` 控制 fast path、vline/relay 和硬件 offload 相关能力。
-- 2026-10-26 Qualcomm PPE 使用目标内核 `linux/qca_ppe_natflow.h` API v1，Kbuild
+- 2026-10-27 Qualcomm PPE 使用目标内核 `linux/qca_ppe_natflow.h` API v1/v2，Kbuild
   自动检测后由 `NATFLOW_HAVE_QCA_PPE` 编译独立客户端；不扩展 MTK fake ABI 或
   `natflow_t`。`natflow_qca.h` 用 slot owner、64 位发布代次、完整 path generation
   及所持 conntrack 验证异步请求，IPv4/IPv6 节点重写均撤销旧 owner，普通转发不
-  取该发布锁。仅准入同 PPE 原生有线 IPv4 TCP/UDP 路由/单侧 NAT，无显式封装、
-  zone、bridge 或 token control。后端双向回滚、每秒轮询保活/统计，native nft
+  取该发布锁。仅准入同 PPE 原生有线 IPv4 TCP/UDP 路由/单侧 NAT，无 zone、
+  bridge 或 token control。v2 用新增 submit_encap 入口复制每方向单层 802.1Q、
+  PPPoE SID 和 MTU，保持 v1 布局/符号；v1 内核继续只支持无封装。先预持两方向
+  uplink/session 再装表，所有项删除后释放预持引用，出口 MTU 计入封装并受物理
+  上限约束。回调复核封装/设备/MAC/MTU；PPP/VLAN 事件立即撤硬件，up/change
+  推进客户端 generation，重学先清除旧 VLAN metadata。后端双向回滚、每秒
+  轮询保活/统计，native nft
   HW 与其互斥；PPE 计 bridge/VLAN，natflow 计 ct/fakeuser。`hwnat=0`、`disabled=1`
   共用控制 mutex，和卸载同步排空请求及回调后再释放软件表。保活的 tuple 查询
   必须命中 ticket 持有的同一 ct。主机测试不替代真机统计/流量验证。

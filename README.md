@@ -67,19 +67,26 @@ graph TB
 
 ## Natflow Hardware Acceleration Overview
 
-### Qualcomm PPE 控制面（配套内核 API v1）
+### Qualcomm PPE 控制面（配套内核 API v1/v2）
 
 配套 qualcommax 内核提供 `linux/qca_ppe_natflow.h` 后，Kbuild 自动检测接口，
 并在 PPE、`CONFIG_NATFLOW_PATH`、netfilter ingress 均启用时编译客户端。
-首版支持 IPQ807x/IPQ60xx 同一 PPE 的两个原生有线端口间 IPv4 TCP/UDP 路由和
-单侧 NAT；显式 VLAN/PPPoE、IPv6、纯桥接、conntrack zone、软件 token control
-以及外部设备仍走软件路径。此接口不改变 MTK/Airoha 的私有 netdev ABI。
+支持 IPQ807x/IPQ60xx 同一 PPE 的两个原生有线端口间 IPv4 TCP/UDP 路由和
+单侧 NAT。API v2 增加单层 802.1Q、PPPoE 和 VLAN 上拨号；API v1 内核仍只
+接管无显式封装的连接，旧客户端也可继续使用 v1 提交接口。QinQ、802.1ad、
+IPv6、纯桥接、conntrack zone、软件 token control 以及外部设备仍走软件路径。
+此接口不改变 MTK/Airoha 的私有 netdev ABI。
 
 PPE 使用有界异步队列处理双向连接，排队与真正 READY 分开，失败回滚两方向。
 natflow 保留 conntrack 引用，验证双向软件槽位、各槽位发布代次、path generation
 和当前策略；软件 hash 不等于 PPE 的硬件索引。驱动每秒轮询活动性和真实计数，
 反馈 conntrack/fakeuser 统计及保活；bridge/VLAN 统计由 PPE 计入，避免重复。
 仅 age 变化时只能估计活动性，不能补造 bytes/packets，实际计数能力需要实机核验。
+VLAN/PPPoE 信息从实际收包学习，不保留 PPP socket 指针；每个方向带上独立
+VID/SID 和 IP MTU。后端先准备双向入口分类及会话，再下发流，避免入方向先
+建立时使用错误 VSI。硬件出口 MTU 同时受路径 IP MTU 和物理帧大小限制。
+会话、MAC、VID 或 MTU 变化会使旧请求失效；PPP/VLAN 设备事件立即撤销现存
+硬件项，待安装请求仍需通过客户端复核。重学时清除旧 VLAN 标记。
 
 测试时先关闭 firewall 的标准软件/硬件 flow offload 并重启 firewall，再通过
 `/dev/natflow_ctl` 写入以换行结束的 `hwnat=1`、`disabled=0`。同一 PPE 上 native

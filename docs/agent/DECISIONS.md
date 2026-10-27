@@ -2,6 +2,14 @@
 
 本文件记录需要后续智能体长期遵守的仓库级决策。小型实现细节不要放在这里。
 
+## 2026-10-27：Qualcomm PPE 封装使用兼容的 v2 入口
+
+保留 v1 请求布局和提交符号，以新增 submit_encap 携带两方向独立的 VLAN、
+PPPoE 与 IP MTU；新客户端对 v1 内核继续无封装回退，不扩展 conntrack 布局。
+先为两个端点准备入口分类及会话，再安装任一方向的项，预持引用覆盖整对规则。
+避免入方向先装表时被随后创建的 PPPoE uplink 误清理。回调复核封装及 MTU，
+PPP/VLAN 事件同步撤销已装规则，客户端全局 generation 拒绝旧学习数据。
+
 ## 2026-10-26：Qualcomm PPE 使用独立异步接口
 
 Qualcomm PPE 的 KEY 模式由硬件分配槽位，现有 PPE 控制面可以睡眠，而 natflow

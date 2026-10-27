@@ -9,6 +9,11 @@ struct natflow_qca_ticket {
 	u32 magic;
 	u32 hash[2];
 	u64 generation[2];
+#if QCA_PPE_NATFLOW_API_VERSION >= 2
+	struct qca_ppe_natflow_path path[2];
+	struct ethhdr eth[2];
+	struct net_device *dev[2];
+#endif
 	bool invalid;
 	bool ready;
 };
@@ -87,6 +92,63 @@ static bool natflow_qca_allowed(struct nf_conn *ct, natflow_t *nf)
 	return !user || natflow_fakeuser_data(user)->auth_status != AUTH_BLOCK;
 }
 
+#if QCA_PPE_NATFLOW_API_VERSION >= 2
+/* Learning observes the physical receive device, metadata VLAN and the full
+ * on-wire Ethernet/PPPoE header. No PPP socket or stack pointer is retained.
+ */
+static bool natflow_qca_path(const natflow_route_t *route, struct ethhdr *eth,
+                             struct qca_ppe_natflow_path *path)
+{
+	*path = (struct qca_ppe_natflow_path) {};
+	if (!route->outdev || route->outdev->type != ARPHRD_ETHER || route->mtu < 68)
+		return false;
+	if (route->l2_head_len != ETH_HLEN &&
+	        route->l2_head_len != ETH_HLEN + PPPOE_SES_HLEN)
+		return false;
+	memcpy(eth, route->l2_head, ETH_HLEN);
+	path->mtu = route->mtu;
+	if (route->vlan_present) {
+		if (route->vlan_proto != FF_ETH_P_8021Q ||
+		        !route->vlan_tci || route->vlan_tci >= VLAN_VID_MASK)
+			return false;
+		path->flags |= QCA_PPE_NATFLOW_VLAN;
+		path->vlan_proto = htons(ETH_P_8021Q);
+		path->vlan_id = route->vlan_tci;
+	}
+	if (route->l2_head_len == ETH_HLEN + PPPOE_SES_HLEN) {
+		struct pppoe_hdr ph;
+		__be16 proto;
+
+		memcpy(&ph, route->l2_head + ETH_HLEN, sizeof(ph));
+		memcpy(&proto, route->l2_head + ETH_HLEN + sizeof(ph), sizeof(proto));
+		if (eth->h_proto != htons(ETH_P_PPP_SES) ||
+		        ph.ver != 1 || ph.type != 1 || ph.code ||
+		        !ph.sid || ph.sid == htons(0xffff) || proto != htons(PPP_IP))
+			return false;
+		path->flags |= QCA_PPE_NATFLOW_PPPOE;
+		path->pppoe_sid = ntohs(ph.sid);
+		eth->h_proto = htons(ETH_P_IP);
+	} else if (eth->h_proto != htons(ETH_P_IP)) {
+		return false;
+	}
+	return true;
+}
+
+static bool natflow_qca_path_valid(const struct natflow_qca_ticket *ticket,
+                                   const natflow_t *nf, int d)
+{
+	struct qca_ppe_natflow_path path;
+	const struct qca_ppe_natflow_path *old = &ticket->path[d];
+	struct ethhdr eth;
+
+	return nf->rroute[d].outdev == ticket->dev[d] &&
+	       natflow_qca_path(&nf->rroute[d], &eth, &path) &&
+	       path.flags == old->flags && path.vlan_id == old->vlan_id &&
+	       path.vlan_proto == old->vlan_proto && path.pppoe_sid == old->pppoe_sid &&
+	       path.mtu == old->mtu && !memcmp(&eth, &ticket->eth[d], ETH_HLEN);
+}
+#endif
+
 static bool natflow_qca_valid(struct natflow_qca_ticket *ticket)
 {
 	natflow_t *nf = natflow_session_get(ticket->ct);
@@ -106,6 +168,10 @@ static bool natflow_qca_valid(struct natflow_qca_ticket *ticket)
 		        nfn->magic != (ticket->magic & NATFLOW_PATH_MAGIC_MASK) ||
 		        ulongmindiff(jiffies, nfn->jiffies) >= NATFLOW_FF_TIMEOUT_LOW)
 			return false;
+#if QCA_PPE_NATFLOW_API_VERSION >= 2
+		if (!natflow_qca_path_valid(ticket, nf, d))
+			return false;
+#endif
 	}
 	return true;
 }
@@ -162,6 +228,9 @@ static void natflow_qca_try(struct nf_conn *ct, natflow_t *nf)
 {
 	struct qca_ppe_natflow_request req = {};
 	struct qca_ppe_natflow_stats failed = {};
+#if QCA_PPE_NATFLOW_API_VERSION >= 2
+	struct qca_ppe_natflow_path path[2];
+#endif
 	struct natflow_qca_ticket *ticket;
 	int hash[2], d, ret;
 
@@ -172,16 +241,20 @@ static void natflow_qca_try(struct nf_conn *ct, natflow_t *nf)
 	        nf_ct_zone_id(nf_ct_zone(ct), IP_CT_DIR_ORIGINAL) ||
 	        nf_ct_zone_id(nf_ct_zone(ct), IP_CT_DIR_REPLY))
 		return;
-	/* First version: untagged, routed Ethernet in both directions. */
+	spin_lock_bh(&natflow_qca_lock);
 	for (d = 0; d < 2; d++) {
+#if QCA_PPE_NATFLOW_API_VERSION >= 2
+		if (!natflow_qca_path(&nf->rroute[d], &req.eth[d], &path[d]))
+			goto unlock;
+#else
+		/* API v1 kernels keep their original unencapsulated support. */
 		if (nf->rroute[d].vlan_present ||
 		        nf->rroute[d].l2_head_len != ETH_HLEN ||
 		        !nf->rroute[d].outdev ||
 		        nf->rroute[d].outdev->type != ARPHRD_ETHER)
-			return;
-	}
-	spin_lock_bh(&natflow_qca_lock);
-	for (d = 0; d < 2; d++) {
+			goto unlock;
+		memcpy(&req.eth[d], nf->rroute[d].l2_head, ETH_HLEN);
+#endif
 		hash[d] = natflow_qca_find(&ct->tuplehash[d].tuple);
 		if (hash[d] < 0 || natflow_qca_slots[hash[d]].owner ||
 		        time_before(jiffies, natflow_qca_slots[hash[d]].retry))
@@ -207,13 +280,21 @@ static void natflow_qca_try(struct nf_conn *ct, natflow_t *nf)
 			.proto = tuple->dst.protonum,
 		};
 		req.dev[d] = nf->rroute[!d].outdev;
-		memcpy(&req.eth[d], nf->rroute[d].l2_head, ETH_HLEN);
+#if QCA_PPE_NATFLOW_API_VERSION >= 2
+		ticket->path[d] = path[d];
+		ticket->eth[d] = req.eth[d];
+		ticket->dev[d] = nf->rroute[d].outdev;
+#endif
 	}
 	req.owner = &natflow_qca_slots;
 	req.context = ticket;
 	req.notify = natflow_qca_notify;
 	spin_unlock_bh(&natflow_qca_lock);
+#if QCA_PPE_NATFLOW_API_VERSION >= 2
+	ret = qca_ppe_natflow_submit_encap(&req, path);
+#else
 	ret = qca_ppe_natflow_submit(&req);
+#endif
 	if (ret) {
 		failed.error = ret;
 		natflow_qca_notify(ticket, QCA_PPE_NATFLOW_RELEASE, &failed);

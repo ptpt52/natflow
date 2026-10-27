@@ -1538,6 +1538,9 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 					memcpy(nf->rroute[NF_FF_DIR_REPLY].l2_head + ETH_HLEN, l2 + ETH_HLEN, l2_len - ETH_HLEN);
 				}
 				nf->rroute[NF_FF_DIR_REPLY].outdev = dev;
+				nf->rroute[NF_FF_DIR_REPLY].vlan_present = 0;
+				nf->rroute[NF_FF_DIR_REPLY].vlan_proto = FF_ETH_P_8021Q;
+				nf->rroute[NF_FF_DIR_REPLY].vlan_tci = 0;
 				if ((dev->flags & IFF_IFNAME_GROUP)) {
 					nf->rroute[NF_FF_DIR_REPLY].ifname_group = 1;
 				}
@@ -1573,6 +1576,9 @@ void natflow_session_learn(struct sk_buff *skb, struct nf_conn *ct, natflow_t *n
 					memcpy(nf->rroute[NF_FF_DIR_ORIGINAL].l2_head + ETH_HLEN, l2 + ETH_HLEN, l2_len - ETH_HLEN);
 				}
 				nf->rroute[NF_FF_DIR_ORIGINAL].outdev = dev;
+				nf->rroute[NF_FF_DIR_ORIGINAL].vlan_present = 0;
+				nf->rroute[NF_FF_DIR_ORIGINAL].vlan_proto = FF_ETH_P_8021Q;
+				nf->rroute[NF_FF_DIR_ORIGINAL].vlan_tci = 0;
 				if ((dev->flags & IFF_IFNAME_GROUP)) {
 					nf->rroute[NF_FF_DIR_ORIGINAL].ifname_group = 1;
 				}
@@ -6358,7 +6364,8 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 #if NATFLOW_HAVE_QCA_PPE
 	if (event == NETDEV_GOING_DOWN || event == NETDEV_DOWN ||
 	        event == NETDEV_CHANGEUPPER || event == NETDEV_CHANGEADDR ||
-	        event == NETDEV_CHANGEMTU)
+	        event == NETDEV_CHANGEMTU || event == NETDEV_UP ||
+	        event == NETDEV_CHANGE)
 		natflow_update_magic(0);
 #endif
 	if (event == NETDEV_UP || event == NETDEV_CHANGE) {
