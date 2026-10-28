@@ -111,16 +111,13 @@ typedef struct natflow_t {
 #define NF_FF_DIR_REPLY 1
 #define NF_FF_DIR_MAX 2
 	struct natflow_route_t rroute[NF_FF_DIR_MAX];
+	/* Logical PPP statistics endpoints, indexed like rroute[]. No dev refs. */
+	int ppp[NF_FF_DIR_MAX];
 	unsigned int app_id;
 	unsigned short dpi_byte_count[NF_FF_DIR_MAX];
 	unsigned char dpi_packet_count[NF_FF_DIR_MAX];
 	unsigned char layout_pad[2];
 	unsigned int dpi_automaton;
-	/* Logical PPP statistics endpoints, indexed like rroute[]. No dev refs. */
-	struct {
-		unsigned int generation;
-		int ifindex;
-	} ppp[NF_FF_DIR_MAX];
 } natflow_t;
 
 struct nf_conn;

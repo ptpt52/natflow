@@ -621,12 +621,6 @@ void natflow_update_magic(int init)
 #ifdef CONFIG_NETFILTER_INGRESS
 static natflow_fastnat_node_t *natflow_fast_nat_table = NULL;
 
-/* Serialize endpoint publication, statistics and PPP device invalidation.
- * Learning, slow-fast output and keepalive use it, never ordinary fast forwarding.
- */
-static DEFINE_SPINLOCK(natflow_ppp_lock);
-static unsigned int natflow_ppp_generation = 1;
-
 static bool natflow_pppoe_route(const natflow_route_t *route)
 {
 	return route->l2_head_len == ETH_HLEN + PPPOE_SES_HLEN &&
@@ -638,39 +632,8 @@ static void natflow_ppp_learn(natflow_t *nf, int dir, const struct net_device *d
 	if (!dev || dev->type != ARPHRD_PPP || !net_eq(dev_net(dev), &init_net))
 		return;
 
-	spin_lock_bh(&natflow_ppp_lock);
-	if (netif_running(dev) && netif_carrier_ok(dev)) {
-		nf->ppp[dir].ifindex = dev->ifindex;
-		nf->ppp[dir].generation = natflow_ppp_generation;
-	}
-	spin_unlock_bh(&natflow_ppp_lock);
-}
-
-/* A first reply must reach PPP PRE_ROUTING before ingress can bypass it.
- * This also prevents a flow from remaining in hardware without an endpoint
- * after a PPP device event. Bridged sessions have no local PPP endpoint.
- */
-static bool natflow_ppp_ready(natflow_t *nf)
-{
-	int dir;
-	bool ready = true;
-
-	if (!(nf->status & NF_FF_ROUTE) || (nf->status & NF_FF_BRIDGE) ||
-	        (!natflow_pppoe_route(&nf->rroute[0]) &&
-	         !natflow_pppoe_route(&nf->rroute[1])))
-		return true;
-
-	spin_lock_bh(&natflow_ppp_lock);
-	for (dir = 0; dir < NF_FF_DIR_MAX; dir++) {
-		if (natflow_pppoe_route(&nf->rroute[dir]) &&
-		        (!nf->ppp[dir].ifindex ||
-		         nf->ppp[dir].generation != natflow_ppp_generation)) {
-			ready = false;
-			break;
-		}
-	}
-	spin_unlock_bh(&natflow_ppp_lock);
-	return ready;
+	if (netif_running(dev) && netif_carrier_ok(dev))
+		WRITE_ONCE(nf->ppp[dir], dev->ifindex);
 }
 
 static void natflow_ppp_account(natflow_t *nf, int dir,
@@ -686,32 +649,31 @@ static void natflow_ppp_account(natflow_t *nf, int dir,
 		return;
 
 	rcu_read_lock();
-	spin_lock_bh(&natflow_ppp_lock);
-	/* An event may have invalidated the flow after keepalive validated it,
-	 * and a slow packet may already have published the new PPP endpoint.
-	 */
+	/* Keepalive callbacks can race with endpoint relearning. */
 	if (path_magic != (NATFLOW_PATH_MAGIC_MASK & atomic_read_acquire(&natflow_path_magic)) ||
 	        READ_ONCE(nf->magic) != path_magic)
 		goto out;
 	for (side = 0; side < NF_FF_DIR_MAX; side++) {
 		struct net_device *dev;
+		struct pcpu_sw_netstats __percpu *tstats;
 		struct pcpu_sw_netstats *stats;
+		int ifindex = READ_ONCE(nf->ppp[side]);
 
 		if (!natflow_pppoe_route(&nf->rroute[side]) ||
-		        !nf->ppp[side].ifindex ||
-		        nf->ppp[side].generation != natflow_ppp_generation)
+		        !ifindex)
 			continue;
 		/* A sampled packet can already have crossed native PPP receive. */
-		if (side != dir && nf->ppp[side].ifindex == ingress_ifindex)
+		if (side != dir && ifindex == ingress_ifindex)
 			continue;
-		dev = dev_get_by_index_rcu(&init_net, nf->ppp[side].ifindex);
+		dev = dev_get_by_index_rcu(&init_net, ifindex);
 		/* Older PPP implementations keep counters in private storage.
 		 * Do not guess that layout or write dev->stats instead.
 		 */
+		tstats = dev ? READ_ONCE(dev->tstats) : NULL;
 		if (!dev || dev->type != ARPHRD_PPP || !netif_running(dev) ||
-		        !netif_carrier_ok(dev) || !dev->tstats)
+		        !netif_carrier_ok(dev) || !tstats)
 			continue;
-		stats = this_cpu_ptr(dev->tstats);
+		stats = get_cpu_ptr(tstats);
 		u64_stats_update_begin(&stats->syncp);
 		if (side == dir) {
 			compat_u64_stats_add(&stats->tx_bytes, bytes);
@@ -721,18 +683,10 @@ static void natflow_ppp_account(natflow_t *nf, int dir,
 			compat_u64_stats_add(&stats->rx_packets, packets);
 		}
 		u64_stats_update_end(&stats->syncp);
+		put_cpu_ptr(stats);
 	}
 out:
-	spin_unlock_bh(&natflow_ppp_lock);
 	rcu_read_unlock();
-}
-
-static void natflow_ppp_invalidate(void)
-{
-	spin_lock_bh(&natflow_ppp_lock);
-	++natflow_ppp_generation;
-	natflow_update_magic(0);
-	spin_unlock_bh(&natflow_ppp_lock);
 }
 #else
 static inline void natflow_ppp_learn(natflow_t *nf, int dir, const struct net_device *dev)
@@ -2573,11 +2527,6 @@ slow_fastpath:
 	if (nf->magic != path_magic) {
 		goto out;
 	}
-#ifdef CONFIG_NETFILTER_INGRESS
-	if (!natflow_ppp_ready(nf))
-		goto out;
-#endif
-
 	acct = nf_conn_acct_find(ct);
 	if (acct) {
 		struct nf_conn_counter *counter = acct->counter;
@@ -4490,11 +4439,6 @@ slow_fastpath6:
 	if (nf->magic != path_magic) {
 		goto out6;
 	}
-#ifdef CONFIG_NETFILTER_INGRESS
-	if (!natflow_ppp_ready(nf))
-		goto out6;
-#endif
-
 	acct = nf_conn_acct_find(ct);
 	if (acct) {
 		struct nf_conn_counter *counter = acct->counter;
@@ -6506,14 +6450,6 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
-#ifdef CONFIG_NETFILTER_INGRESS
-	if (dev->type == ARPHRD_PPP &&
-	        (event == NETDEV_GOING_DOWN || event == NETDEV_DOWN ||
-	         event == NETDEV_UNREGISTER || event == NETDEV_UP ||
-	         event == NETDEV_CHANGE || event == NETDEV_CHANGEUPPER ||
-	         event == NETDEV_CHANGEADDR || event == NETDEV_CHANGEMTU))
-		natflow_ppp_invalidate();
-#endif
 #if NATFLOW_HAVE_QCA_PPE
 	if (event == NETDEV_GOING_DOWN || event == NETDEV_DOWN ||
 	        event == NETDEV_CHANGEUPPER || event == NETDEV_CHANGEADDR ||

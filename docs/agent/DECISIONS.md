@@ -6,12 +6,14 @@
 
 从实际慢路径 PPP 入口和 IP POST_ROUTING 出口学习逻辑接口，复用 keepalive
 增量更新使用 dev->tstats 的 PPP 设备，不新增内核 ABI、不推断 PPP 私有布局。
-为兼容旧内核并避免 per-flow 分配/销毁旁表，在 natflow_t 尾部追加双向
-generation/ifindex 共 16 字节；原有字段偏移不变，模块升级后的旧短扩展由
-getter 长度检查拒绝加速。此项扩容独立于下述 QCA 请求 ABI，QCA v1/v2 不变。
-普通逐包 fast path 不新增锁；PPP 设备事件串行失效映射，缺失映射时先保持
-慢路径学习。统计完整性受既有软件采样和硬件计数能力限制，不承诺撤流尾量
-或更新 PPP 私有空闲时间。
+为兼容旧内核并避免 per-flow 分配/销毁旁表，在 natflow_t 的 rroute 之后、
+app_id 与 DPI 字段之前新增双向 ifindex 共 8 字节；app_id 和 DPI 字段整体
+后移，DPI 字段保持在结构末尾。原有 rroute 偏移不变，模块升级后的旧短扩展由 getter 长度检查
+拒绝加速。此项扩容独立于下述 QCA 请求 ABI，QCA v1/v2 不变。
+普通逐包 fast path 不新增锁；补账按保存的 ifindex 在 init_net 中查找当前
+PPP 设备，找到就用，找不到或没有 tstats 时只跳过该项，不阻塞 fast path。
+映射不带设备代次，ifindex 复用后可能使用复用接口；统计完整性受既有软件
+采样和硬件计数能力限制，不承诺撤流尾量或更新 PPP 私有空闲时间。
 
 ## 2026-10-27：Qualcomm PPE 封装使用兼容的 v2 入口
 

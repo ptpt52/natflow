@@ -153,9 +153,13 @@ int natflow_ct_ext_layout_validate(void)
 	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_automaton) +
 	             sizeof(((struct natflow_t *)0)->dpi_automaton) -
 	             offsetof(struct natflow_t, dpi_byte_count) != 12);
-	BUILD_BUG_ON(offsetof(struct natflow_t, ppp) !=
-	             offsetof(struct natflow_t, dpi_automaton) + sizeof(unsigned int));
-	BUILD_BUG_ON(sizeof(((struct natflow_t *)0)->ppp) != 16);
+	BUILD_BUG_ON(offsetof(struct natflow_t, app_id) !=
+	             offsetof(struct natflow_t, ppp) +
+	             sizeof(((struct natflow_t *)0)->ppp));
+	BUILD_BUG_ON(sizeof(((struct natflow_t *)0)->ppp) != 8);
+	BUILD_BUG_ON(offsetof(struct natflow_t, dpi_automaton) +
+	             sizeof(((struct natflow_t *)0)->dpi_automaton) !=
+	             sizeof(struct natflow_t));
 	BUILD_BUG_ON(sizeof(struct natflow_t) % __ALIGN_64BITS != 0);
 
 	natflow_ct_ext_layout_get(&layout);
