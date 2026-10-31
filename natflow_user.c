@@ -54,6 +54,7 @@
 static unsigned int natflow_user_timeout = 1800;
 #define NATFLOW_USER_TIMESTAMP_REFRESH (32 * HZ)
 #define NATFLOW_USER_TIMESTAMP_NEW_REFRESH (2 * HZ)
+#define NATFLOW_USER_KEEPALIVE_REFRESH (64 * HZ)
 
 struct userinfo {
 	struct list_head list;
@@ -320,7 +321,7 @@ static inline void natflow_user_source_refresh(natflow_fakeuser_t *user,
 		ifname_updated = natflow_user_ifname_update_from_session(fud, ct,
 		                 CTINFO2DIR(ctinfo));
 
-	idle_jiffies = timestamp_offset(fud->timestamp, jiffies);
+	idle_jiffies = timestamp_offset(READ_ONCE(fud->timestamp), jiffies);
 	if (idle_jiffies < NATFLOW_USER_TIMESTAMP_REFRESH &&
 	        (ctinfo != IP_CT_NEW || idle_jiffies < NATFLOW_USER_TIMESTAMP_NEW_REFRESH)) {
 		if (ifname_updated)
@@ -332,7 +333,7 @@ static inline void natflow_user_source_refresh(natflow_fakeuser_t *user,
 	                                  ct->tuplehash[CTINFO2DIR(ctinfo)].tuple.src.l3num, fake_mac);
 
 	natflow_user_source_update(fud, macaddr, ct, CTINFO2DIR(ctinfo));
-	fud->timestamp = jiffies;
+	WRITE_ONCE(fud->timestamp, (u32)jiffies);
 	natflow_user_timeout_touch(user);
 	userinfo_event_queue(user);
 }
@@ -925,6 +926,34 @@ void natflow_user_timeout_touch(natflow_fakeuser_t *nfu)
 	natflow_ct_timeout_set(nfu, expires);
 }
 
+void natflow_user_keepalive(natflow_fakeuser_t *user)
+{
+	struct fakeuser_data_t *fud;
+	unsigned int timeout, refresh;
+	u32 now, timestamp;
+
+	if (nf_ct_is_dying(user))
+		return;
+#if NATFLOW_HAVE_NF_CT_IS_EXPIRED
+	if (nf_ct_is_expired(user))
+		return;
+#endif
+	fud = natflow_fakeuser_data(user);
+	now = (u32)jiffies;
+	timestamp = READ_ONCE(fud->timestamp);
+	timeout = fud->auth_type != AUTH_TYPE_UNKNOWN ?
+	          READ_ONCE(natflow_user_timeout) : NATFLOW_USER_TIMEOUT;
+	/* Leave time for source learning, but stay within short user timeouts. */
+	refresh = min_t(unsigned int, timeout, 2 * (NATFLOW_USER_KEEPALIVE_REFRESH / HZ));
+	refresh = max_t(unsigned int, 1, refresh * HZ / 2);
+	if ((u32)(now - timestamp) < refresh)
+		return;
+	/* Only one CPU refreshes a user's timeout in each activity window. */
+	if (cmpxchg(&fud->timestamp, timestamp, now) != timestamp)
+		return;
+	natflow_user_timeout_touch(user);
+}
+
 static inline int natflow_fakeuser_ext_init(natflow_fakeuser_t *user,
         struct fakeuser_data_t **fud)
 {
@@ -1194,7 +1223,7 @@ natflow_fakeuser_t *natflow_user_in_get(__be32 ip, const uint8_t *macaddr)
 	/* Update MAC address. */
 	fud = natflow_fakeuser_data(user);
 	natflow_user_mac_update(fud, macaddr);
-	fud->timestamp = jiffies;
+	WRITE_ONCE(fud->timestamp, (u32)jiffies);
 
 	skb_nfct_reset(uskb);
 
@@ -1303,7 +1332,7 @@ natflow_fakeuser_t *natflow_user_in_get6(const union nf_inet_addr *u3,
 	/* Update MAC address. */
 	fud = natflow_fakeuser_data(user);
 	natflow_user_mac_update(fud, macaddr);
-	fud->timestamp = jiffies;
+	WRITE_ONCE(fud->timestamp, (u32)jiffies);
 
 	skb_nfct_reset(uskb);
 
@@ -3380,6 +3409,7 @@ static unsigned int natflow_user_post_hook(void *priv,
 			}
 		}
 	}
+	natflow_user_keepalive(user);
 out:
 	if (bridge) {
 		skb->network_header -= PPPOE_SES_HLEN;
@@ -3940,7 +3970,7 @@ static int userinfo_apply_line(struct file *file, char *data)
 						continue;
 					}
 					fud = natflow_fakeuser_data(ct);
-					fud->timestamp = 0;
+					WRITE_ONCE(fud->timestamp, 0);
 					fud->auth_type = AUTH_TYPE_UNKNOWN;
 					fud->auth_status = AUTH_NONE;
 					fud->auth_rule_id = INVALID_AUTH_RULE_ID;
@@ -3985,7 +4015,7 @@ static int userinfo_apply_line(struct file *file, char *data)
 			return -ENOENT;
 
 		fud = natflow_fakeuser_data(user);
-		fud->timestamp = 0;
+		WRITE_ONCE(fud->timestamp, 0);
 		fud->auth_type = AUTH_TYPE_UNKNOWN;
 		fud->auth_status = AUTH_NONE;
 		fud->auth_rule_id = INVALID_AUTH_RULE_ID;

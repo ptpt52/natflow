@@ -394,7 +394,8 @@ ip_or_ipv6,mac,auth_type_hex,auth_status_hex,rule_id,idle_time,rx_pkts:rx_bytes,
 
 - 单次 read 如果生成行长度大于用户提供 buffer，会先拷贝 buffer 能容纳的部分，剩余数据保留在 per-open residual buffer 中，下次 `read()` 继续输出，与 `conntrackinfo_read()` 行为一致。
 - fakeuser 是特殊 conntrack，不是独立用户态表。
-- `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数，不再从当前 `no_flow_timeout` 反推；该 timestamp 在 fakeuser 创建/获取时写入，user pre hook 中普通活动最多每 32 秒刷新一次，`IP_CT_NEW` 新连接包距离上次刷新超过 2 秒也会刷新。
+- `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数，不从当前 `no_flow_timeout` 反推。创建/获取、来源学习、流量记账及有效加速保活回调共用此时间戳，不增加来源时间戳字段。来源学习保留 user pre hook 普通包 32 秒、`IP_CT_NEW` 新连接包 2 秒及 vline 8 秒门槛；单纯保活使用 64 秒间隔，为来源学习留出检查窗口，但不保证后续一定有符合条件的报文进入该流程。`USER_BYPASS` 对普通来源学习的提前退出保持不变。
+- `natflow_user_keepalive(user)` 接受调用者持有引用所保护的借用 fakeuser；IPv4/IPv6 慢路径 POST_ROUTING 在限速判定后调用，软件快路径在用户记账后调用，加速路径在通过已有 slot/generation/tuple/expected-ct 校验并取得关联用户后调用，因此 `USER_BYPASS` 不再跳过长连接保活。有效的 `offload_keepalive` 回调即使包数、字节数增量都为零，也会续期；零增量不增加流量统计。dying 用户以及支持 `nf_ct_is_expired()` 的内核上的已过期用户直接跳过。函数按 64 秒节流；配置超时小于 128 秒时使用半个超时、最少一个 jiffy，未知认证类型沿用 300 秒超时。无符号 32 位差值处理 jiffies 回绕，`cmpxchg` 合并同一活动窗口内并发流量的续期。保活不学习 MAC/ifname、不生成 userinfo 事件、不分配或重新关联节点；没有流量及有效回调时仍正常老化，已老化用户仍需新连接创建。
 - `ifname` 的所有权在 user 模块，功能规格依赖 path。普通 TCP/UDP 单播由 user pre hook 通过 `natflow_session_ingress_dev(ct, dir)` 读取当前 generation 下 `rroute[!dir].outdev`：original 方向覆盖用户主动连接，已由 post hook 关联 fakeuser 的外网主动连接在 LAN reply 方向仅当 fakeuser 地址与 reply 源地址一致时刷新已有用户来源并立即退出，避免 LAN-to-LAN/hairpin 应答污染原用户，且不进入认证或重定向流程。字段为空时先于活动节流尝试 path accessor，成功后立即发布事件；普通 MAC/ifname/timeout 刷新仍沿用 32 秒和新连接 2 秒节流。`natflow_get_mac_or_fake()` 在 Ethernet 设备且 skb 已设置 MAC header 时返回真实源 MAC，否则生成确定性的本地管理单播伪 MAC；IPv4 格式为 `02:00:<IPv4 四字节>`，IPv6 的前两字节来自地址四个 32 位分量的 xor，后四字节来自固定 seed `0x12345678` 的 jhash。普通来源刷新把该真实或伪 MAC 写入 `fud->macaddr`，因此 `tun`、`ppp` 等 L3-only 接口也能保存稳定用户身份。对于不建立 route 的广播、组播和 ICMP/ICMPv6，NETDEV ingress 必须保持 path 原有校验及早退顺序；局部 IPv4/IPv6 包装器只在对应早退分支内独立验证 IPv4 total length、header checksum 或 IPv6 payload length，验证通过后才调用 `natflow_user_ingress_ifname_learn(skb, saddr, family)`。该入口仅接受 LAN zone 设备或其 bridge slave，使用同一真实/伪 MAC 规则按源地址校验已有 fakeuser；用户不存在时直接返回，不创建 fakeuser，已有用户 MAC 非零且不匹配时不更新 ifname，验证后记录原始 `skb->dev` 并在 ifname 变化时发布 userinfo 事件。ARP 不经过该 IP 入口；path 未启用、未启 NETDEV ingress 或没有可用入口信息时字段可以为空。
 - 每个打开实例缓存最多 4096 条用户快照；扫描 conntrack hash 超过时间片或缓存上限时会保存 `next_bucket` 并返回 `-EAGAIN`。
 - 速度字段来自 4 个 2 秒窗口；如果超过 8 秒无更新，速度输出为 0。
@@ -757,8 +758,8 @@ fakeuser 不是普通用户态对象，而是特殊 conntrack：
 
 - IPv4 fakeuser tuple：源地址为用户 IP，目标地址为 `NATFLOW_FAKEUSER_DADDR`，UDP 源端口 0、目标端口 65535。
 - IPv6 fakeuser tuple：源地址为用户 IPv6，目标地址以前缀 `ffff::` 形式构造。
-- fakeuser 扩展尾部挂 `fakeuser_data_t`，保存 MAC、源流量入口设备名、认证状态、规则 id、vline LAN 侧标志、速度窗口、token ctrl 等。
-- fakeuser 生命周期依赖 conntrack timeout；默认无流超时 1800 秒。
+- fakeuser 扩展尾部挂 `fakeuser_data_t`，保存活动时间戳 `timestamp`、MAC、源流量入口设备名、认证状态、规则 id、vline LAN 侧标志、速度窗口、token ctrl 等；来源学习和单纯保活共用 `timestamp`，使用不同时间门槛。
+- fakeuser 生命周期依赖 conntrack timeout；默认无流超时 1800 秒。已关联业务连接的流量记账及有效 `offload_keepalive` 回调通过 `natflow_user_keepalive()` 节流更新活动时间及超时，回调不要求流量增量。持续有流量或有效保活回调的长连接不依赖新连接续期；没有两者时正常老化，已老化节点不因此复活。
 - synthetic fakeuser 使用的 per-CPU skb 由 `__alloc_skb()` 分配，user 模块退出且相关 hook 停止后必须用 `kfree_skb()` 完整回收，不能用 `kfree()` 只释放 skb 本体。
 - `natflow_user_get(ct)` 沿 `ct->master` 链返回借用指针，不增加引用计数；调用方必须保持所属 conntrack 存活，且不得直接对返回值调用 `natflow_user_release_put()`。PRE_ROUTING reply 源地址不匹配时只退出，不释放该借用指针。`natflow_user_find_get[6]()` 和 `natflow_user_in_get[6]()` 返回独立引用，调用方使用后必须释放。
 - `NATFLOW_FAKEUSER_DADDR` 定义为 `htonl(0x7fffffff)`；实现注释把它作为 fakeuser 专用目的地址，不应与真实业务 tuple 混用。

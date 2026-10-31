@@ -989,6 +989,7 @@ static int natflow_offload_keepalive_ex(unsigned int hash, unsigned long bytes, 
 				if (NULL == user) {
 					break;
 				}
+				natflow_user_keepalive(user);
 				if (user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip != ct->tuplehash[!d].tuple.src.u3.ip)
 					d = 0; /* download */
 				else
@@ -1237,6 +1238,7 @@ __keepalive_ipv6_main:
 				if (NULL == user) {
 					break;
 				}
+				natflow_user_keepalive(user);
 				if (memcmp(&user->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3, &ct->tuplehash[!d].tuple.src.u3, sizeof(union nf_inet_addr)) != 0)
 					d = 0; /* download */
 				else
@@ -2701,6 +2703,7 @@ slow_fastpath:
 			atomic64_inc(&counter[d].packets);
 			atomic64_add(skb->len, &counter[d].bytes);
 		}
+		natflow_user_keepalive(user);
 	} while (0);
 
 	if ((ct->status & IPS_DST_NAT)) {
@@ -4609,6 +4612,7 @@ slow_fastpath6:
 			atomic64_inc(&counter[d].packets);
 			atomic64_add(skb->len, &counter[d].bytes);
 		}
+		natflow_user_keepalive(user);
 	} while (0);
 
 	if ((ct->status & IPS_DST_NAT)) {
@@ -5924,11 +5928,11 @@ out6:
 						user = natflow_user_in(ct, dir);
 						if (user) {
 							fud = natflow_fakeuser_data(user);
-							if (timestamp_offset(fud->timestamp, jiffies) >= 8 * HZ) {
+							if (timestamp_offset(READ_ONCE(fud->timestamp), jiffies) >= 8 * HZ) {
 								if (memcmp(eth_hdr(skb)->h_source, fud->macaddr, ETH_ALEN) != 0) {
 									memcpy(fud->macaddr, eth_hdr(skb)->h_source, ETH_ALEN);
 								}
-								fud->timestamp = jiffies;
+								WRITE_ONCE(fud->timestamp, (u32)jiffies);
 								natflow_user_timeout_touch(user);
 							}
 						}

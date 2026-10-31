@@ -1,6 +1,6 @@
 # Natflow 智能体记忆
 
-更新时间：2026-10-27
+更新时间：2026-10-31
 
 本文是给智能体快速恢复上下文的压缩记忆，不替代源码。遇到冲突时以源码为准，并修正文档。
 
@@ -78,7 +78,8 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - 普通 `*_ctl` 半行按 open 隔离、关闭即丢弃；同 open（含 dup/fork）写锁覆盖 copy/parse/apply。DPI control 保留 512 字节上限，其他 control 为 256（含换行）；三个 queue 单 reader 协议不变。短写按消费长度续写，`EAGAIN` 重试完整命令；跨 write 拼接和跨命令 reload 的业务顺序仍由调用者保证。
 - auth 的规则/数量/bypass/magic 与 QoS 的规则/数量/classid/buffer_ms/generation/速率分别为不可变 RCU 快照，写端按各自 mutex 克隆发布并等待 grace period 后回收。auth 的 `disabled`、redirect、timeout、HTTPS/WeChat 开关及未知命令改走独立 `auth_scalar_lock`，不分配/发布快照，也不等待 auth grace period；auth seq reader 按 `auth_conf_lock` → `auth_scalar_lock` 同时持锁，写端经 input mutex 后只持其中一把。QoS seq 仍只持配置 mutex。Netfilter hook 使用外层 RCU，rx/tx token 入口显式取 RCU；数据面不取 mutex。auth 的 `update_magic` 仍手动触发；QoS bucket 不随快照复制，速率作为参数传入原 bucket 锁保护的更新，保留 qos_id 槽位复用和 clear 不复位旧 token 余额的语义。
 - `/dev/natflow_conntrackinfo_ctl` 的精确 `kickall` 命令要求 `init_net` 的 `CAP_NET_ADMIN`，通过内核 cleanup iterator 同步删除除 `IPS_NATFLOW_USER` 和 `IPS_NATCAP_PEER` 外的已确认 conntrack；普通业务流即使关联 fakeuser 仍会删除，fakeuser/NATCAP peer 对象自身保留。
-- `/dev/natflow_userinfo_ctl` 的 `idle_time` 复用 fakeuser 内部 `timestamp` 计算，输出值为经过秒数；timestamp 创建/获取 fakeuser 时写入，user pre hook 中普通活动最多每 32 秒刷新一次，新连接包超过 2 秒可刷新；不要用当前 `no_flow_timeout` 和 conntrack 剩余超时反推。
+- `/dev/natflow_userinfo_ctl` 的 `idle_time` 复用 fakeuser 内部活动 `timestamp` 计算，不要用当前 `no_flow_timeout` 和 conntrack 剩余超时反推。来源学习与单纯保活共用原有 `timestamp`，不增加用户字段；来源学习保留 pre hook 普通包 32 秒、新连接包 2 秒及 vline 8 秒门槛，单纯保活改为 64 秒，为来源学习留出检查窗口。窗口不保证一定有学习机会，普通来源流程的 `USER_BYPASS` 提前退出仍保留；仅有保活回调时页面活动时间粒度变粗。
+- 已建立连接的用户保活统一调用 `natflow_user_keepalive(user)`：IPv4/IPv6 慢路径 POST_ROUTING、软件快路径及加速统计回写均接入，包括 `USER_BYPASS`。有效 `offload_keepalive` 回调即使 bytes/packets 都为零也要保活，不增加零增量统计；保留现有 slot/generation/tuple/expected-ct 校验。对存活借用节点按 64 秒节流；配置超时小于 128 秒则使用半个超时、最少一个 jiffy，未知认证用户仍用 300 秒。32 位无符号差值处理回绕，`cmpxchg` 合并并发续期；不学习来源、不生成事件、不创建/重新关联节点。dying 和可检测的 expired 节点不续期，没有流量及有效回调时正常老化。回归入口 `python3 tests/test-user-keepalive.py` 覆盖长连接、零增量回调保活、无回调老化、短超时、回绕、来源学习窗口和并发，不能替代目标设备验证。
 - path 默认关闭，通常通过 `/dev/natflow_ctl` 的 `disabled=0` 开启。
 - `CONFIG_NATFLOW_PATH` 控制 fast path、vline/relay 和硬件 offload 相关能力。
 - 2026-10-27 Qualcomm PPE 使用目标内核 `linux/qca_ppe_natflow.h` API v1/v2，Kbuild

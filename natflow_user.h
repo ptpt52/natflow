@@ -88,6 +88,8 @@ extern int tx_token_ctrl(struct sk_buff *skb, struct fakeuser_data_t *fud, natfl
 extern natflow_fakeuser_t *natflow_user_get(struct nf_conn *ct);
 
 extern void natflow_user_timeout_touch(natflow_fakeuser_t *nfu);
+/* Traffic or a validated offload keepalive refreshes an existing user. */
+extern void natflow_user_keepalive(natflow_fakeuser_t *user);
 
 extern int natflow_user_init(void);
 extern void natflow_user_exit(void);

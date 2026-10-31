@@ -520,7 +520,8 @@ echo 'set-token-ctrl <ip_or_ipv6> <rxbytes> <txbytes>' >/dev/natflow_userinfo_ct
 
 说明：
 
-- `idle_time` 是该 fakeuser 内部活动时间戳至今经过的秒数；该时间戳在 fakeuser 创建/获取时写入，普通活动最多每 32 秒刷新一次，新连接包距离上次刷新超过 2 秒也会刷新。
+- `idle_time` 是该 fakeuser 内部活动时间戳 `timestamp` 至今经过的秒数。来源学习沿用普通包 32 秒、新连接包 2 秒的节流；流量及加速回调的单纯保活使用更长的 64 秒间隔，`no_flow_timeout` 小于 128 秒时改为半个超时（最少一个 jiffy）。两者共用原有时间戳，不增加用户字段；较长的保活间隔为来源学习留下检查窗口，但不保证每次都有符合条件的报文进入学习流程。仅有保活回调时，页面最后活跃时间的更新粒度也相应变粗。
+- 已建立的 IPv4/IPv6 长连接在慢路径 POST_ROUTING、软件快路径处理流量或收到有效的 `offload_keepalive` 回调时，会给关联的存活 fakeuser 续期，包括已设置 `USER_BYPASS` 的连接。有效的加速保活回调即使包数和字节数增量都为零，也会续期；既没有流量也没有保活回调时仍正常老化。已老化或正在销毁的用户不会由该逻辑重建，仍由新连接按原有流程创建。
 - `ifname` 由 user 模块维护并依赖 path。普通 TCP/UDP 单播从当前连接 path 缓存中与包方向相反的 `rroute[!dir].outdev` 同步设备名：用户主动连接使用 original 方向，外网主动进入并已在 post hook 关联用户的连接使用 LAN 应答的 reply 方向；reply 分支仅在 fakeuser 地址与当前 reply 源地址一致时刷新已有用户来源，避免 LAN-to-LAN/hairpin 应答污染原用户，且不执行认证和重定向。字段为空时每个用户侧包都会先尝试补齐 ifname，不受普通活动 32 秒、新连接 2 秒节流限制。用户来源刷新在设备为 Ethernet 且 skb 已设置 MAC header 时记录真实源 MAC；`tun`、`ppp` 等 L3-only 入口没有可用 Ethernet 头时生成确定性的本地管理单播伪 MAC 并写入 `fud->macaddr`：IPv4 使用 `02:00:<IPv4 四字节>`，IPv6 使用地址四个 32 位分量的 xor 和固定 seed 的 jhash 派生 6 字节。对于 path 不建立 route 的广播、组播和 ICMP/ICMPv6，启用的 path 保持原有校验和早退顺序，仅在调用 user 专用入口前由局部包装器独立验证 IPv4 长度/checksum 或 IPv6 长度；入口接受 LAN zone 设备或其 bridge slave，使用同一真实/伪 MAC 规则校验已有 fakeuser，用户不存在时不创建，已有非零用户 MAC 不匹配时不更新 ifname，ifname 变化时发布 userinfo 事件。ARP 不经过该 IP 入口。path 未启用、未启用 NETDEV ingress 或没有可用入口信息时该字段可以为空。
 - `kickall` 清理所有用户认证状态和统计。
 - `kick`、`set-status`、`set-token-ctrl` 找不到用户时返回 `-ENOENT`。
