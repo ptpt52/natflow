@@ -706,7 +706,7 @@ Natflow 复用 `ct->status` 的高位和扩展位：
 - `IPS_NATFLOW_USER`：bit 16，表示 fakeuser conntrack。
 - `IPS_NATFLOW_USER_TOKEN_CTRL`：bit 17，用在 fakeuser 上表示用户级限速。
 - `IPS_NATFLOW_CT_DROP`：bit 17，用在普通 ct 上表示该连接应丢弃；与上一个宏同 bit，不同上下文使用。
-- `IPS_NATFLOW_USER_BYPASS`：bit 15。
+- `NATFLOW_USER_BYPASS` 在所有内核上固定使用 conntrack bit 15，对应内核的 `IPS_HW_OFFLOAD`。构建 natflow 镜像时，通过构建配置排除 Netfilter flowoffload 模块。内核 conntrack 仍会输出 `HW_OFFLOAD`，SNAT 候选端口接近耗尽时仍用该位判断能否立即复用 TIME_WAIT 连接的端口。
 - `IPS_NATFLOW_FF_STOP`：bit 18，永久停止该 ct 的 fast path。
 - `IPS_NATFLOW_L7_HANDLED`：bit 19，当前复用为 L7_SKIP 派生 hint。真实 URL/DPI shared L7 终态仍使用 `natflow_t.status` 中的 URL、DPI domain 和 DPI packet done bit；当这些 done bit 证明当前 active consumer 全部完成后，L7 设置该 conntrack status bit，后续包在 L7 入口快速跳过解析和 session 检查。
 - `IPS_NATFLOW_SKIP_BRIDGE`：bit 20，用于 bridge/non-bridge 双 hook 去重。
@@ -928,7 +928,7 @@ Qualcomm PPE 使用单独的 `NATFLOW_HAVE_QCA_PPE` 分支。Kbuild 只在目标
 兼容头接受 API v1/v2，并检查 PPE 配置、PATH 和 ingress。`NATFLOW_HAVE_ANY_HW_OFFLOAD`
 只用于共享 `hwnat` 控制，不使 Qualcomm 编译到旧的 MTK fake HWNAT ABI。
 
-`natflow_qca.h` 管理软件槽位的 owner、64 位发布代次和重试时间，不扩大
+`natflow_async.h` 管理软件槽位的 owner、64 位发布代次、重试时间和请求生命周期，不扩大
 `natflow_t`/conntrack extension。IPv4、IPv6 软件节点发布均在专用 spinlock 下
 先撤销旧 owner 并推进槽位代次；普通逐包转发不取此锁。请求持有 conntrack，
 复制双向 tuple、出口 Ethernet header 和两个入口设备；后端复制并引用设备后
@@ -936,6 +936,9 @@ Qualcomm PPE 使用单独的 `NATFLOW_HAVE_QCA_PPE` 分支。Kbuild 只在目标
 一次释放 conntrack。回调在 BH 禁止和 RCU 下运行，PPE 不持 flow/vlan mutex。
 验证涵盖软件 tuple、slot owner/代次、完整 path generation、25 秒软件超时、
 dying/TCP 状态、busy/stop/token 和用户封禁。失败后相同槽位等待 8 秒再尝试。
+共享层编译时选择 `natflow_qca.h` 或 `natflow_zte.h`。适配头持有各自的路径快照，
+并负责后端准入、提交、排空和统计处理。QCA 通过校验后才调用共享 keepalive 补账。
+NPPT 则先给所持有的连接和用户结算硬件增量，校验通过后才刷新软件槽位与超时。
 
 只接受 init_net/default zone、同 PPE 有线路由 IPv4 TCP/UDP，不提交 bridge、
 外部设备或软件限速流。API v2 通过新增 submit_encap 入口单独复制两方向的
@@ -963,6 +966,30 @@ QCA 控制写入共用 mutex，避免另一个 open 在同步排空期间恢复�
 等待提交者退出，再在进程上下文调用按 owner 的同步 flush。模块退出在注销
 hook/notifier 和同步 RCU 后 flush，再释放 QCA 槽位和 fastnat 表。没有配套
 内核 API 时该分支完全不参与编译，现有后端保留如下语义。
+
+ZTE NPPT 与 Qualcomm 共用异步客户端的软件槽位和代次校验。Kbuild 检测目标内核的
+`include/linux/zte_nppt_natflow.h`，设置 `NATFLOW_ZTE_NPPT_API_AVAILABLE`。
+`NATFLOW_HAVE_ZTE_NPPT` 检查 `CONFIG_ZTE_ZX279133_FNOFFLOAD`、
+NPPT API v2、PATH 和 ingress。NPPT 规则由 natflow 提交。
+natflow 初始化路径时用 `symbol_get()` 取得已加载的 NPPT API，检查版本和
+submit、flush。接口不可用时回退到软件路径。取得后持有模块引用，直到注销
+hook、同步 RCU 并排空硬件回调。部署硬件转发时先加载 `fnoffload`。
+
+NPPT 准入限于 init_net 默认 zone 的双向 IPv4 TCP/UDP NAT。连接须为 ASSURED，
+TCP 须已建立。要求当前认证配置的 `AUTH_OK`、conntrack 和 fakeuser 记账扩展。
+有 QoS 规则集、用户 token 控制、helper、序号调整或连接停用标记时保持软件转发。
+认证、用户、QoS 和 zone 控制写入先停止提交，再同步排空硬件规则。排空失败时返回
+`EIO`，保持旧策略和待重试的硬件回调。控制开关在停止新提交后也会向用户返回
+排空错误。模块退出使用断开模式，强制释放指向 natflow 的回调，驱动继续重试删除。
+并发写入期间使用计数器维持停止准入，成功更新后推进路径代次。
+
+每方向提交物理端口、MAC、单层 802.1Q VID、PPPoE SID 和内层 MTU。后端只接受
+LAN ↔ 物理 WAN，PPPoE 直接经物理 WAN，拒绝 PPPoE 与 VLAN 叠加。客户端通过
+PPP 的 `ndo_fill_forward_path` 复核会话 SID、对端 MAC 和下层设备。驱动根据同一
+请求显式生成两方向的 PPPoE/VLAN 操作、WANID MTU 和独立计数槽。先写上行，
+双向均成功后发出 READY。安装失败回滚已编程规则，未确认失效的槽位保持隔离。
+硬件轮询和删除回调携带 IP 字节及包数增量，按持有的 ct/fakeuser 引用记账。
+匹配旧会话的逻辑 PPP 接口也补记收发，活动样本用于保活。硬件槽位由 NPPT 自行分配。
 
 在 `NATFLOW_HAVE_HW_OFFLOAD=1` 时，path 会基于设备的 `ndo_flow_offload` 或外部设备 offload API 下发流：
 

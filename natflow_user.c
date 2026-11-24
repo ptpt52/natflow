@@ -182,7 +182,7 @@ static inline int natflow_user_ifname_update(struct fakeuser_data_t *fud,
 	if (!dev || strncmp(fud->ifname, dev->name, IFNAMSIZ) == 0)
 		return 0;
 
-	strncpy(fud->ifname, dev->name, IFNAMSIZ);
+	natflow_ifname_copy(fud->ifname, dev->name);
 	fud->ifname[IFNAMSIZ - 1] = '\0';
 	return 1;
 }
@@ -2305,7 +2305,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 		goto out;
 	}
 
-	if ((ct->status & IPS_NATFLOW_USER_BYPASS) && (nf_ct_protonum(ct) != IPPROTO_ICMP && nf_ct_protonum(ct) != IPPROTO_ICMPV6)) {
+	if ((ct->status & NATFLOW_USER_BYPASS) && (nf_ct_protonum(ct) != IPPROTO_ICMP && nf_ct_protonum(ct) != IPPROTO_ICMPV6)) {
 		goto out;
 	}
 	dir = CTINFO2DIR(ctinfo);
@@ -2420,11 +2420,11 @@ static unsigned int natflow_user_pre_hook(void *priv,
 				if (TCPH(l4)->dest == __constant_htons(443)) {
 					if (auth_conf->dst_bypasslist_name[0] != 0 &&
 					        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
-						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 						goto out;
 					} else if (auth_conf->src_bypasslist_name[0] != 0 &&
 					           IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
-						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 						goto out;
 					}
 
@@ -2444,7 +2444,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 						if (newdst) {
 							NATFLOW_DEBUG(DEBUG_TCP_FMT ": new connection https redirect to %pI4:%u\n", DEBUG_TCP_ARG(iph, l4), &newdst, ntohs(https_redirect_port));
 							natflow_dnat_setup(ct, newdst, https_redirect_port);
-							set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+							set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 						}
 					} while (0);
 				}
@@ -2460,11 +2460,11 @@ static unsigned int natflow_user_pre_hook(void *priv,
 				if (TCPH(l4)->dest == __constant_htons(443)) {
 					if (auth_conf->dst_bypasslist_name[0] != 0 &&
 					        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
-						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 						goto out;
 					} else if (auth_conf->src_bypasslist_name[0] != 0 &&
 					           IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
-						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 						goto out;
 					}
 
@@ -2474,7 +2474,7 @@ static unsigned int natflow_user_pre_hook(void *priv,
 						if (natflow_auth_dev_addr6(in, &newdst) == 0) {
 							NATFLOW_DEBUG(DEBUG_FMT6_TCP ": new connection https redirect to [%pI6c]:%u\n", DEBUG_ARG6_TCP(ip6h, l4), &newdst, ntohs(https_redirect_port));
 							natflow_dnat_setup6(ct, &newdst, https_redirect_port);
-							set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+							set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 						}
 					} while (0);
 				}
@@ -2671,7 +2671,7 @@ static unsigned int natflow_user_forward_hook(void *priv,
 		ret = NF_DROP;
 		goto out;
 	}
-	if ((ct->status & IPS_NATFLOW_USER_BYPASS) && (nf_ct_protonum(ct) != IPPROTO_ICMP && nf_ct_protonum(ct) != IPPROTO_ICMPV6)) {
+	if ((ct->status & NATFLOW_USER_BYPASS) && (nf_ct_protonum(ct) != IPPROTO_ICMP && nf_ct_protonum(ct) != IPPROTO_ICMPV6)) {
 		goto out;
 	}
 
@@ -3039,22 +3039,22 @@ static unsigned int natflow_user_forward_hook(void *priv,
 				void *l4 = (void *)iph + iph->ihl * 4;
 
 				if (iph->daddr == redirect_ip) {
-					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 					goto out;
 				}
 				if (auth_conf->dst_bypasslist_name[0] != 0 &&
 				        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
-					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 					goto out;
 				} else if (auth_conf->src_bypasslist_name[0] != 0 &&
 				           IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
-					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 					goto out;
 				}
 
 				if (iph->protocol == IPPROTO_UDP) {
 					if (UDPH(l4)->dest == __constant_htons(53) || UDPH(l4)->dest == __constant_htons(67) || UDPH(l4)->source == __constant_htons(67)) {
-						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 						goto out;
 					}
 				}
@@ -3095,27 +3095,27 @@ static unsigned int natflow_user_forward_hook(void *priv,
 
 				if (!ipv6_addr_any(&redirect_ip6)) {
 					if (ipv6_addr_equal(&ip6h->daddr, &redirect_ip6)) {
-						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 						goto out;
 					}
 				} else if (natflow_auth_dev_addr6(in, &redirect_addr6) == 0 &&
 				           ipv6_addr_equal(&ip6h->daddr, &redirect_addr6)) {
-					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 					goto out;
 				}
 				if (auth_conf->dst_bypasslist_name[0] != 0 &&
 				        IP_SET_test_dst_ip(state, in, out, skb, auth_conf->dst_bypasslist_name) > 0) {
-					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 					goto out;
 				} else if (auth_conf->src_bypasslist_name[0] != 0 &&
 				           IP_SET_test_src_ip(state, in, out, skb, auth_conf->src_bypasslist_name) > 0) {
-					set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 					goto out;
 				}
 
 				if (ip6h->nexthdr == IPPROTO_UDP) {
 					if (UDPH(l4)->dest == __constant_htons(53) || UDPH(l4)->dest == __constant_htons(546) || UDPH(l4)->source == __constant_htons(547)) {
-						set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+						set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 						goto out;
 					}
 				}
@@ -3187,11 +3187,11 @@ static unsigned int natflow_user_forward_hook(void *priv,
 				}
 			}
 		}
-		set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+		set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 		break;
 	case AUTH_VIP:
 	case AUTH_BYPASS:
-		set_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+		set_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 		break;
 	case AUTH_BLOCK:
 		/* temporary block user */
@@ -3212,7 +3212,7 @@ out:
 		skb_push(skb, PPPOE_SES_HLEN);
 	}
 
-	if (ct && (ct->status & IPS_NATFLOW_USER_BYPASS)) {
+	if (ct && (ct->status & NATFLOW_USER_BYPASS)) {
 		if (nf && (nf->status & NF_FF_USER_USE)) {
 			/* tell FF -user- has finished it's job */
 			simple_clear_bit(NF_FF_USER_USE_BIT, &nf->status);
@@ -3875,9 +3875,34 @@ out:
 	return ret;
 }
 
+#if NATFLOW_HAVE_ZTE_NPPT
+/* With a QoS ruleset present, the software classifier owns shaping. */
+bool natflow_user_zte_allowed(natflow_fakeuser_t *user)
+{
+	const struct auth_conf *auth = rcu_dereference(auth_config);
+	const struct qos_conf *qos = rcu_dereference(qos_config);
+	const struct fakeuser_data_t *fud;
+
+	if (READ_ONCE(disabled) || !user || nf_ct_is_dying(user) ||
+	        nf_ct_is_expired(user) || !nf_conn_acct_find(user) ||
+	        test_bit(IPS_NATFLOW_USER_TOKEN_CTRL_BIT, &user->status) || qos->num)
+		return false;
+	fud = natflow_fakeuser_data(user);
+	return READ_ONCE(fud->auth_rule_magic) == auth->magic &&
+	       READ_ONCE(fud->auth_status) == AUTH_OK;
+}
+#endif
+
 static ssize_t natflow_user_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
 {
-	return natflow_ctl_seq_write(file, buf, buf_len, offset, natflow_user_apply_line);
+	ssize_t ret;
+
+	ret = natflow_zte_policy_begin();
+	if (ret)
+		return ret;
+	ret = natflow_ctl_seq_write(file, buf, buf_len, offset, natflow_user_apply_line);
+	natflow_zte_policy_end();
+	return ret;
 }
 static int natflow_user_open(struct inode *inode, struct file *file)
 {
@@ -4113,7 +4138,14 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 {
 	struct userinfo_user *user = file->private_data;
 
-	return natflow_ctl_write(&user->input, file, buf, buf_len, offset, userinfo_apply_line);
+	ssize_t ret;
+
+	ret = natflow_zte_policy_begin();
+	if (ret)
+		return ret;
+	ret = natflow_ctl_write(&user->input, file, buf, buf_len, offset, userinfo_apply_line);
+	natflow_zte_policy_end();
+	return ret;
 }
 /* read one and clear one */
 static ssize_t userinfo_read(struct file *file, char __user *buf,
@@ -5098,7 +5130,14 @@ out:
 
 static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
 {
-	return natflow_ctl_seq_write(file, buf, buf_len, offset, qos_apply_line);
+	ssize_t ret;
+
+	ret = natflow_zte_policy_begin();
+	if (ret)
+		return ret;
+	ret = natflow_ctl_seq_write(file, buf, buf_len, offset, qos_apply_line);
+	natflow_zte_policy_end();
+	return ret;
 }
 static int qos_open(struct inode *inode, struct file *file)
 {

@@ -23,6 +23,7 @@
 #include <linux/highmem.h>
 #include "natflow_zone.h"
 #include "natflow_common.h"
+#include "natflow_user.h"
 #include "natflow_control.h"
 
 static int natflow_zone_major = 0;
@@ -305,7 +306,14 @@ done:
 
 static ssize_t natflow_zone_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
 {
-	return natflow_ctl_seq_write(file, buf, buf_len, offset, natflow_zone_apply_line);
+	ssize_t ret;
+
+	ret = natflow_zte_policy_begin();
+	if (ret)
+		return ret;
+	ret = natflow_ctl_seq_write(file, buf, buf_len, offset, natflow_zone_apply_line);
+	natflow_zte_policy_end();
+	return ret;
 }
 static int natflow_zone_open(struct inode *inode, struct file *file)
 {

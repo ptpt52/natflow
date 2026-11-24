@@ -67,6 +67,11 @@ graph TB
 
 ## Natflow Hardware Acceleration Overview
 
+构建 natflow 镜像时，通过构建配置排除 Netfilter flowoffload 模块。
+natflow 固定使用 conntrack bit 15（内核的 `IPS_HW_OFFLOAD` 位）作为用户策略 bypass。
+conntrack 因此也会把 bypass 软件流显示为 `HW_OFFLOAD`。在 SNAT 端口紧张时，
+内核可能跳过本可回收的 TCP TIME_WAIT 端口。
+
 ### Qualcomm PPE 控制面（配套内核 API v1/v2）
 
 配套 qualcommax 内核提供 `linux/qca_ppe_natflow.h` 后，Kbuild 自动检测接口，
@@ -88,15 +93,31 @@ VID/SID 和 IP MTU。后端先准备双向入口分类及会话，再下发流�
 会话、MAC、VID 或 MTU 变化会使旧请求失效；PPP/VLAN 设备事件立即撤销现存
 硬件项，待安装请求仍需通过客户端复核。重学时清除旧 VLAN 标记。
 
-测试时先关闭 firewall 的标准软件/硬件 flow offload 并重启 firewall，再通过
-`/dev/natflow_ctl` 写入以换行结束的 `hwnat=1`、`disabled=0`。同一 PPE 上 native
-nft 硬件 flowtable 与 natflow 请求互斥。`hwnat=0` 和 `disabled=1` 会先停止准入、
+测试时通过 `/dev/natflow_ctl` 写入以换行结束的 `hwnat=1`、`disabled=0`。
+`hwnat=0` 和 `disabled=1` 会先停止准入、
 等待在途提交退出，再同步排空队列、表项及回调；模块卸载在释放软件表前执行同样清理。
 改变软件路径代次、连接关闭、用户封禁或 token control 生效后，旧请求不再保活，
-后端轮询会撤销硬件项。新增 `natflow_qca.h` 也包含在 DKMS 源码清单中。
+后端轮询会撤销硬件项。DKMS 源码包含异步客户端及两个后端的适配头。
 
 该路径已提供主机状态测试和编译验证入口；设备启动、NAT 正确性、硬件统计和
 真实流量压力测试仍需在目标设备完成。
+
+### ZTE ZX279133 NPPT（SR1010）
+
+在 X-Wrt 的 ZTE 构建配置中分别选择 `kmod-natflow` 和
+`kmod-zte-fnoffload`。NPPT 的硬件规则由 natflow 下发。
+NPPT 客户端需要 `linux/zte_nppt_natflow.h` 的 v2 API、netfilter ingress
+和 `CONFIG_NATFLOW_PATH`。natflow 加载时绑定已加载的 `fnoffload`，
+后端缺席时走软件路径。手动加载时先加载 `fnoffload`，再加载 natflow，
+并通过 `/dev/natflow_ctl` 设置 `disabled=0` 和 `hwnat=1`。
+
+硬件转发覆盖已授权用户的有线 LAN ↔ 物理 WAN IPv4 TCP/UDP NAT。支持物理 WAN
+直接拨 PPPoE，以及单层 802.1Q 添标签、剥标签和 VID 改写。PPPoE 叠加 VLAN、
+QinQ、IPv6 和受 QoS 限速的路径由软件处理。两方向各用一个硬件计数槽，最多
+512 条双向连接。包数和 IP 字节数会回填 conntrack 和用户统计，PPPoE 会话匹配时
+也会补记逻辑 PPP 接口。更新用户策略或拨号重连会使旧硬件规则退出。
+硬件失效操作失败时，策略写入返回 `EIO`，旧策略继续生效，驱动重试删除。
+`disabled=1` 或 `hwnat=0` 会停止新规则准入，并通过 `EIO` 报告未排空的规则。
 
 ### Hardware Acceleration Support on X-WRT
 

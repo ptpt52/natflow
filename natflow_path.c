@@ -254,10 +254,8 @@ int vline_fwd_map_config_add(const unsigned char *dst_ifname, const unsigned cha
 	int i;
 	for (i = 0; i < VLINE_FWD_MAP_CONFIG_NUM; i++) {
 		if (vline_fwd_map_config[i][0][0] == 0) {
-			strncpy(vline_fwd_map_config[i][0], src_ifname, IFNAMSIZ);
-			vline_fwd_map_config[i][0][IFNAMSIZ - 1] = 0;
-			strncpy(vline_fwd_map_config[i][1], dst_ifname, IFNAMSIZ);
-			vline_fwd_map_config[i][1][IFNAMSIZ - 1] = 0;
+			natflow_ifname_copy(vline_fwd_map_config[i][0], src_ifname);
+			natflow_ifname_copy(vline_fwd_map_config[i][1], dst_ifname);
 			vline_fwd_map_family_config[i] = family;
 			return 0;
 		}
@@ -564,42 +562,52 @@ unsigned short hwnat_wed_disabled = 1;
 unsigned int delay_pkts = 0;
 unsigned int go_slowpath_if_no_qos = 0;
 
-#if NATFLOW_HAVE_QCA_PPE
-static void natflow_qca_stop(void);
-static DEFINE_MUTEX(natflow_qca_control_lock);
+#if NATFLOW_HAVE_ASYNC_HW_OFFLOAD
+static int natflow_async_drain(bool disconnect);
+static DEFINE_MUTEX(natflow_async_control_lock);
 #endif
 
 static int disabled = 1;
-void natflow_disabled_set(int v)
+int natflow_disabled_set(int v)
 {
-#if NATFLOW_HAVE_QCA_PPE
-	mutex_lock(&natflow_qca_control_lock);
+	int ret = 0;
+
+#if NATFLOW_HAVE_ASYNC_HW_OFFLOAD
+	mutex_lock(&natflow_async_control_lock);
+#endif
+#if NATFLOW_HAVE_ZTE_NPPT
+	if (!v)
+		nf_ct_set_acct(&init_net, true);
 #endif
 	WRITE_ONCE(disabled, v);
-#if NATFLOW_HAVE_QCA_PPE
+#if NATFLOW_HAVE_ASYNC_HW_OFFLOAD
 	if (v) {
 		natflow_update_magic(0);
 		synchronize_net();
-		natflow_qca_stop();
+		ret = natflow_async_drain(false);
 	}
-	mutex_unlock(&natflow_qca_control_lock);
+	mutex_unlock(&natflow_async_control_lock);
 #endif
+	return ret;
 }
 #if NATFLOW_HAVE_ANY_HW_OFFLOAD
-void natflow_hwnat_set(unsigned int value)
+int natflow_hwnat_set(unsigned int value)
 {
-#if NATFLOW_HAVE_QCA_PPE
-	mutex_lock(&natflow_qca_control_lock);
+	int ret = 0;
+
+#if NATFLOW_HAVE_ASYNC_HW_OFFLOAD
+	mutex_lock(&natflow_async_control_lock);
 #endif
 	WRITE_ONCE(hwnat, value);
-#if NATFLOW_HAVE_QCA_PPE
+#if NATFLOW_HAVE_ASYNC_HW_OFFLOAD
 	natflow_update_magic(0);
 	if (!value) {
 		synchronize_net();
-		natflow_qca_stop();
+		ret = natflow_async_drain(false);
 	}
-	mutex_unlock(&natflow_qca_control_lock);
+	mutex_unlock(&natflow_async_control_lock);
 #endif
+	return ret;
 }
 #endif
 int natflow_disabled_get(void)
@@ -1077,7 +1085,7 @@ static int natflow_offload_keepalive_ex(unsigned int hash, unsigned long bytes, 
 						/* tell FF -user- need to use this conn */
 						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
 					}
-					clear_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					clear_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
 					nfn_i->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
 
@@ -1326,7 +1334,7 @@ __keepalive_ipv6_main:
 						/* tell FF -user- need to use this conn */
 						simple_set_bit(NF_FF_USER_USE_BIT, &nf->status);
 					}
-					clear_bit(IPS_NATFLOW_USER_BYPASS_BIT, &ct->status);
+					clear_bit(NATFLOW_USER_BYPASS_BIT, &ct->status);
 					nfn->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
 					nfn_i->jiffies = jiffies - NATFLOW_FF_TIMEOUT_HIGH;
 
@@ -1361,7 +1369,7 @@ static int natflow_offload_keepalive(unsigned int hash, unsigned long bytes, uns
 	return natflow_offload_keepalive_ex(hash, bytes, packets, speed_bytes, speed_packets, hw, current_jiffies, 1, NULL);
 }
 
-#include "natflow_qca.h"
+#include "natflow_async.h"
 
 #if NATFLOW_HAVE_HW_OFFLOAD
 static struct net_device __rcu *ppe_dev = NULL;
@@ -2788,7 +2796,7 @@ fastnat_check:
 						          nfn->source == source && nfn->dest == dest &&
 						          NFN_PROTO_DEC(nfn->flags) == protonum))) {
 
-							natflow_qca_write_begin(hash);
+							natflow_async_write_begin(hash);
 							if (nfn->magic != path_magic ||
 							        ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH) {
 								nfn->status = 0;
@@ -2840,7 +2848,7 @@ fastnat_check:
 							nfn->magic = path_magic;
 							nfn->jiffies = jiffies;
 							nfn->keepalive_jiffies = jiffies;
-							natflow_qca_write_end();
+							natflow_async_write_end();
 
 							switch (iph->protocol) {
 							case IPPROTO_TCP:
@@ -3423,7 +3431,7 @@ fastnat_check:
 				}
 			}
 		} /* for (d = 0; d < NF_FF_DIR_MAX; d++) */
-		natflow_qca_try(ct, nf);
+		natflow_async_try(ct, nf);
 	} else {
 		/* NF_FF_FAIL: loop try FF every 8 seconds */
 		if (!(nf->status & NF_FF_RETRY)) {
@@ -4693,7 +4701,7 @@ fastnat_check6:
 						         (memcmp(nfn->saddr6, saddr.s6_addr32, 16) == 0 && memcmp(nfn->daddr6, daddr.s6_addr32, 16) == 0 &&
 						          nfn->source == source && nfn->dest == dest && NFN_PROTO_DEC(nfn->flags) == protonum))) {
 
-							natflow_qca_write_begin(hash);
+							natflow_async_write_begin(hash);
 							if (nfn->magic != path_magic ||
 							        ulongmindiff(jiffies, nfn->jiffies) > NATFLOW_FF_TIMEOUT_HIGH) {
 								nfn->status = 0;
@@ -4745,7 +4753,7 @@ fastnat_check6:
 							nfn->magic = path_magic;
 							nfn->jiffies = jiffies;
 							nfn->keepalive_jiffies = jiffies;
-							natflow_qca_write_end();
+							natflow_async_write_end();
 
 							switch (IPV6H->nexthdr) {
 							case IPPROTO_TCP:
@@ -6454,7 +6462,7 @@ static int natflow_netdev_event(struct notifier_block *this, unsigned long event
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
-#if NATFLOW_HAVE_QCA_PPE
+#if NATFLOW_HAVE_ASYNC_HW_OFFLOAD
 	if (event == NETDEV_GOING_DOWN || event == NETDEV_DOWN ||
 	        event == NETDEV_CHANGEUPPER || event == NETDEV_CHANGEADDR ||
 	        event == NETDEV_CHANGEMTU || event == NETDEV_UP ||
@@ -6650,12 +6658,10 @@ int natflow_path_init(void)
 	}
 #endif
 
-#if NATFLOW_HAVE_QCA_PPE
-	natflow_qca_slots = kcalloc(NATFLOW_FASTNAT_TABLE_SIZE, sizeof(*natflow_qca_slots), GFP_KERNEL);
-	if (!natflow_qca_slots) {
-		ret = -ENOMEM;
-		goto alloc_natflow_qca_slots_failed;
-	}
+#if NATFLOW_HAVE_ASYNC_HW_OFFLOAD
+	ret = natflow_async_init();
+	if (ret)
+		goto natflow_async_init_failed;
 #endif
 
 	vline_fwd_map_config_clear();
@@ -6677,10 +6683,9 @@ int natflow_path_init(void)
 nf_register_hooks_failed:
 	unregister_netdevice_notifier(&natflow_netdev_notifier);
 register_netdevice_notifier_failed:
-#if NATFLOW_HAVE_QCA_PPE
-	kfree(natflow_qca_slots);
-	natflow_qca_slots = NULL;
-alloc_natflow_qca_slots_failed:
+#if NATFLOW_HAVE_ASYNC_HW_OFFLOAD
+	natflow_async_free();
+natflow_async_init_failed:
 #endif
 #ifdef CONFIG_NETFILTER_INGRESS
 	kfree(natflow_fast_nat_table);
@@ -6732,10 +6737,10 @@ void natflow_path_exit(void)
 		synchronize_rcu();
 	}
 #endif
-#if NATFLOW_HAVE_QCA_PPE
-	natflow_qca_stop();
-	kfree(natflow_qca_slots);
-	natflow_qca_slots = NULL;
+#if NATFLOW_HAVE_ASYNC_HW_OFFLOAD
+	if (natflow_async_drain(true))
+		pr_warn("natflow: hardware rules remain quarantined after unload\n");
+	natflow_async_free();
 #endif
 	kfree(natflow_fast_nat_table);
 #else

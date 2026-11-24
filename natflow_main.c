@@ -211,18 +211,14 @@ static int natflow_apply_line(struct file *file, char *data)
 	} else if (strncmp(data, "disabled=", 9) == 0) {
 		int d;
 		n = sscanf(data, "disabled=%u", &d);
-		if (n == 1) {
-			natflow_disabled_set(!!d);
-			goto done;
-		}
+		if (n == 1)
+			return natflow_disabled_set(!!d);
 #if NATFLOW_HAVE_ANY_HW_OFFLOAD
 	} else if (strncmp(data, "hwnat=", 6) == 0) {
 		int d;
 		n = sscanf(data, "hwnat=%u", &d);
-		if (n == 1) {
-			natflow_hwnat_set(d);
-			goto done;
-		}
+		if (n == 1)
+			return natflow_hwnat_set(d);
 #if defined(CONFIG_NET_MEDIATEK_SOC_WED) || defined(NATFLOW_OFFLOAD_AIROHA_NPU)
 	} else if (strncmp(data, "hwnat_wed_disabled=", 19) == 0) {
 		int d;

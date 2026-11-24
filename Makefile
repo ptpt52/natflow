@@ -16,6 +16,9 @@ ccflags-y += $(EXTRA_CFLAGS)
 ifneq ($(wildcard $(srctree)/include/linux/qca_ppe_natflow.h),)
 ccflags-y += -DNATFLOW_QCA_PPE_API_AVAILABLE
 endif
+ifneq ($(wildcard $(srctree)/include/linux/zte_nppt_natflow.h),)
+ccflags-y += -DNATFLOW_ZTE_NPPT_API_AVAILABLE
+endif
 
 # Keep individual L7 data-plane frames bounded.  The cumulative call-chain
 # budget is reviewed separately with compiler-generated .su files.

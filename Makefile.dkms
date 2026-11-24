@@ -10,9 +10,11 @@ all: install
 src_install:
 	mkdir -p '$(DKMS_DEST)'
 	cp \
+		natflow_async.h \
 		natflow_common.c \
 		natflow_compat.h \
 		natflow_qca.h \
+		natflow_zte.h \
 		natflow_common.h \
 		natflow_control.h \
 		natflow_conntrack.c \

@@ -8,6 +8,8 @@
 #define _NATFLOW_COMPAT_H_
 
 #include <linux/errno.h>
+#include <linux/if.h>
+#include <linux/string.h>
 #include <linux/types.h>
 #include <linux/version.h>
 
@@ -19,6 +21,15 @@ static inline loff_t natflow_no_llseek(struct file *file, loff_t offset, int whe
 	(void)offset;
 	(void)whence;
 	return -ESPIPE;
+}
+
+/* Preserve the zero padding in userinfo records on older kernels too. */
+static inline void natflow_ifname_copy(char *dst, const char *src)
+{
+	size_t len = strnlen(src, IFNAMSIZ - 1);
+
+	memcpy(dst, src, len);
+	memset(dst + len, 0, IFNAMSIZ - len);
 }
 
 #define NATFLOW_KERNEL_BEFORE(major, minor, patch) \
@@ -82,7 +93,17 @@ static inline loff_t natflow_no_llseek(struct file *file, loff_t offset, int whe
 #else
 #define NATFLOW_HAVE_QCA_PPE 0
 #endif
-#define NATFLOW_HAVE_ANY_HW_OFFLOAD (NATFLOW_HAVE_HW_OFFLOAD || NATFLOW_HAVE_QCA_PPE)
+#if defined(NATFLOW_ZTE_NPPT_API_AVAILABLE) && IS_ENABLED(CONFIG_ZTE_ZX279133_FNOFFLOAD)
+#include <linux/zte_nppt_natflow.h>
+#endif
+#if defined(ZTE_NPPT_NATFLOW_API_VERSION) && ZTE_NPPT_NATFLOW_API_VERSION == 2 && \
+	defined(CONFIG_NATFLOW_PATH) && defined(CONFIG_NETFILTER_INGRESS)
+#define NATFLOW_HAVE_ZTE_NPPT 1
+#else
+#define NATFLOW_HAVE_ZTE_NPPT 0
+#endif
+#define NATFLOW_HAVE_ASYNC_HW_OFFLOAD (NATFLOW_HAVE_QCA_PPE || NATFLOW_HAVE_ZTE_NPPT)
+#define NATFLOW_HAVE_ANY_HW_OFFLOAD (NATFLOW_HAVE_HW_OFFLOAD || NATFLOW_HAVE_ASYNC_HW_OFFLOAD)
 
 #define NATFLOW_HAVE_IP_SET_STATE_API NATFLOW_KERNEL_AT_LEAST(4, 10, 0)
 #define NATFLOW_HAVE_IP_SET_NET_API NATFLOW_KERNEL_AT_LEAST(3, 13, 0)

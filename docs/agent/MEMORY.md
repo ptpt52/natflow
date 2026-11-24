@@ -1,6 +1,6 @@
 # Natflow 智能体记忆
 
-更新时间：2026-10-31
+更新时间：2026-12-08
 
 本文是给智能体快速恢复上下文的压缩记忆，不替代源码。遇到冲突时以源码为准，并修正文档。
 
@@ -84,9 +84,10 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 - `CONFIG_NATFLOW_PATH` 控制 fast path、vline/relay 和硬件 offload 相关能力。
 - 2026-10-27 Qualcomm PPE 使用目标内核 `linux/qca_ppe_natflow.h` API v1/v2，Kbuild
   自动检测后由 `NATFLOW_HAVE_QCA_PPE` 编译独立客户端；不扩展 MTK fake ABI 或
-  `natflow_t`。`natflow_qca.h` 用 slot owner、64 位发布代次、完整 path generation
+  `natflow_t`。`natflow_async.h` 用 slot owner、64 位发布代次、完整 path generation
   及所持 conntrack 验证异步请求，IPv4/IPv6 节点重写均撤销旧 owner，普通转发不
-  取该发布锁。仅准入同 PPE 原生有线 IPv4 TCP/UDP 路由/单侧 NAT，无 zone、
+  取该发布锁。`natflow_qca.h` 和 `natflow_zte.h` 分别负责后端路径、准入和统计。
+  QCA 仅准入同 PPE 原生有线 IPv4 TCP/UDP 路由/单侧 NAT，无 zone、
   bridge 或 token control。v2 用新增 submit_encap 入口复制每方向单层 802.1Q、
   PPPoE SID 和 MTU，保持 v1 布局/符号；v1 内核继续只支持无封装。先预持两方向
   uplink/session 再装表，所有项删除后释放预持引用，出口 MTU 计入封装并受物理
@@ -96,6 +97,19 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
   HW 与其互斥；PPE 计 bridge/VLAN，natflow 计 ct/fakeuser。`hwnat=0`、`disabled=1`
   共用控制 mutex，和卸载同步排空请求及回调后再释放软件表。保活的 tuple 查询
   必须命中 ticket 持有的同一 ct。主机测试不替代真机统计/流量验证。
+- ZTE ZX279133 使用 `linux/zte_nppt_natflow.h` 的 v2 API 和 `NATFLOW_HAVE_ZTE_NPPT`。
+  NPPT 根据 natflow 的双向请求直接编程硬件规则。
+  natflow 初始化时可选绑定已加载的 `fnoffload` API，排空回调后释放引用。
+  后端缺席时走软件路径。
+  共用异步软件槽代次校验，硬件要求 LAN ↔ 物理 WAN、IPv4 TCP/UDP NAT、
+  `AUTH_OK` 和两端记账。QoS/用户 token 流保持软件转发。策略写入先排空，
+  失败返回 `EIO` 并保持旧策略。模块退出才强制断开回调，硬件删除继续重试。
+  支持物理 WAN 直连 PPPoE 或单层 802.1Q。每方向复核学习到的封装和 MTU，
+  PPP 核对当前 SID、对端 MAC 和下层设备。NPPT 增量回填 ct、用户和匹配的
+  PPP 接口，驱动上限 512 条双向连接。PPPoE 叠加 VLAN 保持软件路径。
+- `NATFLOW_USER_BYPASS_BIT` 固定为 15，对应 Linux `IPS_HW_OFFLOAD_BIT`。natflow
+  镜像通过构建配置排除 flowoffload 模块。conntrack 显示和 SNAT 端口复用沿用内核语义。
+  `natflow_ifname_copy()` 使用固定 IFNAMSIZ 和零填充，兼容旧内核和 Linux 7.3。
 - keepalive 的 VLAN 统计通过内核 VLAN 索引按底层设备、协议和 VID 查询，
   不扫描 netdev 列表；结果须匹配原 `real_dev`，拒绝 master 上的 VLAN，
   802.1Q/802.1ad 相同 VID 分别记账。查询及统计使用保持在同一 RCU 临界区。

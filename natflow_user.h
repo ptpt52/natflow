@@ -91,6 +91,17 @@ extern void natflow_user_timeout_touch(natflow_fakeuser_t *nfu);
 /* Traffic or a validated offload keepalive refreshes an existing user. */
 extern void natflow_user_keepalive(natflow_fakeuser_t *user);
 
+#if NATFLOW_HAVE_ZTE_NPPT
+bool natflow_user_zte_allowed(natflow_fakeuser_t *user);
+int natflow_zte_policy_begin(void);
+void natflow_zte_policy_end(void);
+#else
+static inline int natflow_zte_policy_begin(void) {
+	return 0;
+}
+static inline void natflow_zte_policy_end(void) {}
+#endif
+
 extern int natflow_user_init(void);
 extern void natflow_user_exit(void);
 

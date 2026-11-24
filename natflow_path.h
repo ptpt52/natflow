@@ -30,9 +30,9 @@ extern unsigned short hwnat_wed_disabled;
 extern unsigned int delay_pkts;
 extern unsigned int go_slowpath_if_no_qos;
 
-extern void natflow_disabled_set(int v);
+extern int natflow_disabled_set(int v);
 #if NATFLOW_HAVE_ANY_HW_OFFLOAD
-extern void natflow_hwnat_set(unsigned int value);
+extern int natflow_hwnat_set(unsigned int value);
 #endif
 #if defined(NATFLOW_OFFLOAD_AIROHA_NPU) || defined(CONFIG_NET_MEDIATEK_SOC_WED)
 extern int natflow_hwnat_wed_disabled_set(unsigned int disabled);
