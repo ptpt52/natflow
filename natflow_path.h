@@ -345,7 +345,7 @@ static inline __be16 get_vlan_proto(struct net_device *dev)
 	return 0;
 }
 
-static inline struct net_device *get_macvlan_real_dev(struct net_device *dev)
+static inline const struct net_device *get_macvlan_real_dev(const struct net_device *dev)
 {
 #if IS_ENABLED(CONFIG_MACVLAN)
 	if (netif_is_macvlan(dev)) {
