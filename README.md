@@ -112,7 +112,8 @@ NPPT 客户端需要 `linux/zte_nppt_natflow.h` 的 v2 API、netfilter ingress
 并通过 `/dev/natflow_ctl` 设置 `disabled=0` 和 `hwnat=1`。
 
 硬件转发覆盖已授权用户的有线 LAN ↔ 物理 WAN IPv4 TCP/UDP NAT。支持物理 WAN
-直接拨 PPPoE，以及单层 802.1Q 添标签、剥标签和 VID 改写。PPPoE 叠加 VLAN、
+直接拨 PPPoE，也可在直接挂载于物理 WAN 的 macvlan 上拨号，受 WAN 硬件接收 MAC
+槽位限制。单层 802.1Q 支持添标签、剥标签和 VID 改写。PPPoE 叠加 VLAN、
 QinQ、IPv6 和受 QoS 限速的路径由软件处理。两方向各用一个硬件计数槽，最多
 512 条双向连接。包数和 IP 字节数会回填 conntrack 和用户统计，PPPoE 会话匹配时
 也会补记逻辑 PPP 接口。更新用户策略或拨号重连会使旧硬件规则退出。

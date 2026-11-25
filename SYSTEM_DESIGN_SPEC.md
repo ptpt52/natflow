@@ -984,8 +984,10 @@ TCP 须已建立。要求当前认证配置的 `AUTH_OK`、conntrack 和 fakeuse
 并发写入期间使用计数器维持停止准入，成功更新后推进路径代次。
 
 每方向提交物理端口、MAC、单层 802.1Q VID、PPPoE SID 和内层 MTU。后端只接受
-LAN ↔ 物理 WAN，PPPoE 直接经物理 WAN，拒绝 PPPoE 与 VLAN 叠加。客户端通过
-PPP 的 `ndo_fill_forward_path` 复核会话 SID、对端 MAC 和下层设备。驱动根据同一
+LAN ↔ 物理 WAN，PPPoE 支持物理 WAN 和直接挂在该端口的 macvlan。客户端通过
+PPP 的 `ndo_fill_forward_path` 复核会话 SID、对端 MAC 和下层设备。macvlan 须处于
+运行状态，其直接下层和当前 MAC 须分别匹配学到的物理出口和发包源 MAC。WAN 的
+硬件接收 MAC 匹配表受槽位限制，PPPoE 叠加 VLAN 走软件路径。驱动根据同一
 请求显式生成两方向的 PPPoE/VLAN 操作、WANID MTU 和独立计数槽。先写上行，
 双向均成功后发出 READY。安装失败回滚已编程规则，未确认失效的槽位保持隔离。
 硬件轮询和删除回调携带 IP 字节及包数增量，按持有的 ct/fakeuser 引用记账。

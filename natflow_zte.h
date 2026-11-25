@@ -111,7 +111,14 @@ static bool natflow_zte_pppoe(const struct net_device *lower, const struct ethhd
 	        ppp->netdev_ops->ndo_fill_forward_path(&ctx, &node))
 		return false;
 
-	return ctx.dev == lower && node.type == DEV_PATH_PPPOE &&
+	/* Ingress learns the wire device and MAC before macvlan RX demux. */
+	if (ctx.dev != lower &&
+	        (!ctx.dev || !netif_is_macvlan(ctx.dev) || !netif_running(ctx.dev) ||
+	         get_macvlan_real_dev(ctx.dev) != lower ||
+	         !ether_addr_equal(ctx.dev->dev_addr, eth->h_source)))
+		return false;
+
+	return node.type == DEV_PATH_PPPOE &&
 	       node.encap.proto == htons(ETH_P_PPP_SES) &&
 	       node.encap.id == path->pppoe_sid &&
 	       ether_addr_equal(node.encap.h_dest, eth->h_dest);

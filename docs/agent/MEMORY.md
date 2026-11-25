@@ -104,8 +104,9 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
   共用异步软件槽代次校验，硬件要求 LAN ↔ 物理 WAN、IPv4 TCP/UDP NAT、
   `AUTH_OK` 和两端记账。QoS/用户 token 流保持软件转发。策略写入先排空，
   失败返回 `EIO` 并保持旧策略。模块退出才强制断开回调，硬件删除继续重试。
-  支持物理 WAN 直连 PPPoE 或单层 802.1Q。每方向复核学习到的封装和 MTU，
-  PPP 核对当前 SID、对端 MAC 和下层设备。NPPT 增量回填 ct、用户和匹配的
+  支持物理 WAN 和直接挂在该端口的 macvlan PPPoE，以及单层 802.1Q。每方向复核
+  封装和 MTU，PPP 核对当前 SID、对端 MAC 和下层设备。macvlan 的直接下层和当前
+  MAC 须匹配已学习的物理出口和发包源 MAC。NPPT 增量回填 ct、用户和匹配的
   PPP 接口，驱动上限 512 条双向连接。PPPoE 叠加 VLAN 保持软件路径。
 - `NATFLOW_USER_BYPASS_BIT` 固定为 15，对应 Linux `IPS_HW_OFFLOAD_BIT`。natflow
   镜像通过构建配置排除 flowoffload 模块。conntrack 显示和 SNAT 端口复用沿用内核语义。
