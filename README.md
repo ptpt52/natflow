@@ -111,7 +111,7 @@ NPPT 客户端需要 `linux/zte_nppt_natflow.h` 的 v2 API、netfilter ingress
 后端缺席时走软件路径。手动加载时先加载 `fnoffload`，再加载 natflow，
 并通过 `/dev/natflow_ctl` 设置 `disabled=0` 和 `hwnat=1`。
 
-硬件转发覆盖已授权用户的有线 LAN ↔ 物理 WAN IPv4 TCP/UDP NAT。支持物理 WAN
+硬件转发覆盖已授权用户的有线 LAN ↔ WAN IPv4 TCP/UDP NAT。支持物理 WAN
 直接拨 PPPoE，也可在直接挂载于物理 WAN 的 macvlan 上拨号，受 WAN 硬件接收 MAC
 槽位限制。单层 802.1Q 支持添标签、剥标签和 VID 改写。PPPoE 叠加 VLAN、
 QinQ、IPv6 和受 QoS 限速的路径由软件处理。两方向各用一个硬件计数槽，最多
@@ -119,6 +119,13 @@ QinQ、IPv6 和受 QoS 限速的路径由软件处理。两方向各用一个硬
 也会补记逻辑 PPP 接口。更新用户策略或拨号重连会使旧硬件规则退出。
 硬件失效操作失败时，策略写入返回 `EIO`，旧策略继续生效，驱动重试删除。
 `disabled=1` 或 `hwnat=0` 会停止新规则准入，并通过 `EIO` 报告未排空的规则。
+
+在配套 X-Wrt 内核中，切换为 WAN 型的 RTL8372N 端口可作为第二 WAN，支持无标签
+IPoE 和 PPPoE。端口角色由防火墙 WAN 区同步。第二 WAN 线路叠加用户 VLAN 时走软件路径。
+natflow 对各端口组合使用同一套双向请求，由 ZTE 驱动根据实际端口和微码能力下表。
+支持该能力的内核可在加载 `fnoffload` 时传入 `lan_lan_offload=1`，实验启用两
+个 LAN 型端口间的无标签 IPv4 NAT。默认关闭，实机转发和统计仍待验证。两个 WAN
+型端口间的连接由软件处理。
 
 ### Hardware Acceleration Support on X-WRT
 

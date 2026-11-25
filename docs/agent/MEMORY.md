@@ -101,13 +101,16 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
   NPPT 根据 natflow 的双向请求直接编程硬件规则。
   natflow 初始化时可选绑定已加载的 `fnoffload` API，排空回调后释放引用。
   后端缺席时走软件路径。
-  共用异步软件槽代次校验，硬件要求 LAN ↔ 物理 WAN、IPv4 TCP/UDP NAT、
-  `AUTH_OK` 和两端记账。QoS/用户 token 流保持软件转发。策略写入先排空，
+  共用异步软件槽代次校验，硬件要求 IPv4 TCP/UDP NAT、`AUTH_OK` 和两端记账。
+  双向请求使用相同入口、出口及报文动作描述，ZTE 后端决定端口组合准入。默认准入
+  LAN ↔ WAN，配套后端的 `lan_lan_offload=1` 可实验准入无标签的 LAN ↔ LAN，
+  WAN ↔ WAN 走软件。QoS/用户 token 流保持软件转发。策略写入先排空，
   失败返回 `EIO` 并保持旧策略。模块退出才强制断开回调，硬件删除继续重试。
   支持物理 WAN 和直接挂在该端口的 macvlan PPPoE，以及单层 802.1Q。每方向复核
   封装和 MTU，PPP 核对当前 SID、对端 MAC 和下层设备。macvlan 的直接下层和当前
   MAC 须匹配已学习的物理出口和发包源 MAC。NPPT 增量回填 ct、用户和匹配的
-  PPP 接口，驱动上限 512 条双向连接。PPPoE 叠加 VLAN 保持软件路径。
+  PPP 接口，驱动上限 512 条双向连接。配套内核准入 WAN 型 DSA 端口的无标签 IPoE
+  和 PPPoE，按端口传输 VID 下表。PPPoE 叠加 VLAN 和该 WAN 口线路用户 VLAN 走软件。
 - `NATFLOW_USER_BYPASS_BIT` 固定为 15，对应 Linux `IPS_HW_OFFLOAD_BIT`。natflow
   镜像通过构建配置排除 flowoffload 模块。conntrack 显示和 SNAT 端口复用沿用内核语义。
   `natflow_ifname_copy()` 使用固定 IFNAMSIZ 和零填充，兼容旧内核和 Linux 7.3。
