@@ -3937,9 +3937,10 @@ struct userinfo_user {
 	struct natflow_ctl_input input;
 	struct mutex lock;
 	struct list_head head;
-	unsigned int next_bucket;
+	unsigned int read_next_bucket;
+	unsigned int kickall_next_bucket;
 	unsigned int count;
-	unsigned int status;
+	bool read_complete;
 	unsigned int data_off;
 	unsigned int data_len;
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
@@ -3951,81 +3952,87 @@ struct userinfo_user {
 #define USERINFO_MEMSIZE ALIGN(sizeof(struct userinfo_user), 2048)
 #define USERINFO_DATALEN (USERINFO_MEMSIZE - sizeof(struct userinfo_user))
 
+static int userinfo_kickall(struct userinfo_user *user)
+{
+	unsigned long end_time;
+	unsigned int i, hashsz;
+	struct nf_conntrack_tuple_hash *h;
+	struct hlist_nulls_head *ct_hash;
+	struct hlist_nulls_node *n;
+	struct nf_conn *ct;
+	struct nf_conn_acct *acct;
+	struct fakeuser_data_t *fud;
+	int ret = 0;
+
+	if (mutex_lock_interruptible(&user->lock))
+		return -EAGAIN;
+
+	end_time = jiffies + msecs_to_jiffies(100);
+	rcu_read_lock();
+
+	natflow_conntrack_get_ht(&ct_hash, &hashsz);
+	for (i = user->kickall_next_bucket; i < hashsz; i++) {
+		hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
+			ct = nf_ct_tuplehash_to_ctrack(h);
+			if (unlikely(!REFCOUNT_inc_not_zero(&ct->ct_general.use)))
+				continue;
+
+			/* Visit each fakeuser only in its original direction. */
+			if (NF_CT_DIRECTION(h)) {
+				nf_ct_put(ct);
+				continue;
+			}
+#if NATFLOW_HAVE_NF_CT_IS_EXPIRED
+			if (nf_ct_is_expired(ct)) {
+				nf_ct_put(ct);
+				continue;
+			}
+#endif
+			if (!(IPS_NATFLOW_USER & ct->status)) {
+				nf_ct_put(ct);
+				continue;
+			}
+			fud = natflow_fakeuser_data(ct);
+			WRITE_ONCE(fud->timestamp, 0);
+			fud->auth_type = AUTH_TYPE_UNKNOWN;
+			fud->auth_status = AUTH_NONE;
+			fud->auth_rule_id = INVALID_AUTH_RULE_ID;
+			acct = nf_conn_acct_find(ct);
+			if (acct) {
+				atomic64_set(&acct->counter[0].packets, 0);
+				atomic64_set(&acct->counter[0].bytes, 0);
+				atomic64_set(&acct->counter[1].packets, 0);
+				atomic64_set(&acct->counter[1].bytes, 0);
+			}
+			userinfo_event_queue(ct);
+
+			nf_ct_put(ct);
+		}
+
+		if (i + 1 < hashsz && time_after(jiffies, end_time)) {
+			user->kickall_next_bucket = i + 1;
+			ret = -EAGAIN;
+			goto out_rcu;
+		}
+	}
+	user->kickall_next_bucket = 0;
+
+out_rcu:
+	rcu_read_unlock();
+	mutex_unlock(&user->lock);
+	return ret;
+}
+
 static int userinfo_apply_line(struct file *file, char *data)
 {
-	unsigned long end_time = jiffies + msecs_to_jiffies(100);
 	struct userinfo_user *user = file->private_data;
 	int err = 0;
 	int n;
 
-	if (strncmp(data, "kickall", 7) == 0) {
-		err = mutex_lock_interruptible(&user->lock);
-		if (err != 0)
-			return -EAGAIN;
-		if (user->status == 0) {
-			unsigned int i, hashsz;
-			struct nf_conntrack_tuple_hash *h;
-			struct hlist_nulls_head *ct_hash;
-			struct hlist_nulls_node *n;
-			struct nf_conn *ct;
-			struct nf_conn_acct *acct;
-			struct fakeuser_data_t *fud;
+	if (strncmp(data, "kickall", 7) == 0)
+		return userinfo_kickall(user);
 
-			user->status = 1;
-			rcu_read_lock();
-
-			natflow_conntrack_get_ht(&ct_hash, &hashsz);
-			for (i = user->next_bucket; i < hashsz; i++) {
-				hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
-					ct = nf_ct_tuplehash_to_ctrack(h);
-					if (unlikely(!REFCOUNT_inc_not_zero(&ct->ct_general.use)))
-						continue;
-
-					/* we only want to print DIR_ORIGINAL */
-					if (NF_CT_DIRECTION(h)) {
-						nf_ct_put(ct);
-						continue;
-					}
-#if NATFLOW_HAVE_NF_CT_IS_EXPIRED
-					if (nf_ct_is_expired(ct)) {
-						nf_ct_put(ct);
-						continue;
-					}
-#endif
-					if (!(IPS_NATFLOW_USER & ct->status)) {
-						nf_ct_put(ct);
-						continue;
-					}
-					fud = natflow_fakeuser_data(ct);
-					WRITE_ONCE(fud->timestamp, 0);
-					fud->auth_type = AUTH_TYPE_UNKNOWN;
-					fud->auth_status = AUTH_NONE;
-					fud->auth_rule_id = INVALID_AUTH_RULE_ID;
-					acct = nf_conn_acct_find(ct);
-					if (acct) {
-						atomic64_set(&acct->counter[0].packets, 0);
-						atomic64_set(&acct->counter[0].bytes, 0);
-						atomic64_set(&acct->counter[1].packets, 0);
-						atomic64_set(&acct->counter[1].bytes, 0);
-					}
-					userinfo_event_queue(ct);
-
-					nf_ct_put(ct);
-				}
-
-				if (time_after(jiffies, end_time) && i < hashsz) {
-					user->next_bucket = i + 1;
-					user->status = 0;
-					rcu_read_unlock();
-					mutex_unlock(&user->lock);
-					goto again;
-				}
-			}
-			rcu_read_unlock();
-		}
-		mutex_unlock(&user->lock);
-		goto done;
-	} else if (strncmp(data, "kick ", 5) == 0) {
+	if (strncmp(data, "kick ", 5) == 0) {
 		struct nf_conn_acct *acct;
 		struct fakeuser_data_t *fud;
 		natflow_fakeuser_t *user = NULL;
@@ -4131,8 +4138,6 @@ static int userinfo_apply_line(struct file *file, char *data)
 
 done:
 	return 0;
-again:
-	return -EAGAIN;
 }
 
 
@@ -4170,7 +4175,7 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 	if (user->data_len > 0)
 		goto copy_out;
 
-	if (user->status == 0 && list_empty(&user->head)) {
+	if (!user->read_complete && list_empty(&user->head)) {
 		unsigned int i, hashsz;
 		struct nf_conntrack_tuple_hash *h;
 		struct hlist_nulls_head *ct_hash;
@@ -4179,11 +4184,11 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 		struct nf_conn_acct *acct;
 		struct fakeuser_data_t *fud;
 
-		user->status = 1;
+		user->read_complete = true;
 		rcu_read_lock();
 
 		natflow_conntrack_get_ht(&ct_hash, &hashsz);
-		for (i = user->next_bucket; i < hashsz; i++) {
+		for (i = user->read_next_bucket; i < hashsz; i++) {
 			hlist_nulls_for_each_entry_rcu(h, n, &ct_hash[i], hnnode) {
 				ct = nf_ct_tuplehash_to_ctrack(h);
 				if (unlikely(!REFCOUNT_inc_not_zero(&ct->ct_general.use)))
@@ -4210,8 +4215,8 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 					user_i = kmalloc(sizeof(struct userinfo), GFP_ATOMIC);
 					if (!user_i) {
 						nf_ct_put(ct);
-						user->next_bucket = i;
-						user->status = 0;
+						user->read_next_bucket = i;
+						user->read_complete = false;
 						rcu_read_unlock();
 						ret = -ENOMEM;
 						goto out;
@@ -4275,9 +4280,9 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 				nf_ct_put(ct);
 			}
 
-			if ((time_after(jiffies, end_time) || user->count >= 4096) && i < hashsz) {
-				user->next_bucket = i + 1;
-				user->status = 0;
+			if (i + 1 < hashsz && (time_after(jiffies, end_time) || user->count >= 4096)) {
+				user->read_next_bucket = i + 1;
+				user->read_complete = false;
 				break;
 			}
 		}
@@ -4308,10 +4313,11 @@ static ssize_t userinfo_read(struct file *file, char __user *buf,
 		kfree(user_i);
 		user->count--;
 		goto copy_out;
-	} else if (user->status == 0) {
+	} else if (!user->read_complete) {
 		ret = -EAGAIN;
 	} else {
-		user->status = 0;
+		user->read_next_bucket = 0;
+		user->read_complete = false;
 		ret = 0;
 	}
 	goto out;
@@ -4346,9 +4352,10 @@ static int userinfo_open(struct inode *inode, struct file *file)
 
 	natflow_ctl_input_init(&user->input);
 	mutex_init(&user->lock);
-	user->next_bucket = 0;
+	user->read_next_bucket = 0;
+	user->kickall_next_bucket = 0;
 	user->count = 0;
-	user->status = 0;
+	user->read_complete = false;
 	user->data_off = 0;
 	user->data_len = 0;
 	INIT_LIST_HEAD(&user->head);
