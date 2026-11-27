@@ -12,6 +12,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 
 - 主要语言：C，Linux kernel module。
 - 构建入口：`Makefile`、`Makefile.dkms`、`dkms.conf`。
+- Kbuild 的诊断和 `NO_DEBUG` 选项由 `ccflags-y` 保留，可与调用方的 `EXTRA_CFLAGS` 同时生效。模块目录用 `CURDIR`，递归 recipe 保留 jobserver；`tools/build-matrix.sh` 检查实际无调试编译命令。
 - DKMS 的显式复制清单必须包含 `natflow_control.h` 等所有构建头文件；可通过 `src_install DKMS_DEST=<临时目录>` 和该目录的独立构建验证，避免漏文件被仓库内构建掩盖。
 - 公共用户文档：`README.md`。
 - 实现规格记忆：`SYSTEM_DESIGN_SPEC.md`。

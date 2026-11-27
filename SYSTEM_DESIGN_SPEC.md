@@ -59,10 +59,9 @@ Natflow 是一个 Linux 内核模块，模块名为 `natflow`。它围绕 Netfil
 
 - 生成内核模块 `natflow.o`。
 - `natflow-y` 包含 `natflow_main.o natflow_common.o natflow_l7.o natflow_dpi.o natflow_path.o natflow_user.o natflow_zone.o natflow_urllogger.o natflow_conntrack.o`。
-- 默认 `EXTRA_CFLAGS += -Wall -Werror -Wno-stringop-overread`。
-- 定义 `NO_DEBUG` 时追加 `-Wno-unused -Os -DNO_DEBUG`，并关闭 `NATFLOW_DEBUG/INFO/WARN/ERROR/FIXME` 宏输出。
+- `ccflags-y` 接收调用方的 `EXTRA_CFLAGS`，再追加 `-Wall -Werror -Wno-stringop-overread`。定义 `NO_DEBUG` 时通过 `ccflags-y` 追加 `-Wno-unused -Os -DNO_DEBUG`，关闭 `NATFLOW_DEBUG/INFO/WARN/ERROR/FIXME` 宏输出。构建矩阵检查 `full-no-debug` 的实际编译命令包含 `-DNO_DEBUG` 和 `-Os`。
 - 运行时全局日志级别可通过 `debug=<u>` 掩码控制（包含 `debug_ratelimited` 等位）。
-- `KERNELDIR` 默认 `/lib/modules/$(uname -r)/build`，通过 `make -C $(KERNELDIR) M=$(PWD)` 编译。
+- `KERNELDIR` 默认 `/lib/modules/$(uname -r)/build`，通过 `$(MAKE) -C $(KERNELDIR) M=$(CURDIR)` 编译。`CURDIR` 支持从其他目录调用 `make -C`，递归 recipe 保留 make jobserver。
 
 DKMS Makefile：
 

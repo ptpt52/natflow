@@ -4,13 +4,11 @@ obj-m += natflow.o
 
 natflow-y += natflow_main.o natflow_common.o natflow_l7.o natflow_dpi.o natflow_path.o natflow_user.o natflow_qos.o natflow_zone.o natflow_urllogger.o natflow_conntrack.o
 
-EXTRA_CFLAGS += -Wall -Werror -Wno-stringop-overread
+ccflags-y += $(EXTRA_CFLAGS) -Wall -Werror -Wno-stringop-overread
 
 ifdef NO_DEBUG
-EXTRA_CFLAGS += -Wno-unused -Os -DNO_DEBUG
+ccflags-y += -Wno-unused -Os -DNO_DEBUG
 endif
-
-ccflags-y += $(EXTRA_CFLAGS)
 
 # The API belongs to the target kernel, not to a board name or a host header.
 ifneq ($(wildcard $(srctree)/include/linux/qca_ppe_natflow.h),)
@@ -26,27 +24,25 @@ CFLAGS_natflow_l7.o += -Werror=frame-larger-than=512
 CFLAGS_natflow_dpi.o += -Werror=frame-larger-than=512
 CFLAGS_natflow_urllogger.o += -Werror=frame-larger-than=512
 
-PWD ?= $(shell pwd)
-
 ifndef KERNELRELEASE
 KERNELRELEASE := $(shell uname -r)
 endif
-    
+
 KERNELDIR ?= /lib/modules/$(KERNELRELEASE)/build
-KMAKE := $(MAKE) -C $(KERNELDIR) M=$(PWD)
+KMAKE := $(MAKE) -C $(KERNELDIR) M=$(CURDIR)
 
 all: modules
 
 modules:
-	$(KMAKE) modules
+	+$(KMAKE) modules
 
 modules_install:
-	$(KMAKE) modules_install
+	+$(KMAKE) modules_install
 
 install: modules_install
 	depmod
 
 modules_clean:
-	$(KMAKE) clean
+	+$(KMAKE) clean
 
 clean: modules_clean

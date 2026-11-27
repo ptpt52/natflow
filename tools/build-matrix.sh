@@ -44,4 +44,11 @@ run_case full-no-debug \
 	NO_DEBUG=1 \
 	"EXTRA_CFLAGS=-DCONFIG_NATFLOW_PATH -DCONFIG_NATFLOW_URLLOGGER -DCONFIG_NATFLOW_DPI"
 
+for flag in -DNO_DEBUG -Os; do
+	if ! grep -q -- " $flag " "$REPO_DIR/.natflow_main.o.cmd"; then
+		printf 'full-no-debug: missing compiler flag %s\n' "$flag" >&2
+		exit 1
+	fi
+done
+
 printf '\nAll build matrix cases passed.\n'

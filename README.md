@@ -190,7 +190,7 @@ make
 | `NATFLOW_OFFLOAD_MTK_HNAT_8K_4WAY` | 兼容旧 SDK 内核补丁，继续使用 8192 项、4-way hash 和 13-bit 回注索引。 |
 | `CONFIG_HWNAT_EXTDEV_USE_VLAN_HASH` | MTK 外部设备硬件 offload 使用 VLAN hash 模式；会影响 bridge VLAN filter。 |
 | `CONFIG_HWNAT_EXTDEV_DISABLED` | 禁用部分外部设备硬件 offload 分支。 |
-| `NO_DEBUG=1` | 追加 `-DNO_DEBUG -Os`，编译期关闭日志宏。 |
+| `NO_DEBUG=1` | 追加 `-DNO_DEBUG -Os`，可与 `EXTRA_CFLAGS` 同时使用，编译期关闭日志宏。 |
 
 MT7987 的 16K 硬件转发需要内核 995 patch 与 natflow 一起更新并重新编译。
 X-WRT 6.18 的 995 patch 和 natflow 均将 MT7987 纳入 16K、4-way 平台；
@@ -213,6 +213,8 @@ make NO_DEBUG=1 EXTRA_CFLAGS="-DCONFIG_NATFLOW_PATH -DCONFIG_NATFLOW_URLLOGGER"
 ```sh
 make KERNELRELEASE=6.6.1 EXTRA_CFLAGS="-DCONFIG_NATFLOW_PATH -DCONFIG_NATFLOW_URLLOGGER"
 ```
+
+从其他目录可用 `make -C /path/to/natflow` 构建，`make -j` 的并行设置会传给 Kbuild。
 
 DKMS 入口：
 
