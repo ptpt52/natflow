@@ -151,7 +151,8 @@ static DEFINE_SPINLOCK(urllogger_store_lock);
 static wait_queue_head_t urllogger_wait;
 static unsigned int urllogger_store_readers;
 static unsigned int urllogger_store_cache_limit;
-static struct natflow_queue_cache_write_state urllogger_write_state;
+/* Reused by successive opens, with only one reader at a time. */
+static struct natflow_ctl_input urllogger_input;
 
 static inline int urllogger_store_addr_equal(const struct urlinfo *a, const struct urlinfo *b)
 {
@@ -267,14 +268,11 @@ static void urllogger_store_cache_set(unsigned int cache_limit)
 	struct list_head *pos;
 	struct urlinfo *url_i;
 
-	WRITE_ONCE(urllogger_store_cache_limit, cache_limit);
-	if (cache_limit == 0) {
-		urllogger_store_clear();
-		wake_up_interruptible(&urllogger_wait);
-		return;
-	}
-
 	spin_lock_bh(&urllogger_store_lock);
+	WRITE_ONCE(urllogger_store_cache_limit, cache_limit);
+	if (!cache_limit)
+		urllogger_store_purge_locked(&free_list);
+
 	while (urllogger_store_count > cache_limit) {
 		pos = urllogger_store_list.next;
 		url_i = list_entry(pos, struct urlinfo, list);
@@ -285,6 +283,8 @@ static void urllogger_store_cache_set(unsigned int cache_limit)
 	spin_unlock_bh(&urllogger_store_lock);
 
 	urllogger_store_free_list(&free_list);
+	if (!cache_limit)
+		wake_up_interruptible(&urllogger_wait);
 }
 
 static int hostacl_major = 0;
@@ -1469,10 +1469,16 @@ static struct urlinfo *urlinfo_alloc_record(const unsigned char *host, int host_
 	return url;
 }
 
-static ssize_t urllogger_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+static int urllogger_write_apply(struct file *file, char *data)
 {
-	return natflow_queue_cache_write(&urllogger_write_state, buf, buf_len,
-	                                 offset, urllogger_store_cache_set);
+	return natflow_queue_cache_apply(data, urllogger_store_cache_set);
+}
+
+static ssize_t urllogger_write(struct file *file, const char __user *buf,
+                               size_t buf_len, loff_t *offset)
+{
+	return natflow_ctl_write(&urllogger_input, file, buf, buf_len, offset,
+	                         urllogger_write_apply);
 }
 
 static ssize_t urllogger_read(struct file *file, char __user *buf,
@@ -1555,7 +1561,7 @@ static int urllogger_open(struct inode *inode, struct file *file)
 	}
 	WRITE_ONCE(urllogger_store_readers, 1);
 	WRITE_ONCE(urllogger_store_cache_limit, 0);
-	urllogger_write_state.data_left = 0;
+	urllogger_input.len = 0;
 	urllogger_store_purge_locked(&free_list);
 	spin_unlock_bh(&urllogger_store_lock);
 
@@ -1574,7 +1580,7 @@ static int urllogger_release(struct inode *inode, struct file *file)
 	spin_lock_bh(&urllogger_store_lock);
 	WRITE_ONCE(urllogger_store_readers, 0);
 	WRITE_ONCE(urllogger_store_cache_limit, 0);
-	urllogger_write_state.data_left = 0;
+	urllogger_input.len = 0;
 	urllogger_store_purge_locked(&free_list);
 	spin_unlock_bh(&urllogger_store_lock);
 
@@ -1925,6 +1931,7 @@ int natflow_urllogger_init(void)
 	dev_t devno;
 
 	init_waitqueue_head(&urllogger_wait);
+	natflow_ctl_input_init(&urllogger_input);
 	WRITE_ONCE(urllogger_store_readers, 0);
 	WRITE_ONCE(urllogger_store_cache_limit, 0);
 

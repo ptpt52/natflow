@@ -89,13 +89,15 @@ struct userinfo_event {
 };
 
 static struct userinfo_event userinfo_event_store;
-static struct natflow_queue_cache_write_state userinfo_event_write_state;
+/* Reused by successive opens, with only one reader at a time. */
+static struct natflow_ctl_input userinfo_event_input;
 
 static inline void userinfo_event_store_init(void)
 {
 	spin_lock_init(&userinfo_event_store.lock);
 	INIT_LIST_HEAD(&userinfo_event_store.head);
 	init_waitqueue_head(&userinfo_event_store.wait);
+	natflow_ctl_input_init(&userinfo_event_input);
 	WRITE_ONCE(userinfo_event_store.readers, 0);
 	WRITE_ONCE(userinfo_event_store.cache_limit, 0);
 	userinfo_event_store.count = 0;
@@ -4458,10 +4460,16 @@ static void userinfo_exit(void)
 
 static void userinfo_event_cache_set(unsigned int cache_limit);
 
-static ssize_t userinfo_event_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+static int userinfo_event_write_apply(struct file *file, char *data)
 {
-	return natflow_queue_cache_write(&userinfo_event_write_state, buf, buf_len,
-	                                 offset, userinfo_event_cache_set);
+	return natflow_queue_cache_apply(data, userinfo_event_cache_set);
+}
+
+static ssize_t userinfo_event_write(struct file *file, const char __user *buf,
+                                    size_t buf_len, loff_t *offset)
+{
+	return natflow_ctl_write(&userinfo_event_input, file, buf, buf_len, offset,
+	                         userinfo_event_write_apply);
 }
 
 struct userinfo_event_reader {
@@ -4501,14 +4509,11 @@ static void userinfo_event_cache_set(unsigned int cache_limit)
 	LIST_HEAD(free_list);
 	struct userinfo *user_i;
 
-	WRITE_ONCE(userinfo_event_store.cache_limit, cache_limit);
-	if (cache_limit == 0) {
-		userinfo_event_store_purge();
-		wake_up(&userinfo_event_store.wait);
-		return;
-	}
-
 	spin_lock_bh(&userinfo_event_store.lock);
+	WRITE_ONCE(userinfo_event_store.cache_limit, cache_limit);
+	if (!cache_limit)
+		userinfo_event_store_purge_locked(&free_list);
+
 	while (userinfo_event_store.count > cache_limit) {
 		user_i = list_first_entry(&userinfo_event_store.head,
 		                          struct userinfo, list);
@@ -4519,6 +4524,8 @@ static void userinfo_event_cache_set(unsigned int cache_limit)
 	spin_unlock_bh(&userinfo_event_store.lock);
 
 	userinfo_event_store_free_list(&free_list);
+	if (!cache_limit)
+		wake_up(&userinfo_event_store.wait);
 }
 
 static ssize_t userinfo_event_read(struct file *file, char __user *buf,
@@ -4588,7 +4595,7 @@ static int userinfo_event_open(struct inode *inode, struct file *file)
 	}
 	WRITE_ONCE(userinfo_event_store.readers, 1);
 	WRITE_ONCE(userinfo_event_store.cache_limit, 0);
-	userinfo_event_write_state.data_left = 0;
+	userinfo_event_input.len = 0;
 	userinfo_event_store_purge_locked(&free_list);
 	spin_unlock_bh(&userinfo_event_store.lock);
 
@@ -4609,7 +4616,7 @@ static int userinfo_event_release(struct inode *inode, struct file *file)
 	spin_lock_bh(&userinfo_event_store.lock);
 	WRITE_ONCE(userinfo_event_store.readers, 0);
 	WRITE_ONCE(userinfo_event_store.cache_limit, 0);
-	userinfo_event_write_state.data_left = 0;
+	userinfo_event_input.len = 0;
 	userinfo_event_store_purge_locked(&free_list);
 	spin_unlock_bh(&userinfo_event_store.lock);
 

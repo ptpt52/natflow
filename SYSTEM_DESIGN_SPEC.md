@@ -211,7 +211,7 @@ Natflow 分为控制面、策略面、数据面和观测面。
 - 解析成功时返回本次消费字节数。
 - 未识别命令打印 `ignoring line`，多数情况下仍返回已消费长度；若解析过程中设置了错误码，则返回对应错误。
 - `natflow_userinfo_queue`、`natflow_urllogger_queue` 和 `natflow_dpi_queue` 的写接口共享更窄的缓存数量协议：只接受 `cache=N`，N 为十进制无符号整数。`N > 0` 表示最多缓存 N 条新事件；`cache=0` 关闭缓存并清空未读事件；未知命令返回 `-EINVAL`。
-- `natflow_control.h` 为 main、zone、auth、userinfo、conntrackinfo、QoS、HostACL、DPI control 提供每次 open 独立的半行缓冲与 mutex；锁覆盖 copy/解析/命令执行和 offset 更新。seq_file 的读缓冲与写缓冲分离；userinfo/conntrackinfo 嵌入各自 private 结构。`dup`/`fork` 共享同一个 open，跨多次 write 拼接仍需调用方串行。三个 queue 保留原有单 reader 与已加锁的缓存数量协议。
+- `natflow_control.h` 为 main、zone、auth、userinfo、conntrackinfo、QoS、HostACL、DPI control 和三个事件队列提供半行缓冲与写 mutex；锁覆盖 copy/解析/命令执行和 offset 更新。seq_file 的读缓冲与写缓冲分离，普通控制设备使用各自的 per-open 结构。每个事件队列只允许一个 open 占用写缓冲，open/release 都清空半行。队列自旋锁保护上限更新及裁剪或清队，释放节点在锁外完成。`dup`/`fork` 共享同一个 open，跨多次 write 拼接仍需调用方串行。
 
 AI 重建时必须保留换行结束、上述长度上限、per-open 半行状态和短写返回语义。单次最多执行一行；调用方按返回长度续写。执行错误丢弃当前行，`EAGAIN` 重试完整命令。普通控制设备还应保留“未识别命令只记录日志”的行为，DPI control 和三个 queue 保留未知命令返回 `-EINVAL` 的严格行为。
 

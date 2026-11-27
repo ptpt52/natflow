@@ -38,7 +38,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 | `natflow_zone.c/.h` | LAN/WAN zone 规则、设备 zone 标记、zone notifier。 |
 | `natflow_conntrack.c/.h` | `/dev/natflow_conntrackinfo_ctl` conntrack dump；`kickall` 清理 `init_net` 中除 fakeuser 和 NATCAP peer 外的已确认 conntrack。 |
 | `natflow_compat.h` | 跨内核版本 API 差异兼容。 |
-| `natflow_control.h` | 普通控制设备 per-open 半行解析、同 open 写锁、独立 seq 读缓冲。 |
+| `natflow_control.h` | 普通控制设备和事件队列共用半行解析与同 open 写锁，seq 设备使用独立读缓冲。 |
 | `docs/agent/DPI_IMPLEMENTATION_CHECKLIST.md` | DPI/L7 实现阶段的每步自审基线，覆盖 legacy URL/Host ACL、conntrack layout、fast path gate 和 DPI ABI。 |
 
 ## 长期约束
@@ -76,7 +76,7 @@ Natflow 是一个 Linux 内核模块，通过慢路径学习连接和转发信�
 
 - 源码是最高优先级事实来源，`SYSTEM_DESIGN_SPEC.md` 是反向整理的长期规格。
 - 字符设备命令大多要求单行命令以 `\n` 结束，单条命令长度上限为 `MAX_IOCTL_LEN = 256`。
-- 普通 `*_ctl` 半行按 open 隔离、关闭即丢弃；同 open（含 dup/fork）写锁覆盖 copy/parse/apply。DPI control 保留 512 字节上限，其他 control 为 256（含换行）；三个 queue 单 reader 协议不变。短写按消费长度续写，`EAGAIN` 重试完整命令；跨 write 拼接和跨命令 reload 的业务顺序仍由调用者保证。
+- 普通 `*_ctl` 和三个事件队列的半行按 open 隔离、关闭即丢弃；同 open（含 dup/fork）写锁覆盖 copy/parse/apply。DPI control 保留 512 字节上限，其余 control 和 queue 为 256（含换行）。各 queue 的单 reader 独占写缓冲，上限更新与裁剪或清队在同一个队列自旋锁内完成。短写按消费长度续写，`EAGAIN` 重试完整命令；跨 write 拼接和跨命令 reload 的业务顺序仍由调用者保证。
 - auth 的规则/数量/bypass/magic 与 QoS 的规则/数量/classid/buffer_ms/generation/速率分别为不可变 RCU 快照，写端按各自 mutex 克隆发布并等待 grace period 后回收。auth 的 `disabled`、redirect、timeout、HTTPS/WeChat 开关及未知命令改走独立 `auth_scalar_lock`，不分配/发布快照，也不等待 auth grace period；auth seq reader 按 `auth_conf_lock` → `auth_scalar_lock` 同时持锁，写端经 input mutex 后只持其中一把。QoS seq 仍只持配置 mutex。Netfilter hook 使用外层 RCU，rx/tx token 入口显式取 RCU；数据面不取 mutex。auth 的 `update_magic` 仍手动触发；QoS bucket 不随快照复制，速率作为参数传入原 bucket 锁保护的更新，保留 qos_id 槽位复用和 clear 不复位旧 token 余额的语义。
 - `/dev/natflow_conntrackinfo_ctl` 的精确 `kickall` 命令要求 `init_net` 的 `CAP_NET_ADMIN`，通过内核 cleanup iterator 同步删除除 `IPS_NATFLOW_USER` 和 `IPS_NATCAP_PEER` 外的已确认 conntrack；普通业务流即使关联 fakeuser 仍会删除，fakeuser/NATCAP peer 对象自身保留。
 - `/dev/natflow_userinfo_ctl` 的 `idle_time` 复用 fakeuser 内部活动 `timestamp` 计算，不要用当前 `no_flow_timeout` 和 conntrack 剩余超时反推。来源学习与单纯保活共用原有 `timestamp`，不增加用户字段；来源学习保留 pre hook 普通包 32 秒、新连接包 2 秒及 vline 8 秒门槛，单纯保活改为 64 秒，为来源学习留出检查窗口。窗口不保证一定有学习机会，普通来源流程的 `USER_BYPASS` 提前退出仍保留；仅有保活回调时页面活动时间粒度变粗。

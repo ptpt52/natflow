@@ -312,7 +312,7 @@ echo 1 >/proc/sys/urllogger_store/enable
 - 未识别命令多数情况下只写内核日志并返回已消费字节；三个 `natflow_*_queue` 的写接口只接受 `cache=N`，未识别命令返回 `-EINVAL`。
 - `natflow_userinfo_ctl` 支持 partial read，用户 buffer 小于单条记录时会分多次读取完成。三个 `natflow_*_queue` 不会拆分单条记录；用户 buffer 小于单条记录时返回 `-EINVAL`，buffer 足够时一次 `read()` 可返回多条完整记录。
 - `/dev/natflow_userinfo_queue`、`/dev/natflow_urllogger_queue` 和 `/dev/natflow_dpi_queue` 都只允许一个 reader。长期采集程序应以 `O_RDWR` 打开并保持 fd，写入 `cache=N\n` 设置最多缓存 N 条事件后才会缓存新事件；写入 `cache=0\n` 会关闭缓存并清空未读事件。
-- 普通 `*_ctl` 设备按每次 `open` 独立保存半行，关闭时丢弃；不能在不同 fd 上拼接一条命令。同一 open 经 `dup`/`fork` 共享的 fd 使用同一缓冲，单次写入串行，但多次写入组成的命令仍需调用方串行。
+- 普通 `*_ctl` 设备和三个事件队列按每次 `open` 保存半行，关闭时丢弃。同一 open 经 `dup`/`fork` 共享的 fd 使用同一缓冲，单次写入串行，多次写入组成的命令仍需调用方串行。
 - `write()` 可能只消费前导空白或一行，应按返回长度继续写剩余字节；`EAGAIN` 重试完整命令。跨多条命令的配置重载不是事务，生产脚本仍应串行整个重载过程。
 
 ## 对外接口总览
