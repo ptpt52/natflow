@@ -34,13 +34,21 @@ static const char * const natflow_zone_dev_name = "natflow_zone_ctl";
 static struct class *natflow_zone_class;
 static struct device *natflow_zone_dev;
 
+static DEFINE_MUTEX(zone_conf_lock);
 static DEFINE_RWLOCK(zone_match_lock);
 static LIST_HEAD(zone_match_list);
 
+/* The caller holds zone_conf_lock from validation through publication. */
 static inline int natflow_zone_add_tail(const struct zone_match_t *zm)
 {
 	struct zone_match_t *old;
 	struct zone_match_t *new;
+	int ret;
+
+	list_for_each_entry(old, &zone_match_list, list) {
+		if (old->id == zm->id && old->type != zm->type)
+			return -EINVAL;
+	}
 
 	new = kmalloc(sizeof(struct zone_match_t), GFP_KERNEL);
 	if (new == NULL)
@@ -49,16 +57,15 @@ static inline int natflow_zone_add_tail(const struct zone_match_t *zm)
 	memcpy(new, zm, sizeof(*new));
 	INIT_LIST_HEAD(&new->list);
 
-	write_lock_bh(&zone_match_lock);
-	list_for_each_entry(old, &zone_match_list, list) {
-		if (old->id == zm->id && old->type != zm->type) {
-			write_unlock_bh(&zone_match_lock);
-			kfree(new);
-			return -EINVAL;
-		}
+	ret = natflow_zte_policy_begin();
+	if (ret) {
+		kfree(new);
+		return ret;
 	}
+	write_lock_bh(&zone_match_lock);
 	list_add_tail(&new->list, &zone_match_list);
 	write_unlock_bh(&zone_match_lock);
+	natflow_zte_policy_end();
 
 	return 0;
 }
@@ -253,14 +260,20 @@ static ssize_t natflow_zone_read(struct file *file, char __user *buf, size_t buf
 	return seq_read(file, buf, buf_len, offset);
 }
 
-static int natflow_zone_apply_line(struct file *file, char *data)
+static int natflow_zone_apply_config(char *data)
 {
 	int err = 0;
 	int n;
 	struct zone_match_t zm;
 
 	if (strncmp(data, "clean", 5) == 0) {
+		if (list_empty(&zone_match_list))
+			return 0;
+		err = natflow_zte_policy_begin();
+		if (err)
+			return err;
 		natflow_zone_cleanup();
+		natflow_zte_policy_end();
 		goto done;
 	} else if (strncmp(data, "lan_zone ", 9) == 0) {
 		n = sscanf(data, "lan_zone %u=%14s\n", &zm.id, zm.if_name);
@@ -287,7 +300,11 @@ static int natflow_zone_apply_line(struct file *file, char *data)
 			NATFLOW_println("failed to add natflow zone tail, ret=%d", err);
 		}
 	} else if (strncmp(data, "update_match", 12) == 0) {
+		err = natflow_zte_policy_begin();
+		if (err)
+			return err;
 		natflow_zone_match_refresh();
+		natflow_zte_policy_end();
 		goto done;
 	} else if (strncmp(data, "print_zone", 10) == 0) {
 		natflow_zone_print();
@@ -304,16 +321,19 @@ done:
 }
 
 
+static int natflow_zone_apply_line(struct file *file, char *data)
+{
+	int ret;
+
+	mutex_lock(&zone_conf_lock);
+	ret = natflow_zone_apply_config(data);
+	mutex_unlock(&zone_conf_lock);
+	return ret;
+}
+
 static ssize_t natflow_zone_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
 {
-	ssize_t ret;
-
-	ret = natflow_zte_policy_begin();
-	if (ret)
-		return ret;
-	ret = natflow_ctl_seq_write(file, buf, buf_len, offset, natflow_zone_apply_line);
-	natflow_zte_policy_end();
-	return ret;
+	return natflow_ctl_seq_write(file, buf, buf_len, offset, natflow_zone_apply_line);
 }
 static int natflow_zone_open(struct inode *inode, struct file *file)
 {

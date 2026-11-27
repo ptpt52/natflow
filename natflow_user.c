@@ -3664,8 +3664,7 @@ static int natflow_user_apply_auth_config(struct auth_conf *auth_conf, char *dat
 		auth_conf->magic++;
 		goto done;
 	} else if (strncmp(data, "dst_bypasslist_name=", 20) == 0) {
-		char buf[IPSET_MAXNAMELEN];
-		buf[0] = 0;
+		char buf[IPSET_MAXNAMELEN] = {0};
 		n = sscanf(data, "dst_bypasslist_name=%31s\n", buf);
 		buf[IPSET_MAXNAMELEN - 1] = 0;
 		if (n == 1) {
@@ -3676,8 +3675,7 @@ static int natflow_user_apply_auth_config(struct auth_conf *auth_conf, char *dat
 		}
 		goto done;
 	} else if (strncmp(data, "src_bypasslist_name=", 20) == 0) {
-		char buf[IPSET_MAXNAMELEN];
-		buf[0] = 0;
+		char buf[IPSET_MAXNAMELEN] = {0};
 		n = sscanf(data, "src_bypasslist_name=%31s\n", buf);
 		buf[IPSET_MAXNAMELEN - 1] = 0;
 		if (n == 1) {
@@ -3773,6 +3771,11 @@ static int natflow_user_apply_scalar(char *data)
 		unsigned int a;
 		n = sscanf(data, "disabled=%u", &a);
 		if (n == 1) {
+			if (disabled == !!a)
+				return 0;
+			err = natflow_zte_policy_begin();
+			if (err)
+				return err;
 			natflow_user_disabled_set(!!(a));
 			goto done;
 		}
@@ -3780,6 +3783,11 @@ static int natflow_user_apply_scalar(char *data)
 		struct in6_addr tmp_ip6;
 		if (in6_pton(data + 13, -1, tmp_ip6.s6_addr, '\n', NULL) > 0 ||
 		        in6_pton(data + 13, -1, tmp_ip6.s6_addr, '\0', NULL) > 0) {
+			if (ipv6_addr_equal(&redirect_ip6, &tmp_ip6))
+				return 0;
+			err = natflow_zte_policy_begin();
+			if (err)
+				return err;
 			redirect_ip6 = tmp_ip6;
 			goto done;
 		}
@@ -3791,13 +3799,25 @@ static int natflow_user_apply_scalar(char *data)
 		         ((b & 0xff) == b) &&
 		         ((c & 0xff) == c) &&
 		         ((d & 0xff) == d)) ) {
-			redirect_ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
+			unsigned int ip = htonl((a<<24)|(b<<16)|(c<<8)|(d<<0));
+
+			if (redirect_ip == ip)
+				return 0;
+			err = natflow_zte_policy_begin();
+			if (err)
+				return err;
+			redirect_ip = ip;
 			goto done;
 		}
 	} else if (strncmp(data, "no_flow_timeout=", 16) == 0) {
 		unsigned int a;
 		n = sscanf(data, "no_flow_timeout=%u", &a);
 		if (n == 1) {
+			if (natflow_user_timeout == a)
+				return 0;
+			err = natflow_zte_policy_begin();
+			if (err)
+				return err;
 			natflow_user_timeout = a;
 			goto done;
 		}
@@ -3805,6 +3825,11 @@ static int natflow_user_apply_scalar(char *data)
 		unsigned int a;
 		n = sscanf(data, "https_redirect_en=%u", &a);
 		if (n == 1) {
+			if (https_redirect_en == !!a)
+				return 0;
+			err = natflow_zte_policy_begin();
+			if (err)
+				return err;
 			https_redirect_en = !!a;
 			goto done;
 		}
@@ -3812,12 +3837,22 @@ static int natflow_user_apply_scalar(char *data)
 		unsigned int a;
 		n = sscanf(data, "auth_open_weixin_reply=%u", &a);
 		if (n == 1) {
+			if (auth_open_weixin_reply == !!a)
+				return 0;
+			err = natflow_zte_policy_begin();
+			if (err)
+				return err;
 			auth_open_weixin_reply = !!a;
 			goto done;
 		}
 	} else if (strncmp(data, "https_redirect_port=", sizeof("https_redirect_port=") - 1) == 0) {
 		u16 port;
 		if (kstrtou16(data + sizeof("https_redirect_port=") - 1, 10, &port) == 0) {
+			if (https_redirect_port == htons(port))
+				return 0;
+			err = natflow_zte_policy_begin();
+			if (err)
+				return err;
 			https_redirect_port = htons(port);
 			goto done;
 		}
@@ -3825,11 +3860,10 @@ static int natflow_user_apply_scalar(char *data)
 	}
 
 	NATFLOW_println("ignoring line: [%s]", data);
-	if (err != 0) {
-		return err;
-	}
+	return err;
 
 done:
+	natflow_zte_policy_end();
 	return 0;
 }
 
@@ -3867,11 +3901,17 @@ static int natflow_user_apply_line(struct file *file, char *data)
 		kfree(next);
 		goto out;
 	}
+	ret = natflow_zte_policy_begin();
+	if (ret) {
+		kfree(next);
+		goto out;
+	}
 	rcu_assign_pointer(auth_config, next);
 	/* Bound retired memory even during a sustained configuration flood. */
 	synchronize_rcu();
 	if (old != &auth_conf_empty)
 		kfree(old);
+	natflow_zte_policy_end();
 out:
 	mutex_unlock(&auth_conf_lock);
 	return ret;
@@ -3897,14 +3937,7 @@ bool natflow_user_zte_allowed(natflow_fakeuser_t *user)
 
 static ssize_t natflow_user_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
 {
-	ssize_t ret;
-
-	ret = natflow_zte_policy_begin();
-	if (ret)
-		return ret;
-	ret = natflow_ctl_seq_write(file, buf, buf_len, offset, natflow_user_apply_line);
-	natflow_zte_policy_end();
-	return ret;
+	return natflow_ctl_seq_write(file, buf, buf_len, offset, natflow_user_apply_line);
 }
 static int natflow_user_open(struct inode *inode, struct file *file)
 {
@@ -3962,10 +3995,14 @@ static int userinfo_kickall(struct userinfo_user *user)
 	struct nf_conn *ct;
 	struct nf_conn_acct *acct;
 	struct fakeuser_data_t *fud;
-	int ret = 0;
+	int ret;
 
 	if (mutex_lock_interruptible(&user->lock))
 		return -EAGAIN;
+
+	ret = natflow_zte_policy_begin();
+	if (ret)
+		goto out_unlock;
 
 	end_time = jiffies + msecs_to_jiffies(100);
 	rcu_read_lock();
@@ -4019,7 +4056,23 @@ static int userinfo_kickall(struct userinfo_user *user)
 
 out_rcu:
 	rcu_read_unlock();
+	natflow_zte_policy_end();
+out_unlock:
 	mutex_unlock(&user->lock);
+	return ret;
+}
+
+static int userinfo_user_policy_begin(natflow_fakeuser_t *user)
+{
+	int ret = natflow_zte_policy_begin();
+
+#if NATFLOW_HAVE_ZTE_NPPT
+	/* The reference keeps the object alive while the hardware drains. */
+	if (!ret && (nf_ct_is_dying(user) || nf_ct_is_expired(user))) {
+		natflow_zte_policy_end();
+		return -ENOENT;
+	}
+#endif
 	return ret;
 }
 
@@ -4048,6 +4101,11 @@ static int userinfo_apply_line(struct file *file, char *data)
 		if (!user)
 			return -ENOENT;
 
+		err = userinfo_user_policy_begin(user);
+		if (err) {
+			natflow_user_release_put(user);
+			return err;
+		}
 		fud = natflow_fakeuser_data(user);
 		WRITE_ONCE(fud->timestamp, 0);
 		fud->auth_type = AUTH_TYPE_UNKNOWN;
@@ -4062,6 +4120,7 @@ static int userinfo_apply_line(struct file *file, char *data)
 		}
 		userinfo_event_queue(user);
 
+		natflow_zte_policy_end();
 		natflow_user_release_put(user);
 		goto done;
 	} else if (strncmp(data, "set-status ", 11) == 0) {
@@ -4084,10 +4143,16 @@ static int userinfo_apply_line(struct file *file, char *data)
 		if (!user)
 			return -ENOENT;
 
+		err = userinfo_user_policy_begin(user);
+		if (err) {
+			natflow_user_release_put(user);
+			return err;
+		}
 		fud = natflow_fakeuser_data(user);
 		fud->auth_status = s;
 		userinfo_event_queue(user);
 
+		natflow_zte_policy_end();
 		natflow_user_release_put(user);
 		goto done;
 	} else if (strncmp(data, "set-token-ctrl ", 15) == 0) {
@@ -4110,6 +4175,11 @@ static int userinfo_apply_line(struct file *file, char *data)
 		if (!user)
 			return -ENOENT;
 
+		err = userinfo_user_policy_begin(user);
+		if (err) {
+			natflow_user_release_put(user);
+			return err;
+		}
 		fud = natflow_fakeuser_data(user);
 		spin_lock_bh(&fud->tc.rx.lock);
 		if (fud->tc.rx.tokens_per_jiffy != rx / HZ)
@@ -4127,6 +4197,7 @@ static int userinfo_apply_line(struct file *file, char *data)
 			clear_bit(IPS_NATFLOW_USER_TOKEN_CTRL_BIT, &user->status);
 		}
 
+		natflow_zte_policy_end();
 		natflow_user_release_put(user);
 		goto done;
 	}
@@ -4145,14 +4216,7 @@ static ssize_t userinfo_write(struct file *file, const char __user *buf, size_t 
 {
 	struct userinfo_user *user = file->private_data;
 
-	ssize_t ret;
-
-	ret = natflow_zte_policy_begin();
-	if (ret)
-		return ret;
-	ret = natflow_ctl_write(&user->input, file, buf, buf_len, offset, userinfo_apply_line);
-	natflow_zte_policy_end();
-	return ret;
+	return natflow_ctl_write(&user->input, file, buf, buf_len, offset, userinfo_apply_line);
 }
 /* read one and clear one */
 static ssize_t userinfo_read(struct file *file, char __user *buf,
@@ -5127,6 +5191,11 @@ static int qos_apply_line(struct file *file, char *data)
 		kfree(next);
 		goto out;
 	}
+	ret = natflow_zte_policy_begin();
+	if (ret) {
+		kfree(next);
+		goto out;
+	}
 	next->generation = old->generation + 1;
 	if (!next->generation)
 		next->generation = 1;
@@ -5137,6 +5206,7 @@ static int qos_apply_line(struct file *file, char *data)
 	synchronize_rcu();
 	if (old != &qos_conf_empty)
 		kfree(old);
+	natflow_zte_policy_end();
 out:
 	mutex_unlock(&qos_conf_lock);
 	return ret;
@@ -5144,14 +5214,7 @@ out:
 
 static ssize_t qos_write(struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
 {
-	ssize_t ret;
-
-	ret = natflow_zte_policy_begin();
-	if (ret)
-		return ret;
-	ret = natflow_ctl_seq_write(file, buf, buf_len, offset, qos_apply_line);
-	natflow_zte_policy_end();
-	return ret;
+	return natflow_ctl_seq_write(file, buf, buf_len, offset, qos_apply_line);
 }
 static int qos_open(struct inode *inode, struct file *file)
 {
